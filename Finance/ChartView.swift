@@ -1,115 +1,161 @@
 import SwiftUI
 import DGCharts
 
+// MARK: - TimeRange Enum
+enum TimeRange: String, CaseIterable {
+    case oneMonth = "1 Month"
+    case threeMonths = "3 Months"
+    case sixMonths = "6 Months"
+    case oneYear = "1 Year"
+    case twoYears = "2 Years"
+    case fiveYears = "5 Years"
+    case tenYears = "10 Years"
+    
+    var startDate: Date {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        switch self {
+        case .oneMonth:   return calendar.date(byAdding: .month, value: -1, to: now) ?? now
+        case .threeMonths: return calendar.date(byAdding: .month, value: -3, to: now) ?? now
+        case .sixMonths:   return calendar.date(byAdding: .month, value: -6, to: now) ?? now
+        case .oneYear:     return calendar.date(byAdding: .year, value: -1, to: now) ?? now
+        case .twoYears:    return calendar.date(byAdding: .year, value: -2, to: now) ?? now
+        case .fiveYears:   return calendar.date(byAdding: .year, value: -5, to: now) ?? now
+        case .tenYears:    return calendar.date(byAdding: .year, value: -10, to: now) ?? now
+        }
+    }
+}
+
+// MARK: - ChartView
 struct ChartView: View {
+    // MARK: - Properties
     let symbol: String
     let groupName: String
+    
     @State private var selectedTimeRange: TimeRange = .tenYears
     @State private var chartData: [DatabaseManager.PriceData] = []
     @State private var isLoading = false
     
+    // MARK: - Body
     var body: some View {
         VStack {
-            // 时间范围选择器
-            Picker("Time Range", selection: $selectedTimeRange) {
-                ForEach(TimeRange.allCases, id: \.self) { range in
-                    Text(range.rawValue).tag(range)
-                }
-            }
-            .pickerStyle(SegmentedPickerStyle())
-            .padding()
-            
-            // 图表视图
-            StockLineChartView(data: chartData)
-                .frame(height: 300)
-                .padding()
-            
+            timeRangePicker
+            chartView
             Spacer()
         }
         .navigationTitle("\(symbol) Chart")
-        .onChange(of: selectedTimeRange) { oldValue, newValue in
-            loadChartData()
-        }
-        .onAppear {
-            loadChartData()
-        }
-        .overlay(
-                    Group {
-                        if isLoading {
-                            ProgressView()
-                                .scaleEffect(1.5)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .background(Color.white.opacity(0.7))
-                        }
-                    }
-                )
+        .onChange(of: selectedTimeRange) { _, _ in loadChartData() }
+        .onAppear { loadChartData() }
+        .overlay(loadingOverlay)
     }
     
-    private func loadChartData() {
-            print("=== ChartView Debug ===")
-            print("开始加载图表数据")
-            print("Symbol: \(symbol)")
-            print("GroupName: \(groupName)")
-            print("TimeRange: \(selectedTimeRange)")
-        
-            isLoading = true
-            DispatchQueue.global(qos: .userInitiated).async {
-                    print("开始数据库查询...")
-                    let newData = DatabaseManager.shared.fetchHistoricalData(
-                        symbol: symbol,
-                        tableName: groupName,
-                        timeRange: selectedTimeRange
-                    )
-                    print("查询完成，获取到 \(newData.count) 条数据")
-                    
-                    DispatchQueue.main.async {
-                        self.chartData = newData
-                        self.isLoading = false
-                        print("数据已更新到UI")
-                    }
-                }
+    // MARK: - View Components
+    private var timeRangePicker: some View {
+        Picker("Time Range", selection: $selectedTimeRange) {
+            ForEach(TimeRange.allCases, id: \.self) { range in
+                Text(range.rawValue).tag(range)
+            }
         }
+        .pickerStyle(SegmentedPickerStyle())
+        .padding()
+    }
+    
+    private var chartView: some View {
+        StockLineChartView(data: chartData)
+            .frame(height: 300)
+            .padding()
+    }
+    
+    private var loadingOverlay: some View {
+        Group {
+            if isLoading {
+                ProgressView()
+                    .scaleEffect(1.5)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.white.opacity(0.7))
+            }
+        }
+    }
+    
+    // MARK: - Methods
+    private func loadChartData() {
+        print("=== ChartView Debug ===")
+        print("开始加载图表数据")
+        print("Symbol: \(symbol)")
+        print("GroupName: \(groupName)")
+        print("TimeRange: \(selectedTimeRange)")
+        
+        isLoading = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            print("开始数据库查询...")
+            let newData = DatabaseManager.shared.fetchHistoricalData(
+                symbol: symbol,
+                tableName: groupName,
+                timeRange: selectedTimeRange
+            )
+            print("查询完成，获取到 \(newData.count) 条数据")
+            
+            DispatchQueue.main.async {
+                chartData = newData
+                isLoading = false
+                print("数据已更新到UI")
+            }
+        }
+    }
 }
 
+// MARK: - StockLineChartView
 struct StockLineChartView: UIViewRepresentable {
+    // MARK: - Properties
     let data: [DatabaseManager.PriceData]
     
-    func makeUIView(context: Context) -> DGCharts.LineChartView {
-        let chartView = DGCharts.LineChartView()
-        
-        // 基本设置
-        chartView.legend.enabled = false
-        chartView.rightAxis.enabled = false
-        
-        // 配置X轴
-        chartView.xAxis.labelPosition = .bottom
-        chartView.xAxis.valueFormatter = DateAxisValueFormatter()
-        chartView.xAxis.labelRotationAngle = -45
-        
-        // 配置Y轴
-        let leftAxis = chartView.leftAxis
-        leftAxis.labelCount = 6
-        leftAxis.drawGridLinesEnabled = true
-        
-        // 其他设置
-        chartView.dragEnabled = true
-        chartView.setScaleEnabled(true)
-        chartView.pinchZoomEnabled = true
-        
+    // MARK: - UIViewRepresentable
+    func makeUIView(context: Context) -> LineChartView {
+        let chartView = LineChartView()
+        configureChartView(chartView)
         return chartView
     }
     
-    func updateUIView(_ chartView: DGCharts.LineChartView, context: Context) {
-        // 创建数据项
-        let entries = data.map { priceData -> ChartDataEntry in
-            return ChartDataEntry(x: priceData.date.timeIntervalSince1970,
-                                y: priceData.price)
-        }
+    func updateUIView(_ chartView: LineChartView, context: Context) {
+        updateChartData(chartView)
+    }
+    
+    // MARK: - Configuration Methods
+    private func configureChartView(_ chartView: LineChartView) {
+        chartView.legend.enabled = false
+        chartView.rightAxis.enabled = false
         
-        // 创建数据集
+        configureXAxis(chartView.xAxis)
+        configureYAxis(chartView.leftAxis)
+        
+        chartView.dragEnabled = true
+        chartView.setScaleEnabled(true)
+        chartView.pinchZoomEnabled = true
+    }
+    
+    private func configureXAxis(_ xAxis: XAxis) {
+        xAxis.labelPosition = .bottom
+        xAxis.valueFormatter = DateAxisValueFormatter()
+        xAxis.labelRotationAngle = -45
+    }
+    
+    private func configureYAxis(_ leftAxis: YAxis) {
+        leftAxis.labelCount = 6
+        leftAxis.drawGridLinesEnabled = true
+    }
+    
+    private func updateChartData(_ chartView: LineChartView) {
+        let entries = data.map { ChartDataEntry(x: $0.date.timeIntervalSince1970, y: $0.price) }
+        let dataSet = createDataSet(entries: entries)
+        
+        chartView.data = LineChartData(dataSet: dataSet)
+        chartView.animate(xAxisDuration: 0.5)
+    }
+    
+    private func createDataSet(entries: [ChartDataEntry]) -> LineChartDataSet {
         let dataSet = LineChartDataSet(entries: entries, label: "Price")
         
-        // 配置数据集样式
         dataSet.drawCirclesEnabled = false
         dataSet.mode = .cubicBezier
         dataSet.lineWidth = 2
@@ -119,16 +165,12 @@ struct StockLineChartView: UIViewRepresentable {
         dataSet.drawFilledEnabled = true
         dataSet.drawValuesEnabled = false
         
-        // 设置数据
-        let lineChartData = LineChartData(dataSet: dataSet)
-        chartView.data = lineChartData
-        
-        // 动画
-        chartView.animate(xAxisDuration: 0.5)
+        return dataSet
     }
 }
 
-class DateAxisValueFormatter: AxisValueFormatter {
+// MARK: - DateAxisValueFormatter
+private class DateAxisValueFormatter: AxisValueFormatter {
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "MM/dd/yy"

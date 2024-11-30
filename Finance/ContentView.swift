@@ -1,6 +1,6 @@
 import SwiftUI // 确保导入 SwiftUI
 
-struct MainView: View {
+struct ContentView: View {
     @ObservedObject var dataService = DataService()
     @State private var isLoading = true
 

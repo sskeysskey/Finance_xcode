@@ -32,7 +32,7 @@ class DatabaseManager {
         var result: [PriceData] = []
         let dateFormat = "yyyy-MM-dd"
         let endDate = Date()
-        let startDate = timeRange.getStartDate()
+        let startDate = timeRange.startDate
         
         let query = """
             SELECT id, date, price, volume 
