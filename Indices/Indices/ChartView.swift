@@ -55,7 +55,7 @@ struct ChartView: View {
     @State private var selectedTimeRange: TimeRange = .oneYear
     @State private var chartData: [DatabaseManager.PriceData] = []
     @State private var isLoading = false
-    @State private var showGrid = true
+    @State private var showGrid = false
     @State private var isDarkMode = true
     
     // MARK: - Body
@@ -151,12 +151,6 @@ struct ChartView: View {
 extension ChartView {
     // MARK: - Methods
     private func loadChartData() {
-        print("=== ChartView Debug ===")
-        print("开始加载图表数据")
-        print("Symbol: \(symbol)")
-        print("GroupName: \(groupName)")
-        print("TimeRange: \(selectedTimeRange)")
-        
         isLoading = true
         DispatchQueue.global(qos: .userInitiated).async {
             print("开始数据库查询...")
