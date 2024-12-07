@@ -242,6 +242,9 @@ struct StockLineChartView: UIViewRepresentable {
         // 使用预处理方法处理数据
         let processedEntries = preprocessData(entries, timeRange: timeRange)
         let dataSet = LineChartDataSet(entries: processedEntries, label: "Price")
+    
+        // 检查价格是否为负值
+        let isNegative = processedEntries.contains { $0.y < 0 }
         
         // 根据模式选择颜色
         if isDarkMode {
@@ -252,8 +255,10 @@ struct StockLineChartView: UIViewRepresentable {
                 neonColor.withAlphaComponent(0.0).cgColor
             ]
             dataSet.setColor(neonColor)
-            let gradient = CGGradient(colorsSpace: nil, colors: gradientColors as CFArray, locations: [0.0, 1.0])!
-            dataSet.fill = LinearGradientFill(gradient: gradient, angle: 90)
+            let gradient = CGGradient(colorsSpace: nil,
+                                colors: isNegative ? gradientColors as CFArray : gradientColors as CFArray,
+                                locations: [0.0, 1.0])!
+            dataSet.fill = LinearGradientFill(gradient: gradient, angle: isNegative ? 270 : 90)
         } else {
             // 明亮模式使用系统蓝色
             let gradientColors = [
@@ -261,10 +266,13 @@ struct StockLineChartView: UIViewRepresentable {
                 UIColor.systemBlue.withAlphaComponent(0.0).cgColor
             ]
             dataSet.setColor(.systemBlue)
-            let gradient = CGGradient(colorsSpace: nil, colors: gradientColors as CFArray, locations: [0.0, 1.0])!
-            dataSet.fill = LinearGradientFill(gradient: gradient, angle: 90)
+            let gradient = CGGradient(colorsSpace: nil,
+                                colors: isNegative ? gradientColors as CFArray : gradientColors as CFArray,
+                                locations: [0.0, 1.0])!
+            dataSet.fill = LinearGradientFill(gradient: gradient, angle: isNegative ? 270 : 90)
         }
         
+    // 其他设置保持不变
         dataSet.drawCirclesEnabled = false
         dataSet.mode = .cubicBezier
         dataSet.lineWidth = 1.0
