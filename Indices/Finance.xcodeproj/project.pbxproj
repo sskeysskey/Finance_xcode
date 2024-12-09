@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A3028E4F2D072F8D0060FF11 /* DGCharts in Frameworks */ = {isa = PBXBuildFile; productRef = A3028E4E2D072F8D0060FF11 /* DGCharts */; };
 		A36A5D462CFF47F800FE9AB4 /* Sectors_All.json in Resources */ = {isa = PBXBuildFile; fileRef = A36A5D452CFF47F800FE9AB4 /* Sectors_All.json */; };
 		A36A5DA62CFF62FA00FE9AB4 /* CompareStock.txt in Resources */ = {isa = PBXBuildFile; fileRef = A36A5DA52CFF62FA00FE9AB4 /* CompareStock.txt */; };
 		A36A5DA82CFF630900FE9AB4 /* CompareETFs.txt in Resources */ = {isa = PBXBuildFile; fileRef = A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */; };
@@ -15,7 +16,6 @@
 		A3BF5AB92CFCAA2500F7578C /* Compare_All.txt in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5AB82CFCAA2500F7578C /* Compare_All.txt */; };
 		A3BF5ABB2CFCAA5300F7578C /* marketcap_pe.txt in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5ABA2CFCAA5300F7578C /* marketcap_pe.txt */; };
 		A3BF5ABD2CFCAA9500F7578C /* Sectors_panel.json in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5ABC2CFCAA9500F7578C /* Sectors_panel.json */; };
-		A3FEEA9B2CFF1B2200F151D7 /* DGCharts in Frameworks */ = {isa = PBXBuildFile; productRef = A3FEEA9A2CFF1B2200F151D7 /* DGCharts */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -39,9 +39,9 @@
 		A36A5D452CFF47F800FE9AB4 /* Sectors_All.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = Sectors_All.json; path = ../../Financial_System/Modules/Sectors_All.json; sourceTree = "<group>"; };
 		A36A5DA52CFF62FA00FE9AB4 /* CompareStock.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = CompareStock.txt; path = ../../News/CompareStock.txt; sourceTree = "<group>"; };
 		A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = CompareETFs.txt; path = ../../News/CompareETFs.txt; sourceTree = "<group>"; };
-		A3BF5A7B2CFCA71000F7578C /* Indices.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Indices.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		A3BF5A8B2CFCA71100F7578C /* IndicesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = IndicesTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A3BF5A952CFCA71100F7578C /* IndicesUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = IndicesUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A3BF5A7B2CFCA71000F7578C /* Finance.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Finance.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A3BF5A8B2CFCA71100F7578C /* FinanceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FinanceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A3BF5A952CFCA71100F7578C /* FinanceUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FinanceUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A3BF5AB42CFCA9F100F7578C /* Finance.db */ = {isa = PBXFileReference; lastKnownFileType = file; name = Finance.db; path = ../../Database/Finance.db; sourceTree = "<group>"; };
 		A3BF5AB62CFCAA0C00F7578C /* description.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = description.json; path = ../../Financial_System/Modules/description.json; sourceTree = "<group>"; };
 		A3BF5AB82CFCAA2500F7578C /* Compare_All.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = Compare_All.txt; path = ../../News/backup/Compare_All.txt; sourceTree = "<group>"; };
@@ -50,19 +50,19 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		A3BF5A7D2CFCA71000F7578C /* Indices */ = {
+		A3BF5A7D2CFCA71000F7578C /* Finance */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = Indices;
+			path = Finance;
 			sourceTree = "<group>";
 		};
-		A3BF5A8E2CFCA71100F7578C /* IndicesTests */ = {
+		A3BF5A8E2CFCA71100F7578C /* FinanceTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = IndicesTests;
+			path = FinanceTests;
 			sourceTree = "<group>";
 		};
-		A3BF5A982CFCA71100F7578C /* IndicesUITests */ = {
+		A3BF5A982CFCA71100F7578C /* FinanceUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = IndicesUITests;
+			path = FinanceUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -72,7 +72,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A3FEEA9B2CFF1B2200F151D7 /* DGCharts in Frameworks */,
+				A3028E4F2D072F8D0060FF11 /* DGCharts in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -104,9 +104,9 @@
 				A3BF5AB82CFCAA2500F7578C /* Compare_All.txt */,
 				A3BF5AB62CFCAA0C00F7578C /* description.json */,
 				A3BF5AB42CFCA9F100F7578C /* Finance.db */,
-				A3BF5A7D2CFCA71000F7578C /* Indices */,
-				A3BF5A8E2CFCA71100F7578C /* IndicesTests */,
-				A3BF5A982CFCA71100F7578C /* IndicesUITests */,
+				A3BF5A7D2CFCA71000F7578C /* Finance */,
+				A3BF5A8E2CFCA71100F7578C /* FinanceTests */,
+				A3BF5A982CFCA71100F7578C /* FinanceUITests */,
 				A3FEEA992CFF1B2200F151D7 /* Frameworks */,
 				A3BF5A7C2CFCA71000F7578C /* Products */,
 			);
@@ -115,9 +115,9 @@
 		A3BF5A7C2CFCA71000F7578C /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A3BF5A7B2CFCA71000F7578C /* Indices.app */,
-				A3BF5A8B2CFCA71100F7578C /* IndicesTests.xctest */,
-				A3BF5A952CFCA71100F7578C /* IndicesUITests.xctest */,
+				A3BF5A7B2CFCA71000F7578C /* Finance.app */,
+				A3BF5A8B2CFCA71100F7578C /* FinanceTests.xctest */,
+				A3BF5A952CFCA71100F7578C /* FinanceUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -132,9 +132,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A3BF5A7A2CFCA71000F7578C /* Indices */ = {
+		A3BF5A7A2CFCA71000F7578C /* Finance */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A3BF5A9F2CFCA71100F7578C /* Build configuration list for PBXNativeTarget "Indices" */;
+			buildConfigurationList = A3BF5A9F2CFCA71100F7578C /* Build configuration list for PBXNativeTarget "Finance" */;
 			buildPhases = (
 				A3BF5A772CFCA71000F7578C /* Sources */,
 				A3BF5A782CFCA71000F7578C /* Frameworks */,
@@ -145,19 +145,19 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				A3BF5A7D2CFCA71000F7578C /* Indices */,
+				A3BF5A7D2CFCA71000F7578C /* Finance */,
 			);
-			name = Indices;
+			name = Finance;
 			packageProductDependencies = (
-				A3FEEA9A2CFF1B2200F151D7 /* DGCharts */,
+				A3028E4E2D072F8D0060FF11 /* DGCharts */,
 			);
 			productName = Indices;
-			productReference = A3BF5A7B2CFCA71000F7578C /* Indices.app */;
+			productReference = A3BF5A7B2CFCA71000F7578C /* Finance.app */;
 			productType = "com.apple.product-type.application";
 		};
-		A3BF5A8A2CFCA71100F7578C /* IndicesTests */ = {
+		A3BF5A8A2CFCA71100F7578C /* FinanceTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A3BF5AA22CFCA71100F7578C /* Build configuration list for PBXNativeTarget "IndicesTests" */;
+			buildConfigurationList = A3BF5AA22CFCA71100F7578C /* Build configuration list for PBXNativeTarget "FinanceTests" */;
 			buildPhases = (
 				A3BF5A872CFCA71100F7578C /* Sources */,
 				A3BF5A882CFCA71100F7578C /* Frameworks */,
@@ -169,18 +169,18 @@
 				A3BF5A8D2CFCA71100F7578C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				A3BF5A8E2CFCA71100F7578C /* IndicesTests */,
+				A3BF5A8E2CFCA71100F7578C /* FinanceTests */,
 			);
-			name = IndicesTests;
+			name = FinanceTests;
 			packageProductDependencies = (
 			);
 			productName = IndicesTests;
-			productReference = A3BF5A8B2CFCA71100F7578C /* IndicesTests.xctest */;
+			productReference = A3BF5A8B2CFCA71100F7578C /* FinanceTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		A3BF5A942CFCA71100F7578C /* IndicesUITests */ = {
+		A3BF5A942CFCA71100F7578C /* FinanceUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A3BF5AA52CFCA71100F7578C /* Build configuration list for PBXNativeTarget "IndicesUITests" */;
+			buildConfigurationList = A3BF5AA52CFCA71100F7578C /* Build configuration list for PBXNativeTarget "FinanceUITests" */;
 			buildPhases = (
 				A3BF5A912CFCA71100F7578C /* Sources */,
 				A3BF5A922CFCA71100F7578C /* Frameworks */,
@@ -192,13 +192,13 @@
 				A3BF5A972CFCA71100F7578C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				A3BF5A982CFCA71100F7578C /* IndicesUITests */,
+				A3BF5A982CFCA71100F7578C /* FinanceUITests */,
 			);
-			name = IndicesUITests;
+			name = FinanceUITests;
 			packageProductDependencies = (
 			);
 			productName = IndicesUITests;
-			productReference = A3BF5A952CFCA71100F7578C /* IndicesUITests.xctest */;
+			productReference = A3BF5A952CFCA71100F7578C /* FinanceUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -224,7 +224,7 @@
 					};
 				};
 			};
-			buildConfigurationList = A3BF5A762CFCA71000F7578C /* Build configuration list for PBXProject "Indices" */;
+			buildConfigurationList = A3BF5A762CFCA71000F7578C /* Build configuration list for PBXProject "Finance" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -234,16 +234,16 @@
 			mainGroup = A3BF5A722CFCA71000F7578C;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A3FEEA982CFF1AE900F151D7 /* XCRemoteSwiftPackageReference "Charts" */,
+				A3028E4D2D072F620060FF11 /* XCRemoteSwiftPackageReference "Charts" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A3BF5A7C2CFCA71000F7578C /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				A3BF5A7A2CFCA71000F7578C /* Indices */,
-				A3BF5A8A2CFCA71100F7578C /* IndicesTests */,
-				A3BF5A942CFCA71100F7578C /* IndicesUITests */,
+				A3BF5A7A2CFCA71000F7578C /* Finance */,
+				A3BF5A8A2CFCA71100F7578C /* FinanceTests */,
+				A3BF5A942CFCA71100F7578C /* FinanceUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -307,12 +307,12 @@
 /* Begin PBXTargetDependency section */
 		A3BF5A8D2CFCA71100F7578C /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = A3BF5A7A2CFCA71000F7578C /* Indices */;
+			target = A3BF5A7A2CFCA71000F7578C /* Finance */;
 			targetProxy = A3BF5A8C2CFCA71100F7578C /* PBXContainerItemProxy */;
 		};
 		A3BF5A972CFCA71100F7578C /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = A3BF5A7A2CFCA71000F7578C /* Indices */;
+			target = A3BF5A7A2CFCA71000F7578C /* Finance */;
 			targetProxy = A3BF5A962CFCA71100F7578C /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -444,7 +444,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_ASSET_PATHS = "\"Indices/Preview Content\"";
+				DEVELOPMENT_ASSET_PATHS = "\"Finance/Preview Content\"";
 				DEVELOPMENT_TEAM = X9B2ZJZ4H7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -473,7 +473,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_ASSET_PATHS = "\"Indices/Preview Content\"";
+				DEVELOPMENT_ASSET_PATHS = "\"Finance/Preview Content\"";
 				DEVELOPMENT_TEAM = X9B2ZJZ4H7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -510,7 +510,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Indices.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Indices";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Finance.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Finance";
 			};
 			name = Debug;
 		};
@@ -529,7 +529,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Indices.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Indices";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Finance.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Finance";
 			};
 			name = Release;
 		};
@@ -570,7 +570,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A3BF5A762CFCA71000F7578C /* Build configuration list for PBXProject "Indices" */ = {
+		A3BF5A762CFCA71000F7578C /* Build configuration list for PBXProject "Finance" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A3BF5A9D2CFCA71100F7578C /* Debug */,
@@ -579,7 +579,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A3BF5A9F2CFCA71100F7578C /* Build configuration list for PBXNativeTarget "Indices" */ = {
+		A3BF5A9F2CFCA71100F7578C /* Build configuration list for PBXNativeTarget "Finance" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A3BF5AA02CFCA71100F7578C /* Debug */,
@@ -588,7 +588,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A3BF5AA22CFCA71100F7578C /* Build configuration list for PBXNativeTarget "IndicesTests" */ = {
+		A3BF5AA22CFCA71100F7578C /* Build configuration list for PBXNativeTarget "FinanceTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A3BF5AA32CFCA71100F7578C /* Debug */,
@@ -597,7 +597,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A3BF5AA52CFCA71100F7578C /* Build configuration list for PBXNativeTarget "IndicesUITests" */ = {
+		A3BF5AA52CFCA71100F7578C /* Build configuration list for PBXNativeTarget "FinanceUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A3BF5AA62CFCA71100F7578C /* Debug */,
@@ -609,7 +609,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		A3FEEA982CFF1AE900F151D7 /* XCRemoteSwiftPackageReference "Charts" */ = {
+		A3028E4D2D072F620060FF11 /* XCRemoteSwiftPackageReference "Charts" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/danielgindi/Charts.git";
 			requirement = {
@@ -620,9 +620,9 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		A3FEEA9A2CFF1B2200F151D7 /* DGCharts */ = {
+		A3028E4E2D072F8D0060FF11 /* DGCharts */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = A3FEEA982CFF1AE900F151D7 /* XCRemoteSwiftPackageReference "Charts" */;
+			package = A3028E4D2D072F620060FF11 /* XCRemoteSwiftPackageReference "Charts" */;
 			productName = DGCharts;
 		};
 /* End XCSwiftPackageProductDependency section */
