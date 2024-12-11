@@ -744,32 +744,35 @@ extension StockLineChartView {
     private func updateChartData(_ chartView: LineChartView) {
         let entries = data.map { ChartDataEntry(x: $0.date.timeIntervalSince1970, y: $0.price) }
         let dataSet = createDataSet(entries: entries)
-
+        
+        // 禁用零线
+        chartView.leftAxis.drawZeroLineEnabled = false
+        
         chartView.data = LineChartData(dataSet: dataSet)
-
-        // 设置可见范围
+        
         if !entries.isEmpty {
             let minX = entries.map(\.x).min() ?? 0
             let maxX = entries.map(\.x).max() ?? 0
             let minY = entries.map(\.y).min() ?? 0
             let maxY = entries.map(\.y).max() ?? 0
             let padding = (maxY - minY) * 0.1
-
-            // 计算价格范围并动态设置粒度
+            
             let priceRange = maxY - minY
             let granularity = calculateGranularity(priceRange: priceRange)
-
+            
             chartView.leftAxis.granularity = granularity
             chartView.leftAxis.decimals = calculateDecimals(granularity: granularity)
-
+            
+            // 使用 max() 函数修正语法
+            let adjustedMinY = minY > 0 ? max((minY - padding), 0) : minY - padding
+            
             chartView.setVisibleXRange(minXRange: 30, maxXRange: maxX - minX)
-            chartView.leftAxis.axisMinimum = minY - padding
+            chartView.leftAxis.axisMinimum = adjustedMinY
             chartView.leftAxis.axisMaximum = maxY + padding
-
-            // 移动到最新数据点
+            
             chartView.moveViewToX(maxX)
         }
-
+        
         chartView.animate(xAxisDuration: 0.5)
     }
 

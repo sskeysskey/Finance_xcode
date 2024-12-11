@@ -401,9 +401,6 @@ struct SearchHistoryView: View {
                         ForEach(viewModel.searchHistory, id: \.self) { term in
                             HStack {
                                 Text(term)
-                                    .onTapGesture {
-                                        onSelect(term)
-                                    }
                                 Spacer()
                                 Button(action: {
                                     viewModel.removeSearchHistory(term: term)
@@ -414,6 +411,10 @@ struct SearchHistoryView: View {
                             }
                             .padding(.horizontal)
                             .padding(.vertical, 4)
+                            .contentShape(Rectangle()) // 确保整个 HStack 区域可点击
+                            .onTapGesture {
+                                onSelect(term)
+                            }
                         }
                     }
                 }
