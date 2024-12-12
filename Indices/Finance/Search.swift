@@ -44,16 +44,6 @@ struct SelectedSymbol: Identifiable {
     let category: String
 }
 
-struct SearchDescriptionData: Codable {
-    let stocks: [SearchStock]
-    let etfs: [SearchETF]
-}
-
-struct SearchMarketCapDataItem {
-    let marketCap: Double
-    let peRatio: Double?
-}
-
 // 定义匹配类别
 enum MatchCategory: String, CaseIterable, Identifiable {
     case symbol = "Symbol Matches"
@@ -132,6 +122,7 @@ struct GroupedSearchResults: Identifiable {
 // MARK: - Views
 struct SearchContentView: View {
     @State private var showSearch = false
+    @EnvironmentObject var dataService: DataService
     
     var body: some View {
         NavigationStack {  // 使用 NavigationStack
@@ -153,7 +144,7 @@ struct SearchContentView: View {
                 Spacer()
             }
             .navigationDestination(isPresented: $showSearch) {
-                SearchView(isSearchActive: true)
+                SearchView(isSearchActive: true, dataService: dataService)
             }
         }
     }
@@ -171,21 +162,20 @@ struct SearchView: View {
     @State private var selectedResult: SearchResult? = nil
     @State private var selectedSymbol: SelectedSymbol? = nil
     @State private var isFirstAppear = true  // 新增状态变量
-    @ObservedObject var viewModel = SearchViewModel()
+    @ObservedObject var viewModel: SearchViewModel
     @FocusState private var isSearchFieldFocused: Bool
-    
-    // 添加初始化参数
-    let isSearchActive: Bool
     
     // 添加分组折叠状态
     @State private var collapsedGroups: [MatchCategory: Bool] = [:]
     
-    init(isSearchActive: Bool = false) {
+    // 添加存储属性
+    let isSearchActive: Bool
+    
+    init(isSearchActive: Bool = false, dataService: DataService) {
         self.isSearchActive = isSearchActive
+        self.viewModel = SearchViewModel(dataService: dataService)
         // 如果需要显示历史记录，设置初始值
-        if isSearchActive {
-            _showSearchHistory = State(initialValue: true)
-        }
+        _showSearchHistory = State(initialValue: isSearchActive)
     }
     
     var body: some View {
@@ -315,7 +305,7 @@ struct SearchView: View {
                         if !(collapsedGroups[groupedResult.category] ?? false) { // 根据折叠状态决定是否显示内容
                             ForEach(groupedResult.results) { result in
                                 NavigationLink(destination: {
-                                    if let category = viewModel.getCategory(for: result.symbol) {
+                                    if let category = viewModel.dataService.getCategory(for: result.symbol) {
                                         ChartView(symbol: result.symbol, groupName: category)
                                     }
                                 }) {
@@ -432,100 +422,20 @@ class SearchViewModel: ObservableObject {
     @Published var searchHistory: [String] = []
     @Published var errorMessage: String? = nil
     @Published var isChartLoading: Bool = false
-    @Published var chartData: [Double] = []
     @Published var groupedSearchResults: [GroupedSearchResults] = []
     
-    private var descriptionData: SearchDescriptionData?
-    private var sectorsData: [String: [String]] = [:]
-    private var marketCapData: [String: SearchMarketCapDataItem] = [:]
-    private var compareData: [String: String] = [:]
+    var dataService: DataService
+    private var cancellables = Set<AnyCancellable>()
     
-    init() {
-        loadAllData()
+    init(dataService: DataService = DataService()) {
+        self.dataService = dataService
+        // 监听 DataService 的 errorMessage
+        dataService.$errorMessage
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.errorMessage, on: self)
+            .store(in: &cancellables)
+        
         loadSearchHistory()
-    }
-    
-    func loadAllData() {
-        // 加载description.json
-        if let url = Bundle.main.url(forResource: "description", withExtension: "json") {
-            do {
-                let data = try Data(contentsOf: url)
-                let decoder = JSONDecoder()
-                descriptionData = try decoder.decode(SearchDescriptionData.self, from: data)
-            } catch {
-                errorMessage = "加载 description 数据失败: \(error.localizedDescription)"
-            }
-        }
-        
-        // 加载sectors_all.json
-        if let url = Bundle.main.url(forResource: "Sectors_All", withExtension: "json") {
-            do {
-                let data = try Data(contentsOf: url)
-                let decoder = JSONDecoder()
-                sectorsData = try decoder.decode([String: [String]].self, from: data)
-            } catch {
-                errorMessage = "加载 sectors 数据失败: \(error.localizedDescription)"
-            }
-        }
-        
-        loadMarketCapData()
-        loadCompareData()
-    }
-    
-    func getCategory(for symbol: String) -> String? {
-        for (category, symbols) in sectorsData {
-            if symbols.map({ $0.uppercased() }).contains(symbol.uppercased()) {
-                return category
-            }
-        }
-        return nil
-    }
-    
-    func loadMarketCapData() {
-        if let url = Bundle.main.url(forResource: "marketcap_pe", withExtension: "txt") {
-            do {
-                let text = try String(contentsOf: url, encoding: .utf8)
-                let lines = text.split(separator: "\n")
-                
-                for line in lines {
-                    let parts = line.split(separator: ":")
-                    if parts.count >= 2 {
-                        let symbol = parts[0].trimmingCharacters(in: .whitespaces).uppercased()
-                        let values = parts[1].split(separator: ",")
-                        
-                        if values.count >= 2 {
-                            if let marketCap = Double(values[0].trimmingCharacters(in: .whitespaces)) {
-                                let peRatioString = values[1].trimmingCharacters(in: .whitespaces)
-                                let peRatio = peRatioString == "--" ? nil : Double(peRatioString)
-                                marketCapData[symbol] = SearchMarketCapDataItem(marketCap: marketCap, peRatio: peRatio)
-                            }
-                        }
-                    }
-                }
-            } catch {
-                errorMessage = "加载 MarketCap 数据失败: \(error.localizedDescription)"
-            }
-        }
-    }
-    
-    func loadCompareData() {
-        if let url = Bundle.main.url(forResource: "Compare_All", withExtension: "txt") {
-            do {
-                let text = try String(contentsOf: url, encoding: .utf8)
-                let lines = text.split(separator: "\n")
-                
-                for line in lines {
-                    let parts = line.split(separator: ":")
-                    if parts.count >= 2 {
-                        let symbol = parts[0].trimmingCharacters(in: .whitespaces).uppercased()
-                        let value = parts[1].trimmingCharacters(in: .whitespaces)
-                        compareData[symbol] = value
-                    }
-                }
-            } catch {
-                errorMessage = "加载 Compare 数据失败: \(error.localizedDescription)"
-            }
-        }
     }
     
     // 搜索功能
@@ -533,7 +443,7 @@ class SearchViewModel: ObservableObject {
         let keywords = query.lowercased().split(separator: " ").map { String($0) }
             
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self, let descriptionData = self.descriptionData else {
+            guard let self = self, let descriptionData = self.dataService.descriptionData else {
                 DispatchQueue.main.async {
                     completion([])
                 }
@@ -688,9 +598,9 @@ class SearchViewModel: ObservableObject {
             }
             
             if allKeywordsMatched {
-                let marketCap = marketCapData[item.symbol.uppercased()]?.marketCap
-                let peRatio = marketCapData[item.symbol.uppercased()]?.peRatio
-                let compare = compareData[item.symbol.uppercased()]
+                let marketCap = dataService.marketCapData[item.symbol.uppercased()]?.marketCap
+                let peRatio = dataService.marketCapData[item.symbol.uppercased()]?.peRatio
+                let compare = dataService.compareData[item.symbol.uppercased()]
                 
                 let result = SearchResult(
                     symbol: item.symbol,

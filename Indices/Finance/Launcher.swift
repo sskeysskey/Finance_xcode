@@ -11,9 +11,11 @@ struct Finance: App {
 }
 
 struct MainContentView: View {
+    @StateObject private var dataService = DataService()
+    
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) { // spacing: 0 可以更好地控制间距
+            VStack(spacing: 0) {
                 // 1. 上部：扇区展示
                 IndicesContentView()
                     .frame(maxHeight: .infinity, alignment: .top)
@@ -29,10 +31,14 @@ struct MainContentView: View {
                 
                 // 3. 下部：自定义标签栏
                 TopContentView()
-                    .frame(height: 60) // 给标签栏一个合适的高度
-                    .background(Color(.systemBackground)) // 确保底部有背景色
+                    .frame(height: 60)
+                    .background(Color(.systemBackground))
             }
             .navigationBarTitle("经济数据与搜索", displayMode: .inline)
+        }
+        .environmentObject(dataService) // 移到这里，确保 NavigationStack 内的所有视图都能访问
+        .onAppear {
+            dataService.loadData()
         }
     }
 }

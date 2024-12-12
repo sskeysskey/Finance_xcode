@@ -147,7 +147,7 @@ struct ChartView: View {
             Spacer()
         }
         .padding(.vertical)  // 只保留垂直方向的 padding
-        .navigationTitle("\(symbol) Chart")
+        .navigationTitle("\(symbol)")
         .onChange(of: selectedTimeRange) { _, _ in
             // 在加载新数据之前，先清空现有数据
             chartData = []
@@ -168,8 +168,8 @@ struct ChartView: View {
     // MARK: - View Components
     private var headerView: some View {
         HStack {
-            Text(symbol)
-                .font(.system(size: 24, weight: .bold))
+//            Text(symbol)
+//                .font(.system(size: 24, weight: .bold))
             Spacer()
             Toggle("", isOn: $showGrid) // 移除文字标签
                 .toggleStyle(SwitchToggleStyle(tint: .green))
@@ -391,11 +391,13 @@ struct StockLineChartView: UIViewRepresentable {
                 return
             }
             
+            // 根据时间戳决定哪个是较早的点
+            let (earlierEntry, laterEntry) = firstEntry.x < secondEntry.x ?
+                (firstEntry, secondEntry) : (secondEntry, firstEntry)
+            
             // 计算价格变化百分比
-            let priceDiffPercentage = ((secondEntry.y - firstEntry.y) / firstEntry.y) * 100
-            // 更新显示的值为百分比
+            let priceDiffPercentage = ((laterEntry.y - earlierEntry.y) / earlierEntry.y) * 100
             isShowingPercentage = true
-            // 更新绑定
             parent.onSelectedPriceChange(priceDiffPercentage, true, nil)
         }
     }
@@ -455,7 +457,7 @@ struct StockLineChartView: UIViewRepresentable {
         chartView.rightAxis.enabled = false
 
         // 添加动画效果
-        chartView.animate(xAxisDuration: 1.0, yAxisDuration: 1.0, easingOption: .easeInOutQuart)
+//        chartView.animate(xAxisDuration: 1.0, yAxisDuration: 1.0, easingOption: .easeInOutQuart)
 
         configureXAxis(chartView.xAxis)
         configureYAxis(chartView.leftAxis)
@@ -773,6 +775,7 @@ extension StockLineChartView {
             chartView.moveViewToX(maxX)
         }
         
+        // 添加动画效果
         chartView.animate(xAxisDuration: 0.5)
     }
 

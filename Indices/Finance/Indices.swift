@@ -98,174 +98,44 @@ struct SectorsPanel: Decodable {
     }
 }
 
-struct IndicesMarketCap: Codable {
-    let symbol: String
-    let marketCap: Double
-    let peRatio: String
-}
-
-struct IndicesDescription: Codable {
-    let stocks: [IndicesStock]
-    let etfs: [IndicesETF]
-}
-
-struct IndicesStock: Codable {
-    let symbol: String
-    let tag: [String]
-}
-
-struct IndicesETF: Codable {
-    let symbol: String
-    let tag: [String]
-}
-
-struct IndicesDescriptionMap {
-    let tag: [String]
-}
-
 struct IndicesContentView: View {
-    @State private var isLoading = true
-    @State private var sectors: [IndicesSector] = []
-    @State private var marketCapData: [String: IndicesMarketCap] = [:]
+    @EnvironmentObject var dataService: DataService
     @State private var showError: Bool = false
     @State private var errorMessage: String = ""
-    @State private var descriptionMap: [String: IndicesDescriptionMap] = [:]
-    
+
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: [
-                GridItem(.adaptive(minimum: 100, maximum: .infinity), spacing: 8)
-            ], spacing: 8) {
-                ForEach(sectors, id: \.name) { sector in
-                    NavigationLink {
-                        SectorDetailView(sector: sector,
-                                       marketCapData: $marketCapData,
-                                       descriptionMap: $descriptionMap)
-                            .navigationBarTitleDisplayMode(.inline)
-                    } label: {
-                        SectorButtonView(sectorName: sector.name)
+            if let sectorsPanel = dataService.sectorsPanel {
+                LazyVGrid(columns: [
+                    GridItem(.adaptive(minimum: 100, maximum: .infinity), spacing: 8)
+                ], spacing: 8) {
+                    ForEach(sectorsPanel.sectors, id: \.name) { sector in
+                        NavigationLink {
+                            SectorDetailView(sector: sector)
+                                .navigationBarTitleDisplayMode(.inline)
+                        } label: {
+                            SectorButtonView(sectorName: sector.name)
+                        }
                     }
                 }
+                .padding()
+            } else {
+                if let error = dataService.errorMessage {
+                    Text(error)
+                        .foregroundColor(.red)
+                } else {
+                    LoadingView()
+                }
             }
-            .padding()
         }
-        .overlay(Group {
-            if isLoading {
-                LoadingView()
-            } else if sectors.isEmpty {
-                Text("暂无可用数据。")
-                    .foregroundColor(.gray)
-            }
-        })
-        .alert(isPresented: $showError) {
+        .alert(isPresented: Binding<Bool>(
+            get: { dataService.errorMessage != nil },
+            set: { _ in dataService.errorMessage = nil }
+        )) {
             Alert(title: Text("错误"),
-                  message: Text(errorMessage),
+                  message: Text(dataService.errorMessage ?? "未知错误"),
                   dismissButton: .default(Text("好的")))
         }
-        .onAppear {
-            loadData()
-        }
-    }
-    
-    // MARK: - 数据加载相关方法
-    
-    func loadData() {
-        let dispatchGroup = DispatchGroup()
-        
-        dispatchGroup.enter()
-        fetchJSON(filename: "Sectors_panel.json") { (sectorsPanel: SectorsPanel?, error) in
-            if let sectorsPanel = sectorsPanel {
-                self.sectors = sectorsPanel.sectors
-            } else {
-                self.errorMessage = error?.localizedDescription ?? "无法加载板块数据。"
-                self.showError = true
-            }
-            dispatchGroup.leave()
-        }
-        
-        dispatchGroup.enter()
-        fetchMarketCap(filename: "marketcap_pe.txt") { data, error in
-            if let data = data {
-                self.marketCapData = data
-            } else {
-                self.errorMessage = error?.localizedDescription ?? "无法加载 MarketCap 数据。"
-                self.showError = true
-            }
-            dispatchGroup.leave()
-        }
-        
-        dispatchGroup.enter()
-        fetchJSON(filename: "description.json") { (descriptionData: IndicesDescription?, error) in
-            if let descriptionData = descriptionData {
-                var map: [String: IndicesDescriptionMap] = [:]
-                for stock in descriptionData.stocks {
-                    map[stock.symbol.uppercased()] = IndicesDescriptionMap(tag: stock.tag)
-                }
-                for etf in descriptionData.etfs {
-                    map[etf.symbol.uppercased()] = IndicesDescriptionMap(tag: etf.tag)
-                }
-                self.descriptionMap = map
-            } else {
-                self.errorMessage = error?.localizedDescription ?? "无法加载描述数据。"
-                self.showError = true
-            }
-            dispatchGroup.leave()
-        }
-        
-        dispatchGroup.notify(queue: .main) {
-            self.isLoading = false
-        }
-    }
-    
-    // MARK: - 工具方法
-    
-    func fetchJSON<T: Decodable>(filename: String, completion: @escaping (T?, Error?) -> Void) {
-        guard let url = Bundle.main.url(forResource: filename, withExtension: nil) else {
-            completion(nil, NSError(domain: "Invalid file path.", code: 404, userInfo: nil))
-            return
-        }
-        
-        do {
-            let data = try Data(contentsOf: url)
-            let decoder = JSONDecoder()
-            let decodedData = try decoder.decode(T.self, from: data)
-            completion(decodedData, nil)
-        } catch {
-            completion(nil, error)
-        }
-    }
-    
-    func fetchMarketCap(filename: String, completion: @escaping ([String: IndicesMarketCap]?, Error?) -> Void) {
-        guard let url = Bundle.main.url(forResource: filename, withExtension: nil) else {
-            completion(nil, NSError(domain: "Invalid file path.", code: 404, userInfo: nil))
-            return
-        }
-        
-        do {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            let data = parseMarketCapData(text: text)
-            completion(data, nil)
-        } catch {
-            completion(nil, error)
-        }
-    }
-    
-    func parseMarketCapData(text: String) -> [String: IndicesMarketCap] {
-        var data: [String: IndicesMarketCap] = [:]
-        let lines = text.split(separator: "\n")
-        for line in lines {
-            let parts = line.split(separator: ": ")
-            if parts.count == 2 {
-                let symbol = String(parts[0]).uppercased()
-                let values = parts[1].split(separator: ", ")
-                if values.count == 2 {
-                    let marketCap = Double(values[0]) ?? 0.0
-                    let peRatio = String(values[1])
-                    data[symbol] = IndicesMarketCap(symbol: symbol, marketCap: marketCap, peRatio: peRatio)
-                }
-            }
-        }
-        return data
     }
 }
 
@@ -300,12 +170,11 @@ struct SectorButtonView: View {
 
 struct SectorDetailView: View {
     let sector: IndicesSector
-    @Binding var marketCapData: [String: IndicesMarketCap]
-    @Binding var descriptionMap: [String: IndicesDescriptionMap]
+    @EnvironmentObject var dataService: DataService
     @State private var symbols: [IndicesSymbol] = []
     @State private var showError: Bool = false
     @State private var errorMessage: String = ""
-    
+
     var body: some View {
         ScrollView {
             LazyVStack {
@@ -316,7 +185,7 @@ struct SectorDetailView: View {
             .padding()
         }
         .navigationBarTitle(sector.name.replacingOccurrences(of: "_", with: " "),
-                          displayMode: .inline)
+                            displayMode: .inline)
         .alert(isPresented: $showError) {
             Alert(title: Text("错误"),
                   message: Text(errorMessage),
@@ -326,72 +195,25 @@ struct SectorDetailView: View {
             loadSymbols()
         }
     }
-    
-    // 添加需要显示 description 的扇区列表
-    private let sectorsWithDescription = [
-        "Basic_Materials",
-        "Communication_Services",
-        "Consumer_Cyclical",
-        "Energy",
-        "Real_Estate",
-        "Technology",
-        "Utilities",
-        "Consumer_Defensive",
-        "Industrials",
-        "Financial_Services",
-        "Healthcare",
-        "ETFs",
-        "ETFs_US"
-    ]
-    
+
     func loadSymbols() {
-        let compareMap = loadCompareAll()
+        let compareMap = dataService.compareData
         self.symbols = sector.symbols.map { symbol in
             var updatedSymbol = symbol
             
-            // 更新 value - 使用原始大小写进行匹配
-            if let value = compareMap[symbol.symbol] {
-                updatedSymbol.value = value
-            } else {
-                updatedSymbol.value = "N/A"
-            }
+            // 使用大写进行查找
+            let value = compareMap[symbol.symbol.uppercased()] ??
+                       compareMap[symbol.symbol] ??
+                       "N/A"
+            updatedSymbol.value = value
             
-            // 只在指定的扇区中添加 description
-            if sectorsWithDescription.contains(sector.name) {
-                // 同样使用原始大小写
-                if let description = descriptionMap[symbol.symbol] {
-                    updatedSymbol.tags = description.tag
-                }
+            // 尝试获取 description，如果有就添加，没有就保持为 nil
+            if let description = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == symbol.symbol.uppercased() })?.tag ??
+                dataService.descriptionData?.etfs.first(where: { $0.symbol.uppercased() == symbol.symbol.uppercased() })?.tag {
+                updatedSymbol.tags = description
             }
             
             return updatedSymbol
-        }
-    }
-
-    func loadCompareAll() -> [String: String] {
-        guard let url = Bundle.main.url(forResource: "Compare_All.txt", withExtension: nil) else {
-            self.errorMessage = "无法找到 compare_all.txt 文件。"
-            self.showError = true
-            return [:]
-        }
-        
-        do {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            let lines = text.split(separator: "\n")
-            var map: [String: String] = [:]
-            
-            for line in lines {
-                let parts = line.split(separator: ":").map { String($0).trimmingCharacters(in: .whitespaces) }
-                if parts.count == 2 {
-                    // 保持原始大小写
-                    map[parts[0]] = parts[1]
-                }
-            }
-            return map
-        } catch {
-            self.errorMessage = "无法读取 compare_all.txt 文件。"
-            self.showError = true
-            return [:]
         }
     }
 }
