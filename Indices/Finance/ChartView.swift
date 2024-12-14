@@ -3,6 +3,7 @@ import DGCharts
 
 // MARK: - TimeRange Enum
 enum TimeRange: String, CaseIterable {
+    case oneMonth = "1M"
     case twoYears = "2Y"
     case fiveYears = "5Y"
     case oneYear = "1Y"
@@ -15,6 +16,7 @@ enum TimeRange: String, CaseIterable {
         let now = Date()
 
         switch self {
+        case .oneMonth: return calendar.date(byAdding: .month, value: -1, to: now) ?? now
         case .threeMonths: return calendar.date(byAdding: .month, value: -3, to: now) ?? now
         case .sixMonths:   return calendar.date(byAdding: .month, value: -6, to: now) ?? now
         case .oneYear:     return calendar.date(byAdding: .year, value: -1, to: now) ?? now
@@ -26,6 +28,8 @@ enum TimeRange: String, CaseIterable {
     
     var duration: TimeInterval {
         switch self {
+        case .oneMonth:
+            return 1 * 30 * 24 * 60 * 60
         case .threeMonths:
             return 3 * 30 * 24 * 60 * 60
         case .sixMonths:
@@ -62,7 +66,7 @@ private class DateAxisValueFormatter: AxisValueFormatter {
         case .oneYear:
             dateFormatter.dateFormat = "MMM" // 显示月份
             shift = 30 * 24 * 60 * 60 / 2 // 半个月
-        case .threeMonths, .sixMonths:
+        case .oneMonth, .threeMonths, .sixMonths:
             dateFormatter.dateFormat = "MMM" // 仅显示月份
             shift = 15 * 24 * 60 * 60 // 半个月
         }
@@ -83,8 +87,8 @@ struct TimeRangeButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 14, weight: .medium))
-                .padding(.horizontal, 14)
+                .font(.system(size: 13, weight: .medium))
+                .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 20)
@@ -614,6 +618,7 @@ extension StockLineChartView {
         case .oneYear:    baseRate = 2
         case .sixMonths:  baseRate = 1
         case .threeMonths: baseRate = 1
+        case .oneMonth: baseRate = 1
         }
 
         // 确保最近一个月的数据点被更好地保留
@@ -629,6 +634,7 @@ extension StockLineChartView {
         case .oneYear: return 0.1
         case .sixMonths: return 0.075
         case .threeMonths: return 0.05
+        case .oneMonth: return 0.025
         }
     }
 
