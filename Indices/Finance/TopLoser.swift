@@ -19,22 +19,18 @@ struct Stock: MarketItem {
     let symbol: String
     let value: String
     let descriptions: String
-    let marketCap: Double?
-    let pe: String?
     
     var numericValue: Double {
         Double(value.replacingOccurrences(of: "%", with: "")) ?? 0.0
     }
     
-    init(groupName: String, rawSymbol: String, symbol: String, value: String, descriptions: String, marketCap: Double? = nil, pe: String? = nil) {
+    init(groupName: String, rawSymbol: String, symbol: String, value: String, descriptions: String) {
         self.id = UUID().uuidString
         self.groupName = groupName
         self.rawSymbol = rawSymbol
         self.symbol = symbol
         self.value = value
         self.descriptions = descriptions
-        self.marketCap = marketCap
-        self.pe = pe
     }
 }
 

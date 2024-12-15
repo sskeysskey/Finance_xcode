@@ -8,8 +8,18 @@ struct DescriptionData: Codable {
 }
 
 struct MarketCapDataItem {
-    let marketCap: Double
+    let marketCap: String // 改为 String 类型
     let peRatio: Double?
+    
+    init(marketCap: Double, peRatio: Double?) {
+        self.marketCap = Self.formatMarketCap(marketCap)
+        self.peRatio = peRatio
+    }
+    
+    // 将格式化方法移到结构体内部作为静态方法
+    private static func formatMarketCap(_ cap: Double) -> String {
+        String(format: "%.0fB", cap / 1_000_000_000)
+    }
 }
 
 class DataService: ObservableObject {
@@ -35,7 +45,7 @@ class DataService: ObservableObject {
         loadDescriptionData()
         loadSectorsData()
         loadCompareData()
-        loadSectorsPanel() // 新增这一行
+        loadSectorsPanel()
     }
     
     private func loadCompareStock() {

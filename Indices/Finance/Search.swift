@@ -606,7 +606,7 @@ class SearchViewModel: ObservableObject {
                     symbol: item.symbol,
                     name: item.name,
                     tag: item.tag,
-                    marketCap: formatMarketCap(marketCap),
+                    marketCap: marketCap,
                     peRatio: peRatio != nil ? String(format: "%.2f", peRatio!) : "--",
                     compare: compare
                 )
@@ -693,11 +693,5 @@ class SearchViewModel: ObservableObject {
             searchHistory.remove(at: index)
             UserDefaults.standard.set(searchHistory, forKey: "stockSearchHistory")
         }
-    }
-    
-    // 市值格式化
-    private func formatMarketCap(_ cap: Double?) -> String? {
-        guard let cap = cap else { return nil }
-        return String(format: "%.1fB", cap / 1_000_000_000)
     }
 }

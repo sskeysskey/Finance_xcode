@@ -103,6 +103,8 @@ struct TimeRangeButton: View {
 struct ChartView: View {
     let symbol: String
     let groupName: String
+    
+    @EnvironmentObject var dataService: DataService
 
     @State private var selectedTimeRange: TimeRange = .oneYear
     @State private var chartData: [DatabaseManager.PriceData] = []
@@ -136,7 +138,7 @@ struct ChartView: View {
                 }
                 .padding(.top, 0)
             } else {
-                Text("Select points to see price difference")
+                Text("👋")
                     .font(.system(size: 16, weight: .medium))
                     .padding(.top, 0)
             }
@@ -148,6 +150,13 @@ struct ChartView: View {
                         .shadow(color: .gray.opacity(0.2), radius: 8)
                 )
             timeRangePicker
+            // 显示错误消息
+            if let errorMessage = dataService.errorMessage {
+                Text(errorMessage)
+                    .foregroundColor(.red)
+                    .font(.system(size: 14))
+                    .padding()
+            }
             Spacer()
         }
         .padding(.vertical)  // 只保留垂直方向的 padding
@@ -171,21 +180,42 @@ struct ChartView: View {
 
     // MARK: - View Components
     private var headerView: some View {
-        HStack {
-//            Text(symbol)
-//                .font(.system(size: 24, weight: .bold))
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 12) {
+                    Text(dataService.marketCapData[symbol.uppercased()]?.marketCap ?? "")
+                        .font(.system(size: 20))
+                        .lineLimit(1)  // 添加这行
+                        .fixedSize(horizontal: true, vertical: false)  // 添加这行
+                    
+                    Text(dataService.marketCapData[symbol.uppercased()]?.peRatio.map { String(format: "%.0f", $0) } ?? "")
+                        .font(.system(size: 20))
+                        .lineLimit(1)  // 添加这行
+                        .fixedSize(horizontal: true, vertical: false)  // 添加这行
+                    
+                    Text(dataService.compareData[symbol.uppercased()]?.description ?? "--")
+                        .font(.system(size: 20))
+                        .lineLimit(1)  // 添加这行
+                        .fixedSize(horizontal: true, vertical: false)  // 添加这行
+                }
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)  // 添加这行
+            }
+            
             Spacer()
-            Toggle("", isOn: $showGrid) // 移除文字标签
+            
+            Toggle("", isOn: $showGrid)
                 .toggleStyle(SwitchToggleStyle(tint: .green))
+            
             Spacer()
+            
             Button(action: { isDarkMode.toggle() }) {
                 Image(systemName: isDarkMode ? "sun.max.fill" : "moon.fill")
                     .font(.system(size: 20))
                     .foregroundColor(isDarkMode ? .yellow : .gray)
             }
             .padding(.leading, 8)
-            Spacer()
         }
+        .padding(.horizontal)
     }
 
     private var chartView: some View {
