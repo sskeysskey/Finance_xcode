@@ -115,6 +115,7 @@ struct ChartView: View {
     @State private var isDifferencePercentage: Bool = false
     @State private var selectedDate: Date? = nil
     @State private var isInteracting: Bool = false
+    @State private var shouldAnimate: Bool = true
 
     var body: some View {
         VStack(spacing: 16) {
@@ -164,9 +165,13 @@ struct ChartView: View {
         .onChange(of: selectedTimeRange) { _, _ in
             // 在加载新数据之前，先清空现有数据
             chartData = []
+            shouldAnimate = true // 允许动画
             loadChartData()
         }
-        .onAppear { loadChartData() }
+        .onAppear {
+            shouldAnimate = true // 允许动画
+            loadChartData()
+        }
         .overlay(loadingOverlay)
         .background(Color(uiColor: .systemGroupedBackground))
     }
@@ -229,7 +234,8 @@ struct ChartView: View {
                 isDifferencePercentage = isPercentage
                 selectedDate = date
             },
-            isInteracting: $isInteracting  // 传递绑定
+            isInteracting: $isInteracting,  // 传递绑定
+            shouldAnimate: $shouldAnimate // 传递 shouldAnimate
         )
         .frame(height: 350)
         .padding(.vertical, 1)  // 只保留垂直方向的少量 padding
@@ -299,6 +305,7 @@ struct StockLineChartView: UIViewRepresentable {
     let timeRange: TimeRange
     var onSelectedPriceChange: (Double?, Bool, Date?) -> Void  // 修改闭包签名
     @Binding var isInteracting: Bool
+    @Binding var shouldAnimate: Bool // 新增
 
     class Coordinator: NSObject, ChartViewDelegate {
         var parent: StockLineChartView
@@ -323,6 +330,9 @@ struct StockLineChartView: UIViewRepresentable {
             parent.onSelectedPriceChange(nil, false, nil)  // 清除选择，日期设为 nil
             firstTouchHighlight = nil
             secondTouchHighlight = nil
+            
+            self.parent.shouldAnimate = false
+            
         }
 
         @objc func handleMultiTouchGesture(_ gestureRecognizer: MultiTouchLongPressGestureRecognizer) {
@@ -344,6 +354,9 @@ struct StockLineChartView: UIViewRepresentable {
                 firstTouchHighlight = nil
                 secondTouchHighlight = nil
                 parent.onSelectedPriceChange(nil, false, nil)  // 使用回调
+                
+                // 用户结束交互时，不执行动画
+                parent.shouldAnimate = false
                 
             default:
                 break
@@ -465,25 +478,22 @@ struct StockLineChartView: UIViewRepresentable {
         if isInteracting {
             return
         }
-        
+
         if data.isEmpty {
             chartView.clear()
             return
         }
 
+        // 始终配置 X 轴
         configureXAxis(chartView.xAxis)
+        
+        // 始终更新图表的外观，以确保网格和模式切换生效
+        updateChartAppearance(chartView)
+        updateChartData(chartView)
 
-        let currentEntries = chartView.data?.entryCount ?? 0
-        if currentEntries != data.count {
-            updateChartAppearance(chartView)
-            updateChartData(chartView)
-
-            CATransaction.begin()
-            CATransaction.setAnimationDuration(0.5)
-            CATransaction.commit()
-        } else {
-            updateChartAppearance(chartView)
-        }
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.5)
+        CATransaction.commit()
     }
     
     private func configureChartView(_ chartView: LineChartView) {
@@ -812,7 +822,9 @@ extension StockLineChartView {
         }
         
         // 添加动画效果
-        chartView.animate(xAxisDuration: 0.5)
+        if shouldAnimate {
+            chartView.animate(xAxisDuration: 0.5)
+        }
     }
 
     // 添加计算粒度的辅助方法

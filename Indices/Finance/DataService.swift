@@ -102,7 +102,6 @@ class DataService: ObservableObject {
         }
     }
     
-    // 新增的方法
     private func loadDescriptionData() {
         guard let url = Bundle.main.url(forResource: "description", withExtension: "json") else {
             self.errorMessage = "description.json 文件未找到"
