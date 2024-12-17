@@ -44,6 +44,13 @@ struct SelectedSymbol: Identifiable {
     let category: String
 }
 
+struct GroupedSearchResults: Identifiable {
+    var id = UUID()
+    var category: MatchCategory
+    var results: [(result: SearchResult, score: Int)] // 改为存储结果及其评分
+    let highestScore: Int
+}
+
 // 定义匹配类别
 enum MatchCategory: String, CaseIterable, Identifiable {
     case symbol = "Symbol Matches"
@@ -109,14 +116,6 @@ struct GroupHeaderView: View {
             }
         }
     }
-}
-
-// 定义分组后的搜索结果结构
-struct GroupedSearchResults: Identifiable {
-    var id = UUID()
-    var category: MatchCategory
-    var results: [SearchResult]
-    let highestScore: Int  // 新添加的属性
 }
 
 // MARK: - Views
@@ -302,14 +301,15 @@ struct SearchView: View {
                         get: { collapsedGroups[groupedResult.category] ?? false },
                         set: { collapsedGroups[groupedResult.category] = $0 }
                     ))) {
-                        if !(collapsedGroups[groupedResult.category] ?? false) { // 根据折叠状态决定是否显示内容
-                            ForEach(groupedResult.results) { result in
+                        if !(collapsedGroups[groupedResult.category] ?? false) {
+                            // 按照评分降序排列
+                            ForEach(groupedResult.results.sorted { $0.score > $1.score }, id: \.result.id) { result, score in
                                 NavigationLink(destination: {
                                     if let category = viewModel.dataService.getCategory(for: result.symbol) {
                                         ChartView(symbol: result.symbol, groupName: category)
                                     }
                                 }) {
-                                    SearchResultRow(result: result)
+                                    SearchResultRow(result: result, score: score)
                                 }
                             }
                         }
@@ -347,11 +347,18 @@ struct SearchView: View {
 // MARK: - 搜索结果行视图
 struct SearchResultRow: View {
     let result: SearchResult
+    let score: Int // 添加评分属性
     
     var body: some View {
         VStack(alignment: .leading) {
-            Text("\(result.symbol) - \(result.name)")
-                .font(.headline)
+            HStack {
+                Text("\(result.symbol) - \(result.name)")
+                    .font(.headline)
+                Spacer()
+                Text("Score: \(score)")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
             Text(result.tag.joined(separator: ", "))
                 .font(.subheadline)
                 .foregroundColor(.secondary)
@@ -417,7 +424,6 @@ struct SearchHistoryView: View {
     }
 }
 
-//——————————————————————————————————————————————————————————————————————————————
 class SearchViewModel: ObservableObject {
     @Published var searchHistory: [String] = []
     @Published var errorMessage: String? = nil
@@ -480,9 +486,9 @@ class SearchViewModel: ObservableObject {
                     
                     
                     let group = GroupedSearchResults(
-                    category: category,
-                    results: results,
-                    highestScore: highestScore
+                        category: category,
+                        results: matches,
+                        highestScore: highestScore
                     )
                     
                     let scoredGroup = ScoredGroup(

@@ -109,7 +109,7 @@ struct ChartView: View {
     @State private var selectedTimeRange: TimeRange = .oneYear
     @State private var chartData: [DatabaseManager.PriceData] = []
     @State private var isLoading = false
-    @State private var showGrid = true
+    @State private var showGrid = false
     @State private var isDarkMode = true
     @State private var selectedPrice: Double? = nil
     @State private var isDifferencePercentage: Bool = false
