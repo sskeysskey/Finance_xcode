@@ -482,8 +482,6 @@ class SearchViewModel: ObservableObject {
                 
                 if !matches.isEmpty {
                     let highestScore = matches.max(by: { $0.score < $1.score })?.score ?? 0
-                    let results = matches.map { $0.result }
-                    
                     
                     let group = GroupedSearchResults(
                         category: category,
