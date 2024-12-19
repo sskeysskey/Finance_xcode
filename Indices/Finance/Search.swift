@@ -355,9 +355,9 @@ struct SearchResultRow: View {
                 Text("\(result.symbol) - \(result.name)")
                     .font(.headline)
                 Spacer()
-                Text("Score: \(score)")
-                    .font(.caption)
-                    .foregroundColor(.gray)
+//                Text("Score: \(score)")
+//                    .font(.caption)
+//                    .foregroundColor(.gray)
             }
             Text(result.tag.joined(separator: ", "))
                 .font(.subheadline)
