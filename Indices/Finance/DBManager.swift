@@ -14,6 +14,8 @@ class DatabaseManager {
             } else {
                 print("Could not open database")
             }
+        } else {
+            print("Database file not found")
         }
     }
     
@@ -26,6 +28,24 @@ class DatabaseManager {
         let date: Date
         let price: Double
         let volume: Int64?  // 修改为可选类型
+    }
+    
+    // 新增的方法：获取特定 ETF 的最新 volume
+    func fetchLatestVolume(forSymbol symbol: String, tableName: String) -> Int64? {
+        let query = "SELECT volume FROM \(tableName) WHERE name = ? ORDER BY date DESC LIMIT 1"
+        var statement: OpaquePointer?
+        var latestVolume: Int64? = nil
+
+        if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
+            sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
+            if sqlite3_step(statement) == SQLITE_ROW {
+                latestVolume = sqlite3_column_int64(statement, 0)
+            }
+        } else {
+            print("Failed to prepare statement: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        sqlite3_finalize(statement)
+        return latestVolume
     }
     
     func fetchHistoricalData(symbol: String, tableName: String, timeRange: TimeRange) -> [PriceData] {

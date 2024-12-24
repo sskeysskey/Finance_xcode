@@ -99,6 +99,33 @@ struct TimeRangeButton: View {
     }
 }
 
+// MARK: - DescriptionView
+struct DescriptionView: View {
+    let descriptions: (String, String) // (description1, description2)
+    let isDarkMode: Bool
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(descriptions.0)
+                        .font(.title2)
+                        .foregroundColor(isDarkMode ? .white : .black)
+                        .padding(.bottom, 18) // 添加底部间距
+                    
+                    Text(descriptions.1)
+                        .font(.title2)
+                        .foregroundColor(isDarkMode ? .white : .black)
+                }
+                .padding()
+            }
+            Spacer()
+        }
+        .navigationBarTitle("Description", displayMode: .inline)
+        .background(isDarkMode ? Color.black.edgesIgnoringSafeArea(.all) : Color.white.edgesIgnoringSafeArea(.all))
+    }
+}
+
 // MARK: - ChartView
 struct ChartView: View {
     let symbol: String
@@ -120,15 +147,15 @@ struct ChartView: View {
     var body: some View {
         VStack(spacing: 16) {
             headerView
-            
-            // 修改价格和日期显示逻辑
+
+            // 价格和日期显示逻辑
             if let price = selectedPrice {
                 HStack {
                     if isDifferencePercentage {
                         Text(String(format: "%.2f%%", price))
                             .font(.system(size: 16, weight: .medium))
                     } else if let date = selectedDate {
-                        HStack(spacing: 18) {  // 改用 HStack，并设置间距
+                        HStack(spacing: 18) {
                             Text(formattedDate(date))
                                 .font(.system(size: 14))
                                 .foregroundColor(.white)
@@ -139,18 +166,29 @@ struct ChartView: View {
                 }
                 .padding(.top, 0)
             } else {
+                // 替换为 NavigationLink
+                NavigationLink(destination: {
+                    if let descriptions = getDescriptions(for: symbol) {
+                        DescriptionView(descriptions: descriptions, isDarkMode: isDarkMode)
+                    } else {
+                        DescriptionView(descriptions: ("No description available.", ""), isDarkMode: isDarkMode)
+                    }
+                }) {
                 Text("👋")
                     .font(.system(size: 16, weight: .medium))
                     .padding(.top, 0)
             }
-            
+            }
+
             chartView
                 .background(
                     RoundedRectangle(cornerRadius: 12)
                         .fill(Color(uiColor: .systemBackground))
                         .shadow(color: .gray.opacity(0.2), radius: 8)
                 )
+            
             timeRangePicker
+
             // 显示错误消息
             if let errorMessage = dataService.errorMessage {
                 Text(errorMessage)
@@ -160,16 +198,15 @@ struct ChartView: View {
             }
             Spacer()
         }
-        .padding(.vertical)  // 只保留垂直方向的 padding
+        .padding(.vertical)
         .navigationTitle("\(symbol)")
         .onChange(of: selectedTimeRange) { _, _ in
-            // 在加载新数据之前，先清空现有数据
             chartData = []
-            shouldAnimate = true // 允许动画
+            shouldAnimate = true
             loadChartData()
         }
         .onAppear {
-            shouldAnimate = true // 允许动画
+            shouldAnimate = true
             loadChartData()
         }
         .overlay(loadingOverlay)
@@ -269,14 +306,12 @@ struct ChartView: View {
                                 .fill(Color(uiColor: .systemBackground))
                                 .shadow(radius: 10)
                         )
-                }
             }
         }
     }
 }
 
-extension ChartView {
-    // MARK: - Methods
+// MARK: - Methods
     private func loadChartData() {
         isLoading = true
         DispatchQueue.global(qos: .userInitiated).async {
@@ -295,6 +330,19 @@ extension ChartView {
             }
         }
     }
+    
+    // 获取当前symbol的描述信息
+    private func getDescriptions(for symbol: String) -> (String, String)? {
+        // 检查是否为股票
+        if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == symbol.uppercased() }) {
+            return (stock.description1, stock.description2)
+        }
+        // 检查是否为ETF
+        if let etf = dataService.descriptionData?.etfs.first(where: { $0.symbol.uppercased() == symbol.uppercased() }) {
+            return (etf.description1, etf.description2)
+        }
+        return nil
+    }
 }
 
 // MARK: - StockLineChartView
@@ -305,7 +353,7 @@ struct StockLineChartView: UIViewRepresentable {
     let timeRange: TimeRange
     var onSelectedPriceChange: (Double?, Bool, Date?) -> Void  // 修改闭包签名
     @Binding var isInteracting: Bool
-    @Binding var shouldAnimate: Bool // 新增
+    @Binding var shouldAnimate: Bool
 
     class Coordinator: NSObject, ChartViewDelegate {
         var parent: StockLineChartView
@@ -330,9 +378,7 @@ struct StockLineChartView: UIViewRepresentable {
             parent.onSelectedPriceChange(nil, false, nil)  // 清除选择，日期设为 nil
             firstTouchHighlight = nil
             secondTouchHighlight = nil
-            
             self.parent.shouldAnimate = false
-            
         }
 
         @objc func handleMultiTouchGesture(_ gestureRecognizer: MultiTouchLongPressGestureRecognizer) {
@@ -378,31 +424,6 @@ struct StockLineChartView: UIViewRepresentable {
                 secondTouchHighlight = nil
             }
             
-            // 更新图表高亮
-            updateChartHighlights(chartView)
-            
-            // 计算并更新价格差异百分比
-            calculatePriceDifference(chartView)
-        }
-        
-        private func handleTouchPoints(_ touchPoints: Set<UITouch>, in chartView: LineChartView) {
-            let sortedTouches = touchPoints.sorted { $0.timestamp < $1.timestamp }
-            
-            // 处理第一个触摸点
-            if let firstTouch = sortedTouches.first {
-                let firstLocation = firstTouch.location(in: chartView)
-                firstTouchHighlight = chartView.getHighlightByTouchPoint(firstLocation)
-            }
-            
-            // 处理第二个触摸点
-            if sortedTouches.count > 1, let secondTouch = sortedTouches[safe: 1] {
-                let secondLocation = secondTouch.location(in: chartView)
-                secondTouchHighlight = chartView.getHighlightByTouchPoint(secondLocation)
-            } else {
-                secondTouchHighlight = nil
-            }
-            
-            // 更新图表高亮
             updateChartHighlights(chartView)
             
             // 计算并更新价格差异百分比
@@ -617,7 +638,9 @@ class MultiTouchLongPressGestureRecognizer: UIGestureRecognizer {
     }
     
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-        touches.forEach { touchDict.removeValue(forKey: $0) }
+        touches.forEach { touch in
+            touchDict.removeValue(forKey: touch)
+        }
         if touchDict.isEmpty {
             state = .ended
         } else {
@@ -626,7 +649,9 @@ class MultiTouchLongPressGestureRecognizer: UIGestureRecognizer {
     }
     
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        touches.forEach { touchDict.removeValue(forKey: $0) }
+        touches.forEach { touch in
+            touchDict.removeValue(forKey: touch)
+        }
         if touchDict.isEmpty {
             state = .cancelled
         } else {
@@ -782,11 +807,11 @@ extension StockLineChartView {
         leftAxis.decimals = 2
         leftAxis.drawGridLinesEnabled = true
         leftAxis.drawZeroLineEnabled = true
-        leftAxis.zeroLineWidth = 0.5 // 添加这行
-        leftAxis.zeroLineColor = .systemGray // 添加这行
+        leftAxis.zeroLineWidth = 0.5
+        leftAxis.zeroLineColor = .systemGray
         leftAxis.granularity = 1
-        leftAxis.spaceTop = 0.1 // 添加这行
-        leftAxis.spaceBottom = 0.1 // 添加这行
+        leftAxis.spaceTop = 0.1
+        leftAxis.spaceBottom = 0.1
     }
 
     private func updateChartData(_ chartView: LineChartView) {

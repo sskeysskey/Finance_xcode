@@ -47,27 +47,41 @@ struct SelectedSymbol: Identifiable {
 struct GroupedSearchResults: Identifiable {
     var id = UUID()
     var category: MatchCategory
-    var results: [(result: SearchResult, score: Int)] // 改为存储结果及其评分
+    var results: [(result: SearchResult, score: Int)] // 存储结果及其评分
     let highestScore: Int
 }
 
 // 定义匹配类别
 enum MatchCategory: String, CaseIterable, Identifiable {
-    case symbol = "Symbol Matches"
-    case name = "Name Matches"
+    // Symbol Matches
+    case stockSymbol = "Stock Symbol Matches"
+    case etfSymbol = "ETF Symbol Matches"
+    
+    // Name Matches
+    case stockName = "Stock Name Matches"
+    case etfName = "ETF Name Matches"
+    
+    // Tag Matches
     case stockTag = "Stock Tag Matches"
     case etfTag = "ETF Tag Matches"
-    case description = "Description Matches"
+    
+    // Description Matches
+    case stockDescription = "Stock Description Matches"
+    case etfDescription = "ETF Description Matches"
+    
     var id: String { self.rawValue }
     
-    // 添加权重属性
+    // 更新权重属性，根据新的分类调整优先级
     var priority: Int {
         switch self {
-        case .symbol:     return 1000  // 最高优先级
-        case .stockTag:   return 800   // stock tag 优先于 etf tag
-        case .etfTag:     return 700
-        case .name:       return 500
-        case .description: return 300  // 最低优先级
+        case .stockSymbol, .etfSymbol:
+            return 1000  // 最高优先级
+        case .stockTag, .etfTag:
+            return 800
+        case .stockName, .etfName:
+            return 500
+        case .stockDescription, .etfDescription:
+            return 300  // 最低优先级
         }
     }
 }
@@ -80,7 +94,7 @@ class SearchResult: Identifiable, ObservableObject {
     @Published var marketCap: String?
     @Published var peRatio: String?
     @Published var compare: String?
-    @Published var volume: String?
+    @Published var volume: String?  // 确保这是一个可选的 String
     
     init(symbol: String, name: String, tag: [String], marketCap: String? = nil,
          peRatio: String? = nil, compare: String? = nil, volume: String? = nil) {
@@ -346,38 +360,47 @@ struct SearchView: View {
 
 // MARK: - 搜索结果行视图
 struct SearchResultRow: View {
-    let result: SearchResult
+    @ObservedObject var result: SearchResult
     let score: Int // 添加评分属性
     
     var body: some View {
         VStack(alignment: .leading) {
             HStack {
-                Text("\(result.symbol) - \(result.name)")
-                    .font(.headline)
+                VStack(alignment: .leading) {
+                    Text("\(result.symbol) - \(result.name)")
+                        .font(.headline)
+                    Text(result.tag.joined(separator: ", "))
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
                 Spacer()
-//                Text("Score: \(score)")
-//                    .font(.caption)
-//                    .foregroundColor(.gray)
             }
-            Text(result.tag.joined(separator: ", "))
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            if let marketCap = result.marketCap, let peRatio = result.peRatio {
-                Text("\(marketCap) \(peRatio)")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            if let compare = result.compare {
-                Text("\(compare)")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            if let volume = result.volume {
-                Text("\(volume)")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+            HStack {
+                if let marketCap = result.marketCap {
+                    Text(marketCap)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                
+                // 修改这部分代码
+                if let peRatio = result.peRatio, peRatio != "--" {
+                    Text("\(peRatio)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                if let compare = result.compare {
+                    Text(compare)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                if let volume = result.volume {
+                    Text(volume)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
             }
         }
+        .padding(.vertical, 4)
     }
 }
 
@@ -456,7 +479,6 @@ class SearchViewModel: ObservableObject {
                 return
             }
             
-            // 修改数据结构定义，使用元组存储所有需要的信息
             struct ScoredGroup {
                 let group: GroupedSearchResults
                 let matchScore: Int
@@ -464,19 +486,20 @@ class SearchViewModel: ObservableObject {
             }
             
             var groupedResults: [ScoredGroup] = []
-            let categories: [MatchCategory] = MatchCategory.allCases
+            let categories: [MatchCategory] = [
+                .stockSymbol, .etfSymbol,
+                .stockName, .etfName,
+                .stockTag, .etfTag,
+                .stockDescription, .etfDescription
+            ]
             
             for category in categories {
                 var matches: [(result: SearchResult, score: Int)] = []
                 
                 switch category {
-                case .symbol, .name, .description:
-                    let stockMatches = self.searchCategory(items: descriptionData.stocks, keywords: keywords, category: category)
-                    let etfMatches = self.searchCategory(items: descriptionData.etfs, keywords: keywords, category: category)
-                    matches = stockMatches + etfMatches
-                case .stockTag:
+                case .stockSymbol, .stockName, .stockDescription, .stockTag:
                     matches = self.searchCategory(items: descriptionData.stocks, keywords: keywords, category: category)
-                case .etfTag:
+                case .etfSymbol, .etfName, .etfDescription, .etfTag:
                     matches = self.searchCategory(items: descriptionData.etfs, keywords: keywords, category: category)
                 }
                 
@@ -499,25 +522,63 @@ class SearchViewModel: ObservableObject {
                 }
             }
         
-            // 修改排序逻辑，先按分数排序，分数相同时按优先级排序
+            // 按分数和优先级排序
             let sortedGroups = groupedResults.sorted { first, second in
                 if first.matchScore != second.matchScore {
-                    return first.matchScore > second.matchScore  // 先按分数排序
+                    return first.matchScore > second.matchScore
                 }
-                // 分数相同时，再按优先级排序
                 return first.priority > second.priority
             }.map { $0.group }
 
-            // 添加到搜索历史
             DispatchQueue.main.async {
                 if !keywords.isEmpty {
                     self.addSearchHistory(term: query)
                 }
                 self.groupedSearchResults = sortedGroups
                 
-                completion(sortedGroups)
+                // 获取 ETF 的最新 volume
+                self.fetchLatestVolumes(for: sortedGroups) {
+                    completion(sortedGroups)
+                }
             }
         }
+    }
+    
+    // 新增的方法：为 ETF 搜索结果获取最新 volume
+    private func fetchLatestVolumes(for groupedResults: [GroupedSearchResults], completion: @escaping () -> Void) {
+        // 定义所有ETF相关的分类
+        let etfCategories: Set<MatchCategory> = [.etfSymbol, .etfName, .etfDescription, .etfTag]
+        
+        // 遍历所有分组结果
+        for groupedResult in groupedResults {
+            // 检查当前分组是否属于ETF相关分类
+            if etfCategories.contains(groupedResult.category) {
+                for (_, (result, _)) in groupedResult.results.enumerated() {
+                    let symbol = result.symbol
+                    // 从数据库获取最新的volume
+                    if let latestVolume = DatabaseManager.shared.fetchLatestVolume(forSymbol: symbol, tableName: "ETFs") {
+                        // 将volume格式化为K单位
+                        let formattedVolume = formatVolume(latestVolume)
+                        // 更新SearchResult的volume属性
+                        DispatchQueue.main.async {
+                            result.volume = formattedVolume
+                        }
+                    } else {
+                        // 如果未找到volume，则设置为"--K"
+                        DispatchQueue.main.async {
+                            result.volume = "--K"
+                        }
+                    }
+                }
+            }
+        }
+        completion()
+    }
+    
+    // 辅助方法：将 volume 转换为 K 单位的字符串
+    private func formatVolume(_ volume: Int64) -> String {
+        let kVolume = Double(volume) / 1000.0
+        return String(format: "%.0fK", kVolume)
     }
     
     // 搜索类别，并排序结果（完全匹配优先）
@@ -534,7 +595,7 @@ class SearchViewModel: ObservableObject {
                 var matched = false
                 
                 switch category {
-                case .symbol:
+                case .stockSymbol, .etfSymbol:
                     if lowercasedKeyword == item.symbol.lowercased() {
                         matchScore = 3
                         matched = true
@@ -546,7 +607,7 @@ class SearchViewModel: ObservableObject {
                         matched = true
                     }
                     
-                case .name:
+                case .stockName, .etfName:
                     if lowercasedKeyword == item.name.lowercased() {
                         matchScore = 3
                         matched = true
@@ -575,7 +636,7 @@ class SearchViewModel: ObservableObject {
                         matched = true
                     }
                     
-                case .description:
+                case .stockDescription, .etfDescription:
                     let desc1 = item.description1.lowercased()
                     let desc2 = item.description2.lowercased()
                     let descWords = desc1.split(separator: " ") + desc2.split(separator: " ")
@@ -586,10 +647,6 @@ class SearchViewModel: ObservableObject {
                     } else if desc1.contains(lowercasedKeyword) || desc2.contains(lowercasedKeyword) {
                         matchScore = max(matchScore, 1)
                         matched = true
-//                    } else if fuzzyMatch(text: desc1, keyword: lowercasedKeyword, maxDistance: 1) ||
-//                              fuzzyMatch(text: desc2, keyword: lowercasedKeyword, maxDistance: 1) {
-//                        matchScore = max(matchScore, 1)
-//                        matched = true
                     }
                 }
                 
@@ -612,7 +669,8 @@ class SearchViewModel: ObservableObject {
                     tag: item.tag,
                     marketCap: marketCap,
                     peRatio: peRatio != nil ? String(format: "%.2f", peRatio!) : "--",
-                    compare: compare
+                    compare: compare,
+                    volume: nil  // 初始为 nil，稍后设置
                 )
                 scoredResults.append((result: result, score: totalScore))
             }
