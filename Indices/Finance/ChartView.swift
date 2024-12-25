@@ -174,7 +174,7 @@ struct ChartView: View {
                         DescriptionView(descriptions: ("No description available.", ""), isDarkMode: isDarkMode)
                     }
                 }) {
-                Text("👋")
+                Text("Description")
                     .font(.system(size: 16, weight: .medium))
                     .padding(.top, 0)
             }
