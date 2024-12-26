@@ -135,11 +135,29 @@ struct GroupHeaderView: View {
 // MARK: - Views
 struct SearchContentView: View {
     @State private var showSearch = false
+    @State private var showCompare = false
     @EnvironmentObject var dataService: DataService
     
     var body: some View {
-        NavigationStack {  // 使用 NavigationStack
-            VStack {
+        NavigationStack {
+            HStack(spacing: 12) {
+                // 比较按钮
+                Button(action: {
+                    showCompare = true
+                }) {
+                    VStack {
+                        Image(systemName: "chart.line.uptrend.xyaxis")
+                            .font(.system(size: 20))
+                        Text("比较")
+                            .font(.caption)
+                    }
+                    .frame(width: 60)
+                    .padding(.vertical, 8)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(8)
+                }
+                
+                // 搜索按钮
                 Button(action: {
                     showSearch = true
                 }) {
@@ -152,13 +170,16 @@ struct SearchContentView: View {
                     .background(Color(.systemGray6))
                     .cornerRadius(8)
                 }
-                .padding()
-                
-                Spacer()
             }
-            .navigationDestination(isPresented: $showSearch) {
-                SearchView(isSearchActive: true, dataService: dataService)
-            }
+            .padding(.horizontal)
+            
+            Spacer()
+        }
+        .navigationDestination(isPresented: $showSearch) {
+            SearchView(isSearchActive: true, dataService: dataService)
+        }
+        .navigationDestination(isPresented: $showCompare) {
+            CompareView(initialSymbol: "")
         }
     }
 }

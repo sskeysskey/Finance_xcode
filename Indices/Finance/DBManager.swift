@@ -48,29 +48,39 @@ class DatabaseManager {
         return latestVolume
     }
     
-    func fetchHistoricalData(symbol: String, tableName: String, timeRange: TimeRange) -> [PriceData] {
+    enum DateRangeInput {
+        case timeRange(TimeRange)
+        case customRange(start: Date, end: Date)
+    }
+
+    func fetchHistoricalData(
+        symbol: String,
+        tableName: String,
+        dateRange: DateRangeInput
+    ) -> [PriceData] {
         var result: [PriceData] = []
         let dateFormat = "yyyy-MM-dd"
-        let endDate = Date()
-        let startDate = timeRange.startDate
         
-        // 首先检查表结构
+        // 确定日期范围
+        let (startDate, endDate): (Date, Date) = {
+            switch dateRange {
+            case .timeRange(let timeRange):
+                return (timeRange.startDate, Date())
+            case .customRange(let start, let end):
+                return (start, end)
+            }
+        }()
+        
+        // 检查表结构
         let hasVolumeColumn = checkIfTableHasVolume(tableName: tableName)
         
-        // 根据表结构构建查询语句
-        let query = hasVolumeColumn ?
-            """
-            SELECT id, date, price, volume 
-            FROM \(tableName) 
-            WHERE name = ? AND date BETWEEN ? AND ? 
+        // 构建查询语句
+        let query = """
+            SELECT id, date, price\(hasVolumeColumn ? ", volume" : "")
+            FROM \(tableName)
+            WHERE name = ? AND date BETWEEN ? AND ?
             ORDER BY date ASC
-            """ :
-            """
-            SELECT id, date, price 
-            FROM \(tableName) 
-            WHERE name = ? AND date BETWEEN ? AND ? 
-            ORDER BY date ASC
-            """
+        """
         
         var statement: OpaquePointer?
         
@@ -78,22 +88,20 @@ class DatabaseManager {
             let formatter = DateFormatter()
             formatter.dateFormat = dateFormat
             
+            // 绑定参数
             sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
             sqlite3_bind_text(statement, 2, (formatter.string(from: startDate) as NSString).utf8String, -1, nil)
             sqlite3_bind_text(statement, 3, (formatter.string(from: endDate) as NSString).utf8String, -1, nil)
             
+            // 处理结果
             while sqlite3_step(statement) == SQLITE_ROW {
                 let id = Int(sqlite3_column_int(statement, 0))
                 let dateString = String(cString: sqlite3_column_text(statement, 1))
                 let price = sqlite3_column_double(statement, 2)
                 
                 if let date = formatter.date(from: dateString) {
-                    if hasVolumeColumn {
-                        let volume = sqlite3_column_int64(statement, 3)
-                        result.append(PriceData(id: id, date: date, price: price, volume: volume))
-                    } else {
-                        result.append(PriceData(id: id, date: date, price: price, volume: nil))
-                    }
+                    let volume = hasVolumeColumn ? sqlite3_column_int64(statement, 3) : nil
+                    result.append(PriceData(id: id, date: date, price: price, volume: volume))
                 }
             }
         }

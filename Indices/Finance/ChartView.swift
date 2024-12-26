@@ -166,18 +166,36 @@ struct ChartView: View {
                 }
                 .padding(.top, 0)
             } else {
-                // 替换为 NavigationLink
-                NavigationLink(destination: {
-                    if let descriptions = getDescriptions(for: symbol) {
-                        DescriptionView(descriptions: descriptions, isDarkMode: isDarkMode)
-                    } else {
-                        DescriptionView(descriptions: ("No description available.", ""), isDarkMode: isDarkMode)
+                HStack {
+                    // 替换为 NavigationLink
+                    NavigationLink(destination: {
+                        if let descriptions = getDescriptions(for: symbol) {
+                            DescriptionView(descriptions: descriptions, isDarkMode: isDarkMode)
+                        } else {
+                            DescriptionView(descriptions: ("No description available.", ""), isDarkMode: isDarkMode)
+                        }
+                    }) {
+                        Text("Description")
+                            .font(.system(size: 16, weight: .medium))
+                            .padding(.top, 0)
                     }
-                }) {
-                Text("Description")
-                    .font(.system(size: 16, weight: .medium))
-                    .padding(.top, 0)
-            }
+                    // 新增 Compare 按钮
+                    NavigationLink(destination: CompareView(initialSymbol: symbol)) {
+                        Text("Compare")
+                            .font(.system(size: 16, weight: .medium))
+                            .padding(.top, 0)
+                            .padding(.leading, 20)
+                            .foregroundColor(.blue)
+                    }
+                    // 新增 Similar 按钮
+                    NavigationLink(destination: SimilarView(symbol: symbol)) {
+                        Text("Similar")
+                            .font(.system(size: 16, weight: .medium))
+                            .padding(.top, 0)
+                            .padding(.leading, 20)
+                            .foregroundColor(.green)
+                    }
+                }
             }
 
             chartView
@@ -306,12 +324,12 @@ struct ChartView: View {
                                 .fill(Color(uiColor: .systemBackground))
                                 .shadow(radius: 10)
                         )
+                }
             }
         }
     }
-}
 
-// MARK: - Methods
+    // MARK: - Methods
     private func loadChartData() {
         isLoading = true
         DispatchQueue.global(qos: .userInitiated).async {
@@ -319,7 +337,7 @@ struct ChartView: View {
             let newData = DatabaseManager.shared.fetchHistoricalData(
                 symbol: symbol,
                 tableName: groupName,
-                timeRange: selectedTimeRange
+                dateRange: .timeRange(selectedTimeRange)
             )
             print("查询完成，获取到 \(newData.count) 条数据")
 
