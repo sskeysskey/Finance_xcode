@@ -628,14 +628,43 @@ class SearchViewModel: ObservableObject {
                         matched = true
                     }
                     
+//                case .stockName, .etfName:
+//                    if lowercasedKeyword == item.name.lowercased() {
+//                        matchScore = 3
+//                        matched = true
+//                    } else if item.name.lowercased().contains(lowercasedKeyword) {
+//                        matchScore = 2
+//                        matched = true
+//                    } else if fuzzyMatch(text: item.name.lowercased(), keyword: lowercasedKeyword, maxDistance: 1) {
+//                        matchScore = 1
+//                        matched = true
+//                    }
+                    
                 case .stockName, .etfName:
+                    // 安全地处理名称分割
+                    let nameComponents = item.name.lowercased().components(separatedBy: ",")
+                    let mainName = nameComponents.first ?? item.name.lowercased()
+                    let nameWords = mainName.split(separator: " ").map { String($0) }
+                    
                     if lowercasedKeyword == item.name.lowercased() {
+                        // 完全匹配整个名称
+                        matchScore = 4
+                        matched = true
+                    } else if nameWords.contains(where: { $0 == lowercasedKeyword }) ||
+                              mainName == lowercasedKeyword {
+                        // 精确匹配任何完整单词或主要名称
                         matchScore = 3
                         matched = true
-                    } else if item.name.lowercased().contains(lowercasedKeyword) {
+                    } else if mainName.contains(lowercasedKeyword) {
+                        // 主要名称中的部分匹配
                         matchScore = 2
                         matched = true
+                    } else if item.name.lowercased().contains(lowercasedKeyword) {
+                        // 整个名称中的部分匹配
+                        matchScore = 1
+                        matched = true
                     } else if fuzzyMatch(text: item.name.lowercased(), keyword: lowercasedKeyword, maxDistance: 1) {
+                        // 模糊匹配
                         matchScore = 1
                         matched = true
                     }
