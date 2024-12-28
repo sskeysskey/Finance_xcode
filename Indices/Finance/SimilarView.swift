@@ -27,7 +27,9 @@ struct SimilarView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(viewModel.relatedSymbols.sorted(by: { $0.totalWeight > $1.totalWeight }), id: \.symbol) { item in
+                        ForEach(viewModel.relatedSymbols
+                            .sorted(by: { $0.totalWeight > $1.totalWeight }),
+                            id: \.symbol) { item in
                             // 使用 NavigationLink 并传递正确的 groupName
                             NavigationLink(destination: ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Unknown")) {
                                 HStack {
@@ -120,10 +122,10 @@ class SimilarViewModel: ObservableObject {
             let allSymbols = stocksRelated + etfsRelated
             
             // 按 totalWeight 降序排序
-            let sortedSymbols = allSymbols.sorted { $0.totalWeight > $1.totalWeight }
+            let sortedSymbols = allSymbols.sorted { $0.totalWeight > $1.totalWeight }.prefix(50)
             
             DispatchQueue.main.async {
-                self.relatedSymbols = sortedSymbols
+                self.relatedSymbols = Array(sortedSymbols)
                 self.isLoading = false
             }
         }

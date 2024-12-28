@@ -4,12 +4,13 @@ import DGCharts
 // MARK: - TimeRange Enum
 enum TimeRange: String, CaseIterable {
     case oneMonth = "1M"
-    case twoYears = "2Y"
+    case all = "ALL"
     case fiveYears = "5Y"
     case oneYear = "1Y"
     case threeMonths = "3M"
     case sixMonths = "6M"
     case tenYears = "10Y"
+    case twoYears = "2Y"
 
     var startDate: Date {
         let calendar = Calendar.current
@@ -23,6 +24,7 @@ enum TimeRange: String, CaseIterable {
         case .twoYears:    return calendar.date(byAdding: .year, value: -2, to: now) ?? now
         case .fiveYears:   return calendar.date(byAdding: .year, value: -5, to: now) ?? now
         case .tenYears:    return calendar.date(byAdding: .year, value: -10, to: now) ?? now
+        case .all:         return Date.distantPast  // 返回一个很早的日期
         }
     }
     
@@ -42,13 +44,18 @@ enum TimeRange: String, CaseIterable {
             return 5 * 365 * 24 * 60 * 60
         case .tenYears:
             return 10 * 365 * 24 * 60 * 60
+        case .all:         return Double.infinity   // 设置为无限大的时间间隔
         }
     }
     
     // 添加 labelCount 计算属性
     var labelCount: Int {
-        let numberString = self.rawValue.filter { $0.isNumber }
-        return Int(numberString) ?? 1
+        switch self {
+        case .all:  return 10  // 为 ALL 设置合适的标签数量
+        default:
+            let numberString = self.rawValue.filter { $0.isNumber }
+            return Int(numberString) ?? 1
+        }
     }
 }
 
@@ -60,7 +67,7 @@ private class DateAxisValueFormatter: AxisValueFormatter {
     init(timeRange: TimeRange) {
         dateFormatter = DateFormatter()
         switch timeRange {
-        case .twoYears, .fiveYears, .tenYears:
+        case .twoYears, .fiveYears, .tenYears, .all:  // 添加 all
             dateFormatter.dateFormat = "yyyy" // 仅显示年份
             shift = 365 * 24 * 60 * 60 / 2 // 半年
         case .oneYear:
@@ -140,7 +147,10 @@ struct ChartView: View {
     @State private var isDarkMode = true
     @State private var selectedPrice: Double? = nil
     @State private var isDifferencePercentage: Bool = false
-    @State private var selectedDate: Date? = nil
+//    @State private var selectedDate: Date? = nil
+    // 新增两个日期状态变量
+    @State private var selectedDateStart: Date? = nil
+    @State private var selectedDateEnd: Date? = nil
     @State private var isInteracting: Bool = false
     @State private var shouldAnimate: Bool = true
 
@@ -151,10 +161,13 @@ struct ChartView: View {
             // 价格和日期显示逻辑
             if let price = selectedPrice {
                 HStack {
-                    if isDifferencePercentage {
+                    if isDifferencePercentage, let startDate = selectedDateStart, let endDate = selectedDateEnd {
+                        Text("\(formattedDate(startDate))   \(formattedDate(endDate))")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white)
                         Text(String(format: "%.2f%%", price))
                             .font(.system(size: 16, weight: .medium))
-                    } else if let date = selectedDate {
+                    } else if let date = selectedDateStart { // 单点选择
                         HStack(spacing: 18) {
                             Text(formattedDate(date))
                                 .font(.system(size: 14))
@@ -284,10 +297,11 @@ struct ChartView: View {
             showGrid: showGrid,
             isDarkMode: isDarkMode,
             timeRange: selectedTimeRange,
-            onSelectedPriceChange: { price, isPercentage, date in
+            onSelectedPriceChange: { price, isPercentage, startDate, endDate in
                 selectedPrice = price
                 isDifferencePercentage = isPercentage
-                selectedDate = date
+                selectedDateStart = startDate
+                selectedDateEnd = endDate
             },
             isInteracting: $isInteracting,  // 传递绑定
             shouldAnimate: $shouldAnimate // 传递 shouldAnimate
@@ -369,7 +383,7 @@ struct StockLineChartView: UIViewRepresentable {
     let showGrid: Bool
     let isDarkMode: Bool
     let timeRange: TimeRange
-    var onSelectedPriceChange: (Double?, Bool, Date?) -> Void  // 修改闭包签名
+    let onSelectedPriceChange: (Double?, Bool, Date?, Date?) -> Void
     @Binding var isInteracting: Bool
     @Binding var shouldAnimate: Bool
 
@@ -388,12 +402,12 @@ struct StockLineChartView: UIViewRepresentable {
             if secondTouchHighlight == nil {
                 // 处理单点选择，传递日期
                 let date = Date(timeIntervalSince1970: entry.x)
-                parent.onSelectedPriceChange(entry.y, false, date)  // 传递日期
+                parent.onSelectedPriceChange(entry.y, false, date, nil)
             }
         }
 
         func chartValueNothingSelected(_ chartView: ChartViewBase) {
-            parent.onSelectedPriceChange(nil, false, nil)  // 清除选择，日期设为 nil
+            parent.onSelectedPriceChange(nil, false, nil, nil)
             firstTouchHighlight = nil
             secondTouchHighlight = nil
             self.parent.shouldAnimate = false
@@ -417,7 +431,7 @@ struct StockLineChartView: UIViewRepresentable {
                 chartView.highlightValues(nil)
                 firstTouchHighlight = nil
                 secondTouchHighlight = nil
-                parent.onSelectedPriceChange(nil, false, nil)  // 使用回调
+                parent.onSelectedPriceChange(nil, false, nil, nil)
                 
                 // 用户结束交互时，不执行动画
                 parent.shouldAnimate = false
@@ -472,7 +486,7 @@ struct StockLineChartView: UIViewRepresentable {
                     // 只有一个触摸点时显示具体价格和日期
                     isShowingPercentage = false
                     let date = Date(timeIntervalSince1970: firstEntry.x)
-                    parent.onSelectedPriceChange(firstEntry.y, false, date)
+                    parent.onSelectedPriceChange(firstEntry.y, false, date, nil)
                 }
                 return
             }
@@ -484,7 +498,9 @@ struct StockLineChartView: UIViewRepresentable {
             // 计算价格变化百分比
             let priceDiffPercentage = ((laterEntry.y - earlierEntry.y) / earlierEntry.y) * 100
             isShowingPercentage = true
-            parent.onSelectedPriceChange(priceDiffPercentage, true, nil)
+            let startDate = Date(timeIntervalSince1970: earlierEntry.x)
+            let endDate = Date(timeIntervalSince1970: laterEntry.x)
+            parent.onSelectedPriceChange(priceDiffPercentage, true, startDate, endDate)
         }
     }
 
@@ -695,6 +711,7 @@ extension StockLineChartView {
     private func calculateSamplingRate(_ timeRange: TimeRange) -> Int {
         let baseRate: Int
         switch timeRange {
+        case .all:        baseRate = 20  // 为全部数据设置更高的采样率
         case .tenYears:   baseRate = 14
         case .fiveYears:  baseRate = 7
         case .twoYears:   baseRate = 4
@@ -711,6 +728,7 @@ extension StockLineChartView {
     // 根据时间范围计算曲线张力
     private func calculateLineTension(_ timeRange: TimeRange) -> Double {
         switch timeRange {
+        case .all:        return 0.4  // 为全部数据设置适当的张力
         case .tenYears: return 0.3
         case .fiveYears: return 0.2
         case .twoYears: return 0.15
