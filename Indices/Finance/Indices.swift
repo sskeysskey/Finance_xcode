@@ -230,24 +230,28 @@ struct SymbolItemView: View {
     
     var body: some View {
         NavigationLink(destination: ChartView(symbol: symbol.symbol, groupName: tableName)) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
+                // 第一行：symbol和value
+                HStack {
                     Text("\(symbol.symbol) \(symbol.name)")
                         .font(.headline)
                         .foregroundColor(.white)
                     
-                    if let tags = symbol.tags, !tags.isEmpty {
-                        Text(tags.joined(separator: ", "))
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-                            .lineLimit(2)
-                    }
+                    Spacer()
+                    
+                    Text(symbol.value)
+                        .foregroundColor(getValueColor(value: symbol.value))
                 }
                 
-                Spacer()
-                
-                Text(symbol.value)
-                    .foregroundColor(getValueColor(value: symbol.value))
+                // 第二行：tags
+                if let tags = symbol.tags, !tags.isEmpty {
+                    Text(tags.joined(separator: ", "))
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)  // 添加多行文本对齐
+                        .fixedSize(horizontal: false, vertical: true)  // 确保正确换行
+                }
             }
             .padding()
             .background(Color(.systemGray6))

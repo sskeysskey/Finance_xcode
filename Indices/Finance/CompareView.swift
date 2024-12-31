@@ -1,5 +1,66 @@
 import SwiftUI
 import DGCharts
+import Charts
+
+class DateMarkerView: MarkerView {
+    private var text = ""
+    private let textLabel: UILabel = {
+        let label = UILabel()
+        label.textColor = UIColor.white
+        label.backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        label.font = UIFont.systemFont(ofSize: 12)
+        label.textAlignment = .center
+        label.layer.cornerRadius = 4
+        label.clipsToBounds = true
+        label.numberOfLines = 1
+        return label
+    }()
+    
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        addSubview(textLabel)
+    }
+    
+    required init?(coder aDecoder: NSCoder) {
+        super.init(coder: aDecoder)
+        addSubview(textLabel)
+    }
+    
+    override func refreshContent(entry: ChartDataEntry, highlight: Highlight) {
+        let date = Date(timeIntervalSince1970: entry.x)
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .none
+        text = dateFormatter.string(from: date)
+        textLabel.text = text
+        
+        // 调整标签的大小以适应文本
+        textLabel.sizeToFit()
+        let padding: CGFloat = 8
+        self.frame.size = CGSize(width: textLabel.frame.width + padding, height: textLabel.frame.height + padding / 2)
+        textLabel.frame = CGRect(x: padding / 2, y: padding / 4, width: textLabel.frame.width, height: textLabel.frame.height)
+        
+        super.refreshContent(entry: entry, highlight: highlight)
+    }
+    
+    override func draw(context: CGContext, point: CGPoint) {
+        // 调整标记位置，使其不超出图表边界
+        var drawPosition = CGPoint(x: point.x - self.bounds.width / 2, y: point.y - self.bounds.height - 10)
+        
+        // 确保标记不会超出左边界
+        if drawPosition.x < 0 {
+            drawPosition.x = 0
+        }
+        
+        // 确保标记不会超出右边界
+        if drawPosition.x + self.bounds.width > self.chartView?.bounds.width ?? 0 {
+            drawPosition.x = (self.chartView?.bounds.width ?? 0) - self.bounds.width
+        }
+        
+        self.frame.origin = drawPosition
+        super.draw(context: context, point: point)
+    }
+}
 
 struct CompareView: View {
     @Environment(\.presentationMode) var presentationMode
@@ -22,6 +83,9 @@ struct CompareView: View {
     
     // 修改默认起始时间为2024年
     @State private var startDate: Date = Calendar.current.date(from: DateComponents(year: 2004))!
+    
+    // 输入框大小写状态切换
+    @State private var shouldUppercase = true
 
     var body: some View {
         VStack {
@@ -76,28 +140,33 @@ struct CompareView: View {
                         )
                     }
                     
+                    // 添加大写转换开关
+                    Toggle(isOn: $shouldUppercase) {
+                    }
+                    .onChange(of: shouldUppercase) { oldValue, newValue in
+                        // 当开关状态改变时，更新所有现有的股票代码
+                        if newValue {
+                            symbols = symbols.map { $0.uppercased() }
+                        }
+                    }
+                    
                     // 股票代码输入框
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(0..<symbols.count, id: \.self) { index in
                             HStack {
-                                TextField("股票代码 \(index + 1)", text: Binding(
-                                    get: { symbols[index] },
-                                    set: { symbols[index] = $0.uppercased() }
-                                ))
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .focused($focusedField, equals: index) // 添加焦点绑定
-                                
-                                // 添加清除按钮
-                                if !symbols[index].isEmpty {
-                                    Button(action: {
-                                        symbols[index] = ""  // 清空当前输入框
-                                        focusedField = index // 设置焦点到当前输入框
-                                    }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.gray)
+                                CustomTextField(
+                                    placeholder: "股票代码 \(index + 1)",
+                                    text: Binding(
+                                        get: { symbols[index] },
+                                        set: { newValue in
+                                            symbols[index] = shouldUppercase ? newValue.uppercased() : newValue
+                                        }
+                                    ),
+                                    onClear: {
+                                        focusedField = index
                                     }
-                                    .transition(.opacity)
-                                }
+                                )
+                                .focused($focusedField, equals: index)
                                 
                                 // 保留原有的删除整行按钮
                                 if symbols.count > 1 {
@@ -146,7 +215,7 @@ struct CompareView: View {
                 if initialSymbol.isEmpty {
                     symbols.append("")
                 } else {
-                    symbols.append(initialSymbol.uppercased())
+                    symbols.append(shouldUppercase ? initialSymbol.uppercased() : initialSymbol)
                 }
                 symbols.append("")
                 
@@ -197,6 +266,33 @@ struct CompareView: View {
         // 设置 symbols、startDate、endDate，并导航
         symbols = trimmedSymbols
         navigateToComparison = true
+    }
+}
+
+struct CustomTextField: View {
+    let placeholder: String
+    @Binding var text: String
+    let onClear: () -> Void
+    @FocusState private var isFocused: Bool
+    
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            TextField(placeholder, text: $text)
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+                .focused($isFocused)
+            
+            if !text.isEmpty {
+                Button(action: {
+                    text = ""
+                    onClear()
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.gray)
+                        .opacity(0.6)
+                }
+                .padding(.trailing, 8) // 调整clearButton的右侧边距
+            }
+        }
     }
 }
 
@@ -335,6 +431,12 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
         configureChartView(chartView)
         chartView.noDataText = "No Data Available"
         configureXAxis(chartView.xAxis, formatter: formatter)
+        
+        // 创建并配置自定义 Marker
+        let marker = DateMarkerView()
+        marker.chartView = chartView
+        chartView.marker = marker
+        
         return chartView
     }
     

@@ -64,11 +64,14 @@ struct MarketItemRow<T: MarketItem>: View {
     var body: some View {
         NavigationLink(destination: ChartView(symbol: item.symbol, groupName: item.groupName)) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("\(item.groupName) \(item.rawSymbol)")
-                    .font(.headline)
-                Text(item.value)
-                    .font(.subheadline)
-                    .foregroundColor(item.numericValue > 0 ? .green : (item.numericValue < 0 ? .red : .gray))
+                HStack(spacing: 8) {  // 使用HStack将标题和值放在同一行
+                    Text("\(item.rawSymbol)")
+                        .font(.headline)
+                    Spacer()  // 添加Spacer将value推到最右边
+                    Text(item.value)
+                        .font(.subheadline)
+                        .foregroundColor(item.numericValue > 0 ? .green : (item.numericValue < 0 ? .red : .gray))
+                }
                 Text(item.descriptions)
                     .font(.caption)
                     .foregroundColor(.gray)

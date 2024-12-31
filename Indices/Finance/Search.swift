@@ -54,20 +54,20 @@ struct GroupedSearchResults: Identifiable {
 // 定义匹配类别
 enum MatchCategory: String, CaseIterable, Identifiable {
     // Symbol Matches
-    case stockSymbol = "Stock Symbol Matches"
-    case etfSymbol = "ETF Symbol Matches"
+    case stockSymbol = "Stock Symbol"
+    case etfSymbol = "ETF Symbol"
     
     // Name Matches
-    case stockName = "Stock Name Matches"
-    case etfName = "ETF Name Matches"
+    case stockName = "Stock Name"
+    case etfName = "ETF Name"
     
     // Tag Matches
-    case stockTag = "Stock Tag Matches"
-    case etfTag = "ETF Tag Matches"
+    case stockTag = "Stock Tag"
+    case etfTag = "ETF Tag"
     
     // Description Matches
-    case stockDescription = "Stock Description Matches"
-    case etfDescription = "ETF Description Matches"
+    case stockDescription = "Stock Description"
+    case etfDescription = "ETF Description"
     
     var id: String { self.rawValue }
     
@@ -116,7 +116,7 @@ struct GroupHeaderView: View {
         HStack {
             Text(category.rawValue)
                 .font(.headline)
-                .foregroundColor(.blue)
+                .foregroundColor(.gray)
             
             Spacer()
             
@@ -273,44 +273,48 @@ struct SearchView: View {
     // MARK: - 搜索栏
     private var searchBar: some View {
         HStack {
-            TextField("请输入要搜索的关键字", text: $searchText, onEditingChanged: { isEditing in
-                withAnimation {
-                    // 只在文本为空且正在编辑时显示搜索历史
-                    showSearchHistory = isEditing && searchText.isEmpty
-                    if isEditing && searchText.isEmpty {
-                        groupedSearchResults = [] // 只在合适的时机清空搜索结果
-                    }
-                }
-            }, onCommit: {
-                startSearch()
-            })
-            .focused($isSearchFieldFocused)
-            .padding(10)
-            .background(Color(.systemGray6))
-            .cornerRadius(8)
-            .onChange(of: searchText) { oldValue, newValue in
-                showClearButton = !newValue.isEmpty
-                if newValue.isEmpty {
+            ZStack(alignment: .trailing) {
+                TextField("请输入要搜索的关键字", text: $searchText, onEditingChanged: { isEditing in
                     withAnimation {
-                        showSearchHistory = true
-                        groupedSearchResults = [] // 清空搜索结果
+                        showSearchHistory = isEditing && searchText.isEmpty
+                        if isEditing && searchText.isEmpty {
+                            groupedSearchResults = []
+                        }
+                    }
+                }, onCommit: {
+                    startSearch()
+                })
+                .focused($isSearchFieldFocused)
+                .padding(10)
+                .padding(.trailing, showClearButton ? 30 : 10) // 为清除按钮预留空间
+                .background(Color(.systemGray6))
+                .cornerRadius(8)
+                .onChange(of: searchText) { oldValue, newValue in
+                    showClearButton = !newValue.isEmpty
+                    if newValue.isEmpty {
+                        withAnimation {
+                            showSearchHistory = true
+                            groupedSearchResults = []
+                        }
                     }
                 }
-            }
-            
-            if showClearButton {
-                Button(action: {
-                    searchText = ""
-                    withAnimation {
-                        showSearchHistory = true
-                        groupedSearchResults = [] // 清空搜索结果
-                        isSearchFieldFocused = true  // 添加这一行，设置输入框焦点
+                
+                if showClearButton {
+                    Button(action: {
+                        searchText = ""
+                        withAnimation {
+                            showSearchHistory = true
+                            groupedSearchResults = []
+                            isSearchFieldFocused = true
+                        }
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.gray)
+                            .opacity(0.6)
                     }
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.gray)
+                    .padding(.trailing, 15) // 调整清除按钮在输入框内的位置
+                    .transition(.opacity)
                 }
-                .transition(.opacity)
             }
             
             Button(action: {
@@ -388,8 +392,16 @@ struct SearchResultRow: View {
         VStack(alignment: .leading) {
             HStack {
                 VStack(alignment: .leading) {
-                    Text("\(result.symbol) - \(result.name)")
-                        .font(.headline)
+                    HStack {
+                        Text(result.symbol)
+                            .foregroundColor(.green)  // 将symbol设置为绿色
+                        Text("\(result.name)")
+                            .foregroundColor(.primary)
+                            .lineLimit(1)  // 限制为单行
+                            .truncationMode(.tail)  // 在末尾显示...
+                    }
+                    .font(.headline)
+                    
                     Text(result.tag.joined(separator: ", "))
                         .font(.subheadline)
                         .foregroundColor(.secondary)

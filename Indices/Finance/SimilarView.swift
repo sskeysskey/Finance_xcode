@@ -32,21 +32,31 @@ struct SimilarView: View {
                             id: \.symbol) { item in
                             // 使用 NavigationLink 并传递正确的 groupName
                             NavigationLink(destination: ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Unknown")) {
-                                HStack {
-                                    VStack(alignment: .leading) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    // 上面一行：symbol、totalWeight 和 compareValue
+                                    HStack(spacing: 12) {
                                         Text(item.symbol)
                                             .font(.system(size: 20, weight: .bold))
                                             .foregroundColor(.green)
-                                            .shadow(radius: 1) // 添加轻微阴影效果，使文字更突出
+                                            .shadow(radius: 1)
+                                        
                                         Text("\(item.totalWeight, specifier: "%.2f")")
                                             .font(.subheadline)
+                                            .foregroundColor(.white)
+                                        
                                         Text("\(item.compareValue)")
                                             .font(.subheadline)
+                                            .foregroundColor(.white)
+                                        
+                                        Spacer()
                                     }
-                                    Spacer()
+                                    
+                                    // 下面一行：tags
                                     Text(item.allTags.joined(separator: ", "))
                                         .font(.caption)
                                         .foregroundColor(.gray)
+                                        .lineLimit(1)  // 确保标签只显示一行
+                                        .truncationMode(.tail)  // 如果文本过长，在末尾显示省略号
                                 }
                                 .padding()
                                 .background(Color(UIColor.secondarySystemBackground))

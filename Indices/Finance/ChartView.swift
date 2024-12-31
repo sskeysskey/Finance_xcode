@@ -62,25 +62,26 @@ enum TimeRange: String, CaseIterable {
 // MARK: - DateAxisValueFormatter
 private class DateAxisValueFormatter: AxisValueFormatter {
     private let dateFormatter: DateFormatter
-    private let shift: TimeInterval
+    private let timeRange: TimeRange
 
     init(timeRange: TimeRange) {
+        self.timeRange = timeRange
         dateFormatter = DateFormatter()
+        
         switch timeRange {
-        case .twoYears, .fiveYears, .tenYears, .all:  // 添加 all
-            dateFormatter.dateFormat = "yyyy" // 仅显示年份
-            shift = 365 * 24 * 60 * 60 / 2 // 半年
+        case .all:
+            dateFormatter.dateFormat = "yyyy"
+        case .twoYears, .fiveYears, .tenYears:
+            dateFormatter.dateFormat = "yyyy"
         case .oneYear:
-            dateFormatter.dateFormat = "MMM" // 显示月份
-            shift = 30 * 24 * 60 * 60 / 2 // 半个月
+            dateFormatter.dateFormat = "MMM"
         case .oneMonth, .threeMonths, .sixMonths:
-            dateFormatter.dateFormat = "MMM" // 仅显示月份
-            shift = 15 * 24 * 60 * 60 // 半个月
+            dateFormatter.dateFormat = "MMM"
         }
     }
 
     func stringForValue(_ value: Double, axis: AxisBase?) -> String {
-        let date = Date(timeIntervalSince1970: value + shift)
+        let date = Date(timeIntervalSince1970: value)
         return dateFormatter.string(from: date)
     }
 }
@@ -167,6 +168,7 @@ struct ChartView: View {
                             .foregroundColor(.white)
                         Text(String(format: "%.2f%%", price))
                             .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.green)
                     } else if let date = selectedDateStart { // 单点选择
                         HStack(spacing: 18) {
                             Text(formattedDate(date))
@@ -174,6 +176,7 @@ struct ChartView: View {
                                 .foregroundColor(.white)
                             Text(String(format: "%.2f", price))
                                 .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(.green)
                         }
                     }
                 }
@@ -191,6 +194,7 @@ struct ChartView: View {
                         Text("Description")
                             .font(.system(size: 16, weight: .medium))
                             .padding(.top, 0)
+                            .foregroundColor(.green)
                     }
                     // 新增 Compare 按钮
                     NavigationLink(destination: CompareView(initialSymbol: symbol)) {
@@ -198,7 +202,7 @@ struct ChartView: View {
                             .font(.system(size: 16, weight: .medium))
                             .padding(.top, 0)
                             .padding(.leading, 20)
-                            .foregroundColor(.blue)
+                            .foregroundColor(.green)
                     }
                     // 新增 Similar 按钮
                     NavigationLink(destination: SimilarView(symbol: symbol)) {
@@ -711,7 +715,7 @@ extension StockLineChartView {
     private func calculateSamplingRate(_ timeRange: TimeRange) -> Int {
         let baseRate: Int
         switch timeRange {
-        case .all:        baseRate = 20  // 为全部数据设置更高的采样率
+        case .all:        baseRate = 15  // 为全部数据设置更高的采样率
         case .tenYears:   baseRate = 14
         case .fiveYears:  baseRate = 7
         case .twoYears:   baseRate = 4
@@ -813,26 +817,43 @@ extension StockLineChartView {
     private func configureXAxis(_ xAxis: XAxis) {
         xAxis.labelPosition = .bottom
         xAxis.valueFormatter = DateAxisValueFormatter(timeRange: timeRange)
-        xAxis.labelRotationAngle = 0 // 设置为水平
+        xAxis.labelRotationAngle = 0
         xAxis.labelFont = .systemFont(ofSize: 10)
         
-        switch timeRange {
-        case .twoYears, .fiveYears, .tenYears:
-            xAxis.granularity = 365 * 24 * 60 * 60 // 1 年（秒）
-            xAxis.labelCount = timeRange.labelCount
-        default:
-            xAxis.granularity = 30 * 24 * 60 * 60 // 1 个月（秒）
+        // 特别处理.all的情况
+        if case .all = timeRange {
+            // 获取数据的时间跨度
+            if let firstDate = data.first?.date.timeIntervalSince1970,
+               let lastDate = data.last?.date.timeIntervalSince1970 {
+                let totalYears = (lastDate - firstDate) / (365 * 24 * 60 * 60)
+                
+                // 根据总年数动态调整标签数量
+                if totalYears <= 5 {
+                    xAxis.labelCount = 5
+                    xAxis.granularity = 365 * 24 * 60 * 60  // 1年
+                } else {
+                    // 对于更长的时间跨度，减少标签数量
+                    xAxis.labelCount = min(Int(totalYears) / 2, 8)  // 最多显示8个标签
+                    xAxis.granularity = (lastDate - firstDate) / Double(xAxis.labelCount)
+                }
+            }
+        } else {
+            // 原有的其他时间范围处理逻辑
             switch timeRange {
-            case .threeMonths:
-                xAxis.labelCount = 3
-            case .sixMonths:
-                xAxis.labelCount = 6
-            case .oneYear:
-                xAxis.labelCount = 6
+            case .twoYears, .fiveYears, .tenYears:
+                xAxis.granularity = 365 * 24 * 60 * 60
+                xAxis.labelCount = timeRange.labelCount
             default:
-                xAxis.labelCount = 12 // 默认值
+                xAxis.granularity = 30 * 24 * 60 * 60
+                switch timeRange {
+                case .threeMonths: xAxis.labelCount = 3
+                case .sixMonths: xAxis.labelCount = 6
+                case .oneYear: xAxis.labelCount = 6
+                default: xAxis.labelCount = 12
+                }
             }
         }
+        
         xAxis.granularityEnabled = true
         xAxis.drawGridLinesEnabled = showGrid
     }
