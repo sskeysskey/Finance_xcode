@@ -82,7 +82,7 @@ struct CompareView: View {
     @FocusState private var focusedField: Int?
     
     // 修改默认起始时间为2024年
-    @State private var startDate: Date = Calendar.current.date(from: DateComponents(year: 2004))!
+    @State private var startDate: Date = Calendar.current.date(from: DateComponents(year: 2014))!
     
     // 输入框大小写状态切换
     @State private var shouldUppercase = true
