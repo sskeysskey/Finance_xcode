@@ -112,16 +112,58 @@ struct DescriptionView: View {
     let descriptions: (String, String) // (description1, description2)
     let isDarkMode: Bool
     
+    private func formatDescription(_ text: String) -> String {
+        // 1. 首先处理连续的空格，将其统一处理为单个换行
+        var formattedText = text
+        let spacePatterns = ["    ", "  "] // 优先处理四个空格，再处理两个空格
+        
+        for pattern in spacePatterns {
+            formattedText = formattedText.replacingOccurrences(
+                of: pattern,
+                with: "\n"
+            )
+        }
+        
+        // 2. 统一处理所有需要换行的标记符号
+        let patterns = [
+            "([^\\n])(\\d+、)", // 中文数字序号
+            "([^\\n])(\\d+\\.)", // 英文数字序号
+            "([^\\n])([一二三四五六七八九十]+、)", // 中文数字
+            "([^\\n])(- )" // 新增破折号标记
+        ]
+        
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+                formattedText = regex.stringByReplacingMatches(
+                    in: formattedText,
+                    options: [],
+                    range: NSRange(location: 0, length: formattedText.utf16.count),
+                    withTemplate: "$1\n$2"
+                )
+            }
+        }
+        
+        // 3. 清理多余的换行，将多个连续换行替换为单个换行
+        while formattedText.contains("\n\n") {
+            formattedText = formattedText.replacingOccurrences(
+                of: "\n\n",
+                with: "\n"
+            )
+        }
+        
+        return formattedText
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text(descriptions.0)
+                    Text(formatDescription(descriptions.0))
                         .font(.title2)
                         .foregroundColor(isDarkMode ? .white : .black)
-                        .padding(.bottom, 18) // 添加底部间距
+                        .padding(.bottom, 18)
                     
-                    Text(descriptions.1)
+                    Text(formatDescription(descriptions.1))
                         .font(.title2)
                         .foregroundColor(isDarkMode ? .white : .black)
                 }
