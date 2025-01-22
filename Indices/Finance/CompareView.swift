@@ -2,13 +2,14 @@ import SwiftUI
 import DGCharts
 import Charts
 
+// MARK: - DateMarkerView
 class DateMarkerView: MarkerView {
     private var text = ""
     private let textLabel: UILabel = {
         let label = UILabel()
-        label.textColor = UIColor.white
+        label.textColor = .white
         label.backgroundColor = UIColor.black.withAlphaComponent(0.7)
-        label.font = UIFont.systemFont(ofSize: 12)
+        label.font = .systemFont(ofSize: 12)
         label.textAlignment = .center
         label.layer.cornerRadius = 4
         label.clipsToBounds = true
@@ -31,37 +32,42 @@ class DateMarkerView: MarkerView {
         let dateFormatter = DateFormatter()
         dateFormatter.dateStyle = .medium
         dateFormatter.timeStyle = .none
+        
         text = dateFormatter.string(from: date)
         textLabel.text = text
         
-        // 调整标签的大小以适应文本
         textLabel.sizeToFit()
         let padding: CGFloat = 8
-        self.frame.size = CGSize(width: textLabel.frame.width + padding, height: textLabel.frame.height + padding / 2)
+        frame.size = CGSize(width: textLabel.frame.width + padding, height: textLabel.frame.height + padding / 2)
         textLabel.frame = CGRect(x: padding / 2, y: padding / 4, width: textLabel.frame.width, height: textLabel.frame.height)
         
         super.refreshContent(entry: entry, highlight: highlight)
     }
     
     override func draw(context: CGContext, point: CGPoint) {
-        // 调整标记位置，使其不超出图表边界
-        var drawPosition = CGPoint(x: point.x - self.bounds.width / 2, y: point.y - self.bounds.height - 10)
+        var drawPosition = CGPoint(
+            x: point.x - bounds.width / 2,
+            y: point.y - bounds.height - 10
+        )
         
-        // 确保标记不会超出左边界
+        // Left boundary
         if drawPosition.x < 0 {
             drawPosition.x = 0
         }
         
-        // 确保标记不会超出右边界
-        if drawPosition.x + self.bounds.width > self.chartView?.bounds.width ?? 0 {
-            drawPosition.x = (self.chartView?.bounds.width ?? 0) - self.bounds.width
+        // Right boundary
+        if let chartWidth = chartView?.bounds.width {
+            if drawPosition.x + bounds.width > chartWidth {
+                drawPosition.x = chartWidth - bounds.width
+            }
         }
         
-        self.frame.origin = drawPosition
+        frame.origin = drawPosition
         super.draw(context: context, point: point)
     }
 }
 
+// MARK: - CompareView
 struct CompareView: View {
     @Environment(\.presentationMode) var presentationMode
     @EnvironmentObject var dataService: DataService
@@ -74,24 +80,26 @@ struct CompareView: View {
     @State private var errorMessage: String? = nil
     @State private var navigateToComparison = false
     @State private var showAlert = false
-    // 添加日期选择器的折叠状态
+    
+    // Start/End Date pickers expansion states
     @State private var isStartDateExpanded = false
     @State private var isEndDateExpanded = false
     
-    // 添加一个状态变量来追踪当前聚焦的输入框
+    // Track focused input field
     @FocusState private var focusedField: Int?
     
-    // 修改默认起始时间为2024年
+    // Default start date: year 2014
     @State private var startDate: Date = Calendar.current.date(from: DateComponents(year: 2014))!
     
-    // 输入框大小写状态切换
+    // Uppercase toggle
     @State private var shouldUppercase = true
 
     var body: some View {
         VStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // 将开始比较按钮移到最上方
+                    
+                    // Comparison button
                     Button(action: startComparison) {
                         Text("开始比较")
                             .foregroundColor(.white)
@@ -101,56 +109,46 @@ struct CompareView: View {
                             .cornerRadius(8)
                     }
                     
-                    // 可折叠的日期选择器
+                    // Collapsible date pickers
                     Group {
-                        DisclosureGroup(
-                            isExpanded: $isStartDateExpanded,
-                            content: {
-                                DatePicker("", selection: $startDate, displayedComponents: .date)
-                                    .datePickerStyle(GraphicalDatePickerStyle())
-                                    .padding(.vertical)
-                            },
-                            label: {
-                                HStack {
-                                    Text("开始日期:")
-                                        .font(.headline)
-                                    Spacer()
-                                    Text(startDate.formatted(date: .abbreviated, time: .omitted))
-                                        .foregroundColor(.gray)
-                                }
+                        DisclosureGroup(isExpanded: $isStartDateExpanded) {
+                            DatePicker("", selection: $startDate, displayedComponents: .date)
+                                .datePickerStyle(GraphicalDatePickerStyle())
+                                .padding(.vertical)
+                        } label: {
+                            HStack {
+                                Text("开始日期:")
+                                    .font(.headline)
+                                Spacer()
+                                Text(startDate.formatted(date: .abbreviated, time: .omitted))
+                                    .foregroundColor(.gray)
                             }
-                        )
+                        }
                         
-                        DisclosureGroup(
-                            isExpanded: $isEndDateExpanded,
-                            content: {
-                                DatePicker("", selection: $endDate, displayedComponents: .date)
-                                    .datePickerStyle(GraphicalDatePickerStyle())
-                                    .padding(.vertical)
-                            },
-                            label: {
-                                HStack {
-                                    Text("结束日期:")
-                                        .font(.headline)
-                                    Spacer()
-                                    Text(endDate.formatted(date: .abbreviated, time: .omitted))
-                                        .foregroundColor(.gray)
-                                }
+                        DisclosureGroup(isExpanded: $isEndDateExpanded) {
+                            DatePicker("", selection: $endDate, displayedComponents: .date)
+                                .datePickerStyle(GraphicalDatePickerStyle())
+                                .padding(.vertical)
+                        } label: {
+                            HStack {
+                                Text("结束日期:")
+                                    .font(.headline)
+                                Spacer()
+                                Text(endDate.formatted(date: .abbreviated, time: .omitted))
+                                    .foregroundColor(.gray)
                             }
-                        )
-                    }
-                    
-                    // 添加大写转换开关
-                    Toggle(isOn: $shouldUppercase) {
-                    }
-                    .onChange(of: shouldUppercase) { oldValue, newValue in
-                        // 当开关状态改变时，更新所有现有的股票代码
-                        if newValue {
-                            symbols = symbols.map { $0.uppercased() }
                         }
                     }
                     
-                    // 股票代码输入框
+                    // Uppercase toggle
+                    Toggle("", isOn: $shouldUppercase)
+                        .onChange(of: shouldUppercase) { _, newValue in
+                            if newValue {
+                                symbols = symbols.map { $0.uppercased() }
+                            }
+                        }
+                    
+                    // Stock symbol input fields
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(0..<symbols.count, id: \.self) { index in
                             HStack {
@@ -159,7 +157,9 @@ struct CompareView: View {
                                     text: Binding(
                                         get: { symbols[index] },
                                         set: { newValue in
-                                            symbols[index] = shouldUppercase ? newValue.uppercased() : newValue
+                                            symbols[index] = shouldUppercase
+                                                ? newValue.uppercased()
+                                                : newValue
                                         }
                                     ),
                                     onClear: {
@@ -168,27 +168,27 @@ struct CompareView: View {
                                 )
                                 .focused($focusedField, equals: index)
                                 
-                                // 保留原有的删除整行按钮
+                                // Remove row button
                                 if symbols.count > 1 {
-                                    Button(action: {
+                                    Button {
                                         symbols.remove(at: index)
-                                    }) {
+                                    } label: {
                                         Image(systemName: "minus.circle")
                                             .foregroundColor(.red)
                                     }
                                 }
                             }
                         }
-
+                        
+                        // "Add symbol" button
                         if symbols.count < maxSymbols {
-                            Button(action: {
+                            Button {
                                 let newIndex = symbols.count
                                 symbols.append("")
-                                // 设置焦点到新添加的输入框
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                                     focusedField = newIndex
                                 }
-                            }) {
+                            } label: {
                                 HStack {
                                     Image(systemName: "plus.circle")
                                     Text("添加股票代码")
@@ -198,8 +198,8 @@ struct CompareView: View {
                         }
                     }
                     
-                    // 显示错误消息
-                    if let errorMessage = errorMessage {
+                    // Error message
+                    if let errorMessage {
                         Text(errorMessage)
                             .foregroundColor(.red)
                             .font(.footnote)
@@ -211,7 +211,6 @@ struct CompareView: View {
         }
         .onAppear {
             if symbols.isEmpty {
-                // 如果initialSymbol为空，只添加一个空字符串
                 if initialSymbol.isEmpty {
                     symbols.append("")
                 } else {
@@ -219,10 +218,7 @@ struct CompareView: View {
                 }
                 symbols.append("")
                 
-                // 使用延迟来确保视图完全加载后设置焦点
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    // 如果initialSymbol为空，聚焦第一个输入框
-                    // 否则聚焦第二个输入框
                     focusedField = initialSymbol.isEmpty ? 0 : 1
                 }
             }
@@ -231,48 +227,48 @@ struct CompareView: View {
             ComparisonChartView(symbols: symbols, startDate: startDate, endDate: endDate)
         }
         .alert(isPresented: $showAlert) {
-            Alert(title: Text("错误"), message: Text(errorMessage ?? "未知错误"), dismissButton: .default(Text("确定")))
+            Alert(title: Text("错误"),
+                  message: Text(errorMessage ?? "未知错误"),
+                  dismissButton: .default(Text("确定")))
         }
     }
     
     private func startComparison() {
-        // 清除之前的错误消息
         errorMessage = nil
         
-        // 清理符号输入，移除空白
-        let trimmedSymbols = symbols.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let trimmedSymbols = symbols
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
         
-        // 检查是否至少有一个符号
         guard !trimmedSymbols.isEmpty else {
             errorMessage = "请至少输入一个股票代码"
             showAlert = true
             return
         }
         
-        // 检查是否超过最大数量
         if trimmedSymbols.count > maxSymbols {
             errorMessage = "最多只能比较 \(maxSymbols) 个股票代码"
             showAlert = true
             return
         }
         
-        // 检查日期有效性
         guard startDate <= endDate else {
             errorMessage = "开始日期必须早于或等于结束日期"
             showAlert = true
             return
         }
         
-        // 设置 symbols、startDate、endDate，并导航
         symbols = trimmedSymbols
         navigateToComparison = true
     }
 }
 
+// MARK: - CustomTextField
 struct CustomTextField: View {
     let placeholder: String
     @Binding var text: String
     let onClear: () -> Void
+    
     @FocusState private var isFocused: Bool
     
     var body: some View {
@@ -282,20 +278,21 @@ struct CustomTextField: View {
                 .focused($isFocused)
             
             if !text.isEmpty {
-                Button(action: {
+                Button {
                     text = ""
                     onClear()
-                }) {
+                } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.gray)
                         .opacity(0.6)
                 }
-                .padding(.trailing, 8) // 调整clearButton的右侧边距
+                .padding(.trailing, 8)
             }
         }
     }
 }
 
+// MARK: - ComparisonChartView
 struct ComparisonChartView: View {
     let symbols: [String]
     let startDate: Date
@@ -311,7 +308,7 @@ struct ComparisonChartView: View {
             if isLoading {
                 ProgressView("加载数据...")
                     .scaleEffect(1.5, anchor: .center)
-            } else if let errorMessage = errorMessage {
+            } else if let errorMessage {
                 Text(errorMessage)
                     .foregroundColor(.red)
                     .padding()
@@ -335,7 +332,7 @@ struct ComparisonChartView: View {
             var tempData: [String: [DatabaseManager.PriceData]] = [:]
             var shortestDateRange: (start: Date, end: Date)?
             
-            // 第一次遍历：获取所有数据并确定最短的日期范围
+            // First pass: fetch data and determine the shortest date range
             for symbol in symbols {
                 guard let tableName = dataService.getCategory(for: symbol) else {
                     DispatchQueue.main.async {
@@ -359,15 +356,13 @@ struct ComparisonChartView: View {
                     return
                 }
                 
-                // 获取当前数据集的日期范围
                 let currentStart = data.first?.date ?? startDate
                 let currentEnd = data.last?.date ?? endDate
                 
-                // 更新最短日期范围
-                if let existing = shortestDateRange {
+                if let existingRange = shortestDateRange {
                     shortestDateRange = (
-                        start: max(existing.start, currentStart),
-                        end: min(existing.end, currentEnd)
+                        start: max(existingRange.start, currentStart),
+                        end: min(existingRange.end, currentEnd)
                     )
                 } else {
                     shortestDateRange = (currentStart, currentEnd)
@@ -376,7 +371,6 @@ struct ComparisonChartView: View {
                 tempData[symbol] = data
             }
             
-            // 确保我们有有效的日期范围
             guard let dateRange = shortestDateRange else {
                 DispatchQueue.main.async {
                     errorMessage = "无法确定共同的日期范围"
@@ -385,13 +379,11 @@ struct ComparisonChartView: View {
                 return
             }
             
-            // 第二次遍历：根据最短日期范围过滤所有数据
+            // Second pass: filter data by the shortest date range
             for (symbol, data) in tempData {
                 var filteredData = data.filter {
                     $0.date >= dateRange.start && $0.date <= dateRange.end
                 }
-                
-                // 采样处理
                 filteredData = filteredData.sampled(step: 5)
                 tempData[symbol] = filteredData
             }
@@ -404,18 +396,14 @@ struct ComparisonChartView: View {
     }
 }
 
+// MARK: - Array Extension
 extension Array where Element == DatabaseManager.PriceData {
     func sampled(step: Int) -> [DatabaseManager.PriceData] {
-        var result: [DatabaseManager.PriceData] = []
-        for (index, data) in self.enumerated() {
-            if index % step == 0 {
-                result.append(data)
-            }
-        }
-        return result
+        stride(from: 0, to: count, by: step).map { self[$0] }
     }
 }
 
+// MARK: - ComparisonStockLineChartView
 struct ComparisonStockLineChartView: UIViewRepresentable {
     let data: [String: [DatabaseManager.PriceData]]
     let isDarkMode: Bool
@@ -424,15 +412,14 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
         let chartView = LineChartView()
         chartView.delegate = context.coordinator
         
-        // 创建自定义格式化器
         let formatter = DateValueFormatter()
-        context.coordinator.dateFormatter = formatter  // 保存引用
+        context.coordinator.dateFormatter = formatter
         
         configureChartView(chartView)
         chartView.noDataText = "No Data Available"
+        
         configureXAxis(chartView.xAxis, formatter: formatter)
         
-        // 创建并配置自定义 Marker
         let marker = DateMarkerView()
         marker.chartView = chartView
         chartView.marker = marker
@@ -446,7 +433,6 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
             return
         }
         
-        // 计算时间跨度
         var minDate = Date.distantFuture
         var maxDate = Date.distantPast
         
@@ -460,37 +446,46 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
         
         let timespan = maxDate.timeIntervalSince(minDate)
         context.coordinator.dateFormatter?.updateTimespan(timespan)
-
         
-        var dataSets: [LineChartDataSet] = []
-        let colors: [UIColor] = [.systemRed, .systemGreen, .systemBlue, .systemPurple, .systemOrange]
+        var dataSets = [LineChartDataSet]()
+        let colors: [UIColor] = [
+            .systemRed,
+            .systemGreen,
+            .systemBlue,
+            .systemPurple,
+            .systemOrange
+        ]
         
         for (index, (symbol, priceData)) in data.enumerated() {
             if !priceData.isEmpty {
-                // 找出最大最小值
-                let prices = priceData.map { $0.price }
+                let prices = priceData.map(\.price)
                 guard let minPrice = prices.min(),
-                      let maxPrice = prices.max() else { continue }
+                      let maxPrice = prices.max()
+                else { continue }
                 
                 let priceRange = maxPrice - minPrice
                 
-                // 归一化处理：将所有价格映射到0-100的范围内
-                let entries = priceData.map { priceData -> ChartDataEntry in
-                    let normalizedPrice = priceRange > 0 ?
-                        ((priceData.price - minPrice) / priceRange) * 100 : 50
-                    return ChartDataEntry(x: priceData.date.timeIntervalSince1970,
-                                        y: normalizedPrice)
+                // Normalize prices to 0 - 100
+                let entries = priceData.map {
+                    let normalizedPrice = (priceRange > 0)
+                        ? (($0.price - minPrice) / priceRange) * 100
+                        : 50
+                    return ChartDataEntry(
+                        x: $0.date.timeIntervalSince1970,
+                        y: normalizedPrice
+                    )
                 }
                 
-                let dataSet = createDataSet(entries: entries,
-                                          color: colors[index % colors.count],
-                                          label: "\(symbol)")
+                let dataSet = createDataSet(
+                    entries: entries,
+                    color: colors[index % colors.count],
+                    label: symbol
+                )
                 dataSets.append(dataSet)
             }
         }
         
-        let combinedData = LineChartData(dataSets: dataSets)
-        chartView.data = combinedData
+        chartView.data = LineChartData(dataSets: dataSets)
         chartView.notifyDataSetChanged()
     }
     
@@ -498,7 +493,7 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
         Coordinator(self)
     }
     
-    // MARK: - Coordinator
+    // MARK: Coordinator
     class Coordinator: NSObject, ChartViewDelegate {
         var parent: ComparisonStockLineChartView
         var dateFormatter: DateValueFormatter?
@@ -518,19 +513,19 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
         chartView.pinchZoomEnabled = true
         chartView.highlightPerTapEnabled = true
         chartView.highlightPerDragEnabled = true
-
+        
         configureYAxis(chartView.leftAxis)
         
-        // 主题相关设置
         let textColor = isDarkMode ? UIColor.white : UIColor.black
-        let gridColor = isDarkMode ? UIColor.gray.withAlphaComponent(0.3) : UIColor.gray.withAlphaComponent(0.2)
+        let gridColor = isDarkMode
+            ? UIColor.gray.withAlphaComponent(0.3)
+            : UIColor.gray.withAlphaComponent(0.2)
         
         chartView.xAxis.labelTextColor = textColor
         chartView.leftAxis.labelTextColor = textColor
         chartView.xAxis.gridColor = gridColor
         chartView.leftAxis.gridColor = gridColor
         
-        // 背景颜色
         chartView.backgroundColor = isDarkMode ? .black : .white
     }
     
@@ -538,7 +533,7 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
         xAxis.labelPosition = .bottom
         xAxis.labelRotationAngle = 0
         xAxis.labelFont = .systemFont(ofSize: 10)
-        xAxis.granularity = 3600 * 24 * 30  // 至少间隔30天
+        xAxis.granularity = 3600 * 24 * 30
         xAxis.valueFormatter = formatter
         xAxis.drawGridLinesEnabled = true
     }
@@ -551,25 +546,25 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
         leftAxis.drawZeroLineEnabled = true
         leftAxis.zeroLineWidth = 0.5
         leftAxis.zeroLineColor = .gray
-        
-        // 设置Y轴范围为0-100
         leftAxis.axisMinimum = 0
         leftAxis.axisMaximum = 100
         leftAxis.spaceTop = 0.1
         leftAxis.spaceBottom = 0.1
         
-        // 自定义Y轴标签
         leftAxis.valueFormatter = DefaultAxisValueFormatter { value, _ in
-            return String(format: "%.1f", value)
+            String(format: "%.1f", value)
         }
     }
-
-    private func createDataSet(entries: [ChartDataEntry], color: UIColor, label: String) -> LineChartDataSet {
+    
+    private func createDataSet(
+        entries: [ChartDataEntry],
+        color: UIColor,
+        label: String
+    ) -> LineChartDataSet {
         let dataSet = LineChartDataSet(entries: entries, label: label)
         dataSet.setColor(color)
         dataSet.lineWidth = 1.5
         dataSet.drawCirclesEnabled = false
-        // 更改为贝塞尔曲线模式
         dataSet.mode = .cubicBezier
         dataSet.drawFilledEnabled = false
         dataSet.drawValuesEnabled = false
@@ -578,14 +573,17 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
         dataSet.highlightLineWidth = 1
         dataSet.highlightLineDashLengths = [5, 2]
         
-        // 添加渐变效果
         let gradientColors = [
             color.withAlphaComponent(0.3).cgColor,
             color.withAlphaComponent(0.0).cgColor
         ]
-        let gradient = CGGradient(colorsSpace: nil,
-                                 colors: gradientColors as CFArray,
-                                 locations: [0.0, 1.0])!
+        
+        let gradient = CGGradient(
+            colorsSpace: nil,
+            colors: gradientColors as CFArray,
+            locations: [0.0, 1.0]
+        )!
+        
         dataSet.fillAlpha = 0.3
         dataSet.fill = LinearGradientFill(gradient: gradient, angle: 90)
         dataSet.drawFilledEnabled = true
@@ -594,6 +592,7 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
     }
 }
 
+// MARK: - DateValueFormatter
 class DateValueFormatter: AxisValueFormatter {
     private let dateFormatter = DateFormatter()
     private var referenceTimespan: TimeInterval = 0
@@ -604,18 +603,15 @@ class DateValueFormatter: AxisValueFormatter {
     
     func stringForValue(_ value: Double, axis: AxisBase?) -> String {
         let date = Date(timeIntervalSince1970: value)
-        
-        // 根据时间跨度选择不同的日期格式
-        if referenceTimespan > 365 * 24 * 3600 { // 超过1年
+        if referenceTimespan > 365 * 24 * 3600 {
             dateFormatter.dateFormat = "yyyy"
         } else {
             dateFormatter.dateFormat = "MM/dd"
         }
-        
         return dateFormatter.string(from: date)
     }
     
     func updateTimespan(_ timespan: TimeInterval) {
-        self.referenceTimespan = timespan
+        referenceTimespan = timespan
     }
 }

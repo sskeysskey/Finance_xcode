@@ -1,6 +1,8 @@
 import SwiftUI
 import Foundation
 
+// MARK: - Models
+
 struct IndicesSector: Identifiable, Codable {
     var id: String { name }  // 使用name作为唯一标识符
     let name: String
@@ -64,30 +66,29 @@ struct SectorsPanel: Decodable {
         let container = try decoder.container(keyedBy: DynamicCodingKeys.self)
         var sectors: [IndicesSector] = []
         
-        // 获取所有sector的key，并按字母顺序排序
+        // 获取所有 sector 的 key，并按字母顺序排序
         let orderedKeys = container.allKeys
             .map { $0.stringValue }
-            .sorted() // 如果需要按照其他规则排序，可以修改这里的排序逻辑
+            .sorted()
         
-        // 按照固定顺序遍历
+        // 按照固定顺序遍历 sector
         for key in orderedKeys {
             let codingKey = DynamicCodingKeys(stringValue: key)!
             let symbolsContainer = try container.nestedContainer(keyedBy: DynamicCodingKeys.self, forKey: codingKey)
             var symbols: [IndicesSymbol] = []
             
-            // 保存symbols的原始顺序
+            // 按照固定顺序遍历 symbols
             let orderedSymbolKeys = symbolsContainer.allKeys
                 .map { $0.stringValue }
-                .sorted() // 保持symbol的排序一致性
+                .sorted()
             
-            // 按照固定顺序遍历symbols
             for symbolKey in orderedSymbolKeys {
                 let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
                 let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
                 symbols.append(IndicesSymbol(symbol: symbolKey, name: symbolName, value: "", tags: nil))
             }
             
-            // 只有当symbols不为空时才添加该sector
+            // 只有当 symbols 不为空时才添加该 sector
             if !symbols.isEmpty {
                 let sector = IndicesSector(name: key, symbols: symbols)
                 sectors.append(sector)
@@ -98,48 +99,58 @@ struct SectorsPanel: Decodable {
     }
 }
 
+// MARK: - Views
+
 struct IndicesContentView: View {
     @EnvironmentObject var dataService: DataService
     @State private var showError: Bool = false
     @State private var errorMessage: String = ""
-
+    
+    // 自定义网格布局
+    private let gridLayout = [
+        GridItem(.adaptive(minimum: 100, maximum: .infinity), spacing: 12)
+    ]
+    
     var body: some View {
-        ScrollView {
-            if let sectorsPanel = dataService.sectorsPanel {
-                LazyVGrid(columns: [
-                    GridItem(.adaptive(minimum: 100, maximum: .infinity), spacing: 8)
-                ], spacing: 8) {
-                    ForEach(sectorsPanel.sectors, id: \.name) { sector in
-                        NavigationLink {
-                            SectorDetailView(sector: sector)
-                                .navigationBarTitleDisplayMode(.inline)
-                        } label: {
-                            SectorButtonView(sectorName: sector.name)
+        NavigationView {
+            ScrollView {
+                if let sectorsPanel = dataService.sectorsPanel {
+                    LazyVGrid(columns: gridLayout, spacing: 12) {
+                        ForEach(sectorsPanel.sectors, id: \.name) { sector in
+                            NavigationLink {
+                                SectorDetailView(sector: sector)
+                                    .navigationBarTitleDisplayMode(.inline)
+                            } label: {
+                                SectorButtonView(sectorName: sector.name)
+                            }
                         }
                     }
-                }
-                .padding()
-            } else {
-                if let error = dataService.errorMessage {
-                    Text(error)
-                        .foregroundColor(.red)
+                    .padding()
                 } else {
-                    LoadingView()
+                    if let error = dataService.errorMessage {
+                        Text(error)
+                            .foregroundColor(.red)
+                            .padding()
+                    } else {
+                        LoadingView()
+                    }
                 }
             }
+//            .navigationTitle("Sectors")
+            .alert(isPresented: Binding<Bool>(
+                get: { dataService.errorMessage != nil },
+                set: { _ in dataService.errorMessage = nil }
+            )) {
+                Alert(
+                    title: Text("错误"),
+                    message: Text(dataService.errorMessage ?? "未知错误"),
+                    dismissButton: .default(Text("好的"))
+                )
+            }
         }
-        .alert(isPresented: Binding<Bool>(
-            get: { dataService.errorMessage != nil },
-            set: { _ in dataService.errorMessage = nil }
-        )) {
-            Alert(title: Text("错误"),
-                  message: Text(dataService.errorMessage ?? "未知错误"),
-                  dismissButton: .default(Text("好的")))
-        }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 }
-
-// MARK: - 子视图组件
 
 struct LoadingView: View {
     var body: some View {
@@ -158,12 +169,19 @@ struct SectorButtonView: View {
     
     var body: some View {
         Text(sectorName.replacingOccurrences(of: "_", with: " "))
-            .font(.system(size: 14))
+            .font(.subheadline).bold()
             .foregroundColor(.white)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color.blue)
-            .cornerRadius(8)
+            .background(
+                LinearGradient(
+                    gradient: Gradient(colors: [.blue, .purple]),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .cornerRadius(10)
+            .shadow(color: Color.black.opacity(0.15), radius: 3, x: 2, y: 2)
             .frame(minHeight: 44)
     }
 }
@@ -174,28 +192,33 @@ struct SectorDetailView: View {
     @State private var symbols: [IndicesSymbol] = []
     @State private var showError: Bool = false
     @State private var errorMessage: String = ""
-
+    
     var body: some View {
         ScrollView {
-            LazyVStack {
+            LazyVStack(spacing: 0) {
                 ForEach(symbols) { symbol in
                     SymbolItemView(symbol: symbol, sectorName: sector.name)
                 }
             }
-            .padding()
+            .padding(.horizontal)
+            .padding(.top, 8)
         }
-        .navigationBarTitle(sector.name.replacingOccurrences(of: "_", with: " "),
-                            displayMode: .inline)
+        .navigationBarTitle(
+            sector.name.replacingOccurrences(of: "_", with: " "),
+            displayMode: .inline
+        )
         .alert(isPresented: $showError) {
-            Alert(title: Text("错误"),
-                  message: Text(errorMessage),
-                  dismissButton: .default(Text("好的")))
+            Alert(
+                title: Text("错误"),
+                message: Text(errorMessage),
+                dismissButton: .default(Text("好的"))
+            )
         }
         .onAppear {
             loadSymbols()
         }
     }
-
+    
     func loadSymbols() {
         let compareMap = dataService.compareData
         self.symbols = sector.symbols.map { symbol in
@@ -207,9 +230,12 @@ struct SectorDetailView: View {
                        "N/A"
             updatedSymbol.value = value
             
-            // 尝试获取 description，如果有就添加，没有就保持为 nil
-            if let description = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == symbol.symbol.uppercased() })?.tag ??
-                dataService.descriptionData?.etfs.first(where: { $0.symbol.uppercased() == symbol.symbol.uppercased() })?.tag {
+            // 尝试获取 description
+            if let description = dataService.descriptionData?.stocks.first(where: {
+                $0.symbol.uppercased() == symbol.symbol.uppercased()
+            })?.tag ?? dataService.descriptionData?.etfs.first(where: {
+                $0.symbol.uppercased() == symbol.symbol.uppercased()
+            })?.tag {
                 updatedSymbol.tags = description
             }
             
@@ -218,10 +244,9 @@ struct SectorDetailView: View {
     }
 }
 
-// 优化 SymbolItemView 以更好地处理显示逻辑
 struct SymbolItemView: View {
     let symbol: IndicesSymbol
-    let sectorName: String  // 添加这一行来传递 sector 名称
+    let sectorName: String
     
     private var tableName: String {
         // 特殊处理 ETFs_US
@@ -230,33 +255,36 @@ struct SymbolItemView: View {
     
     var body: some View {
         NavigationLink(destination: ChartView(symbol: symbol.symbol, groupName: tableName)) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 // 第一行：symbol和value
                 HStack {
                     Text("\(symbol.symbol) \(symbol.name)")
                         .font(.headline)
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     
                     Spacer()
                     
                     Text(symbol.value)
                         .foregroundColor(getValueColor(value: symbol.value))
+                        .fontWeight(.semibold)
                 }
                 
                 // 第二行：tags
                 if let tags = symbol.tags, !tags.isEmpty {
                     Text(tags.joined(separator: ", "))
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
                         .lineLimit(2)
-                        .multilineTextAlignment(.leading)  // 添加多行文本对齐
-                        .fixedSize(horizontal: false, vertical: true)  // 确保正确换行
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding()
-            .background(Color(.systemGray6))
-            .cornerRadius(10)
-            .shadow(radius: 2)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.systemGray6))
+                    .shadow(color: Color.black.opacity(0.05), radius: 2, x: 2, y: 2)
+            )
             .padding(.vertical, 4)
         }
     }
@@ -269,7 +297,21 @@ struct SymbolItemView: View {
         } else if value == "N/A" {
             return .gray
         } else {
-            return .green
+            return .blue
         }
     }
 }
+
+// MARK: - 你自己的 DataService、ChartView 等辅助可能需要在其他文件中实现
+// 这里只保留主界面及其相关的结构体和视图示例。
+
+// 示例：如果你需要预览，可以使用下面的 PreviewProvider
+// 需要注意的是，DataService、ChartView 等需要自行实现。
+/*
+struct IndicesContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        IndicesContentView()
+            .environmentObject(DataService())
+    }
+}
+*/

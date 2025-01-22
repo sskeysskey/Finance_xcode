@@ -2,7 +2,7 @@ import Foundation
 import Combine
 import SwiftUI
 
-// 定义公共协议
+// MARK: - 协议与模型
 protocol SearchDescribableItem {
     var symbol: String { get }
     var name: String { get }
@@ -24,7 +24,6 @@ struct SearchStock: Identifiable, Codable, SearchDescribableItem {
     }
 }
 
-// 使 ETF 遵循 DescribableItem 协议
 struct SearchETF: Identifiable, Codable, SearchDescribableItem {
     let id = UUID()
     let symbol: String
@@ -47,45 +46,37 @@ struct SelectedSymbol: Identifiable {
 struct GroupedSearchResults: Identifiable {
     var id = UUID()
     var category: MatchCategory
-    var results: [(result: SearchResult, score: Int)] // 存储结果及其评分
+    var results: [(result: SearchResult, score: Int)]
     let highestScore: Int
 }
 
-// 定义匹配类别
 enum MatchCategory: String, CaseIterable, Identifiable {
-    // Symbol Matches
     case stockSymbol = "Stock Symbol"
     case etfSymbol = "ETF Symbol"
-    
-    // Name Matches
     case stockName = "Stock Name"
     case etfName = "ETF Name"
-    
-    // Tag Matches
     case stockTag = "Stock Tag"
     case etfTag = "ETF Tag"
-    
-    // Description Matches
     case stockDescription = "Stock Description"
     case etfDescription = "ETF Description"
     
     var id: String { self.rawValue }
     
-    // 更新权重属性，根据新的分类调整优先级
     var priority: Int {
         switch self {
         case .stockSymbol, .etfSymbol:
-            return 1000  // 最高优先级
+            return 1000
         case .stockTag, .etfTag:
             return 800
         case .stockName, .etfName:
             return 500
         case .stockDescription, .etfDescription:
-            return 300  // 最低优先级
+            return 300
         }
     }
 }
 
+// MARK: - 搜索结果包装
 class SearchResult: Identifiable, ObservableObject {
     let id = UUID()
     @Published var symbol: String
@@ -94,10 +85,11 @@ class SearchResult: Identifiable, ObservableObject {
     @Published var marketCap: String?
     @Published var peRatio: String?
     @Published var compare: String?
-    @Published var volume: String?  // 确保这是一个可选的 String
+    @Published var volume: String?
     
-    init(symbol: String, name: String, tag: [String], marketCap: String? = nil,
-         peRatio: String? = nil, compare: String? = nil, volume: String? = nil) {
+    init(symbol: String, name: String, tag: [String],
+         marketCap: String? = nil, peRatio: String? = nil,
+         compare: String? = nil, volume: String? = nil) {
         self.symbol = symbol
         self.name = name
         self.tag = tag
@@ -108,6 +100,7 @@ class SearchResult: Identifiable, ObservableObject {
     }
 }
 
+// MARK: - 分组 header
 struct GroupHeaderView: View {
     let category: MatchCategory
     @Binding var isCollapsed: Bool
@@ -117,13 +110,11 @@ struct GroupHeaderView: View {
             Text(category.rawValue)
                 .font(.headline)
                 .foregroundColor(.gray)
-            
             Spacer()
-            
             Image(systemName: isCollapsed ? "chevron.down" : "chevron.up")
                 .foregroundColor(.gray)
         }
-        .contentShape(Rectangle()) // 让整个区域都可点击
+        .contentShape(Rectangle())
         .onTapGesture {
             withAnimation {
                 isCollapsed.toggle()
@@ -132,7 +123,7 @@ struct GroupHeaderView: View {
     }
 }
 
-// MARK: - Views
+// MARK: - 主搜索按钮页面
 struct SearchContentView: View {
     @State private var showSearch = false
     @State private var showCompare = false
@@ -141,10 +132,7 @@ struct SearchContentView: View {
     var body: some View {
         NavigationStack {
             HStack(spacing: 12) {
-                // 比较按钮
-                Button(action: {
-                    showCompare = true
-                }) {
+                Button(action: { showCompare = true }) {
                     VStack {
                         Image(systemName: "chart.line.uptrend.xyaxis")
                             .font(.system(size: 20))
@@ -157,10 +145,7 @@ struct SearchContentView: View {
                     .cornerRadius(8)
                 }
                 
-                // 搜索按钮
-                Button(action: {
-                    showSearch = true
-                }) {
+                Button(action: { showSearch = true }) {
                     HStack {
                         Image(systemName: "magnifyingglass")
                         Text("点击搜索")
@@ -172,7 +157,6 @@ struct SearchContentView: View {
                 }
             }
             .padding(.horizontal)
-            
             Spacer()
         }
         .navigationDestination(isPresented: $showSearch) {
@@ -184,6 +168,7 @@ struct SearchContentView: View {
     }
 }
 
+// MARK: - 搜索页面
 struct SearchView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var searchText: String = ""
@@ -195,48 +180,39 @@ struct SearchView: View {
     @State private var showChart: Bool = false
     @State private var selectedResult: SearchResult? = nil
     @State private var selectedSymbol: SelectedSymbol? = nil
-    @State private var isFirstAppear = true  // 新增状态变量
+    @State private var isFirstAppear = true
     @ObservedObject var viewModel: SearchViewModel
     @FocusState private var isSearchFieldFocused: Bool
     
-    // 添加分组折叠状态
     @State private var collapsedGroups: [MatchCategory: Bool] = [:]
-    
-    // 添加存储属性
     let isSearchActive: Bool
     
     init(isSearchActive: Bool = false, dataService: DataService) {
         self.isSearchActive = isSearchActive
         self.viewModel = SearchViewModel(dataService: dataService)
-        // 如果需要显示历史记录，设置初始值
         _showSearchHistory = State(initialValue: isSearchActive)
     }
     
     var body: some View {
         VStack(spacing: 0) {
-            // 搜索栏
             searchBar
                 .padding()
             
-            // 主要内容区域
             ZStack {
-                // 搜索历史
                 if showSearchHistory {
-                    SearchHistoryView(viewModel: viewModel, onSelect: { term in
+                    SearchHistoryView(viewModel: viewModel) { term in
                         searchText = term
                         startSearch()
-                    })
+                    }
                     .transition(.opacity)
-                    .zIndex(1) // 确保历史记录始终在最上层
+                    .zIndex(1)
                 }
                 
-                // 加载指示器
                 if isLoading {
                     ProgressView("正在搜索...")
                         .padding()
                 }
                 
-                // 搜索结果列表
                 if !showSearchHistory && !groupedSearchResults.isEmpty {
                     searchResultsList
                         .transition(.opacity)
@@ -253,24 +229,20 @@ struct SearchView: View {
                     dismissButton: .default(Text("确定"))
                 )
             }
-            // 使用 sheet(item:) 展示 ChartView
             .sheet(item: $selectedSymbol) { selected in
                 ChartView(symbol: selected.result.symbol, groupName: selected.category)
             }
         }
         .onAppear {
             if isSearchActive && isFirstAppear {
-                // 只在首次进入搜索页面时激活输入框焦点
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     isSearchFieldFocused = true
-                    isFirstAppear = false  // 标记不再是首次加载
+                    isFirstAppear = false
                 }
             }
         }
-//        .ignoresSafeArea(.keyboard) // 防止键盘顶起视图
     }
     
-    // MARK: - 搜索栏
     private var searchBar: some View {
         HStack {
             ZStack(alignment: .trailing) {
@@ -286,10 +258,10 @@ struct SearchView: View {
                 })
                 .focused($isSearchFieldFocused)
                 .padding(10)
-                .padding(.trailing, showClearButton ? 30 : 10) // 为清除按钮预留空间
+                .padding(.trailing, showClearButton ? 30 : 10)
                 .background(Color(.systemGray6))
                 .cornerRadius(8)
-                .onChange(of: searchText) { oldValue, newValue in
+                .onChange(of: searchText) { _, newValue in
                     showClearButton = !newValue.isEmpty
                     if newValue.isEmpty {
                         withAnimation {
@@ -312,7 +284,7 @@ struct SearchView: View {
                             .foregroundColor(.gray)
                             .opacity(0.6)
                     }
-                    .padding(.trailing, 15) // 调整清除按钮在输入框内的位置
+                    .padding(.trailing, 15)
                     .transition(.opacity)
                 }
             }
@@ -331,21 +303,22 @@ struct SearchView: View {
         }
     }
     
-    // MARK: - 搜索结果列表
     private var searchResultsList: some View {
         List {
             ForEach(groupedSearchResults) { groupedResult in
                 if !groupedResult.results.isEmpty {
-                    Section(header: GroupHeaderView(category: groupedResult.category, isCollapsed: Binding(
-                        get: { collapsedGroups[groupedResult.category] ?? false },
-                        set: { collapsedGroups[groupedResult.category] = $0 }
-                    ))) {
+                    Section(header: GroupHeaderView(
+                        category: groupedResult.category,
+                        isCollapsed: Binding(
+                            get: { collapsedGroups[groupedResult.category] ?? false },
+                            set: { collapsedGroups[groupedResult.category] = $0 }
+                        )
+                    )) {
                         if !(collapsedGroups[groupedResult.category] ?? false) {
-                            // 按照评分降序排列
                             ForEach(groupedResult.results.sorted { $0.score > $1.score }, id: \.result.id) { result, score in
                                 NavigationLink(destination: {
-                                    if let category = viewModel.dataService.getCategory(for: result.symbol) {
-                                        ChartView(symbol: result.symbol, groupName: category)
+                                    if let groupName = viewModel.dataService.getCategory(for: result.symbol) {
+                                        ChartView(symbol: result.symbol, groupName: groupName)
                                     }
                                 }) {
                                     SearchResultRow(result: result, score: score)
@@ -370,8 +343,6 @@ struct SearchView: View {
                 withAnimation {
                     self.groupedSearchResults = groupedResults
                     self.isLoading = false
-                    
-                    // 初始化 collapsedGroups，所有分组默认展开
                     for group in groupedResults {
                         if collapsedGroups[group.category] == nil {
                             collapsedGroups[group.category] = false
@@ -383,10 +354,10 @@ struct SearchView: View {
     }
 }
 
-// MARK: - 搜索结果行视图
+// MARK: - 搜索结果行
 struct SearchResultRow: View {
     @ObservedObject var result: SearchResult
-    let score: Int // 添加评分属性
+    let score: Int
     
     var body: some View {
         VStack(alignment: .leading) {
@@ -394,14 +365,13 @@ struct SearchResultRow: View {
                 VStack(alignment: .leading) {
                     HStack {
                         Text(result.symbol)
-                            .foregroundColor(.green)  // 将symbol设置为绿色
-                        Text("\(result.name)")
+                            .foregroundColor(.green)
+                        Text(result.name)
                             .foregroundColor(.primary)
-                            .lineLimit(1)  // 限制为单行
-                            .truncationMode(.tail)  // 在末尾显示...
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                     .font(.headline)
-                    
                     Text(result.tag.joined(separator: ", "))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
@@ -414,10 +384,8 @@ struct SearchResultRow: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
-                
-                // 修改这部分代码
                 if let peRatio = result.peRatio, peRatio != "--" {
-                    Text("\(peRatio)")
+                    Text(peRatio)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -464,7 +432,7 @@ struct SearchHistoryView: View {
                             }
                             .padding(.horizontal)
                             .padding(.vertical, 4)
-                            .contentShape(Rectangle()) // 确保整个 HStack 区域可点击
+                            .contentShape(Rectangle())
                             .onTapGesture {
                                 onSelect(term)
                             }
@@ -480,6 +448,7 @@ struct SearchHistoryView: View {
     }
 }
 
+// MARK: - ViewModel
 class SearchViewModel: ObservableObject {
     @Published var searchHistory: [String] = []
     @Published var errorMessage: String? = nil
@@ -491,34 +460,28 @@ class SearchViewModel: ObservableObject {
     
     init(dataService: DataService = DataService()) {
         self.dataService = dataService
-        // 监听 DataService 的 errorMessage
         dataService.$errorMessage
             .receive(on: DispatchQueue.main)
             .assign(to: \.errorMessage, on: self)
             .store(in: &cancellables)
-        
         loadSearchHistory()
     }
     
-    // 搜索功能
     func performSearch(query: String, completion: @escaping ([GroupedSearchResults]) -> Void) {
         let keywords = query.lowercased().split(separator: " ").map { String($0) }
-            
+        
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self, let descriptionData = self.dataService.descriptionData else {
-                DispatchQueue.main.async {
-                    completion([])
-                }
+                DispatchQueue.main.async { completion([]) }
                 return
             }
             
-            struct ScoredGroup {
-                let group: GroupedSearchResults
-                let matchScore: Int
-                let priority: Int
-            }
+            var groupedResults: [(
+                group: GroupedSearchResults,
+                matchScore: Int,
+                priority: Int
+            )] = []
             
-            var groupedResults: [ScoredGroup] = []
             let categories: [MatchCategory] = [
                 .stockSymbol, .etfSymbol,
                 .stockName, .etfName,
@@ -532,44 +495,30 @@ class SearchViewModel: ObservableObject {
                 switch category {
                 case .stockSymbol, .stockName, .stockDescription, .stockTag:
                     matches = self.searchCategory(items: descriptionData.stocks, keywords: keywords, category: category)
+                    
                 case .etfSymbol, .etfName, .etfDescription, .etfTag:
                     matches = self.searchCategory(items: descriptionData.etfs, keywords: keywords, category: category)
                 }
                 
                 if !matches.isEmpty {
                     let highestScore = matches.max(by: { $0.score < $1.score })?.score ?? 0
-                    
-                    let group = GroupedSearchResults(
-                        category: category,
-                        results: matches,
-                        highestScore: highestScore
-                    )
-                    
-                    let scoredGroup = ScoredGroup(
-                        group: group,
-                        matchScore: highestScore,
-                        priority: category.priority
-                    )
-                    
-                    groupedResults.append(scoredGroup)
+                    let group = GroupedSearchResults(category: category, results: matches, highestScore: highestScore)
+                    groupedResults.append((group, highestScore, category.priority))
                 }
             }
-        
-            // 按分数和优先级排序
-            let sortedGroups = groupedResults.sorted { first, second in
-                if first.matchScore != second.matchScore {
-                    return first.matchScore > second.matchScore
+            
+            let sortedGroups = groupedResults.sorted {
+                if $0.matchScore != $1.matchScore {
+                    return $0.matchScore > $1.matchScore
                 }
-                return first.priority > second.priority
+                return $0.priority > $1.priority
             }.map { $0.group }
-
+            
             DispatchQueue.main.async {
                 if !keywords.isEmpty {
                     self.addSearchHistory(term: query)
                 }
                 self.groupedSearchResults = sortedGroups
-                
-                // 获取 ETF 的最新 volume
                 self.fetchLatestVolumes(for: sortedGroups) {
                     completion(sortedGroups)
                 }
@@ -577,29 +526,21 @@ class SearchViewModel: ObservableObject {
         }
     }
     
-    // 新增的方法：为 ETF 搜索结果获取最新 volume
+    // 为 ETF 搜索结果获取最新 volume
     private func fetchLatestVolumes(for groupedResults: [GroupedSearchResults], completion: @escaping () -> Void) {
-        // 定义所有ETF相关的分类
         let etfCategories: Set<MatchCategory> = [.etfSymbol, .etfName, .etfDescription, .etfTag]
         
-        // 遍历所有分组结果
         for groupedResult in groupedResults {
-            // 检查当前分组是否属于ETF相关分类
             if etfCategories.contains(groupedResult.category) {
-                for (_, (result, _)) in groupedResult.results.enumerated() {
-                    let symbol = result.symbol
-                    // 从数据库获取最新的volume
+                for (_, entry) in groupedResult.results.enumerated() {
+                    let symbol = entry.result.symbol
                     if let latestVolume = DatabaseManager.shared.fetchLatestVolume(forSymbol: symbol, tableName: "ETFs") {
-                        // 将volume格式化为K单位
-                        let formattedVolume = formatVolume(latestVolume)
-                        // 更新SearchResult的volume属性
                         DispatchQueue.main.async {
-                            result.volume = formattedVolume
+                            entry.result.volume = self.formatVolume(latestVolume)
                         }
                     } else {
-                        // 如果未找到volume，则设置为"--K"
                         DispatchQueue.main.async {
-                            result.volume = "--K"
+                            entry.result.volume = "--K"
                         }
                     }
                 }
@@ -608,157 +549,149 @@ class SearchViewModel: ObservableObject {
         completion()
     }
     
-    // 辅助方法：将 volume 转换为 K 单位的字符串
     private func formatVolume(_ volume: Int64) -> String {
         let kVolume = Double(volume) / 1000.0
         return String(format: "%.0fK", kVolume)
     }
     
-    // 搜索类别，并排序结果（完全匹配优先）
-    func searchCategory<T: SearchDescribableItem>(items: [T], keywords: [String], category: MatchCategory) -> [(result: SearchResult, score: Int)] {
-        var scoredResults: [(result: SearchResult, score: Int)] = []
+    // 搜索类别，并根据结果进行匹配和排序
+    func searchCategory<T: SearchDescribableItem>(items: [T],
+                                                  keywords: [String],
+                                                  category: MatchCategory)
+    -> [(result: SearchResult, score: Int)] {
+        var scoredResults: [(SearchResult, Int)] = []
         
         for item in items {
-            var totalScore = 0
-            var allKeywordsMatched = true
-            
-            for keyword in keywords {
-                let lowercasedKeyword = keyword.lowercased()
-                var matchScore = 0
-                var matched = false
-                
-                switch category {
-                case .stockSymbol, .etfSymbol:
-                    if lowercasedKeyword == item.symbol.lowercased() {
-                        matchScore = 3
-                        matched = true
-                    } else if item.symbol.lowercased().contains(lowercasedKeyword) {
-                        matchScore = 2
-                        matched = true
-                    } else if fuzzyMatch(text: item.symbol.lowercased(), keyword: lowercasedKeyword, maxDistance: 1) {
-                        matchScore = 1
-                        matched = true
-                    }
-                    
-//                case .stockName, .etfName:
-//                    if lowercasedKeyword == item.name.lowercased() {
-//                        matchScore = 3
-//                        matched = true
-//                    } else if item.name.lowercased().contains(lowercasedKeyword) {
-//                        matchScore = 2
-//                        matched = true
-//                    } else if fuzzyMatch(text: item.name.lowercased(), keyword: lowercasedKeyword, maxDistance: 1) {
-//                        matchScore = 1
-//                        matched = true
-//                    }
-                    
-                case .stockName, .etfName:
-                    // 安全地处理名称分割
-                    let nameComponents = item.name.lowercased().components(separatedBy: ",")
-                    let mainName = nameComponents.first ?? item.name.lowercased()
-                    let nameWords = mainName.split(separator: " ").map { String($0) }
-                    
-                    if lowercasedKeyword == item.name.lowercased() {
-                        // 完全匹配整个名称
-                        matchScore = 4
-                        matched = true
-                    } else if nameWords.contains(where: { $0 == lowercasedKeyword }) ||
-                              mainName == lowercasedKeyword {
-                        // 精确匹配任何完整单词或主要名称
-                        matchScore = 3
-                        matched = true
-                    } else if mainName.contains(lowercasedKeyword) {
-                        // 主要名称中的部分匹配
-                        matchScore = 2
-                        matched = true
-                    } else if item.name.lowercased().contains(lowercasedKeyword) {
-                        // 整个名称中的部分匹配
-                        matchScore = 1
-                        matched = true
-                    } else if fuzzyMatch(text: item.name.lowercased(), keyword: lowercasedKeyword, maxDistance: 1) {
-                        // 模糊匹配
-                        matchScore = 1
-                        matched = true
-                    }
-                    
-                case .stockTag, .etfTag:
-                    var tagMatchScore = 0
-                    for tag in item.tag {
-                        let lowercasedTag = tag.lowercased()
-                        if lowercasedTag == lowercasedKeyword {
-                            tagMatchScore = max(tagMatchScore, 3)
-                        } else if lowercasedTag.contains(lowercasedKeyword) {
-                            tagMatchScore = max(tagMatchScore, 2)
-                        } else if fuzzyMatch(text: lowercasedTag, keyword: lowercasedKeyword, maxDistance: 1) {
-                            tagMatchScore = max(tagMatchScore, 1)
-                        }
-                    }
-                    if tagMatchScore > 0 {
-                        matchScore = tagMatchScore
-                        matched = true
-                    }
-                    
-                case .stockDescription, .etfDescription:
-                    let desc1 = item.description1.lowercased()
-                    let desc2 = item.description2.lowercased()
-                    let descWords = desc1.split(separator: " ") + desc2.split(separator: " ")
-                    
-                    if descWords.contains(where: { String($0) == lowercasedKeyword }) {
-                        matchScore = max(matchScore, 2)
-                        matched = true
-                    } else if desc1.contains(lowercasedKeyword) || desc2.contains(lowercasedKeyword) {
-                        matchScore = max(matchScore, 1)
-                        matched = true
-                    }
-                }
-                
-                if matched {
-                    totalScore += matchScore
-                } else {
-                    allKeywordsMatched = false
-                    break
-                }
-            }
-            
-            if allKeywordsMatched {
-                let marketCap = dataService.marketCapData[item.symbol.uppercased()]?.marketCap
-                let peRatio = dataService.marketCapData[item.symbol.uppercased()]?.peRatio
-                let compare = dataService.compareData[item.symbol.uppercased()]
+            if let totalScore = matchScoreForItem(item, category: category, keywords: keywords) {
+                let upperSymbol = item.symbol.uppercased()
+                let data = dataService.marketCapData[upperSymbol]
+                let marketCap = data?.marketCap
+                let peRatioStr = data?.peRatio != nil ? String(format: "%.2f", data!.peRatio!) : "--"
                 
                 let result = SearchResult(
                     symbol: item.symbol,
                     name: item.name,
                     tag: item.tag,
                     marketCap: marketCap,
-                    peRatio: peRatio != nil ? String(format: "%.2f", peRatio!) : "--",
-                    compare: compare,
-                    volume: nil  // 初始为 nil，稍后设置
+                    peRatio: peRatioStr,
+                    compare: dataService.compareData[upperSymbol]
                 )
-                scoredResults.append((result: result, score: totalScore))
+                
+                scoredResults.append((result, totalScore))
             }
         }
         
-        // 按分数降序排序
-        return scoredResults.sorted { $0.score > $1.score }
+        return scoredResults.sorted { $0.1 > $1.1 }
     }
     
-    // 字符串匹配
-    private func matchText(_ text: String, keywords: [String]) -> Bool {
-        if keywords.count > 1 {
-            return keywords.allSatisfy { text.contains($0) }
+    // 计算某个 item 与一组关键词在指定分类下的匹配分数
+    private func matchScoreForItem<T: SearchDescribableItem>(
+        _ item: T,
+        category: MatchCategory,
+        keywords: [String]) -> Int? {
+        
+        var totalScore = 0
+        
+        for keyword in keywords {
+            let lowerKeyword = keyword.lowercased()
+            let singleScore = scoreOfSingleMatch(item: item, keyword: lowerKeyword, category: category)
+            if singleScore <= 0 {
+                return nil
+            } else {
+                totalScore += singleScore
+            }
         }
-        return text.contains(keywords[0])
+        return totalScore
     }
-    // 模糊匹配
-    private func fuzzyMatch(text: String, keyword: String, maxDistance: Int) -> Bool {
+    
+    // 计算单个关键词在指定分类下的匹配分数
+    private func scoreOfSingleMatch<T: SearchDescribableItem>(
+        item: T,
+        keyword: String,
+        category: MatchCategory) -> Int {
+        
+        switch category {
+        case .stockSymbol, .etfSymbol:
+            return matchSymbol(item.symbol.lowercased(), keyword: keyword)
+        case .stockName, .etfName:
+            return matchName(item.name, keyword: keyword)
+        case .stockTag, .etfTag:
+            return matchTags(item.tag, keyword: keyword)
+        case .stockDescription, .etfDescription:
+            return matchDescriptions(item.description1, item.description2, keyword: keyword)
+        }
+    }
+    
+    private func matchSymbol(_ symbol: String, keyword: String) -> Int {
+        if symbol == keyword {
+            return 3
+        } else if symbol.contains(keyword) {
+            return 2
+        } else if isFuzzyMatch(text: symbol, keyword: keyword, maxDistance: 1) {
+            return 1
+        }
+        return 0
+    }
+    
+    private func matchName(_ name: String, keyword: String) -> Int {
+        let lowercasedName = name.lowercased()
+        let nameComponents = lowercasedName.components(separatedBy: ",")
+        let mainName = nameComponents.first ?? lowercasedName
+        let nameWords = mainName.split(separator: " ").map { String($0) }
+        
+        if lowercasedName == keyword {
+            return 4
+        } else if nameWords.contains(keyword) || mainName == keyword {
+            return 3
+        } else if mainName.contains(keyword) {
+            return 2
+        } else if lowercasedName.contains(keyword) {
+            return 1
+        } else if isFuzzyMatch(text: lowercasedName, keyword: keyword, maxDistance: 1) {
+            return 1
+        }
+        return 0
+    }
+    
+    private func matchTags(_ tags: [String], keyword: String) -> Int {
+        var maxScore = 0
+        for t in tags {
+            let lowerTag = t.lowercased()
+            var score = 0
+            if lowerTag == keyword {
+                score = 3
+            } else if lowerTag.contains(keyword) {
+                score = 2
+            } else if isFuzzyMatch(text: lowerTag, keyword: keyword, maxDistance: 1) {
+                score = 1
+            }
+            maxScore = max(maxScore, score)
+        }
+        return maxScore
+    }
+    
+    private func matchDescriptions(_ desc1: String, _ desc2: String, keyword: String) -> Int {
+        let d1 = desc1.lowercased()
+        let d2 = desc2.lowercased()
+        let words = d1.split(separator: " ") + d2.split(separator: " ")
+        
+        if words.contains(where: { String($0) == keyword }) {
+            return 2
+        } else if d1.contains(keyword) || d2.contains(keyword) {
+            return 1
+        }
+        return 0
+    }
+    
+    private func isFuzzyMatch(text: String, keyword: String, maxDistance: Int) -> Bool {
         if keyword.count <= 1 {
             return text.contains(keyword)
         }
         let words = text.split(separator: " ").map { String($0) }
-        return words.contains { levenshtein_distance(String($0), keyword) <= maxDistance }
+        return words.contains { levenshteinDistance($0, keyword) <= maxDistance }
     }
-    // Levenshtein 距离计算
-    private func levenshtein_distance(_ s1: String, _ s2: String) -> Int {
+    
+    private func levenshteinDistance(_ s1: String, _ s2: String) -> Int {
         let a = Array(s1)
         let b = Array(s2)
         let n = a.count
@@ -768,7 +701,6 @@ class SearchViewModel: ObservableObject {
         if m == 0 { return n }
         
         var matrix = Array(repeating: Array(repeating: 0, count: m + 1), count: n + 1)
-        
         for i in 0...n { matrix[i][0] = i }
         for j in 0...m { matrix[0][j] = j }
         
@@ -778,18 +710,17 @@ class SearchViewModel: ObservableObject {
                     matrix[i][j] = matrix[i - 1][j - 1]
                 } else {
                     matrix[i][j] = min(
-                        matrix[i - 1][j] + 1, //删除
-                        matrix[i][j - 1] + 1, //插入
-                        matrix[i - 1][j - 1] + 1 //替换
+                        matrix[i - 1][j] + 1,
+                        matrix[i][j - 1] + 1,
+                        matrix[i - 1][j - 1] + 1
                     )
                 }
             }
         }
-        
         return matrix[n][m]
     }
     
-    // 搜索历史管理
+    // MARK: - 搜索历史
     func loadSearchHistory() {
         if let history = UserDefaults.standard.array(forKey: "stockSearchHistory") as? [String] {
             self.searchHistory = history
@@ -804,11 +735,10 @@ class SearchViewModel: ObservableObject {
             self.searchHistory.remove(at: index)
         }
         self.searchHistory.insert(trimmedTerm, at: 0)
-                
+        
         if self.searchHistory.count > 10 {
             self.searchHistory = Array(self.searchHistory.prefix(10))
         }
-        
         UserDefaults.standard.set(searchHistory, forKey: "stockSearchHistory")
     }
     

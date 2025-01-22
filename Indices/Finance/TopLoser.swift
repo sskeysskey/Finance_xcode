@@ -8,24 +8,26 @@ protocol MarketItem: Identifiable, Codable {
     var symbol: String { get }
     var value: String { get }
     var descriptions: String { get }
-    var numericValue: Double { get }
+}
+
+// MARK: - MarketItem 扩展
+extension MarketItem {
+    /// 根据 value 中的字符串数字（移除 "%" 等字符）转换为 Double
+    var numericValue: Double {
+        Double(value.replacingOccurrences(of: "%", with: "")) ?? 0.0
+    }
 }
 
 // MARK: - Stock Model
 struct Stock: MarketItem {
-    var id: String
+    var id: String = UUID().uuidString
     let groupName: String
     let rawSymbol: String
     let symbol: String
     let value: String
     let descriptions: String
     
-    var numericValue: Double {
-        Double(value.replacingOccurrences(of: "%", with: "")) ?? 0.0
-    }
-    
     init(groupName: String, rawSymbol: String, symbol: String, value: String, descriptions: String) {
-        self.id = UUID().uuidString
         self.groupName = groupName
         self.rawSymbol = rawSymbol
         self.symbol = symbol
@@ -36,19 +38,14 @@ struct Stock: MarketItem {
 
 // MARK: - ETF Model
 struct ETF: MarketItem {
-    var id: String
+    var id: String = UUID().uuidString
     let groupName: String
     let rawSymbol: String
     let symbol: String
     let value: String
     let descriptions: String
     
-    var numericValue: Double {
-        Double(value.replacingOccurrences(of: "%", with: "")) ?? 0.0
-    }
-    
     init(groupName: String, rawSymbol: String, symbol: String, value: String, descriptions: String) {
-        self.id = UUID().uuidString
         self.groupName = groupName
         self.rawSymbol = rawSymbol
         self.symbol = symbol
@@ -57,17 +54,17 @@ struct ETF: MarketItem {
     }
 }
 
-// MARK: - Generic Market Item View
+// MARK: - 单个 Market Item 行视图
 struct MarketItemRow<T: MarketItem>: View {
     let item: T
     
     var body: some View {
         NavigationLink(destination: ChartView(symbol: item.symbol, groupName: item.groupName)) {
             VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {  // 使用HStack将标题和值放在同一行
-                    Text("\(item.rawSymbol)")
+                HStack(spacing: 8) {
+                    Text(item.rawSymbol)
                         .font(.headline)
-                    Spacer()  // 添加Spacer将value推到最右边
+                    Spacer()
                     Text(item.value)
                         .font(.subheadline)
                         .foregroundColor(item.numericValue > 0 ? .green : (item.numericValue < 0 ? .red : .gray))
@@ -81,7 +78,7 @@ struct MarketItemRow<T: MarketItem>: View {
     }
 }
 
-// MARK: - Generic List View
+// MARK: - 通用 MarketItem 列表视图
 struct MarketListView<T: MarketItem>: View {
     let title: String
     let items: [T]
@@ -94,49 +91,51 @@ struct MarketListView<T: MarketItem>: View {
     }
 }
 
-// MARK: - Type Aliases for Convenience
+// MARK: - 别名简化
 typealias StockListView = MarketListView<Stock>
 typealias ETFListView = MarketListView<ETF>
 
+// MARK: - 主容器视图
 struct TopContentView: View {
     var body: some View {
         NavigationView {
             VStack {
-                Spacer() // 保持上方为空
-                CustomTabBar() // 自定义底部标签栏
+                Spacer()
+                CustomTabBar()
             }
         }
     }
 }
 
+// MARK: - 自定义底部标签栏
 struct CustomTabBar: View {
     @ObservedObject var dataService = DataService()
     
     var body: some View {
         HStack(spacing: 0) {
-            NavigationLink(destination:
-                StockListView(title: "Top Gainers", items: dataService.topGainers)
+            NavigationLink(
+                destination: StockListView(title: "Top Gainers", items: dataService.topGainers)
                     .onAppear { dataService.loadData() }
             ) {
                 TabItemView(title: "涨幅榜", imageName: "arrow.up")
             }
             
-            NavigationLink(destination:
-                StockListView(title: "Top Losers", items: dataService.topLosers)
+            NavigationLink(
+                destination: StockListView(title: "Top Losers", items: dataService.topLosers)
                     .onAppear { dataService.loadData() }
             ) {
                 TabItemView(title: "跌幅榜", imageName: "arrow.down")
             }
             
-            NavigationLink(destination:
-                ETFListView(title: "ETF Gainers", items: dataService.etfGainers)
+            NavigationLink(
+                destination: ETFListView(title: "ETF Gainers", items: dataService.etfGainers)
                     .onAppear { dataService.loadData() }
             ) {
                 TabItemView(title: "ETF涨幅", imageName: "chart.line.uptrend.xyaxis")
             }
             
-            NavigationLink(destination:
-                ETFListView(title: "ETF Losers", items: dataService.etfLosers)
+            NavigationLink(
+                destination: ETFListView(title: "ETF Losers", items: dataService.etfLosers)
                     .onAppear { dataService.loadData() }
             ) {
                 TabItemView(title: "ETF跌幅", imageName: "chart.line.downtrend.xyaxis")
@@ -147,6 +146,7 @@ struct CustomTabBar: View {
     }
 }
 
+// MARK: - 标签栏子视图
 struct TabItemView: View {
     let title: String
     let imageName: String
