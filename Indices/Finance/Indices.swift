@@ -249,8 +249,14 @@ struct SymbolItemView: View {
     let sectorName: String
     
     private var tableName: String {
-        // 特殊处理 ETFs_US
-        return sectorName == "ETFs_US" ? "ETFs" : sectorName
+        switch sectorName {
+        case "ETFs_US":
+            return "ETFs"
+        case "Economic_All":
+            return "Economics"
+        default:
+            return sectorName
+        }
     }
     
     var body: some View {
