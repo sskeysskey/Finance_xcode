@@ -23,10 +23,20 @@ struct EarningReleaseView: View {
                         let groupName = dataService.getCategory(for: item.symbol) ?? "Stocks"
                         
                         NavigationLink(destination: ChartView(symbol: item.symbol, groupName: groupName)) {
-                            Text(item.symbol)
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(item.color)
-                                .padding(.vertical, 2)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.symbol)
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(item.color)
+                                if let tags = getTags(for: item.symbol), !tags.isEmpty {
+                                    Text(tags.joined(separator: ", "))
+                                        .font(.footnote)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(2)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .padding(.vertical, 2)
                         }
                     }
                 }
@@ -36,5 +46,15 @@ struct EarningReleaseView: View {
         .onAppear {
             dataService.loadData()
         }
+    }
+    
+    /// 根据 symbol 查询 description 中的 tags
+    private func getTags(for symbol: String) -> [String]? {
+        if let stockTags = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == symbol.uppercased() })?.tag {
+            return stockTags
+        } else if let etfTags = dataService.descriptionData?.etfs.first(where: { $0.symbol.uppercased() == symbol.uppercased() })?.tag {
+            return etfTags
+        }
+        return nil
     }
 }

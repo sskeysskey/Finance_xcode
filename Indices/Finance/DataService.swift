@@ -104,13 +104,13 @@ class DataService: ObservableObject {
         case "C":
             return .cyan
         case "B":
-            return .blue
+            return .green
         case "W":
             return .white
         case "O":
             return .orange
         case "b":
-            return .green // Green color
+            return .blue
         default:
             return .gray
         }
