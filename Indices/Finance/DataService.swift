@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftUI  // 添加这行
 
 // 定义模型结构
 struct DescriptionData: Codable {
@@ -22,6 +23,13 @@ struct MarketCapDataItem {
     }
 }
 
+struct EarningRelease: Identifiable {
+    let id = UUID()
+    let symbol: String
+    let color: Color
+    let date: String
+}
+
 class DataService: ObservableObject {
     @Published var topGainers: [Stock] = []
     @Published var topLosers: [Stock] = []
@@ -35,6 +43,9 @@ class DataService: ObservableObject {
     @Published var compareData: [String: String] = [:]
     @Published var sectorsPanel: SectorsPanel?
     
+    // 添加新的属性
+    @Published var earningReleases: [EarningRelease] = []
+    
     // 新增的 errorMessage 属性
     @Published var errorMessage: String? = nil
     
@@ -46,6 +57,63 @@ class DataService: ObservableObject {
         loadSectorsData()
         loadCompareData()
         loadSectorsPanel()
+        loadEarningRelease() // 添加这行
+    }
+    
+    // 添加新的加载方法
+    private func loadEarningRelease() {
+        guard let url = Bundle.main.url(forResource: "Earnings_Release_new", withExtension: "txt") else { return }
+        do {
+            let content = try String(contentsOf: url, encoding: .utf8)
+            let lines = content.split(separator: "\n")
+            
+            earningReleases = lines.compactMap { line -> EarningRelease? in
+                let parts = line.split(separator: ":")
+                let firstPart = String(parts[0]).trimmingCharacters(in: .whitespaces)
+                
+                // 提取基础symbol和颜色标识
+                let symbol = firstPart.trimmingCharacters(in: .whitespaces)
+                var color: Color = .gray // 默认颜色
+                
+                if parts.count > 1 {
+                    let colorIdentifier = String(parts[1].prefix(1))
+                    color = self.getColor(for: colorIdentifier)
+                }
+                
+                // 提取日期
+                let dateParts = line.split(separator: ":").last?
+                    .trimmingCharacters(in: .whitespaces)
+                    .split(separator: "-")
+                
+                if let month = dateParts?[1], let day = dateParts?[2] {
+                    let dateStr = "\(month)-\(day)"
+                    return EarningRelease(symbol: symbol, color: color, date: dateStr)
+                }
+                
+                return nil
+            }
+        } catch {
+            self.errorMessage = "加载 Earnings_Release_new.txt 失败: \(error.localizedDescription)"
+        }
+    }
+    
+    private func getColor(for identifier: String) -> Color {
+        switch identifier {
+        case "Y":
+            return .yellow
+        case "C":
+            return .cyan
+        case "B":
+            return .blue
+        case "W":
+            return .white
+        case "O":
+            return .orange
+        case "b":
+            return .green // Green color
+        default:
+            return .gray
+        }
     }
     
     private func loadCompareStock() {

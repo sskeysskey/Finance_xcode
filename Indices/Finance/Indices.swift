@@ -307,17 +307,3 @@ struct SymbolItemView: View {
         }
     }
 }
-
-// MARK: - 你自己的 DataService、ChartView 等辅助可能需要在其他文件中实现
-// 这里只保留主界面及其相关的结构体和视图示例。
-
-// 示例：如果你需要预览，可以使用下面的 PreviewProvider
-// 需要注意的是，DataService、ChartView 等需要自行实现。
-/*
-struct IndicesContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        IndicesContentView()
-            .environmentObject(DataService())
-    }
-}
-*/

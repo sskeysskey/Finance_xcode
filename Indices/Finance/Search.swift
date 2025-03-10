@@ -127,6 +127,7 @@ struct GroupHeaderView: View {
 struct SearchContentView: View {
     @State private var showSearch = false
     @State private var showCompare = false
+    @State private var showEarning = false // 添加新状态
     @EnvironmentObject var dataService: DataService
     
     var body: some View {
@@ -155,6 +156,19 @@ struct SearchContentView: View {
                     .background(Color(.systemGray6))
                     .cornerRadius(8)
                 }
+                
+                Button(action: { showEarning = true }) {
+                    VStack {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 20))
+                        Text("财报")
+                            .font(.caption)
+                    }
+                    .frame(width: 60)
+                    .padding(.vertical, 8)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(8)
+                }
             }
             .padding(.horizontal)
             Spacer()
@@ -165,6 +179,9 @@ struct SearchContentView: View {
         .navigationDestination(isPresented: $showCompare) {
             CompareView(initialSymbol: "")
         }
+        .navigationDestination(isPresented: $showEarning) {
+                    EarningReleaseView()
+                }
     }
 }
 

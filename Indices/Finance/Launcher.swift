@@ -16,7 +16,7 @@ struct MainContentView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // 1. 上部：扇区展示
+                // 1. 上部：Sectors 展示
                 IndicesContentView()
                     .frame(maxHeight: .infinity, alignment: .top)
                 
