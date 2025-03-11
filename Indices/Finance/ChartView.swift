@@ -197,33 +197,45 @@ struct ChartView: View {
     @State private var selectedDateEnd: Date? = nil
     @State private var isInteracting: Bool = false
     @State private var shouldAnimate: Bool = true
+    
+    @State private var markerText: String? = nil // 添加新属性
 
     var body: some View {
         VStack(spacing: 16) {
             headerView
 
-            // 价格和日期显示逻辑
+            // 修改价格和日期显示逻辑，添加标记文本显示
             if let price = selectedPrice {
-                HStack {
-                    if isDifferencePercentage,
-                       let startDate = selectedDateStart,
-                       let endDate = selectedDateEnd {
-                        Text("\(formattedDate(startDate))   \(formattedDate(endDate))")
-                            .font(.system(size: 14))
-                            .foregroundColor(.white)
-                        Text(String(format: "%.2f%%", price))
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(.green)
-                        
-                    } else if let date = selectedDateStart {
-                        HStack(spacing: 18) {
-                            Text(formattedDate(date))
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        if isDifferencePercentage,
+                           let startDate = selectedDateStart,
+                           let endDate = selectedDateEnd {
+                            Text("\(formattedDate(startDate))   \(formattedDate(endDate))")
                                 .font(.system(size: 14))
                                 .foregroundColor(.white)
-                            Text(String(format: "%.2f", price))
+                            Text(String(format: "%.2f%%", price))
                                 .font(.system(size: 16, weight: .medium))
                                 .foregroundColor(.green)
+                            
+                        } else if let date = selectedDateStart {
+                            HStack(spacing: 18) {
+                                Text(formattedDate(date))
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.white)
+                                Text(String(format: "%.2f", price))
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(.green)
+                            }
                         }
+                    }
+                    
+                    // 添加标记文本显示
+                    if let text = markerText {
+                        Text(text)
+                            .font(.system(size: 14))
+                            .foregroundColor(.yellow)
+                            .padding(.top, 2)
                     }
                 }
                 .padding(.top, 0)
@@ -264,6 +276,7 @@ struct ChartView: View {
                 }
             }
 
+            // 修改图表视图，传递新的参数
             chartView
                 .background(
                     RoundedRectangle(cornerRadius: 12)
@@ -347,18 +360,23 @@ struct ChartView: View {
         .padding(.horizontal)
     }
 
+    // 修改图表视图
     private var chartView: some View {
         StockLineChartView(
             data: chartData,
             showGrid: showGrid,
             isDarkMode: isDarkMode,
             timeRange: selectedTimeRange,
-            onSelectedPriceChange: { price, isPercentage, startDate, endDate in
+            onSelectedPriceChange: { price, isPercentage, startDate, endDate, text in
                 selectedPrice = price
                 isDifferencePercentage = isPercentage
                 selectedDateStart = startDate
                 selectedDateEnd = endDate
+                markerText = text
             },
+            globalTimeMarkers: dataService.globalTimeMarkers,
+            symbolTimeMarkers: dataService.symbolTimeMarkers[symbol.uppercased()] ?? [:],
+            symbol: symbol,
             isInteracting: $isInteracting,
             shouldAnimate: $shouldAnimate
         )
@@ -442,7 +460,10 @@ struct StockLineChartView: UIViewRepresentable {
     let showGrid: Bool
     let isDarkMode: Bool
     let timeRange: TimeRange
-    let onSelectedPriceChange: (Double?, Bool, Date?, Date?) -> Void
+    let onSelectedPriceChange: (Double?, Bool, Date?, Date?, String?) -> Void  // 修改回调添加额外文本参数
+    let globalTimeMarkers: [Date: String]  // 全局时间点标记
+    let symbolTimeMarkers: [Date: String]  // 当前股票的特定时间点标记
+    let symbol: String  // 当前显示的股票代码
     @Binding var isInteracting: Bool
     @Binding var shouldAnimate: Bool
 
@@ -451,6 +472,7 @@ struct StockLineChartView: UIViewRepresentable {
         var firstTouchHighlight: Highlight?
         var secondTouchHighlight: Highlight?
         var isShowingPercentage = false
+        var specialMarkerText: String? = nil  // 添加变量存储特殊点文本
 
         init(_ parent: StockLineChartView) {
             self.parent = parent
@@ -460,12 +482,45 @@ struct StockLineChartView: UIViewRepresentable {
             // 单点选择
             if secondTouchHighlight == nil {
                 let date = Date(timeIntervalSince1970: entry.x)
-                parent.onSelectedPriceChange(entry.y, false, date, nil)
+                
+                // 检查是否是特殊时间点
+                let markerText = getMarkerTextForDate(date)
+                parent.onSelectedPriceChange(entry.y, false, date, nil, markerText)
             }
+        }
+        
+        private func getMarkerTextForDate(_ date: Date) -> String? {
+            // 首先用日期格式化器获取精确到天的日期来比较
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd"
+            let dateString = dateFormatter.string(from: date)
+            
+            // 重新解析为日期，确保只比较年月日
+            if let normalizedDate = dateFormatter.date(from: dateString) {
+                // 检查是否匹配全局标记
+                for (markerDate, text) in parent.globalTimeMarkers {
+                    let markerDateString = dateFormatter.string(from: markerDate)
+                    if let normalizedMarkerDate = dateFormatter.date(from: markerDateString),
+                       normalizedDate == normalizedMarkerDate {
+                        return text
+                    }
+                }
+                
+                // 检查是否匹配特定股票标记
+                for (markerDate, text) in parent.symbolTimeMarkers {
+                    let markerDateString = dateFormatter.string(from: markerDate)
+                    if let normalizedMarkerDate = dateFormatter.date(from: markerDateString),
+                       normalizedDate == normalizedMarkerDate {
+                        return text
+                    }
+                }
+            }
+            
+            return nil
         }
 
         func chartValueNothingSelected(_ chartView: ChartViewBase) {
-            parent.onSelectedPriceChange(nil, false, nil, nil)
+            parent.onSelectedPriceChange(nil, false, nil, nil, nil)  // 添加第五个参数 nil
             firstTouchHighlight = nil
             secondTouchHighlight = nil
             parent.shouldAnimate = false
@@ -484,7 +539,7 @@ struct StockLineChartView: UIViewRepresentable {
                 chartView.highlightValues(nil)
                 firstTouchHighlight = nil
                 secondTouchHighlight = nil
-                parent.onSelectedPriceChange(nil, false, nil, nil)
+                parent.onSelectedPriceChange(nil, false, nil, nil, nil)  // 添加第五个参数 nil
                 parent.shouldAnimate = false
             default:
                 break
@@ -520,6 +575,7 @@ struct StockLineChartView: UIViewRepresentable {
         }
         
         private func calculatePriceDifference(_ chartView: LineChartView) {
+            // 修改回调，添加特殊点文本
             guard let firstHighlight = firstTouchHighlight,
                   let secondHighlight = secondTouchHighlight,
                   let firstEntry = chartView.data?.dataSet(at: 0)?
@@ -532,7 +588,8 @@ struct StockLineChartView: UIViewRepresentable {
                     .entryForXValue(firstHighlight.x, closestToY: firstHighlight.y) {
                     isShowingPercentage = false
                     let date = Date(timeIntervalSince1970: singleEntry.x)
-                    parent.onSelectedPriceChange(singleEntry.y, false, date, nil)
+                    let markerText = getMarkerTextForDate(date)
+                    parent.onSelectedPriceChange(singleEntry.y, false, date, nil, markerText)
                 }
                 return
             }
@@ -546,7 +603,15 @@ struct StockLineChartView: UIViewRepresentable {
             isShowingPercentage = true
             let startDate = Date(timeIntervalSince1970: earlierEntry.x)
             let endDate = Date(timeIntervalSince1970: laterEntry.x)
-            parent.onSelectedPriceChange(priceDiffPercentage, true, startDate, endDate)
+            
+            // 检查这两个日期是否有特殊标记
+            let startMarkerText = getMarkerTextForDate(startDate)
+            let endMarkerText = getMarkerTextForDate(endDate)
+            
+            // 优先显示结束日期的标记，如果没有则显示开始日期的标记
+            let markerText = endMarkerText ?? startMarkerText
+            
+            parent.onSelectedPriceChange(priceDiffPercentage, true, startDate, endDate, markerText)
         }
     }
 
@@ -885,6 +950,9 @@ struct StockLineChartView: UIViewRepresentable {
         }
         let dataSet = createDataSet(entries: entries)
         
+        // 添加特殊点标记
+        addSpecialMarkers(to: dataSet)
+        
         chartView.leftAxis.drawZeroLineEnabled = false
         chartView.data = LineChartData(dataSet: dataSet)
         
@@ -914,6 +982,37 @@ struct StockLineChartView: UIViewRepresentable {
         
         if shouldAnimate {
             chartView.animate(xAxisDuration: 0.5)
+        }
+    }
+    
+    private func addSpecialMarkers(to dataSet: LineChartDataSet) {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
+        // 查找特殊日期对应的数据点
+        for entry in dataSet.entries {
+            let entryDate = Date(timeIntervalSince1970: entry.x)
+            let entryDateString = dateFormatter.string(from: entryDate)
+            
+            // 检查全局标记
+            for (date, _) in globalTimeMarkers {
+                let markerDateString = dateFormatter.string(from: date)
+                if markerDateString == entryDateString {
+                    // 添加黄色标记
+                    let circleImage = UIImage.circleImage(with: .yellow, size: CGSize(width: 8, height: 8))
+                    entry.icon = circleImage
+                }
+            }
+            
+            // 检查特定股票标记
+            for (date, _) in symbolTimeMarkers {
+                let markerDateString = dateFormatter.string(from: date)
+                if markerDateString == entryDateString {
+                    // 添加橙色标记（优先级高于全局标记）
+                    let circleImage = UIImage.circleImage(with: .orange, size: CGSize(width: 8, height: 8))
+                    entry.icon = circleImage
+                }
+            }
         }
     }
 
@@ -955,5 +1054,16 @@ struct StockLineChartView: UIViewRepresentable {
 extension Array {
     subscript(safe index: Index) -> Element? {
         indices.contains(index) ? self[index] : nil
+    }
+}
+
+extension UIImage {
+    static func circleImage(with color: UIColor, size: CGSize) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { ctx in
+            let rect = CGRect(origin: .zero, size: size)
+            ctx.cgContext.setFillColor(color.cgColor)
+            ctx.cgContext.fillEllipse(in: rect)
+        }
     }
 }
