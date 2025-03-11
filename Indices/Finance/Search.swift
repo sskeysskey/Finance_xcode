@@ -200,6 +200,9 @@ struct SearchView: View {
     @State private var isFirstAppear = true
     @ObservedObject var viewModel: SearchViewModel
     @FocusState private var isSearchFieldFocused: Bool
+    @State private var showChartView: Bool = false
+    @State private var selectedSymbolForChart: SelectedSymbol? = nil
+    @State private var selectedSymbolForDescription: SelectedSymbol? = nil
     
     @State private var collapsedGroups: [MatchCategory: Bool] = [:]
     let isSearchActive: Bool
@@ -333,13 +336,12 @@ struct SearchView: View {
                     )) {
                         if !(collapsedGroups[groupedResult.category] ?? false) {
                             ForEach(groupedResult.results.sorted { $0.score > $1.score }, id: \.result.id) { result, score in
-                                NavigationLink(destination: {
-                                    if let groupName = viewModel.dataService.getCategory(for: result.symbol) {
-                                        ChartView(symbol: result.symbol, groupName: groupName)
-                                    }
+                                Button(action: {
+                                    handleResultSelection(result: result)
                                 }) {
                                     SearchResultRow(result: result, score: score)
                                 }
+                                .buttonStyle(PlainButtonStyle())
                             }
                         }
                     }
@@ -347,6 +349,68 @@ struct SearchView: View {
             }
         }
         .listStyle(InsetGroupedListStyle())
+        .sheet(item: $selectedSymbolForDescription) { selected in
+            if let descriptions = getDescriptions(for: selected.result.symbol) {
+                DescriptionView(descriptions: descriptions, isDarkMode: true)
+            } else {
+                DescriptionView(descriptions: ("No description available.", ""), isDarkMode: true)
+            }
+        }
+        .navigationDestination(isPresented: $showChartView) {
+            if let selected = selectedSymbolForChart {
+                ChartView(symbol: selected.result.symbol, groupName: selected.category)
+            }
+        }
+    }
+
+    // 添加处理结果选择的方法
+    private func handleResultSelection(result: SearchResult) {
+        // 检查symbol是否在数据库中有数据
+        if let groupName = viewModel.dataService.getCategory(for: result.symbol) {
+            // 检查数据库中是否有该symbol的价格数据
+            DispatchQueue.global(qos: .userInitiated).async {
+                let data = DatabaseManager.shared.fetchHistoricalData(
+                    symbol: result.symbol,
+                    tableName: groupName,
+                    dateRange: .timeRange(.oneMonth)
+                )
+                
+                DispatchQueue.main.async {
+                    if data.isEmpty {
+                        // 如果没有价格数据，但有description数据
+                        if getDescriptions(for: result.symbol) != nil {
+                            selectedSymbolForDescription = SelectedSymbol(result: result, category: "Description")
+                        }
+                    } else {
+                        // 有价格数据，通过导航打开ChartView
+                        selectedSymbolForChart = SelectedSymbol(result: result, category: groupName)
+                        showChartView = true
+                    }
+                }
+            }
+        } else {
+            // 如果在分类中找不到，但可能有description
+            if getDescriptions(for: result.symbol) != nil {
+                selectedSymbolForDescription = SelectedSymbol(result: result, category: "Description")
+            }
+        }
+    }
+
+    // 添加获取描述的辅助方法
+    private func getDescriptions(for symbol: String) -> (String, String)? {
+        // 检查是否为股票
+        if let stock = viewModel.dataService.descriptionData?.stocks.first(where: {
+            $0.symbol.uppercased() == symbol.uppercased()
+        }) {
+            return (stock.description1, stock.description2)
+        }
+        // 检查是否为ETF
+        if let etf = viewModel.dataService.descriptionData?.etfs.first(where: {
+            $0.symbol.uppercased() == symbol.uppercased()
+        }) {
+            return (etf.description1, etf.description2)
+        }
+        return nil
     }
     
     func startSearch() {
