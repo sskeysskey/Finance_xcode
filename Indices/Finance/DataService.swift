@@ -4,8 +4,37 @@ import SwiftUI  // 添加这行
 
 // 定义模型结构
 struct DescriptionData: Codable {
+    let global: [String: String]?  // 添加全局时间点标记
     let stocks: [SearchStock]
     let etfs: [SearchETF]
+}
+
+struct SearchStock: Identifiable, Codable, SearchDescribableItem {
+    let id = UUID()
+    let symbol: String
+    let name: String
+    let tag: [String]
+    let description1: String
+    let description2: String
+    let description3: [[String: String]]?
+    
+    enum CodingKeys: String, CodingKey {
+        case symbol, name, tag, description1, description2, description3
+    }
+}
+
+struct SearchETF: Identifiable, Codable, SearchDescribableItem {
+    let id = UUID()
+    let symbol: String
+    let name: String
+    let tag: [String]
+    let description1: String
+    let description2: String
+    let description3: [[String: String]]?
+    
+    enum CodingKeys: String, CodingKey {
+        case symbol, name, tag, description1, description2, description3
+    }
 }
 
 struct MarketCapDataItem {
@@ -48,6 +77,10 @@ class DataService: ObservableObject {
     
     // 新增的 errorMessage 属性
     @Published var errorMessage: String? = nil
+    
+    // 在 DataService 类中添加新的属性来存储时间点标记
+    @Published var globalTimeMarkers: [Date: String] = [:]
+    @Published var symbolTimeMarkers: [String: [Date: String]] = [:]
     
     func loadData() {
         loadMarketCapData()
@@ -179,6 +212,66 @@ class DataService: ObservableObject {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             descriptionData = try decoder.decode(DescriptionData.self, from: data)
+            
+            // 解析全局时间点标记
+            if let global = descriptionData?.global {
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "yyyy-MM-dd"
+                
+                for (dateString, text) in global {
+                    if let date = dateFormatter.date(from: dateString) {
+                        globalTimeMarkers[date] = text
+                    }
+                }
+            }
+            
+            // 解析特定股票的时间点标记
+            if let stocks = descriptionData?.stocks {
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "yyyy-MM-dd"
+                
+                for stock in stocks {
+                    if let description3 = stock.description3 {
+                        var markers: [Date: String] = [:]
+                        
+                        for markerDict in description3 {
+                            for (dateString, text) in markerDict {
+                                if let date = dateFormatter.date(from: dateString) {
+                                    markers[date] = text
+                                }
+                            }
+                        }
+                        
+                        if !markers.isEmpty {
+                            symbolTimeMarkers[stock.symbol.uppercased()] = markers
+                        }
+                    }
+                }
+            }
+            
+            // 解析特定ETF的时间点标记
+            if let etfs = descriptionData?.etfs {
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "yyyy-MM-dd"
+                
+                for etf in etfs {
+                    if let description3 = etf.description3 {
+                        var markers: [Date: String] = [:]
+                        
+                        for markerDict in description3 {
+                            for (dateString, text) in markerDict {
+                                if let date = dateFormatter.date(from: dateString) {
+                                    markers[date] = text
+                                }
+                            }
+                        }
+                        
+                        if !markers.isEmpty {
+                            symbolTimeMarkers[etf.symbol.uppercased()] = markers
+                        }
+                    }
+                }
+            }
         } catch {
             self.errorMessage = "加载 description.json 失败: \(error.localizedDescription)"
         }

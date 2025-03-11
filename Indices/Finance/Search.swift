@@ -11,32 +11,6 @@ protocol SearchDescribableItem {
     var description2: String { get }
 }
 
-struct SearchStock: Identifiable, Codable, SearchDescribableItem {
-    let id = UUID()
-    let symbol: String
-    let name: String
-    let tag: [String]
-    let description1: String
-    let description2: String
-    
-    enum CodingKeys: String, CodingKey {
-        case symbol, name, tag, description1, description2
-    }
-}
-
-struct SearchETF: Identifiable, Codable, SearchDescribableItem {
-    let id = UUID()
-    let symbol: String
-    let name: String
-    let tag: [String]
-    let description1: String
-    let description2: String
-    
-    enum CodingKeys: String, CodingKey {
-        case symbol, name, tag, description1, description2
-    }
-}
-
 struct SelectedSymbol: Identifiable {
     let id = UUID()
     let result: SearchResult
