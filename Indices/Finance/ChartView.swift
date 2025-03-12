@@ -239,6 +239,12 @@ struct ChartView: View {
                     }
                 }
                 .padding(.top, 0)
+            } else if let markerText = markerText {
+                // 当只有标记文本时(单指触摸到特殊点)
+                Text(markerText)
+                    .font(.system(size: 14))
+                    .foregroundColor(.yellow)
+                    .padding(.top, 2)
             } else {
                 HStack {
                     // Description
@@ -485,7 +491,14 @@ struct StockLineChartView: UIViewRepresentable {
                 
                 // 检查是否是特殊时间点
                 let markerText = getMarkerTextForDate(date)
-                parent.onSelectedPriceChange(entry.y, false, date, nil, markerText)
+                
+                // 如果是特殊点(有markerText)，则只显示事件文本，不显示时间和价格
+                if let text = markerText {
+                    parent.onSelectedPriceChange(nil, false, nil, nil, text)
+                } else {
+                    // 不是特殊点，则显示时间和价格
+                    parent.onSelectedPriceChange(entry.y, false, date, nil, nil)
+                }
             }
         }
         
@@ -589,7 +602,14 @@ struct StockLineChartView: UIViewRepresentable {
                     isShowingPercentage = false
                     let date = Date(timeIntervalSince1970: singleEntry.x)
                     let markerText = getMarkerTextForDate(date)
-                    parent.onSelectedPriceChange(singleEntry.y, false, date, nil, markerText)
+                    
+                    // 如果是特殊点(有markerText)，则只显示事件文本，不显示时间和价格
+                    if let text = markerText {
+                        parent.onSelectedPriceChange(nil, false, nil, nil, text)
+                    } else {
+                        // 不是特殊点，则显示时间和价格
+                        parent.onSelectedPriceChange(singleEntry.y, false, date, nil, nil)
+                    }
                 }
                 return
             }
@@ -604,14 +624,9 @@ struct StockLineChartView: UIViewRepresentable {
             let startDate = Date(timeIntervalSince1970: earlierEntry.x)
             let endDate = Date(timeIntervalSince1970: laterEntry.x)
             
-            // 检查这两个日期是否有特殊标记
-            let startMarkerText = getMarkerTextForDate(startDate)
-            let endMarkerText = getMarkerTextForDate(endDate)
-            
-            // 优先显示结束日期的标记，如果没有则显示开始日期的标记
-            let markerText = endMarkerText ?? startMarkerText
-            
-            parent.onSelectedPriceChange(priceDiffPercentage, true, startDate, endDate, markerText)
+            // 双指交互下，无论是否有特殊点，都只显示日期和价格差异
+            // 不传递markerText，这样就不会显示事件文本
+            parent.onSelectedPriceChange(priceDiffPercentage, true, startDate, endDate, nil)
         }
     }
 
