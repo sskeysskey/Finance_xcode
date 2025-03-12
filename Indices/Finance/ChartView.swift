@@ -207,35 +207,32 @@ struct ChartView: View {
             // 修改价格和日期显示逻辑，添加标记文本显示
             if let price = selectedPrice {
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        if isDifferencePercentage,
-                           let startDate = selectedDateStart,
-                           let endDate = selectedDateEnd {
-                            Text("\(formattedDate(startDate))   \(formattedDate(endDate))")
-                                .font(.system(size: 14))
-                                .foregroundColor(.white)
-                            Text(String(format: "%.2f%%", price))
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.green)
-                            
-                        } else if let date = selectedDateStart {
-                            HStack(spacing: 18) {
-                                Text(formattedDate(date))
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.white)
-                                Text(String(format: "%.2f", price))
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundColor(.green)
-                            }
-                        }
-                    }
-                    
-                    // 添加标记文本显示
+                    // 如果有标记文本，则只显示标记文本
                     if let text = markerText {
                         Text(text)
                             .font(.system(size: 14))
                             .foregroundColor(.yellow)
                             .padding(.top, 2)
+                    }
+                    // 只有在没有标记文本时才显示日期和价格信息
+                    else if isDifferencePercentage,
+                            let startDate = selectedDateStart,
+                            let endDate = selectedDateEnd {
+                        Text("\(formattedDate(startDate))   \(formattedDate(endDate))")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white)
+                        Text(String(format: "%.2f%%", price))
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.green)
+                    } else if let date = selectedDateStart {
+                        HStack(spacing: 18) {
+                            Text(formattedDate(date))
+                                .font(.system(size: 14))
+                                .foregroundColor(.white)
+                            Text(String(format: "%.2f", price))
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(.green)
+                        }
                     }
                 }
                 .padding(.top, 0)
