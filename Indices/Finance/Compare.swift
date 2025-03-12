@@ -9,7 +9,7 @@ class DateMarkerView: MarkerView {
         let label = UILabel()
         label.textColor = .white
         label.backgroundColor = UIColor.black.withAlphaComponent(0.7)
-        label.font = .systemFont(ofSize: 12)
+        label.font = .systemFont(ofSize: 10) // 从12减小到10
         label.textAlignment = .center
         label.layer.cornerRadius = 4
         label.clipsToBounds = true
@@ -37,7 +37,7 @@ class DateMarkerView: MarkerView {
         textLabel.text = text
         
         textLabel.sizeToFit()
-        let padding: CGFloat = 8
+        let padding: CGFloat = 6 // 从8减小到6
         frame.size = CGSize(width: textLabel.frame.width + padding, height: textLabel.frame.height + padding / 2)
         textLabel.frame = CGRect(x: padding / 2, y: padding / 4, width: textLabel.frame.width, height: textLabel.frame.height)
         
@@ -314,8 +314,9 @@ struct ComparisonChartView: View {
                     .padding()
             } else {
                 ComparisonStockLineChartView(data: chartData, isDarkMode: true)
-                    .frame(height: 400)
-                    .padding()
+                    .frame(height: 350) // 从400减少到350
+                    .padding(.horizontal, 4) // 减少水平内边距
+                    .padding(.vertical) // 保持垂直内边距不变
             }
             Spacer()
         }
@@ -533,11 +534,26 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
         chartView.legend.enabled = true
         chartView.legend.horizontalAlignment = .left
         chartView.rightAxis.enabled = false
+        
+        // 禁用左侧Y轴的标签显示
+        chartView.leftAxis.drawLabelsEnabled = false
+        
         chartView.dragEnabled = true
         chartView.setScaleEnabled(true)
         chartView.pinchZoomEnabled = true
         chartView.highlightPerTapEnabled = true
         chartView.highlightPerDragEnabled = true
+        
+        // 减少图表边缘的空间，因为我们不再需要显示Y轴标签
+        chartView.minOffset = 0 // 减少图表边缘的最小偏移量
+        chartView.extraRightOffset = 2 // 减少右侧边距
+        chartView.extraLeftOffset = 2 // 减少左侧边距
+        chartView.extraTopOffset = 5 // 减少顶部边距
+        chartView.extraBottomOffset = 5 // 减少底部边距
+        
+        // 保持图例紧凑
+        chartView.legend.xEntrySpace = 5
+        chartView.legend.font = .systemFont(ofSize: 9)
         
         configureYAxis(chartView.leftAxis)
         
@@ -555,30 +571,42 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
     }
     
     private func configureXAxis(_ xAxis: XAxis, formatter: DateValueFormatter) {
+        xAxis.drawAxisLineEnabled = false
         xAxis.labelPosition = .bottom
         xAxis.labelRotationAngle = 0
         xAxis.labelFont = .systemFont(ofSize: 10)
         xAxis.granularity = 3600 * 24 * 30
         xAxis.valueFormatter = formatter
-        xAxis.drawGridLinesEnabled = true
+        xAxis.drawGridLinesEnabled = false // 去掉 Y 轴的网格线
+        xAxis.spaceMin = 0.1 // 减少左侧空间
+        xAxis.spaceMax = 0.1 // 减少右侧空间
     }
     
     private func configureYAxis(_ leftAxis: YAxis) {
-        leftAxis.labelFont = .systemFont(ofSize: 10)
-        leftAxis.labelCount = 6
-        leftAxis.decimals = 1
+//        leftAxis.labelFont = .systemFont(ofSize: 9) // 缩小字体从10到9
+        //        leftAxis.labelCount = 6
+        //        leftAxis.decimals = 1
+
+        // 禁用绘制Y轴线
+        leftAxis.drawAxisLineEnabled = false
+        
+        // 你可以决定是否保留网格线
         leftAxis.drawGridLinesEnabled = true
-        leftAxis.drawZeroLineEnabled = true
+        
+        // 零线可以根据需要保留或移除
+        leftAxis.drawZeroLineEnabled = false
         leftAxis.zeroLineWidth = 0.5
         leftAxis.zeroLineColor = .gray
+        
         leftAxis.axisMinimum = 0
         leftAxis.axisMaximum = 100
-        leftAxis.spaceTop = 0.1
-        leftAxis.spaceBottom = 0.1
+        leftAxis.spaceTop = 0.05 // 减少顶部空间从0.1到0.05
+        leftAxis.spaceBottom = 0.05 // 减少底部空间从0.1到0.05
         
-        leftAxis.valueFormatter = DefaultAxisValueFormatter { value, _ in
-            String(format: "%.1f", value)
-        }
+        // 轴值格式化程序在没有标签的情况下不再需要
+        //        leftAxis.valueFormatter = DefaultAxisValueFormatter { value, _ in
+//            String(format: "%.1f", value)
+//        }
     }
     
     private func createDataSet(
@@ -588,7 +616,7 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
     ) -> LineChartDataSet {
         let dataSet = LineChartDataSet(entries: entries, label: label)
         dataSet.setColor(color)
-        dataSet.lineWidth = 1.5
+        dataSet.lineWidth = 1.2 // 减小线宽从1.5到1.2
         dataSet.drawCirclesEnabled = false
         dataSet.mode = .cubicBezier
         dataSet.drawFilledEnabled = false
@@ -597,6 +625,9 @@ struct ComparisonStockLineChartView: UIViewRepresentable {
         dataSet.highlightColor = .systemRed
         dataSet.highlightLineWidth = 1
         dataSet.highlightLineDashLengths = [5, 2]
+        // 确保标签在图例中显示得更紧凑
+        dataSet.form = .circle
+        dataSet.formSize = 8
         
         let gradientColors = [
             color.withAlphaComponent(0.3).cgColor,
