@@ -253,7 +253,7 @@ struct SectorDetailView: View {
                                 .padding(.top, 16)
                             
                             LazyVStack(spacing: 0) {
-                                ForEach(subSector.symbols) { symbol in
+                                ForEach(loadSymbolsForSubSector(subSector.symbols)) { symbol in
                                     SymbolItemView(symbol: symbol, sectorName: sector.name)
                                 }
                             }
@@ -289,6 +289,28 @@ struct SectorDetailView: View {
         }
     }
     
+    // 添加新方法处理子分组的 symbols
+    func loadSymbolsForSubSector(_ symbols: [IndicesSymbol]) -> [IndicesSymbol] {
+        let compareMap = dataService.compareData
+        return symbols.map { symbol in
+            var updatedSymbol = symbol
+            let value = compareMap[symbol.symbol.uppercased()] ??
+                       compareMap[symbol.symbol] ??
+                       "N/A"
+            updatedSymbol.value = value
+            
+            if let description = dataService.descriptionData?.stocks.first(where: {
+                $0.symbol.uppercased() == symbol.symbol.uppercased()
+            })?.tag ?? dataService.descriptionData?.etfs.first(where: {
+                $0.symbol.uppercased() == symbol.symbol.uppercased()
+            })?.tag {
+                updatedSymbol.tags = description
+            }
+            
+            return updatedSymbol
+        }
+    }
+    
     func loadSymbols() {
         let compareMap = dataService.compareData
         self.symbols = sector.symbols.map { symbol in
@@ -311,6 +333,7 @@ struct SectorDetailView: View {
     }
 }
 
+// 修改 SymbolItemView 只显示 symbol
 struct SymbolItemView: View {
     let symbol: IndicesSymbol
     let sectorName: String
@@ -329,9 +352,9 @@ struct SymbolItemView: View {
     var body: some View {
         NavigationLink(destination: ChartView(symbol: symbol.symbol, groupName: tableName)) {
             VStack(alignment: .leading, spacing: 8) {
-                // 第一行：symbol和value
+                // 只显示 symbol
                 HStack {
-                    Text("\(symbol.symbol) \(symbol.name)")
+                    Text(symbol.symbol)
                         .font(.headline)
                         .foregroundColor(.primary)
                     
@@ -342,7 +365,7 @@ struct SymbolItemView: View {
                         .fontWeight(.semibold)
                 }
                 
-                // 第二行：tags
+                // 保持 tags 显示
                 if let tags = symbol.tags, !tags.isEmpty {
                     Text(tags.joined(separator: ", "))
                         .font(.footnote)
