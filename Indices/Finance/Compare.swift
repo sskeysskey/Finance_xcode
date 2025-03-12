@@ -332,7 +332,7 @@ struct ComparisonChartView: View {
             var tempData: [String: [DatabaseManager.PriceData]] = [:]
             var shortestDateRange: (start: Date, end: Date)?
             
-            // First pass: fetch data and determine the shortest date range
+            // 第一轮：获取数据并确定最短日期范围
             for symbol in symbols {
                 guard let tableName = dataService.getCategory(for: symbol) else {
                     DispatchQueue.main.async {
@@ -356,8 +356,11 @@ struct ComparisonChartView: View {
                     return
                 }
                 
-                let currentStart = data.first?.date ?? startDate
-                let currentEnd = data.last?.date ?? endDate
+                // 确保数据是按日期排序的
+                let sortedData = data.sorted { $0.date < $1.date }
+                
+                let currentStart = sortedData.first?.date ?? startDate
+                let currentEnd = sortedData.last?.date ?? endDate
                 
                 if let existingRange = shortestDateRange {
                     shortestDateRange = (
@@ -368,7 +371,7 @@ struct ComparisonChartView: View {
                     shortestDateRange = (currentStart, currentEnd)
                 }
                 
-                tempData[symbol] = data
+                tempData[symbol] = sortedData
             }
             
             guard let dateRange = shortestDateRange else {
@@ -379,12 +382,14 @@ struct ComparisonChartView: View {
                 return
             }
             
-            // Second pass: filter data by the shortest date range
+            // 第二轮：过滤数据至最短日期范围
             for (symbol, data) in tempData {
                 var filteredData = data.filter {
+                    // 使用 <= 而不是 < 来确保包含最后一天
                     $0.date >= dateRange.start && $0.date <= dateRange.end
                 }
-                filteredData = filteredData.sampled(step: 5)
+                // 修改数据采样方法，确保保留最新的数据点
+                filteredData = filteredData.smartSampled(maxPoints: filteredData.count / 5)
                 tempData[symbol] = filteredData
             }
             
@@ -400,6 +405,26 @@ struct ComparisonChartView: View {
 extension Array where Element == DatabaseManager.PriceData {
     func sampled(step: Int) -> [DatabaseManager.PriceData] {
         stride(from: 0, to: count, by: step).map { self[$0] }
+    }
+    
+    // 添加新的智能采样方法，确保保留最后几个数据点
+    func smartSampled(maxPoints: Int) -> [DatabaseManager.PriceData] {
+        guard count > maxPoints else { return self }
+        
+        // 至少保留最后10个数据点或者总数据的20%，取较小值
+        let reserveCount = Swift.min(10, Int(Double(count) * 0.2))
+        let lastElements = Array(suffix(reserveCount))
+        
+        // 对剩余部分进行采样
+        let remainingElementsCount = count - reserveCount
+        let sampleStep = Swift.max(1, remainingElementsCount / (Swift.max(1, maxPoints - reserveCount)))
+        
+        let sampledMainPart = Array(prefix(remainingElementsCount)).enumerated()
+            .filter { $0.offset % sampleStep == 0 }
+            .map { $0.element }
+        
+        // 组合采样部分和保留的最新数据
+        return sampledMainPart + lastElements
     }
 }
 
