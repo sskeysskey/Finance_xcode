@@ -419,7 +419,7 @@ struct SearchResultRow: View {
                 VStack(alignment: .leading) {
                     HStack {
                         Text(result.symbol)
-                            .foregroundColor(.green)
+                            .foregroundColor(.blue)
                         Text(result.name)
                             .foregroundColor(.primary)
                             .lineLimit(1)
