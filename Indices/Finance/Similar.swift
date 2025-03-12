@@ -207,9 +207,11 @@ class SimilarViewModel: ObservableObject {
                 for tag in item.tag {
                     let tagLower = tag.lowercased()
                     if usedTags.contains(tagLower) { continue }
-                    for (targetTag, _) in targetTagsDict {
+                    for (targetTag, weight) in targetTagsDict {
                         if (tagLower.contains(targetTag) || targetTag.contains(tagLower)) && tagLower != targetTag && !usedTags.contains(targetTag) {
-                            matchedTags.append((tag, 1.0))
+                            // 如果原始权重大于1，给1分；否则给原始权重分数
+                            let matchWeight = weight > 1.0 ? 1.0 : weight
+                            matchedTags.append((tag, matchWeight))
                             usedTags.insert(targetTag)
                             break
                         }
