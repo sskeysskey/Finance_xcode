@@ -310,12 +310,11 @@ struct SearchView: View {
                     )) {
                         if !(collapsedGroups[groupedResult.category] ?? false) {
                             ForEach(groupedResult.results.sorted { $0.score > $1.score }, id: \.result.id) { result, score in
-                                Button(action: {
-                                    handleResultSelection(result: result)
-                                }) {
-                                    SearchResultRow(result: result, score: score)
-                                }
-                                .buttonStyle(PlainButtonStyle())
+                                SearchResultRow(result: result, score: score)
+                                    .contentShape(Rectangle())  // 添加这一行
+                                    .onTapGesture {           // 改用 onTapGesture
+                                        handleResultSelection(result: result)
+                                    }
                             }
                         }
                     }
