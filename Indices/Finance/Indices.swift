@@ -4,25 +4,29 @@ import Foundation
 // MARK: - Models
 
 struct IndicesSector: Identifiable, Codable {
-    var id: String { name }  // 使用name作为唯一标识符
+    var id: String { name }
     let name: String
     let symbols: [IndicesSymbol]
+    var subSectors: [IndicesSector]? // 添加子分组
     
     private enum CodingKeys: String, CodingKey {
         case name, symbols
+    }
+    
+    init(name: String, symbols: [IndicesSymbol], subSectors: [IndicesSector]? = nil) {
+        self.name = name
+        self.symbols = symbols
+        self.subSectors = subSectors
     }
     
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.name = try container.decode(String.self, forKey: .name)
         self.symbols = try container.decode([IndicesSymbol].self, forKey: .symbols)
-    }
-    
-    init(name: String, symbols: [IndicesSymbol]) {
-        self.name = name
-        self.symbols = symbols
+        self.subSectors = nil
     }
 }
+
 
 struct IndicesSymbol: Identifiable, Codable {
     var id: String { symbol }  // 使用symbol作为唯一标识符
@@ -66,32 +70,75 @@ struct SectorsPanel: Decodable {
         let container = try decoder.container(keyedBy: DynamicCodingKeys.self)
         var sectors: [IndicesSector] = []
         
-        // 获取所有 sector 的 key，并按字母顺序排序
         let orderedKeys = container.allKeys
             .map { $0.stringValue }
             .sorted()
         
-        // 按照固定顺序遍历 sector
         for key in orderedKeys {
             let codingKey = DynamicCodingKeys(stringValue: key)!
             let symbolsContainer = try container.nestedContainer(keyedBy: DynamicCodingKeys.self, forKey: codingKey)
             var symbols: [IndicesSymbol] = []
             
-            // 按照固定顺序遍历 symbols
             let orderedSymbolKeys = symbolsContainer.allKeys
                 .map { $0.stringValue }
                 .sorted()
             
-            for symbolKey in orderedSymbolKeys {
-                let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
-                let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
-                symbols.append(IndicesSymbol(symbol: symbolKey, name: symbolName, value: "", tags: nil))
-            }
-            
-            // 只有当 symbols 不为空时才添加该 sector
-            if !symbols.isEmpty {
-                let sector = IndicesSector(name: key, symbols: symbols)
-                sectors.append(sector)
+            if key == "Economics" {
+                // 特殊处理 Economics 分组
+                var groupedSymbols: [String: [IndicesSymbol]] = [:]
+                
+                for symbolKey in orderedSymbolKeys {
+                    let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
+                    let symbolValue = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
+                    
+                    // 解析前缀数字
+                    if let prefixNumber = symbolValue.split(separator: " ").first,
+                       let _ = Int(prefixNumber) {
+                        let group = String(prefixNumber)
+                        let symbolName = symbolValue.split(separator: " ")[1]
+                        let symbol = IndicesSymbol(
+                            symbol: symbolKey,
+                            name: String(symbolName),
+                            value: "",
+                            tags: nil
+                        )
+                        
+                        if groupedSymbols[group] == nil {
+                            groupedSymbols[group] = []
+                        }
+                        groupedSymbols[group]?.append(symbol)
+                    }
+                }
+                
+                // 创建子分组
+                let subSectors = groupedSymbols.sorted(by: { $0.key < $1.key }).map { group, groupSymbols in
+                    IndicesSector(name: group, symbols: groupSymbols)
+                }
+                
+                // 创建 Economics 主分组
+                let economicsSector = IndicesSector(
+                    name: key,
+                    symbols: [], // Economics 主分组不直接包含 symbols
+                    subSectors: subSectors
+                )
+                sectors.append(economicsSector)
+            } else {
+                // 其他分组的常规处理
+                for symbolKey in orderedSymbolKeys {
+                    let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
+                    let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
+                    symbols.append(IndicesSymbol(
+                        symbol: symbolKey,
+                        name: symbolName,
+                        value: "",
+                        tags: nil
+                    ))
+                }
+                
+                if !symbols.isEmpty {
+                    let sector = IndicesSector(name: key, symbols: symbols)
+                    sectors.append(sector)
+                }
             }
         }
         
@@ -195,14 +242,35 @@ struct SectorDetailView: View {
     
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(symbols) { symbol in
-                    SymbolItemView(symbol: symbol, sectorName: sector.name)
+            if sector.name == "Economics" {
+                // Economics 特殊处理
+                if let subSectors = sector.subSectors {
+                    ForEach(subSectors, id: \.name) { subSector in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(subSector.name)
+                                .font(.headline)
+                                .padding(.horizontal)
+                                .padding(.top, 16)
+                            
+                            LazyVStack(spacing: 0) {
+                                ForEach(subSector.symbols) { symbol in
+                                    SymbolItemView(symbol: symbol, sectorName: sector.name)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // 常规处理
+                LazyVStack(spacing: 0) {
+                    ForEach(symbols) { symbol in
+                        SymbolItemView(symbol: symbol, sectorName: sector.name)
+                    }
                 }
             }
-            .padding(.horizontal)
-            .padding(.top, 8)
         }
+        .padding(.horizontal)
+        .padding(.top, 8)
         .navigationBarTitle(
             sector.name.replacingOccurrences(of: "_", with: " "),
             displayMode: .inline
@@ -215,7 +283,9 @@ struct SectorDetailView: View {
             )
         }
         .onAppear {
-            loadSymbols()
+            if sector.name != "Economics" {
+                loadSymbols()
+            }
         }
     }
     
@@ -223,14 +293,11 @@ struct SectorDetailView: View {
         let compareMap = dataService.compareData
         self.symbols = sector.symbols.map { symbol in
             var updatedSymbol = symbol
-            
-            // 使用大写进行查找
             let value = compareMap[symbol.symbol.uppercased()] ??
                        compareMap[symbol.symbol] ??
                        "N/A"
             updatedSymbol.value = value
             
-            // 尝试获取 description
             if let description = dataService.descriptionData?.stocks.first(where: {
                 $0.symbol.uppercased() == symbol.symbol.uppercased()
             })?.tag ?? dataService.descriptionData?.etfs.first(where: {
