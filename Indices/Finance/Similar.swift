@@ -37,7 +37,7 @@ struct SimilarView: View {
                                     HStack(spacing: 12) {
                                         Text(item.symbol)
                                             .font(.system(size: 20, weight: .bold))
-                                            .foregroundColor(.green)
+                                            .foregroundColor(.blue)
                                             .shadow(radius: 1)
                                         
                                         Text("\(item.totalWeight, specifier: "%.2f")")
@@ -46,7 +46,7 @@ struct SimilarView: View {
                                         
                                         Text("\(item.compareValue)")
                                             .font(.subheadline)
-                                            .foregroundColor(.white)
+                                            .foregroundColor(item.compareValue.hasPrefix("-") ? .red : .green)
                                         
                                         Spacer()
                                     }
