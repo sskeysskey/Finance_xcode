@@ -483,6 +483,13 @@ struct StockLineChartView: UIViewRepresentable {
         init(_ parent: StockLineChartView) {
             self.parent = parent
         }
+        
+        /// 辅助方法：格式化日期为字符串（例如 "yyyy-MM-dd"）
+        private func formatDate(_ date: Date) -> String {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            return formatter.string(from: date)
+        }
 
         func chartValueSelected(_ chartView: ChartViewBase, entry: ChartDataEntry, highlight: Highlight) {
             // 单点选择
@@ -492,11 +499,12 @@ struct StockLineChartView: UIViewRepresentable {
                 // 检查是否是特殊时间点
                 let markerText = getMarkerTextForDate(date)
                 
-                // 如果是特殊点(有markerText)，则只显示事件文本，不显示时间和价格
+                // 如果是特殊点，则在 markerText 前先显示日期
                 if let text = markerText {
-                    parent.onSelectedPriceChange(nil, false, nil, nil, text)
+                    let dateStr = formatDate(date)
+                    let combinedText = "\(dateStr) \(text)"
+                    parent.onSelectedPriceChange(nil, false, nil, nil, combinedText)
                 } else {
-                    // 不是特殊点，则显示时间和价格
                     parent.onSelectedPriceChange(entry.y, false, date, nil, nil)
                 }
             }
@@ -603,11 +611,12 @@ struct StockLineChartView: UIViewRepresentable {
                     let date = Date(timeIntervalSince1970: singleEntry.x)
                     let markerText = getMarkerTextForDate(date)
                     
-                    // 如果是特殊点(有markerText)，则只显示事件文本，不显示时间和价格
+                    // 如果是特殊点，则在 markerText 前增加时间显示
                     if let text = markerText {
-                        parent.onSelectedPriceChange(nil, false, nil, nil, text)
+                        let dateStr = formatDate(date)
+                        let combinedText = "\(dateStr) \(text)"
+                        parent.onSelectedPriceChange(nil, false, nil, nil, combinedText)
                     } else {
-                        // 不是特殊点，则显示时间和价格
                         parent.onSelectedPriceChange(singleEntry.y, false, date, nil, nil)
                     }
                 }
