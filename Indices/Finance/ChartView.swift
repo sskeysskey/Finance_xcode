@@ -1,7 +1,7 @@
 import SwiftUI
 import Charts
 
-// MARK: - TimeRange Enum
+// MARK: - 时间间隔设置
 enum TimeRange: String, CaseIterable {
     case oneMonth = "1M"
     case all = "ALL"
@@ -68,7 +68,7 @@ enum TimeRange: String, CaseIterable {
     }
 }
 
-// MARK: - TimeRangeButton
+// MARK: - 时间间隔按钮
 struct TimeRangeButton: View {
     let title: String
     let isSelected: Bool
@@ -301,7 +301,7 @@ struct ChartView: View {
         return formatter.string(from: date)
     }
 
-    // MARK: - View Components
+    // MARK: - 视图组件
     private var headerView: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
@@ -441,7 +441,7 @@ struct ChartView: View {
     }
 }
 
-// MARK: - SwiftUIChartView
+// MARK: - 试图组建2 各种开关
 struct SwiftUIChartView: View {
     let data: [DatabaseManager.PriceData]
     let showGrid: Bool
@@ -513,6 +513,22 @@ struct SwiftUIChartView: View {
         return nil
     }
     
+    // 辅助方法：判断标记是来自全局还是特定股票
+    private func isMarkerFromSymbol(_ date: Date) -> Bool {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        let dateString = dateFormatter.string(from: date)
+        
+        for (markerDate, _) in symbolTimeMarkers {
+            let markerDateString = dateFormatter.string(from: markerDate)
+            if dateString == markerDateString {
+                return true
+            }
+        }
+        
+        return false
+    }
+    
     private var sortedData: [DatabaseManager.PriceData] {
         data.sorted { $0.date < $1.date }
     }
@@ -564,39 +580,9 @@ struct SwiftUIChartView: View {
                                         isDragging = true
                                     }
                             )
-                            // 添加点击手势用于清除选择
-                            .gesture(
-                                TapGesture(count: 2)
-                                    .onEnded { _ in
-                                        selectedPointDate = nil
-                                        dragStartPoint = nil
-                                        dragEndPoint = nil
-                                        isDragging = false
-                                        onPriceSelection(nil, false, nil, nil, nil)
-                                        isInteracting = false
-                                    }
-                            )
                     }
                 }
                 .frame(height: geometry.size.height)
-                
-                // 如果有拖动线，添加垂直轴线
-                if let start = dragStartPoint, let end = dragEndPoint {
-                    // 添加一条从start.date到end.date的连接线
-                    // 由于SwiftUI Charts不直接支持自定义连接线，这里使用叠加视图实现
-                    GeometryReader { geo in
-                        let startX = getXPosition(for: start.date, in: geo.size.width, data: sortedData)
-                        let endX = getXPosition(for: end.date, in: geo.size.width, data: sortedData)
-                        let startY = getYPosition(for: start.price, in: geo.size.height, data: sortedData)
-                        let endY = getYPosition(for: end.price, in: geo.size.height, data: sortedData)
-                        
-                        Path { path in
-                            path.move(to: CGPoint(x: startX, y: startY))
-                            path.addLine(to: CGPoint(x: endX, y: endY))
-                        }
-                        .stroke(Color.red.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [5, 3]))
-                    }
-                }
             }
             .background(isDarkMode ? Color.black : Color.white)
         }
@@ -659,6 +645,16 @@ struct SwiftUIChartView: View {
                         .symbolSize(10)
                     }
                     
+                    // 添加垂直的虚线标记
+                    if let selectedDate = selectedPointDate,
+                       isSameDay(selectedDate, pricePoint.date) {
+                        RuleMark(
+                            x: .value("Selected Date", pricePoint.date)
+                        )
+                        .foregroundStyle(Color.red.opacity(0.5))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 3]))
+                    }
+                    
                     // 为双点手势添加标记
                     if let startPoint = dragStartPoint,
                        isSameDay(startPoint.date, pricePoint.date) {
@@ -704,21 +700,6 @@ struct SwiftUIChartView: View {
                                 endPoint: .bottom
                             )
                     )
-                }
-                
-                // 如果有两个拖动点，绘制连接线
-                if let start = dragStartPoint, let end = dragEndPoint {
-                    RuleMark(
-                        x: .value("Start", start.date)
-                    )
-                    .foregroundStyle(Color.red.opacity(0.6))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 3]))
-                    
-                    RuleMark(
-                        x: .value("End", end.date)
-                    )
-                    .foregroundStyle(Color.red.opacity(0.6))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 3]))
                 }
             }
         }
@@ -886,12 +867,6 @@ struct SwiftUIChartView: View {
         }
     }
     
-    // 辅助方法：判断两个日期是否为同一天
-    private func isSameDay(_ date1: Date, _ date2: Date) -> Bool {
-        let calendar = Calendar.current
-        return calendar.isDate(date1, inSameDayAs: date2)
-    }
-    
     // 辅助方法：查找距离特定日期最近的数据点
     private func findClosestDataPoint(to date: Date) -> DatabaseManager.PriceData? {
         guard !sortedData.isEmpty else { return nil }
@@ -908,22 +883,6 @@ struct SwiftUIChartView: View {
         }
         
         return closestPoint
-    }
-    
-    // 辅助方法：判断标记是来自全局还是特定股票
-    private func isMarkerFromSymbol(_ date: Date) -> Bool {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        let dateString = dateFormatter.string(from: date)
-        
-        for (markerDate, _) in symbolTimeMarkers {
-            let markerDateString = dateFormatter.string(from: markerDate)
-            if dateString == markerDateString {
-                return true
-            }
-        }
-        
-        return false
     }
 }
 
