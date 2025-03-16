@@ -209,7 +209,7 @@ struct ChartView: View {
             if let errorMessage = dataService.errorMessage {
                 Text(errorMessage)
                     .foregroundColor(.red)
-                    .font(.system(size: 14))
+                    .font(.system(size: 16))
                     .padding()
             }
             Spacer()
@@ -287,7 +287,7 @@ struct ChartView: View {
                            let startDate = selectedDateStart,
                            let endDate = selectedDateEnd {
                             Text("\(formattedDate(startDate))   \(formattedDate(endDate))")
-                                .font(.system(size: 14))
+                                .font(.system(size: 16))
                                 .foregroundColor(.white)
                             Text(String(format: "%.2f%%", price))
                                 .font(.system(size: 16, weight: .medium))
@@ -295,7 +295,7 @@ struct ChartView: View {
                         } else if let date = selectedDateStart {
                             HStack(spacing: 18) {
                                 Text(formattedDate(date))
-                                    .font(.system(size: 14))
+                                    .font(.system(size: 16))
                                     .foregroundColor(.white)
                                 Text(String(format: "%.2f", price))
                                     .font(.system(size: 16, weight: .medium))
@@ -307,7 +307,7 @@ struct ChartView: View {
                     // 标记文本显示
                     if let text = markerText {
                         Text(text)
-                            .font(.system(size: 14))
+                            .font(.system(size: 16))
                             .foregroundColor(.yellow)
                             .padding(.top, 2)
                     }
@@ -315,7 +315,7 @@ struct ChartView: View {
             } else if let markerText = markerText {
                 // 当只有标记文本时(单指触摸到特殊点)
                 Text(markerText)
-                    .font(.system(size: 14))
+                    .font(.system(size: 16))
                     .foregroundColor(.yellow)
             } else {
                 navigationLinks
