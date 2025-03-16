@@ -493,6 +493,25 @@ struct OptimizedChartView: View {
         data.sorted { $0.date < $1.date }
     }
     
+    private var latestPrice: Double? {
+        sortedData.last?.price
+    }
+    
+    // 添加计算属性来获取当前数据中的最高价和最低价，并添加一个很小的边距比例
+    private var priceRange: (min: Double, max: Double)? {
+        guard !sortedData.isEmpty else { return nil }
+        
+        let prices = sortedData.map { $0.price }
+        guard let minPrice = prices.min(), let maxPrice = prices.max() else { return nil }
+        
+        // 计算价格范围
+        let range = maxPrice - minPrice
+        // 添加非常小的边距(0.5%)
+        let padding = range * 0.005
+        
+        return (minPrice - padding, maxPrice + padding)
+    }
+    
     var body: some View {
         GeometryReader { geometry in
             Chart {
@@ -577,7 +596,7 @@ struct OptimizedChartView: View {
                                 y: .value("Price", price)
                             )
                             .foregroundStyle(Color.red)
-                            .symbolSize(14)
+                            .symbolSize(24)
                         }
                     }
                     
@@ -603,6 +622,8 @@ struct OptimizedChartView: View {
                 }
             }
             
+            // 自定义Y轴范围
+            .chartYScale(domain: priceRange != nil ? priceRange!.min...priceRange!.max : 0...100)
             
             .chartXAxis {
                 AxisMarks(preset: .aligned, position: .bottom) { value in
@@ -737,12 +758,22 @@ struct OptimizedChartView: View {
            let earningValue = symbolEarningData[earningDate] {
             // 是 earning 点，显示 earning 数据
             let formattedChange = String(format: "%+.2f%%", earningValue)
+            
+            // 计算历史价格与最新价格的差异百分比
+            var priceComparisonText = ""
+            if let latest = latestPrice, latest > 0 {
+                // closestPoint.price 是非可选类型，不需要使用 if let
+                let historicalPrice = closestPoint.price
+                let priceDiffPercent = ((latest - historicalPrice) / historicalPrice) * 100
+                priceComparisonText = String(format: " | 至今变化: %+.2f%%", priceDiffPercent)
+            }
+            
             onPriceSelection(
                 nil,
                 true,
                 earningDate,
                 nil,
-                "\(formattedChange)"
+                "\(formattedChange)\(priceComparisonText)"
             )
         } else {
             // 不是 earning 点，显示普通价格数据
