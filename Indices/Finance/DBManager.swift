@@ -110,6 +110,35 @@ class DatabaseManager {
         return result
     }
     
+    // 在 DatabaseManager 类中添加
+    func fetchEarningData(forSymbol symbol: String) -> [Date: Double] {
+        var results: [Date: Double] = [:]
+        let query = "SELECT date, price FROM Earning WHERE name = ?"
+        var statement: OpaquePointer?
+        
+        if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
+            sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
+            
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd"
+            
+            while sqlite3_step(statement) == SQLITE_ROW {
+                if let dateStr = sqlite3_column_text(statement, 0) {
+                    let dateString = String(cString: dateStr)
+                    let price = sqlite3_column_double(statement, 1)
+                    
+                    if let date = dateFormatter.date(from: dateString) {
+                        results[date] = price
+                        print("Loaded earning data for \(symbol): \(dateString) -> \(price)")  // 添加调试输出
+                    }
+                }
+            }
+        }
+        
+        print("Total earning data points for \(symbol): \(results.count)")  // 添加调试输出
+        return results
+    }
+    
     // 添加辅助方法来检查表是否包含 volume 列
     private func checkIfTableHasVolume(tableName: String) -> Bool {
         var hasVolume = false

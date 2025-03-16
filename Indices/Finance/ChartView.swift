@@ -72,7 +72,6 @@ enum TimeRange: String, CaseIterable {
     }
 }
 
-// 时间间隔按钮
 struct TimeRangeButton: View {
     let title: String
     let isSelected: Bool
@@ -188,6 +187,8 @@ struct ChartView: View {
 
     // 缓存的描述数据
     @State private var cachedDescriptions: (String, String)? = nil
+    // 新增盈利数据的状态变量
+    @State private var earningData: [Date: Double] = [:]
 
     var body: some View {
         VStack(spacing: 16) {
@@ -365,6 +366,7 @@ struct ChartView: View {
             timeRange: selectedTimeRange,
             globalTimeMarkers: dataService.globalTimeMarkers,
             symbolTimeMarkers: dataService.symbolTimeMarkers[symbol.uppercased()] ?? [:],
+            symbolEarningData: earningData,  // 新增参数
             symbol: symbol,
             onPriceSelection: { price, isPercentage, startDate, endDate, text in
                 selectedPrice = price
@@ -424,9 +426,13 @@ struct ChartView: View {
                 tableName: groupName,
                 dateRange: .timeRange(selectedTimeRange)
             )
+            
+            // 添加这一行来加载 earning 数据
+            let newEarningData = DatabaseManager.shared.fetchEarningData(forSymbol: symbol.uppercased())
 
             DispatchQueue.main.async {
                 chartData = newData
+                earningData = newEarningData  // 更新 earning 数据
                 isLoading = false
             }
         }
@@ -461,6 +467,8 @@ struct OptimizedChartView: View {
     let timeRange: TimeRange
     let globalTimeMarkers: [Date: String]
     let symbolTimeMarkers: [Date: String]
+    // 新增属性
+    let symbolEarningData: [Date: Double]
     let symbol: String
     let onPriceSelection: (Double?, Bool, Date?, Date?, String?) -> Void
     @Binding var dragStartPoint: (date: Date, price: Double)?
@@ -470,8 +478,15 @@ struct OptimizedChartView: View {
     @State private var selectedPointDate: Date? = nil
     @State private var isDragging: Bool = false
     
-    // 使用 @State 来存储缓存，这样可以在 onAppear 中修改它
-    @State private var markedDatesCache: [String: (isSymbolMarker: Bool, text: String)] = [:]
+    // 标记类型枚举 - 将枚举定义移到更早的位置
+    enum MarkerType {
+        case global
+        case symbol
+        case earning
+    }
+    
+    // 修改缓存类型，包含MarkerType
+    @State private var markedDatesCache: [String: (type: MarkerType, text: String)] = [:]
     
     // 按日期排序的数据
     private var sortedData: [DatabaseManager.PriceData] {
@@ -527,14 +542,14 @@ struct OptimizedChartView: View {
                             )
                     )
                     
-                    // 标记点处理
+                    // 标记点处理 - 修改这部分
                     let dateKey = formattedDate(pricePoint.date)
                     if let markerInfo = markedDatesCache[dateKey] {
                         PointMark(
                             x: .value("Date", pricePoint.date),
                             y: .value("Price", pricePoint.price)
                         )
-                        .foregroundStyle(markerInfo.isSymbolMarker ? Color.orange : Color.yellow)
+                        .foregroundStyle(markerColor(for: markerInfo.type))
                         .symbolSize(8)
                     }
                     
@@ -552,6 +567,18 @@ struct OptimizedChartView: View {
                         )
                         .foregroundStyle(Color.red.opacity(0.5))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 3]))
+                    }
+                    
+                    // 添加 Earning 标记点
+                    ForEach(Array(symbolEarningData.keys.sorted()), id: \.self) { date in
+                        if let price = findPriceForDate(date) {
+                            PointMark(
+                                x: .value("Earning Date", date),
+                                y: .value("Price", price)
+                            )
+                            .foregroundStyle(Color.red)
+                            .symbolSize(10)
+                        }
                     }
                     
                     // 起始选择点
@@ -630,9 +657,31 @@ struct OptimizedChartView: View {
         }
     }
     
+    // 添加这个辅助方法来查找特定日期的价格
+    private func findPriceForDate(_ date: Date) -> Double? {
+        // 首先尝试精确匹配
+        if let exactMatch = sortedData.first(where: { isSameDay($0.date, date) }) {
+            return exactMatch.price
+        }
+        
+        // 如果找不到精确匹配，找最近的价格点
+        guard let nearestPoint = sortedData.min(by: {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+        }) else {
+            return nil
+        }
+        
+        // 如果最近的点在30天以内，则使用该点的价格
+        if abs(nearestPoint.date.timeIntervalSince(date)) <= 30 * 24 * 60 * 60 {
+            return nearestPoint.price
+        }
+        
+        return nil
+    }
+    
     // 建立日期标记缓存以加速查找
     private func buildMarkedDatesCache() {
-        var cache: [String: (isSymbolMarker: Bool, text: String)] = [:]
+        var cache: [String: (type: MarkerType, text: String)] = [:]
         
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd"
@@ -640,16 +689,25 @@ struct OptimizedChartView: View {
         // 添加全局标记
         for (date, text) in globalTimeMarkers {
             let key = dateFormatter.string(from: date)
-            cache[key] = (isSymbolMarker: false, text: "\(key) \(text)")
+            cache[key] = (type: .global, text: "\(key) \(text)")
         }
         
         // 添加股票特定标记（优先级更高）
         for (date, text) in symbolTimeMarkers {
             let key = dateFormatter.string(from: date)
-            cache[key] = (isSymbolMarker: true, text: "\(key) \(text)")
+            cache[key] = (type: .symbol, text: "\(key) \(text)")
+        }
+        
+        // 添加 earning 数据标记
+        for (date, priceChange) in symbolEarningData {
+            let key = dateFormatter.string(from: date)
+            let formattedChange = String(format: "%+.2f%%", priceChange)
+            cache[key] = (type: .earning, text: "\(key) Earnings: \(formattedChange)")
+            print("Adding earning marker for date: \(key) with change: \(formattedChange)")  // 添加调试输出
         }
         
         // 将计算结果赋值给 @State 变量
+        print("Total cached markers: \(cache.count)")  // 添加调试输出
         markedDatesCache = cache
     }
     
@@ -663,13 +721,35 @@ struct OptimizedChartView: View {
               let closestPoint = findClosestDataPoint(to: dateValue) else { return }
         
         selectedPointDate = closestPoint.date
+                
+        // 首先检查是否是 earning 点
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
         
-        // 检查是特殊标记点还是普通点
-        let dateKey = formattedDate(closestPoint.date)
-        if let markerInfo = markedDatesCache[dateKey] {
-            onPriceSelection(nil, false, nil, nil, markerInfo.text)
+        // 检查是否有匹配的 earning 数据
+        let matchingEarningDate = symbolEarningData.keys.first { date in
+            isSameDay(date, closestPoint.date)
+        }
+        
+        if let earningDate = matchingEarningDate,
+           let earningValue = symbolEarningData[earningDate] {
+            // 是 earning 点，显示 earning 数据
+            let formattedChange = String(format: "%+.2f%%", earningValue)
+            onPriceSelection(
+                nil,
+                true,
+                earningDate,
+                nil,
+                "\(formattedChange)"
+            )
         } else {
-            onPriceSelection(closestPoint.price, false, closestPoint.date, nil, nil)
+            // 不是 earning 点，显示普通价格数据
+            let dateKey = dateFormatter.string(from: closestPoint.date)
+            if let markerInfo = markedDatesCache[dateKey] {
+                onPriceSelection(nil, false, nil, nil, markerInfo.text)
+            } else {
+                onPriceSelection(closestPoint.price, false, closestPoint.date, nil, nil)
+            }
         }
         
         // 双点测量逻辑
@@ -730,6 +810,18 @@ struct OptimizedChartView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)
+    }
+
+    // 根据标记类型返回颜色的辅助方法
+    private func markerColor(for type: MarkerType) -> Color {
+        switch type {
+        case .global:
+            return Color.yellow
+        case .symbol:
+            return Color.orange
+        case .earning:
+            return Color.red
+        }
     }
 }
 

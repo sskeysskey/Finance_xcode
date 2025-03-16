@@ -71,6 +71,7 @@ class DataService: ObservableObject {
     @Published var sectorsData: [String: [String]] = [:]
     @Published var compareData: [String: String] = [:]
     @Published var sectorsPanel: SectorsPanel?
+    @Published var symbolEarningData: [String: [Date: Double]] = [:]
     
     // 添加新的属性
     @Published var earningReleases: [EarningRelease] = []
