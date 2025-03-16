@@ -414,7 +414,6 @@ struct ChartView: View {
         }
     }
 
-    // MARK: - Methods
     private func loadChartData() {
         isLoading = true
         chartData = [] // 清空之前的数据
