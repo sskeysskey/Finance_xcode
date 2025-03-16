@@ -550,7 +550,7 @@ struct OptimizedChartView: View {
                             y: .value("Price", pricePoint.price)
                         )
                         .foregroundStyle(markerColor(for: markerInfo.type))
-                        .symbolSize(8)
+                        .symbolSize(14)
                     }
                     
                     // 选择点标记
@@ -559,8 +559,8 @@ struct OptimizedChartView: View {
                             x: .value("Selected Date", pricePoint.date),
                             y: .value("Selected Price", pricePoint.price)
                         )
-                        .foregroundStyle(Color.red)
-                        .symbolSize(10)
+                        .foregroundStyle(Color.purple)
+                        .symbolSize(14)
                         
                         RuleMark(
                             x: .value("Selected Date", pricePoint.date)
@@ -577,7 +577,7 @@ struct OptimizedChartView: View {
                                 y: .value("Price", price)
                             )
                             .foregroundStyle(Color.red)
-                            .symbolSize(10)
+                            .symbolSize(14)
                         }
                     }
                     
@@ -602,6 +602,8 @@ struct OptimizedChartView: View {
                     }
                 }
             }
+            
+            
             .chartXAxis {
                 AxisMarks(preset: .aligned, position: .bottom) { value in
                     if shouldShowAxisMark(value) {
