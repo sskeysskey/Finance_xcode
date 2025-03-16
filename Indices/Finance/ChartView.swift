@@ -72,7 +72,7 @@ enum TimeRange: String, CaseIterable {
     }
 }
 
-// MARK: - 时间间隔按钮
+// 时间间隔按钮
 struct TimeRangeButton: View {
     let title: String
     let isSelected: Bool
@@ -209,7 +209,7 @@ struct ChartView: View {
             if let errorMessage = dataService.errorMessage {
                 Text(errorMessage)
                     .foregroundColor(.red)
-                    .font(.system(size: 16))
+                    .font(.system(size: 14))
                     .padding()
             }
             Spacer()
@@ -277,7 +277,7 @@ struct ChartView: View {
         .padding(.horizontal)
     }
 
-    // 提取价格信息视图
+    // MARK: - 提取价格信息视图
     private var priceInfoView: some View {
         Group {
             if let price = selectedPrice {
@@ -287,18 +287,18 @@ struct ChartView: View {
                            let startDate = selectedDateStart,
                            let endDate = selectedDateEnd {
                             Text("\(formattedDate(startDate))   \(formattedDate(endDate))")
-                                .font(.system(size: 16))
+                                .font(.system(size: 14))
                                 .foregroundColor(.white)
                             Text(String(format: "%.2f%%", price))
-                                .font(.system(size: 16, weight: .medium))
+                                .font(.system(size: 14, weight: .medium))
                                 .foregroundColor(.green)
                         } else if let date = selectedDateStart {
                             HStack(spacing: 18) {
                                 Text(formattedDate(date))
-                                    .font(.system(size: 16))
+                                    .font(.system(size: 14))
                                     .foregroundColor(.white)
                                 Text(String(format: "%.2f", price))
-                                    .font(.system(size: 16, weight: .medium))
+                                    .font(.system(size: 14, weight: .medium))
                                     .foregroundColor(.green)
                             }
                         }
@@ -307,7 +307,7 @@ struct ChartView: View {
                     // 标记文本显示
                     if let text = markerText {
                         Text(text)
-                            .font(.system(size: 16))
+                            .font(.system(size: 14))
                             .foregroundColor(.yellow)
                             .padding(.top, 2)
                     }
@@ -315,7 +315,7 @@ struct ChartView: View {
             } else if let markerText = markerText {
                 // 当只有标记文本时(单指触摸到特殊点)
                 Text(markerText)
-                    .font(.system(size: 16))
+                    .font(.system(size: 14))
                     .foregroundColor(.yellow)
             } else {
                 navigationLinks
@@ -337,20 +337,20 @@ struct ChartView: View {
                 }
             }) {
                 Text("Description")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.green)
             }
             // Compare
             NavigationLink(destination: CompareView(initialSymbol: symbol)) {
                 Text("Compare")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     .padding(.leading, 20)
                     .foregroundColor(.green)
             }
             // Similar
             NavigationLink(destination: SimilarView(symbol: symbol)) {
                 Text("Similar")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     .padding(.leading, 20)
                     .foregroundColor(.green)
             }
