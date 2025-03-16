@@ -709,14 +709,14 @@ struct StockLineChartView: UIViewRepresentable {
         chartView.backgroundColor = isDarkMode ? .black : .white
     }
     
+    // 修改后的 createDataSet：直接使用原始数据，且不做平滑处理
     private func createDataSet(entries: [ChartDataEntry]) -> LineChartDataSet {
-        // 先预处理
-        let processedEntries = preprocessData(entries, timeRange: timeRange)
-        let dataSet = LineChartDataSet(entries: processedEntries, label: "Price")
+        // 不再预处理数据，直接使用原始 entries
+        let dataSet = LineChartDataSet(entries: entries, label: "Price")
         
         // 检查是否有负值
-        let hasNegative = processedEntries.contains { $0.y < 0 }
-
+        let hasNegative = entries.contains { $0.y < 0 }
+        
         if isDarkMode {
             let neonColor = UIColor(red: 0/255, green: 255/255, blue: 178/255, alpha: 1.0)
             let gradientColors = [
@@ -729,7 +729,6 @@ struct StockLineChartView: UIViewRepresentable {
                 colors: gradientColors as CFArray,
                 locations: [0.0, 1.0]
             )!
-            // 负值时的方向同样保持一致
             dataSet.fill = LinearGradientFill(gradient: gradient, angle: hasNegative ? 270 : 90)
         } else {
             let gradientColors = [
@@ -744,9 +743,9 @@ struct StockLineChartView: UIViewRepresentable {
             )!
             dataSet.fill = LinearGradientFill(gradient: gradient, angle: hasNegative ? 270 : 90)
         }
-
+        
         dataSet.drawCirclesEnabled = false
-        dataSet.mode = .cubicBezier
+        dataSet.mode = .linear  // 使用线性连接，不做曲线平滑
         dataSet.lineWidth = 1.0
         dataSet.drawFilledEnabled = true
         dataSet.drawValuesEnabled = false
@@ -754,7 +753,6 @@ struct StockLineChartView: UIViewRepresentable {
         dataSet.highlightColor = .systemRed
         dataSet.highlightLineWidth = 1
         dataSet.highlightLineDashLengths = [5, 2]
-        dataSet.cubicIntensity = CGFloat(calculateLineTension(timeRange))
         
         return dataSet
     }
@@ -817,24 +815,6 @@ struct StockLineChartView: UIViewRepresentable {
         }
     }
 
-    // MARK: - 数据预处理与配置
-    private func calculateSamplingRate(_ timeRange: TimeRange) -> Int {
-        switch timeRange {
-        case .all:
-            return 15
-        case .tenYears:
-            return 14
-        case .fiveYears:
-            return 7
-        case .twoYears:
-            return 4
-        case .oneYear:
-            return 2
-        case .sixMonths, .threeMonths, .oneMonth:
-            return 1
-        }
-    }
-
     private func calculateLineTension(_ timeRange: TimeRange) -> Double {
         switch timeRange {
         case .all:
@@ -854,63 +834,6 @@ struct StockLineChartView: UIViewRepresentable {
         case .oneMonth:
             return 0.025
         }
-    }
-
-    private func downsampleData(_ entries: [ChartDataEntry], samplingRate: Int) -> [ChartDataEntry] {
-        guard samplingRate > 1, !entries.isEmpty else { return entries }
-        guard entries.count > 1 else { return entries }
-        
-        var result: [ChartDataEntry] = [entries.last!]
-        let count = entries.count - 1
-        
-        var accumX: Double = 0
-        var accumY: Double = 0
-        var sampleCount = 0
-        
-        for i in (0..<count).reversed() {
-            let entry = entries[i]
-            accumX += entry.x
-            accumY += entry.y
-            sampleCount += 1
-            
-            if sampleCount == samplingRate {
-                let avgX = accumX / Double(sampleCount)
-                let avgY = accumY / Double(sampleCount)
-                result.insert(ChartDataEntry(x: avgX, y: avgY), at: 0)
-                
-                accumX = 0
-                accumY = 0
-                sampleCount = 0
-            }
-        }
-
-        if sampleCount > 0 {
-            let avgX = accumX / Double(sampleCount)
-            let avgY = accumY / Double(sampleCount)
-            result.insert(ChartDataEntry(x: avgX, y: avgY), at: 0)
-        }
-        
-        return result
-    }
-
-    private func preprocessData(_ entries: [ChartDataEntry], timeRange: TimeRange) -> [ChartDataEntry] {
-        guard !entries.isEmpty else { return entries }
-        
-        let oneMonthAgo = Date()
-            .addingTimeInterval(-30 * 24 * 60 * 60)
-            .timeIntervalSince1970
-        
-        let (recentData, olderData) = entries.reduce(into: ([ChartDataEntry](), [ChartDataEntry]())) {
-            if $1.x >= oneMonthAgo {
-                $0.0.append($1)
-            } else {
-                $0.1.append($1)
-            }
-        }
-        
-        let samplingRate = calculateSamplingRate(timeRange)
-        let sampledOlderData = downsampleData(olderData, samplingRate: samplingRate)
-        return sampledOlderData + recentData
     }
 
     private func configureXAxis(_ xAxis: XAxis) {
@@ -969,33 +892,32 @@ struct StockLineChartView: UIViewRepresentable {
     }
 
     private func updateChartData(_ chartView: LineChartView) {
+        // 将所有数据点全部显示，不做预处理
         let entries = data.map {
             ChartDataEntry(x: $0.date.timeIntervalSince1970, y: $0.price)
         }
         let dataSet = createDataSet(entries: entries)
         
-        // 添加特殊点标记
+        // 添加特殊标记（黄点/橙点），该函数遍历所有数据点
         addSpecialMarkers(to: dataSet)
         
         chartView.leftAxis.drawZeroLineEnabled = false
         chartView.data = LineChartData(dataSet: dataSet)
         
         if !entries.isEmpty {
-            let minX = entries.map(\.x).min() ?? 0
-            let maxX = entries.map(\.x).max() ?? 0
-            let minY = entries.map(\.y).min() ?? 0
-            let maxY = entries.map(\.y).max() ?? 0
+            let minX = entries.map { $0.x }.min() ?? 0
+            let maxX = entries.map { $0.x }.max() ?? 0
+            let minY = entries.map { $0.y }.min() ?? 0
+            let maxY = entries.map { $0.y }.max() ?? 0
             let padding = (maxY - minY) * 0.1
-
+            
             let priceRange = maxY - minY
             let granularity = calculateGranularity(priceRange: priceRange)
             
             chartView.leftAxis.granularity = granularity
             chartView.leftAxis.decimals = calculateDecimals(granularity: granularity)
             
-            let adjustedMinY = minY > 0
-                ? max((minY - padding), 0)
-                : (minY - padding)
+            let adjustedMinY = minY > 0 ? max((minY - padding), 0) : (minY - padding)
             
             chartView.setVisibleXRange(minXRange: 30, maxXRange: maxX - minX)
             chartView.leftAxis.axisMinimum = adjustedMinY
@@ -1009,11 +931,12 @@ struct StockLineChartView: UIViewRepresentable {
         }
     }
     
+    // 添加特殊标记的逻辑保持不变：
     private func addSpecialMarkers(to dataSet: LineChartDataSet) {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd"
         
-        // 查找特殊日期对应的数据点
+        // 遍历所有数据点，检查全局标记和股票特有标记
         for entry in dataSet.entries {
             let entryDate = Date(timeIntervalSince1970: entry.x)
             let entryDateString = dateFormatter.string(from: entryDate)
@@ -1028,11 +951,11 @@ struct StockLineChartView: UIViewRepresentable {
                 }
             }
             
-            // 检查特定股票标记
+            // 检查当前股票特有标记，优先级高于全局标记
             for (date, _) in symbolTimeMarkers {
                 let markerDateString = dateFormatter.string(from: date)
                 if markerDateString == entryDateString {
-                    // 添加橙色标记（优先级高于全局标记）
+                    // 添加橙色标记
                     let circleImage = UIImage.circleImage(with: .orange, size: CGSize(width: 8, height: 8))
                     entry.icon = circleImage
                 }
