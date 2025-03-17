@@ -162,4 +162,33 @@ class DatabaseManager {
         sqlite3_finalize(statement)
         return hasVolume
     }
+    
+    // 添加到DatabaseManager中的采样方法
+    func fetchSampledHistoricalData(
+        symbol: String,
+        tableName: String,
+        dateRange: DateRangeInput,
+        maxPoints: Int = 365 // 默认最多显示365个点
+    ) -> [PriceData] {
+        var result = fetchHistoricalData(symbol: symbol, tableName: tableName, dateRange: dateRange)
+        
+        // 如果数据点超过上限，进行采样
+        if result.count > maxPoints {
+            let step = result.count / maxPoints
+            var sampledResult: [PriceData] = []
+            
+            for i in stride(from: 0, to: result.count, by: step) {
+                sampledResult.append(result[i])
+            }
+            
+            // 确保包含最后一个点
+            if let lastPoint = result.last, sampledResult.last?.id != lastPoint.id {
+                sampledResult.append(lastPoint)
+            }
+            
+            return sampledResult
+        }
+        
+        return result
+    }
 }
