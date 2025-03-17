@@ -110,35 +110,6 @@ class DatabaseManager {
         return result
     }
     
-    // 在 DatabaseManager 类中添加
-    func fetchEarningData(forSymbol symbol: String) -> [Date: Double] {
-        var results: [Date: Double] = [:]
-        let query = "SELECT date, price FROM Earning WHERE name = ?"
-        var statement: OpaquePointer?
-        
-        if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
-            sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
-            
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateFormat = "yyyy-MM-dd"
-            
-            while sqlite3_step(statement) == SQLITE_ROW {
-                if let dateStr = sqlite3_column_text(statement, 0) {
-                    let dateString = String(cString: dateStr)
-                    let price = sqlite3_column_double(statement, 1)
-                    
-                    if let date = dateFormatter.date(from: dateString) {
-                        results[date] = price
-                        print("Loaded earning data for \(symbol): \(dateString) -> \(price)")  // 添加调试输出
-                    }
-                }
-            }
-        }
-        
-        print("Total earning data points for \(symbol): \(results.count)")  // 添加调试输出
-        return results
-    }
-    
     // 添加辅助方法来检查表是否包含 volume 列
     private func checkIfTableHasVolume(tableName: String) -> Bool {
         var hasVolume = false
@@ -161,34 +132,5 @@ class DatabaseManager {
         
         sqlite3_finalize(statement)
         return hasVolume
-    }
-    
-    // 添加到DatabaseManager中的采样方法
-    func fetchSampledHistoricalData(
-        symbol: String,
-        tableName: String,
-        dateRange: DateRangeInput,
-        maxPoints: Int = 365 // 默认最多显示365个点
-    ) -> [PriceData] {
-        var result = fetchHistoricalData(symbol: symbol, tableName: tableName, dateRange: dateRange)
-        
-        // 如果数据点超过上限，进行采样
-        if result.count > maxPoints {
-            let step = result.count / maxPoints
-            var sampledResult: [PriceData] = []
-            
-            for i in stride(from: 0, to: result.count, by: step) {
-                sampledResult.append(result[i])
-            }
-            
-            // 确保包含最后一个点
-            if let lastPoint = result.last, sampledResult.last?.id != lastPoint.id {
-                sampledResult.append(lastPoint)
-            }
-            
-            return sampledResult
-        }
-        
-        return result
     }
 }

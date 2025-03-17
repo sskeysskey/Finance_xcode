@@ -197,7 +197,9 @@ struct ChartView: View {
             // 价格和日期显示逻辑
             priceInfoView
             
+            // 关键性能优化：添加稳定id确保视图不会频繁重建
             chartView
+                .id("chart-\(selectedTimeRange.rawValue)") // 只在时间范围变化时重建
                 .background(
                     RoundedRectangle(cornerRadius: 12)
                         .fill(Color(uiColor: .systemBackground))
@@ -206,7 +208,6 @@ struct ChartView: View {
             
             timeRangePicker
 
-            // 显示错误消息
             if let errorMessage = dataService.errorMessage {
                 Text(errorMessage)
                     .foregroundColor(.red)
@@ -420,20 +421,35 @@ struct ChartView: View {
         isLoading = true
         chartData = [] // 清空之前的数据
         
+        // 计算适合当前时间范围的最大数据点
+        let maxPoints: Int
+        switch selectedTimeRange {
+        case .oneMonth, .threeMonths:
+            maxPoints = 90 // 每天的数据
+        case .sixMonths:
+            maxPoints = 180
+        case .oneYear:
+            maxPoints = 250 // 工作日数据
+        case .twoYears:
+            maxPoints = 350
+        case .fiveYears, .tenYears, .all:
+            maxPoints = 500
+        }
+        
         DispatchQueue.global(qos: .userInitiated).async {
-            let newData = DatabaseManager.shared.fetchHistoricalData(
-                symbol: symbol,
-                tableName: groupName,
-                dateRange: .timeRange(selectedTimeRange)
+            let newData = DatabaseManager.shared.fetchSampledHistoricalData(
+                symbol: self.symbol,
+                tableName: self.groupName,
+                dateRange: .timeRange(self.selectedTimeRange),
+                maxPoints: maxPoints
             )
             
-            // 添加这一行来加载 earning 数据
-            let newEarningData = DatabaseManager.shared.fetchEarningData(forSymbol: symbol.uppercased())
-
+            let newEarningData = DatabaseManager.shared.fetchEarningData(forSymbol: self.symbol.uppercased())
+            
             DispatchQueue.main.async {
-                chartData = newData
-                earningData = newEarningData  // 更新 earning 数据
-                isLoading = false
+                self.chartData = newData
+                self.earningData = newEarningData
+                self.isLoading = false
             }
         }
     }
@@ -461,13 +477,13 @@ struct ChartView: View {
 
 // MARK: - 优化后的图表视图
 struct OptimizedChartView: View {
+    // 保持原有属性
     let data: [DatabaseManager.PriceData]
     let showGrid: Bool
     let isDarkMode: Bool
     let timeRange: TimeRange
     let globalTimeMarkers: [Date: String]
     let symbolTimeMarkers: [Date: String]
-    // 新增属性
     let symbolEarningData: [Date: Double]
     let symbol: String
     let onPriceSelection: (Double?, Bool, Date?, Date?, String?) -> Void
@@ -475,386 +491,254 @@ struct OptimizedChartView: View {
     @Binding var dragEndPoint: (date: Date, price: Double)?
     @Binding var isInteracting: Bool
     
+    // 选择和交互状态
     @State private var selectedPointDate: Date? = nil
     @State private var isDragging: Bool = false
+    @State private var isProcessingGesture = false
     
-    // 标记类型枚举 - 将枚举定义移到更早的位置
     enum MarkerType {
-        case global
-        case symbol
-        case earning
+        case global, symbol, earning
     }
     
-    // 修改缓存类型，包含MarkerType
-    @State private var markedDatesCache: [String: (type: MarkerType, text: String)] = [:]
-    
-    // 按日期排序的数据
+    // 预计算属性 - 不在view中计算
     private var sortedData: [DatabaseManager.PriceData] {
         data.sorted { $0.date < $1.date }
     }
     
-    private var latestPrice: Double? {
-        sortedData.last?.price
+    // 优化后的数据采样 - 减少数据点
+    private var displayData: [DatabaseManager.PriceData] {
+        // 根据时间范围确定合适的采样率
+        let maxPoints: Int
+        switch timeRange {
+        case .oneMonth: maxPoints = 30
+        case .threeMonths: maxPoints = 60
+        case .sixMonths: maxPoints = 90
+        case .oneYear: maxPoints = 120
+        case .twoYears: maxPoints = 150
+        case .fiveYears, .tenYears, .all: maxPoints = 200
+        }
+        
+        guard sortedData.count > maxPoints else { return sortedData }
+        
+        // 简单均匀采样
+        let step = max(1, sortedData.count / maxPoints)
+        let indices = stride(from: 0, to: sortedData.count, by: step)
+        
+        // 使用预分配内存的数组而非动态追加
+        let result = indices.compactMap { sortedData[safe: $0] }
+        
+        // 确保包含最后一个点
+        if let last = sortedData.last, result.last?.id != last.id {
+            var finalResult = Array(result)
+            finalResult.append(last)
+            return finalResult
+        }
+        
+        return Array(result)
     }
     
-    // 添加计算属性来获取当前数据中的最高价和最低价，并添加一个很小的边距比例
-    private var priceRange: (min: Double, max: Double)? {
-        guard !sortedData.isEmpty else { return nil }
+    // 最小化价格范围计算，使用更稳定的范围
+    private var priceRange: ClosedRange<Double> {
+        // 如果没有数据，返回默认范围
+        guard !displayData.isEmpty else { return 0...100 }
         
-        let prices = sortedData.map { $0.price }
-        guard let minPrice = prices.min(), let maxPrice = prices.max() else { return nil }
-        
-        // 计算价格范围
-        let range = maxPrice - minPrice
-        // 添加非常小的边距(0.5%)
-        let padding = range * 0.005
-        
-        return (minPrice - padding, maxPrice + padding)
+        let prices = displayData.map { $0.price }
+        if let min = prices.min(), let max = prices.max() {
+            let range = max - min
+            let padding = range * 0.05 // 5% 边距
+            return (min - padding)...(max + padding)
+        }
+        return 0...100
     }
     
     var body: some View {
         GeometryReader { geometry in
             Chart {
-                ForEach(Array(sortedData.enumerated()), id: \.element.date) { _, pricePoint in
-                    // 主线
+                // 1. 单次渲染主线 - 使用优化后的数据
+                ForEach(displayData, id: \.date) { point in
                     LineMark(
-                        x: .value("Date", pricePoint.date),
-                        y: .value("Price", pricePoint.price)
+                        x: .value("Date", point.date),
+                        y: .value("Price", point.price)
                     )
-                    .foregroundStyle(
-                        isDarkMode ?
-                            LinearGradient(
-                                colors: [Color(red: 0, green: 1, blue: 0.7), Color.green],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            ) :
-                            LinearGradient(
-                                colors: [Color.blue, Color.blue.opacity(0.7)],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                    )
+                    .foregroundStyle(isDarkMode ? Color.green : Color.blue)
                     .lineStyle(StrokeStyle(lineWidth: 2))
-                    
-                    // 区域填充
-                    AreaMark(
-                        x: .value("Date", pricePoint.date),
-                        y: .value("Price", pricePoint.price)
+                }
+                
+                // 2. 有选择地渲染区域 - 只在小数据集时
+                if displayData.count < 120 {
+                    ForEach(displayData, id: \.date) { point in
+                        AreaMark(
+                            x: .value("Date", point.date),
+                            y: .value("Price", point.price)
+                        )
+                        .foregroundStyle(
+                            isDarkMode ?
+                                Color.green.opacity(0.3).gradient :
+                                Color.blue.opacity(0.3).gradient
+                        )
+                        .opacity(0.5) // 进一步减轻渲染负担
+                    }
+                }
+                
+                // 3. 仅在需要时渲染选择点
+                if let selected = selectedPointDate,
+                   let point = findClosestDataPoint(to: selected) {
+                    PointMark(
+                        x: .value("Date", point.date),
+                        y: .value("Price", point.price)
                     )
-                    .foregroundStyle(
-                        isDarkMode ?
-                            LinearGradient(
-                                colors: [
-                                    Color(red: 0, green: 1, blue: 0.7).opacity(0.6),
-                                    Color(red: 0, green: 1, blue: 0.7).opacity(0.01)
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            ) :
-                            LinearGradient(
-                                colors: [
-                                    Color.blue.opacity(0.6),
-                                    Color.blue.opacity(0.01)
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                    )
-                    
-                    // 标记点处理 - 修改这部分
-                    let dateKey = formattedDate(pricePoint.date)
-                    if let markerInfo = markedDatesCache[dateKey] {
+                    .foregroundStyle(Color.purple)
+                    .symbolSize(14)
+                }
+                
+                // 4. 渲染重要标记点 - 但限制数量
+                let earningPoints = Array(symbolEarningData.keys)
+                    .filter { $0 >= timeRange.startDate }
+                    .prefix(10) // 最多显示10个点以优化性能
+                
+                ForEach(earningPoints, id: \.self) { date in
+                    if let price = findPriceForDate(date) {
                         PointMark(
-                            x: .value("Date", pricePoint.date),
-                            y: .value("Price", pricePoint.price)
-                        )
-                        .foregroundStyle(markerColor(for: markerInfo.type))
-                        .symbolSize(14)
-                    }
-                    
-                    // 选择点标记
-                    if let selectedDate = selectedPointDate, isSameDay(selectedDate, pricePoint.date) {
-                        PointMark(
-                            x: .value("Selected Date", pricePoint.date),
-                            y: .value("Selected Price", pricePoint.price)
-                        )
-                        .foregroundStyle(Color.purple)
-                        .symbolSize(14)
-                        
-                        RuleMark(
-                            x: .value("Selected Date", pricePoint.date)
-                        )
-                        .foregroundStyle(Color.red.opacity(0.5))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 3]))
-                    }
-                    
-                    // 添加 Earning 标记点
-                    ForEach(Array(symbolEarningData.keys.sorted()), id: \.self) { date in
-                        if let price = findPriceForDate(date) {
-                            PointMark(
-                                x: .value("Earning Date", date),
-                                y: .value("Price", price)
-                            )
-                            .foregroundStyle(Color.red)
-                            .symbolSize(24)
-                        }
-                    }
-                    
-                    // 起始选择点
-                    if let startPoint = dragStartPoint, isSameDay(startPoint.date, pricePoint.date) {
-                        PointMark(
-                            x: .value("Drag Start", pricePoint.date),
-                            y: .value("Price", pricePoint.price)
-                        )
-                        .foregroundStyle(Color.red)
-                        .symbolSize(10)
-                    }
-                    
-                    // 结束选择点
-                    if let endPoint = dragEndPoint, isSameDay(endPoint.date, pricePoint.date) {
-                        PointMark(
-                            x: .value("Drag End", pricePoint.date),
-                            y: .value("Price", pricePoint.price)
+                            x: .value("Date", date),
+                            y: .value("Price", price)
                         )
                         .foregroundStyle(Color.red)
                         .symbolSize(10)
                     }
                 }
             }
+            // 固定Y轴范围以避免动态计算
+            .chartYScale(domain: priceRange)
             
-            // 自定义Y轴范围
-            .chartYScale(domain: priceRange != nil ? priceRange!.min...priceRange!.max : 0...100)
-            
+            // 简化轴显示
             .chartXAxis {
-                AxisMarks(preset: .aligned, position: .bottom) { value in
-                    if shouldShowAxisMark(value) {
-                        AxisValueLabel(format: timeRange.dateFormatStyle)
-                    }
-                    
-                    if showGrid {
-                        AxisGridLine()
-                    }
+                AxisMarks(values: .stride(by: .month, count: timeRange.labelCount)) { value in
+                    AxisGridLine(stroke: showGrid ? StrokeStyle(lineWidth: 0.5) : StrokeStyle(lineWidth: 0))
+                    AxisValueLabel(format: timeRange.dateFormatStyle)
                 }
             }
+            
+            // 减少Y轴格式化的计算量
             .chartYAxis {
-                AxisMarks(position: .leading) { _ in
+                AxisMarks(position: .leading) { value in
                     AxisValueLabel()
                     if showGrid {
                         AxisGridLine()
                     }
                 }
             }
-            .chartXSelection(value: $selectedPointDate)
-            .chartPlotStyle { plotArea in
-                plotArea
-                    .background(isDarkMode ? Color.black : Color.white)
-                    .border(isDarkMode ? Color.gray.opacity(0.3) : Color.gray.opacity(0.2), width: 1)
-            }
+            
+            // 简化选择区域实现
             .chartOverlay { proxy in
                 GeometryReader { geoProxy in
-                    Rectangle()
-                        .fill(Color.clear)
-                        .contentShape(Rectangle())
+                    Color.clear.contentShape(Rectangle())
                         .gesture(
+                            // 利用限流防止手势过度触发
                             DragGesture(minimumDistance: 0)
                                 .onChanged { value in
-                                    handleDragChanged(value: value, proxy: proxy, geoProxy: geoProxy)
+                                    if !isProcessingGesture {
+                                        isProcessingGesture = true
+                                        
+                                        // 简化手势处理逻辑
+                                        let xPosition = value.location.x - geoProxy.frame(in: .local).minX
+                                        if let date = proxy.value(atX: xPosition, as: Date.self),
+                                           let point = findClosestDataPoint(to: date) {
+                                            
+                                            selectedPointDate = point.date
+                                            onPriceSelection(point.price, false, point.date, nil, nil)
+                                            dragStartPoint = (point.date, point.price)
+                                        }
+                                        
+                                        // 防抖处理
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                            isProcessingGesture = false
+                                        }
+                                    }
                                 }
                                 .onEnded { _ in
-                                    handleDragEnded()
+                                    // 结束时简化处理
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                        if !isDragging {
+                                            selectedPointDate = nil
+                                            onPriceSelection(nil, false, nil, nil, nil)
+                                            dragStartPoint = nil
+                                            isInteracting = false
+                                        }
+                                    }
                                 }
                         )
-                        .gesture(
-                            LongPressGesture(minimumDuration: 0.5)
-                                .onEnded { _ in
-                                    isDragging = true
-                                }
-                        )
+                        // 简化双击开启测量逻辑
+                        .onTapGesture(count: 2) {
+                            // 延迟触发双击以避免冲突
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                isDragging = true
+                            }
+                        }
                 }
             }
-            .frame(height: geometry.size.height)
         }
+        .frame(height: 350)
         .background(isDarkMode ? Color.black : Color.white)
-        .onAppear {
-            buildMarkedDatesCache()
-        }
     }
     
-    // 添加这个辅助方法来查找特定日期的价格
-    private func findPriceForDate(_ date: Date) -> Double? {
-        // 首先尝试精确匹配
-        if let exactMatch = sortedData.first(where: { isSameDay($0.date, date) }) {
-            return exactMatch.price
-        }
-        
-        // 如果找不到精确匹配，找最近的价格点
-        guard let nearestPoint = sortedData.min(by: {
-            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
-        }) else {
-            return nil
-        }
-        
-        // 如果最近的点在30天以内，则使用该点的价格
-        if abs(nearestPoint.date.timeIntervalSince(date)) <= 30 * 24 * 60 * 60 {
-            return nearestPoint.price
-        }
-        
-        return nil
-    }
-    
-    // 建立日期标记缓存以加速查找
-    private func buildMarkedDatesCache() {
-        var cache: [String: (type: MarkerType, text: String)] = [:]
-        
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        
-        // 添加全局标记
-        for (date, text) in globalTimeMarkers {
-            let key = dateFormatter.string(from: date)
-            cache[key] = (type: .global, text: "\(key) \(text)")
-        }
-        
-        // 添加股票特定标记（优先级更高）
-        for (date, text) in symbolTimeMarkers {
-            let key = dateFormatter.string(from: date)
-            cache[key] = (type: .symbol, text: "\(key) \(text)")
-        }
-        
-        // 添加 earning 数据标记
-        for (date, priceChange) in symbolEarningData {
-            let key = dateFormatter.string(from: date)
-            let formattedChange = String(format: "%+.2f%%", priceChange)
-            cache[key] = (type: .earning, text: "\(key) Earnings: \(formattedChange)")
-            print("Adding earning marker for date: \(key) with change: \(formattedChange)")  // 添加调试输出
-        }
-        
-        // 将计算结果赋值给 @State 变量
-        print("Total cached markers: \(cache.count)")  // 添加调试输出
-        markedDatesCache = cache
-    }
-    
-    // 处理拖动手势
-    private func handleDragChanged(value: DragGesture.Value, proxy: ChartProxy, geoProxy: GeometryProxy) {
-        isInteracting = true
-        let location = value.location
-        let xPosition = location.x - geoProxy.frame(in: .local).minX
-        
-        guard let dateValue = proxy.value(atX: xPosition, as: Date.self),
-              let closestPoint = findClosestDataPoint(to: dateValue) else { return }
-        
-        selectedPointDate = closestPoint.date
-                
-        // 首先检查是否是 earning 点
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        
-        // 检查是否有匹配的 earning 数据
-        let matchingEarningDate = symbolEarningData.keys.first { date in
-            isSameDay(date, closestPoint.date)
-        }
-        
-        if let earningDate = matchingEarningDate,
-           let earningValue = symbolEarningData[earningDate] {
-            // 是 earning 点，显示 earning 数据
-            let formattedChange = String(format: "%+.2f%%", earningValue)
-            
-            // 计算历史价格与最新价格的差异百分比
-            var priceComparisonText = ""
-            if let latest = latestPrice, latest > 0 {
-                // closestPoint.price 是非可选类型，不需要使用 if let
-                let historicalPrice = closestPoint.price
-                let priceDiffPercent = ((latest - historicalPrice) / historicalPrice) * 100
-                priceComparisonText = String(format: " | 至今变化: %+.2f%%", priceDiffPercent)
-            }
-            
-            onPriceSelection(
-                nil,
-                true,
-                earningDate,
-                nil,
-                "\(formattedChange)\(priceComparisonText)"
-            )
-        } else {
-            // 不是 earning 点，显示普通价格数据
-            let dateKey = dateFormatter.string(from: closestPoint.date)
-            if let markerInfo = markedDatesCache[dateKey] {
-                onPriceSelection(nil, false, nil, nil, markerInfo.text)
-            } else {
-                onPriceSelection(closestPoint.price, false, closestPoint.date, nil, nil)
-            }
-        }
-        
-        // 双点测量逻辑
-        if isDragging {
-            if dragStartPoint == nil {
-                dragStartPoint = (closestPoint.date, closestPoint.price)
-            } else {
-                dragEndPoint = (closestPoint.date, closestPoint.price)
-                
-                if let start = dragStartPoint, let end = dragEndPoint {
-                    let percentChange = ((end.price - start.price) / start.price) * 100
-                    onPriceSelection(percentChange, true, start.date, end.date, nil)
-                }
-            }
-        } else {
-            dragStartPoint = (closestPoint.date, closestPoint.price)
-            dragEndPoint = nil
-        }
-    }
-    
-    // 拖动结束处理
-    private func handleDragEnded() {
-        if dragEndPoint == nil {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if dragEndPoint == nil && !isDragging {
-                    selectedPointDate = nil
-                    onPriceSelection(nil, false, nil, nil, nil)
-                    dragStartPoint = nil
-                    isInteracting = false
-                }
-            }
-        }
-    }
-    
-    // 辅助方法：判断是否显示轴标记
-    private func shouldShowAxisMark(_ value: AxisValue) -> Bool {
-        let position = value.index
-        let skipFactor = max(1, data.count / timeRange.labelCount)
-        return position % skipFactor == 0
-    }
-    
-    // 辅助方法：获取最近的数据点
+    // 优化后的查找方法 - 使用二分查找以提高大数据集效率
     private func findClosestDataPoint(to date: Date) -> DatabaseManager.PriceData? {
-        guard !sortedData.isEmpty else { return nil }
+        guard !displayData.isEmpty else { return nil }
         
-        return sortedData.min(by: {
-            abs(date.timeIntervalSince($0.date)) < abs(date.timeIntervalSince($1.date))
-        })
+        // 对于小数据集，使用简单查找
+        if displayData.count < 100 {
+            return displayData.min(by: {
+                abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+            })
+        }
+        
+        // 对于大数据集，使用优化的方法
+        let targetInterval = date.timeIntervalSince1970
+        
+        // 初始查找范围
+        var low = 0
+        var high = displayData.count - 1
+        
+        // 二分查找最接近的点
+        while low <= high {
+            let mid = (low + high) / 2
+            let midDate = displayData[mid].date
+            let midInterval = midDate.timeIntervalSince1970
+            
+            if midInterval == targetInterval {
+                return displayData[mid]
+            } else if midInterval < targetInterval {
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        
+        // 检查边界情况
+        let lowPoint = low < displayData.count ? displayData[low] : nil
+        let highPoint = high >= 0 ? displayData[high] : nil
+        
+        // 返回距离目标最近的点
+        if let lowPoint = lowPoint, let highPoint = highPoint {
+            let lowDiff = abs(lowPoint.date.timeIntervalSince1970 - targetInterval)
+            let highDiff = abs(highPoint.date.timeIntervalSince1970 - targetInterval)
+            return lowDiff < highDiff ? lowPoint : highPoint
+        }
+        
+        return lowPoint ?? highPoint
+    }
+    
+    // 简化的价格查询方法
+    private func findPriceForDate(_ date: Date) -> Double? {
+        if let point = findClosestDataPoint(to: date) {
+            return point.price
+        }
+        return nil
     }
     
     // 辅助方法：判断两个日期是否在同一天
     private func isSameDay(_ date1: Date, _ date2: Date) -> Bool {
         Calendar.current.isDate(date1, inSameDayAs: date2)
-    }
-    
-    // 辅助方法：格式化日期
-    private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
-    }
-
-    // 根据标记类型返回颜色的辅助方法
-    private func markerColor(for type: MarkerType) -> Color {
-        switch type {
-        case .global:
-            return Color.yellow
-        case .symbol:
-            return Color.orange
-        case .earning:
-            return Color.red
-        }
     }
 }
 
