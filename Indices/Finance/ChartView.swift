@@ -1,21 +1,34 @@
 import SwiftUI
-import DGCharts
+import Combine
 
-// MARK: - TimeRange Enum
-enum TimeRange: String, CaseIterable {
-    case oneMonth = "1M"
-    case all = "ALL"
-    case fiveYears = "5Y"
-    case oneYear = "1Y"
-    case threeMonths = "3M"
-    case sixMonths = "6M"
-    case tenYears = "10Y"
-    case twoYears = "2Y"
-
+// MARK: - TimeRange
+enum TimeRange {
+    case oneMonth
+    case threeMonths
+    case sixMonths
+    case oneYear
+    case twoYears
+    case fiveYears
+    case tenYears
+    case all
+    
+    var title: String {
+        switch self {
+        case .oneMonth: return "1M"
+        case .threeMonths: return "3M"
+        case .sixMonths: return "6M"
+        case .oneYear: return "1Y"
+        case .twoYears: return "2Y"
+        case .fiveYears: return "5Y"
+        case .tenYears: return "10Y"
+        case .all: return "All"
+        }
+    }
+    
     var startDate: Date {
         let calendar = Calendar.current
         let now = Date()
-
+        
         switch self {
         case .oneMonth:
             return calendar.date(byAdding: .month, value: -1, to: now) ?? now
@@ -32,85 +45,630 @@ enum TimeRange: String, CaseIterable {
         case .tenYears:
             return calendar.date(byAdding: .year, value: -10, to: now) ?? now
         case .all:
-            return Date.distantPast
+            return calendar.date(byAdding: .year, value: -100, to: now) ?? now
         }
     }
     
-    var duration: TimeInterval {
+    func xAxisTickInterval() -> Calendar.Component {
         switch self {
         case .oneMonth:
-            return 1 * 30 * 24 * 60 * 60
-        case .threeMonths:
-            return 3 * 30 * 24 * 60 * 60
-        case .sixMonths:
-            return 6 * 30 * 24 * 60 * 60
+            return .day
+        case .threeMonths, .sixMonths:
+            return .month
         case .oneYear:
-            return 1 * 365 * 24 * 60 * 60
-        case .twoYears:
-            return 2 * 365 * 24 * 60 * 60
-        case .fiveYears:
-            return 5 * 365 * 24 * 60 * 60
-        case .tenYears:
-            return 10 * 365 * 24 * 60 * 60
+            return .month
+        case .twoYears, .fiveYears, .tenYears:
+            return .year
         case .all:
-            return Double.infinity
+            return .year
         }
     }
     
-    var labelCount: Int {
+    func xAxisTickValue() -> Int {
         switch self {
+        case .oneMonth:
+            return 2 // 每2天一个刻度
+        case .threeMonths:
+            return 1 // 每1个月一个刻度
+        case .sixMonths:
+            return 1 // 每1个月一个刻度
+        case .oneYear:
+            return 1 // 每1个月一个刻度
+        case .twoYears, .fiveYears, .tenYears:
+            return 1 // 每1年一个刻度
         case .all:
-            return 10
-        default:
-            let numberString = self.rawValue.filter { $0.isNumber }
-            return Int(numberString) ?? 1
+            return 3 // 每3年一个刻度
+        }
+    }
+    
+    // 添加采样率控制，优化长期数据加载
+    func samplingRate() -> Int {
+        switch self {
+        case .oneMonth, .threeMonths, .sixMonths, .oneYear:
+            return 1 // 不采样，使用所有数据点
+        case .twoYears:
+            return 2 // 每2个数据点取1个
+        case .fiveYears:
+            return 5 // 每5个数据点取1个
+        case .tenYears:
+            return 10 // 每10个数据点取1个
+        case .all:
+            return 15 // 每15个数据点取1个
         }
     }
 }
 
-// MARK: - DateAxisValueFormatter
-private class DateAxisValueFormatter: AxisValueFormatter {
-    private let dateFormatter: DateFormatter
-    private let timeRange: TimeRange
-
-    init(timeRange: TimeRange) {
-        self.timeRange = timeRange
-        dateFormatter = DateFormatter()
-        
-        switch timeRange {
-        case .all, .twoYears, .fiveYears, .tenYears:
-            dateFormatter.dateFormat = "yyyy"
-        case .oneYear, .oneMonth, .threeMonths, .sixMonths:
-            dateFormatter.dateFormat = "MMM"
-        }
+// MARK: - ChartView
+struct ChartView: View {
+    let symbol: String
+    let groupName: String
+    
+    @State private var chartData: [DatabaseManager.PriceData] = []
+    @State private var sampledChartData: [DatabaseManager.PriceData] = [] // 采样后的数据
+    @State private var selectedTimeRange: TimeRange = .oneYear
+    @State private var isLoading = true
+    @State private var dragLocation: CGPoint?
+    @State private var secondDragLocation: CGPoint?
+    @State private var draggedPointIndex: Int?
+    @State private var secondDraggedPointIndex: Int?
+    @State private var draggedPoint: DatabaseManager.PriceData?
+    @State private var secondDraggedPoint: DatabaseManager.PriceData?
+    @State private var isDragging = false // 添加滑动状态跟踪
+    @State private var isDualDragging = false // 添加双指滑动状态跟踪
+    
+    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.presentationMode) var presentationMode
+    @EnvironmentObject var dataService: DataService
+    
+    // MARK: - Computed Properties
+    private var isDarkMode: Bool {
+        colorScheme == .dark
     }
-
-    func stringForValue(_ value: Double, axis: AxisBase?) -> String {
-        let date = Date(timeIntervalSince1970: value)
-        return dateFormatter.string(from: date)
+    
+    private var chartColor: Color {
+        isDarkMode ? Color.white : Color.blue
     }
-}
-
-// MARK: - TimeRangeButton
-struct TimeRangeButton: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-
+    
+    private var backgroundColor: Color {
+        isDarkMode ? Color.black : Color.white
+    }
+    
+    private var minPrice: Double {
+        sampledChartData.map { $0.price }.min() ?? 0
+    }
+    
+    private var maxPrice: Double {
+        sampledChartData.map { $0.price }.max() ?? 0
+    }
+    
+    private var priceRange: Double {
+        max(maxPrice - minPrice, 0.01) // 避免除零
+    }
+    
+    // MARK: - Body
     var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(isSelected ? Color.green : Color(uiColor: .systemBackground))
-                )
-                .foregroundColor(isSelected ? .white : .primary)
+        VStack(spacing: 0) {
+            // Chart header with drag information
+            VStack {
+                if let point = draggedPoint {
+                    let pointDate = formatDate(point.date)
+                    if let secondPoint = secondDraggedPoint {
+                        let secondPointDate = formatDate(secondPoint.date)
+                        // 显示两个点的情况
+                        HStack {
+                            Text("\(pointDate): \(formatPrice(point.price))")
+                                .font(.system(size: 16, weight: .medium))
+                            Spacer()
+                            let percentChange = ((secondPoint.price - point.price) / point.price) * 100
+                            Text("\(secondPointDate): \(formatPrice(secondPoint.price)) (\(formatPercentage(percentChange)))")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundColor(percentChange >= 0 ? .green : .red)
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                        .background(Color(UIColor.systemGray6))
+                        .cornerRadius(8)
+                    } else {
+                        // 显示单个点的情况
+                        HStack {
+                            Text("\(pointDate): \(formatPrice(point.price))")
+                                .font(.system(size: 16, weight: .medium))
+                            
+                            // 显示全局或特定标记信息
+                            if let markerText = getMarkerText(for: point.date) {
+                                Spacer()
+                                Text(markerText)
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.orange)
+                                    .lineLimit(2)
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                        .background(Color(UIColor.systemGray6))
+                        .cornerRadius(8)
+                    }
+                } else {
+                    // 空白占位
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(height: 40)
+                }
+            }
+            .padding(.horizontal)
+            
+            // Chart
+            if isLoading {
+                ProgressView()
+                    .scaleEffect(1.5)
+                    .padding()
+                    .frame(maxHeight: .infinity)
+            } else if sampledChartData.isEmpty {
+                Text("No data available")
+                    .font(.title2)
+                    .foregroundColor(.gray)
+                    .frame(maxHeight: .infinity)
+            } else {
+                // Chart canvas
+                ZStack {
+                    GeometryReader { geometry in
+                        // 绘制价格线
+                        Path { path in
+                            let width = geometry.size.width
+                            let height = geometry.size.height
+                            let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
+                            
+                            if let firstPoint = sampledChartData.first {
+                                let firstX = 0.0
+                                let firstY = height - CGFloat((firstPoint.price - minPrice) / priceRange) * height
+                                path.move(to: CGPoint(x: firstX, y: firstY))
+                                
+                                for i in 1..<sampledChartData.count {
+                                    let x = CGFloat(i) * horizontalStep
+                                    let y = height - CGFloat((sampledChartData[i].price - minPrice) / priceRange) * height
+                                    path.addLine(to: CGPoint(x: x, y: y))
+                                }
+                            }
+                        }
+                        .stroke(chartColor, lineWidth: 2)
+                        
+                        // 绘制 X 轴刻度
+                        ForEach(getXAxisTicks(), id: \.self) { date in
+                            if let index = getIndexForDate(date) {
+                                let x = CGFloat(index) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
+                                let tickHeight: CGFloat = 5
+                                
+                                // 刻度线
+                                Path { path in
+                                    path.move(to: CGPoint(x: x, y: geometry.size.height))
+                                    path.addLine(to: CGPoint(x: x, y: geometry.size.height - tickHeight))
+                                }
+                                .stroke(Color.gray, lineWidth: 1)
+                                
+                                // 刻度标签
+                                Text(formatXAxisLabel(date))
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.gray)
+                                    .position(x: x, y: geometry.size.height + 10)
+                            }
+                        }
+                        
+                        // 绘制特殊时间点标记
+                        ForEach(getTimeMarkers(), id: \.id) { marker in
+                            if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, marker.date) }) {
+                                let x = CGFloat(index) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
+                                let y = geometry.size.height - CGFloat((sampledChartData[index].price - minPrice) / priceRange) * geometry.size.height
+                                
+                                Circle()
+                                    .fill(marker.isGlobal ? Color.red : Color.orange)
+                                    .frame(width: 8, height: 8)
+                                    .position(x: x, y: y)
+                            }
+                        }
+                        
+                        // 拖动线 1 - 使用虚线
+                        if let location = dragLocation, let pointIndex = draggedPointIndex {
+                            let x = CGFloat(pointIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
+                            
+                            Path { path in
+                                path.move(to: CGPoint(x: x, y: 0))
+                                path.addLine(to: CGPoint(x: x, y: geometry.size.height))
+                            }
+                            .stroke(style: StrokeStyle(lineWidth: 1, dash: [4]))
+                            .foregroundColor(Color.gray)
+                            
+                            // 高亮显示当前点
+                            if let point = draggedPoint {
+                                let y = geometry.size.height - CGFloat((point.price - minPrice) / priceRange) * geometry.size.height
+                                
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 10, height: 10)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(chartColor, lineWidth: 2)
+                                    )
+                                    .position(x: x, y: y)
+                            }
+                        }
+                        
+                        // 拖动线 2 - 使用虚线
+                        if let location = secondDragLocation, let pointIndex = secondDraggedPointIndex {
+                            let x = CGFloat(pointIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
+                            
+                            Path { path in
+                                path.move(to: CGPoint(x: x, y: 0))
+                                path.addLine(to: CGPoint(x: x, y: geometry.size.height))
+                            }
+                            .stroke(style: StrokeStyle(lineWidth: 1, dash: [4]))
+                            .foregroundColor(Color.gray)
+                            
+                            // 高亮显示第二个点
+                            if let point = secondDraggedPoint {
+                                let y = geometry.size.height - CGFloat((point.price - minPrice) / priceRange) * geometry.size.height
+                                
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 10, height: 10)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(Color.green, lineWidth: 2)
+                                    )
+                                    .position(x: x, y: y)
+                            }
+                        }
+                    }
+                    // 改进手势处理逻辑，使用longPressGesture配合dragGesture实现连续跟随效果
+                    .contentShape(Rectangle()) // 确保整个区域都能接收手势
+                    .gesture(
+                        // 长按手势，激活拖动状态
+                        LongPressGesture(minimumDuration: 0.1)
+                            .sequenced(before: DragGesture(minimumDistance: 0))
+                            .onChanged { value in
+                                switch value {
+                                case .first(true):
+                                    // 长按开始，准备拖动
+                                    isDragging = true
+                                    isDualDragging = false
+                                    secondDragLocation = nil
+                                    secondDraggedPointIndex = nil
+                                    secondDraggedPoint = nil
+                                case .second(true, let drag):
+                                    // 拖动中
+                                    if let location = drag?.location {
+                                        updateDragLocation(location)
+                                    }
+                                default:
+                                    break
+                                }
+                            }
+                            .onEnded { _ in
+                                // 保持最后的拖动状态，不重置
+                                isDragging = false
+                            }
+                    )
+                    // 添加双指手势
+                    .simultaneousGesture(
+                        // 使用MagnificationGesture检测双指操作
+                        MagnificationGesture(minimumScaleDelta: 0.01)
+                            .onChanged { _ in
+                                if !isDualDragging && draggedPoint != nil {
+                                    isDualDragging = true
+                                    // 保持第一个点的位置，启用第二个点
+                                    secondDragLocation = dragLocation
+                                    secondDraggedPointIndex = draggedPointIndex
+                                    secondDraggedPoint = draggedPoint
+                                }
+                            }
+                    )
+                }
+                .frame(height: 250)
+                .padding(.top, 20)
+                .padding(.bottom, 30) // 为 X 轴标签留出空间
+            }
+            
+            // Time range buttons
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 15) {
+                    ForEach([TimeRange.oneMonth, .threeMonths, .sixMonths, .oneYear, .twoYears, .fiveYears, .tenYears, .all], id: \.title) { range in
+                        Button(action: {
+                            selectedTimeRange = range
+                            loadChartData()
+                        }) {
+                            Text(range.title)
+                                .font(.system(size: 14, weight: selectedTimeRange == range ? .bold : .regular))
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 12)
+                                .background(
+                                    selectedTimeRange == range ?
+                                        Color.blue.opacity(0.2) :
+                                        Color.clear
+                                )
+                                .foregroundColor(selectedTimeRange == range ? .blue : .primary)
+                                .cornerRadius(8)
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+            }
+            
+            // Action buttons
+            HStack(spacing: 20) {
+                // Description
+                NavigationLink(destination: {
+                    if let descriptions = getDescriptions(for: symbol) {
+                        DescriptionView(descriptions: descriptions, isDarkMode: isDarkMode)
+                    } else {
+                        DescriptionView(
+                            descriptions: ("No description available.", ""),
+                            isDarkMode: isDarkMode
+                        )
+                    }
+                }) {
+                    Text("Description")
+                        .font(.system(size: 16, weight: .medium))
+                        .padding(.top, 0)
+                        .foregroundColor(.green)
+                }
+                // Compare
+                NavigationLink(destination: CompareView(initialSymbol: symbol)) {
+                    Text("Compare")
+                        .font(.system(size: 16, weight: .medium))
+                        .padding(.top, 0)
+                        .padding(.leading, 20)
+                        .foregroundColor(.green)
+                }
+                // Similar
+                NavigationLink(destination: SimilarView(symbol: symbol)) {
+                    Text("Similar")
+                        .font(.system(size: 16, weight: .medium))
+                        .padding(.top, 0)
+                        .padding(.leading, 20)
+                        .foregroundColor(.green)
+                }
+            }
+            .padding(.vertical, 16)
+        }
+        .padding(.top)
+        .background(backgroundColor.edgesIgnoringSafeArea(.all))
+        .navigationBarTitle(symbol, displayMode: .inline)
+        .navigationBarBackButtonHidden(true)
+        .navigationBarItems(leading: Button(action: {
+            presentationMode.wrappedValue.dismiss()
+        }) {
+            Image(systemName: "chevron.left")
+                .foregroundColor(.blue)
+            Text("Back")
+                .foregroundColor(.blue)
+        })
+        .onAppear {
+            loadChartData()
+        }
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func getDescriptions(for symbol: String) -> (String, String)? {
+        // 检查是否为股票
+        if let stock = dataService.descriptionData?.stocks.first(where: {
+            $0.symbol.uppercased() == symbol.uppercased()
+        }) {
+            return (stock.description1, stock.description2)
+        }
+        // 检查是否为ETF
+        if let etf = dataService.descriptionData?.etfs.first(where: {
+            $0.symbol.uppercased() == symbol.uppercased()
+        }) {
+            return (etf.description1, etf.description2)
+        }
+        return nil
+    }
+    
+    private func loadChartData() {
+        isLoading = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            print("开始数据库查询...")
+            let newData = DatabaseManager.shared.fetchHistoricalData(
+                symbol: symbol,
+                tableName: groupName,
+                dateRange: .timeRange(selectedTimeRange)
+            )
+            print("查询完成，获取到 \(newData.count) 条数据")
+            
+            // 对长期数据进行采样，提高性能
+            let sampledData = sampleData(newData, rate: selectedTimeRange.samplingRate())
+            print("采样后数据点数: \(sampledData.count)")
+
+            DispatchQueue.main.async {
+                chartData = newData
+                sampledChartData = sampledData
+                isLoading = false
+                // 重置拖动状态
+                dragLocation = nil
+                secondDragLocation = nil
+                draggedPointIndex = nil
+                secondDraggedPointIndex = nil
+                draggedPoint = nil
+                secondDraggedPoint = nil
+                print("数据已更新到UI")
+            }
+        }
+    }
+    
+    // 数据采样函数，用于优化大量数据的显示
+    private func sampleData(_ data: [DatabaseManager.PriceData], rate: Int) -> [DatabaseManager.PriceData] {
+        guard rate > 1, !data.isEmpty else { return data }
+        
+        var result: [DatabaseManager.PriceData] = []
+        
+        // 始终包含第一个和最后一个点
+        if let first = data.first {
+            result.append(first)
+        }
+        
+        // 按采样率添加中间点
+        for i in stride(from: rate, to: data.count - 1, by: rate) {
+            result.append(data[i])
+        }
+        
+        // 添加最后一个点
+        if let last = data.last, result.last?.id != last.id {
+            result.append(last)
+        }
+        
+        return result
+    }
+    
+    // 更新拖动位置和选中的数据点
+    private func updateDragLocation(_ location: CGPoint) {
+        guard !sampledChartData.isEmpty else { return }
+        
+        let width = UIScreen.main.bounds.width
+        let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
+        let index = min(sampledChartData.count - 1, max(0, Int(location.x / horizontalStep)))
+        
+        if isDualDragging {
+            // 第二个点移动
+            secondDragLocation = location
+            secondDraggedPointIndex = index
+            if index < sampledChartData.count {
+                secondDraggedPoint = sampledChartData[index]
+            }
+        } else {
+            // 第一个点移动
+            dragLocation = location
+            draggedPointIndex = index
+            if index < sampledChartData.count {
+                draggedPoint = sampledChartData[index]
+            }
+        }
+    }
+    
+    // 获取时间点标记
+    private struct TimeMarker: Identifiable {
+        let id = UUID()
+        let date: Date
+        let text: String
+        let isGlobal: Bool
+    }
+    
+    private func getTimeMarkers() -> [TimeMarker] {
+        var markers: [TimeMarker] = []
+        
+        // 添加全局时间标记
+        for (date, text) in dataService.globalTimeMarkers {
+            if sampledChartData.contains(where: { isSameDay($0.date, date) }) {
+                markers.append(TimeMarker(date: date, text: text, isGlobal: true))
+            }
+        }
+        
+        // 添加特定股票的时间标记
+        if let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()] {
+            for (date, text) in symbolMarkers {
+                if sampledChartData.contains(where: { isSameDay($0.date, date) }) {
+                    markers.append(TimeMarker(date: date, text: text, isGlobal: false))
+                }
+            }
+        }
+        
+        return markers
+    }
+    
+    private func getMarkerText(for date: Date) -> String? {
+        // 检查全局标记
+        if let text = dataService.globalTimeMarkers.first(where: { isSameDay($0.key, date) })?.value {
+            return text
+        }
+        
+        // 检查特定股票标记
+        if let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()],
+           let text = symbolMarkers.first(where: { isSameDay($0.key, date) })?.value {
+            return text
+        }
+        
+        return nil
+    }
+    
+    // 格式化方法
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+    
+    private func formatPrice(_ price: Double) -> String {
+        return String(format: "$%.2f", price)
+    }
+    
+    private func formatPercentage(_ value: Double) -> String {
+        return String(format: "%.2f%%", value)
+    }
+    
+    private func formatXAxisLabel(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        
+        switch selectedTimeRange {
+        case .oneMonth:
+            formatter.dateFormat = "dd"
+        case .threeMonths, .sixMonths, .oneYear:
+            formatter.dateFormat = "MMM"
+        case .twoYears, .fiveYears, .tenYears, .all:
+            formatter.dateFormat = "yyyy"
+        }
+        
+        return formatter.string(from: date)
+    }
+    
+    // 日期比较方法
+    private func isSameDay(_ date1: Date, _ date2: Date) -> Bool {
+        let calendar = Calendar.current
+        return calendar.isDate(date1, inSameDayAs: date2)
+    }
+    
+    // 根据时间范围获取X轴刻度
+    private func getXAxisTicks() -> [Date] {
+        guard !sampledChartData.isEmpty else { return [] }
+        
+        var ticks: [Date] = []
+        let calendar = Calendar.current
+        let component = selectedTimeRange.xAxisTickInterval()
+        let interval = selectedTimeRange.xAxisTickValue()
+        
+        if let startDate = sampledChartData.first?.date, let endDate = sampledChartData.last?.date {
+            var currentDate = startDate
+            
+            while currentDate <= endDate {
+                ticks.append(currentDate)
+                
+                // 添加下一个刻度
+                if let nextDate = calendar.date(byAdding: component, value: interval, to: currentDate) {
+                    currentDate = nextDate
+                } else {
+                    break
+                }
+            }
+        }
+        
+        return ticks
+    }
+    
+    private func getIndexForDate(_ date: Date) -> Int? {
+        return sampledChartData.firstIndex { priceData in
+            let calendar = Calendar.current
+            
+            switch selectedTimeRange {
+            case .oneMonth:
+                return calendar.isDate(priceData.date, inSameDayAs: date)
+            case .threeMonths, .sixMonths, .oneYear:
+                return calendar.isDate(priceData.date, equalTo: date, toGranularity: .month)
+            case .twoYears, .fiveYears, .tenYears, .all:
+                return calendar.isDate(priceData.date, equalTo: date, toGranularity: .year)
+            }
         }
     }
 }
+
 
 // MARK: - DescriptionView
 struct DescriptionView: View {
@@ -179,817 +737,31 @@ struct DescriptionView: View {
     }
 }
 
-// MARK: - ChartView
-struct ChartView: View {
-    let symbol: String
-    let groupName: String
-    
-    @EnvironmentObject var dataService: DataService
-
-    @State private var selectedTimeRange: TimeRange = .oneYear
-    @State private var chartData: [DatabaseManager.PriceData] = []
-    @State private var isLoading = false
-    @State private var showGrid = false
-    @State private var isDarkMode = true
-    @State private var selectedPrice: Double? = nil
-    @State private var isDifferencePercentage: Bool = false
-    @State private var selectedDateStart: Date? = nil
-    @State private var selectedDateEnd: Date? = nil
-    @State private var isInteracting: Bool = false
-    @State private var shouldAnimate: Bool = true
-    
-    @State private var markerText: String? = nil // 添加新属性
-
-    var body: some View {
-        VStack(spacing: 16) {
-            headerView
-
-            // 修改价格和日期显示逻辑，添加标记文本显示
-            if let price = selectedPrice {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        if isDifferencePercentage,
-                           let startDate = selectedDateStart,
-                           let endDate = selectedDateEnd {
-                            Text("\(formattedDate(startDate))   \(formattedDate(endDate))")
-                                .font(.system(size: 14))
-                                .foregroundColor(.white)
-                            Text(String(format: "%.2f%%", price))
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.green)
-                            
-                        } else if let date = selectedDateStart {
-                            HStack(spacing: 18) {
-                                Text(formattedDate(date))
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.white)
-                                Text(String(format: "%.2f", price))
-                                    .font(.system(size: 16, weight: .medium))
-                                    .foregroundColor(.green)
-                            }
-                        }
-                    }
-                    
-                    // 添加标记文本显示
-                    if let text = markerText {
-                        Text(text)
-                            .font(.system(size: 14))
-                            .foregroundColor(.yellow)
-                            .padding(.top, 2)
-                    }
-                }
-                .padding(.top, 0)
-            } else if let markerText = markerText {
-                // 当只有标记文本时(单指触摸到特殊点)
-                Text(markerText)
-                    .font(.system(size: 14))
-                    .foregroundColor(.yellow)
-                    .padding(.top, 2)
-            } else {
-                HStack {
-                    // Description
-                    NavigationLink(destination: {
-                        if let descriptions = getDescriptions(for: symbol) {
-                            DescriptionView(descriptions: descriptions, isDarkMode: isDarkMode)
-                        } else {
-                            DescriptionView(
-                                descriptions: ("No description available.", ""),
-                                isDarkMode: isDarkMode
-                            )
-                        }
-                    }) {
-                        Text("Description")
-                            .font(.system(size: 16, weight: .medium))
-                            .padding(.top, 0)
-                            .foregroundColor(.green)
-                    }
-                    // Compare
-                    NavigationLink(destination: CompareView(initialSymbol: symbol)) {
-                        Text("Compare")
-                            .font(.system(size: 16, weight: .medium))
-                            .padding(.top, 0)
-                            .padding(.leading, 20)
-                            .foregroundColor(.green)
-                    }
-                    // Similar
-                    NavigationLink(destination: SimilarView(symbol: symbol)) {
-                        Text("Similar")
-                            .font(.system(size: 16, weight: .medium))
-                            .padding(.top, 0)
-                            .padding(.leading, 20)
-                            .foregroundColor(.green)
-                    }
-                }
-            }
-
-            // 修改图表视图，传递新的参数
-            chartView
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(uiColor: .systemBackground))
-                        .shadow(color: .gray.opacity(0.2), radius: 8)
-                )
-            
-            timeRangePicker
-
-            // 显示错误消息
-            if let errorMessage = dataService.errorMessage {
-                Text(errorMessage)
-                    .foregroundColor(.red)
-                    .font(.system(size: 14))
-                    .padding()
-            }
-            Spacer()
-        }
-        .padding(.vertical)
-        .navigationTitle("\(symbol)")
-        .onChange(of: selectedTimeRange) { _, _ in
-            chartData = []
-            shouldAnimate = true
-            loadChartData()
-        }
-        .onAppear {
-            shouldAnimate = true
-            loadChartData()
-        }
-        .overlay(loadingOverlay)
-        .background(Color(uiColor: .systemGroupedBackground))
-    }
-    
-    private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
-    }
-
-    // MARK: - View Components
-    private var headerView: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 12) {
-                    Text(dataService.marketCapData[symbol.uppercased()]?.marketCap ?? "")
-                        .font(.system(size: 20))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                    
-                    Text(
-                        dataService.marketCapData[symbol.uppercased()]?.peRatio.map {
-                            String(format: "%.0f", $0)
-                        } ?? ""
-                    )
-                    .font(.system(size: 20))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    
-                    Text(dataService.compareData[symbol.uppercased()]?.description ?? "--")
-                        .font(.system(size: 20))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            }
-            
-            Spacer()
-            
-            Toggle("", isOn: $showGrid)
-                .toggleStyle(SwitchToggleStyle(tint: .green))
-            
-            Spacer()
-            
-            Button(action: { isDarkMode.toggle() }) {
-                Image(systemName: isDarkMode ? "sun.max.fill" : "moon.fill")
-                    .font(.system(size: 20))
-                    .foregroundColor(isDarkMode ? .yellow : .gray)
-            }
-            .padding(.leading, 8)
-        }
-        .padding(.horizontal)
-    }
-
-    // 修改图表视图
-    private var chartView: some View {
-        StockLineChartView(
-            data: chartData,
-            showGrid: showGrid,
-            isDarkMode: isDarkMode,
-            timeRange: selectedTimeRange,
-            onSelectedPriceChange: { price, isPercentage, startDate, endDate, text in
-                selectedPrice = price
-                isDifferencePercentage = isPercentage
-                selectedDateStart = startDate
-                selectedDateEnd = endDate
-                markerText = text
-            },
-            globalTimeMarkers: dataService.globalTimeMarkers,
-            symbolTimeMarkers: dataService.symbolTimeMarkers[symbol.uppercased()] ?? [:],
-            symbol: symbol,
-            isInteracting: $isInteracting,
-            shouldAnimate: $shouldAnimate
-        )
-        .frame(height: 350)
-        .padding(.vertical, 1)
-    }
-
-    private var timeRangePicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(TimeRange.allCases, id: \.self) { range in
-                    TimeRangeButton(
-                        title: range.rawValue,
-                        isSelected: selectedTimeRange == range
-                    ) {
-                        withAnimation { selectedTimeRange = range }
-                    }
-                }
-            }
-        }
-    }
-
-    private var loadingOverlay: some View {
-        Group {
-            if isLoading {
-                ZStack {
-                    Color.black.opacity(0.2)
-                    ProgressView()
-                        .scaleEffect(1.5)
-                        .padding()
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(uiColor: .systemBackground))
-                                .shadow(radius: 10)
-                        )
-                }
-            }
-        }
-    }
-
-    // MARK: - Methods
-    private func loadChartData() {
-        isLoading = true
-        DispatchQueue.global(qos: .userInitiated).async {
-            print("开始数据库查询...")
-            let newData = DatabaseManager.shared.fetchHistoricalData(
-                symbol: symbol,
-                tableName: groupName,
-                dateRange: .timeRange(selectedTimeRange)
-            )
-            print("查询完成，获取到 \(newData.count) 条数据")
-
-            DispatchQueue.main.async {
-                chartData = newData
-                isLoading = false
-                print("数据已更新到UI")
-            }
-        }
-    }
-    
-    private func getDescriptions(for symbol: String) -> (String, String)? {
-        // 检查是否为股票
-        if let stock = dataService.descriptionData?.stocks.first(where: {
-            $0.symbol.uppercased() == symbol.uppercased()
-        }) {
-            return (stock.description1, stock.description2)
-        }
-        // 检查是否为ETF
-        if let etf = dataService.descriptionData?.etfs.first(where: {
-            $0.symbol.uppercased() == symbol.uppercased()
-        }) {
-            return (etf.description1, etf.description2)
-        }
-        return nil
-    }
+struct SectorPerformance: Codable {
+    let title: String
+    let performance: [SubSectorPerformance]
 }
 
-// MARK: - StockLineChartView
-struct StockLineChartView: UIViewRepresentable {
-    let data: [DatabaseManager.PriceData]
-    let showGrid: Bool
-    let isDarkMode: Bool
-    let timeRange: TimeRange
-    let onSelectedPriceChange: (Double?, Bool, Date?, Date?, String?) -> Void  // 修改回调添加额外文本参数
-    let globalTimeMarkers: [Date: String]  // 全局时间点标记
-    let symbolTimeMarkers: [Date: String]  // 当前股票的特定时间点标记
-    let symbol: String  // 当前显示的股票代码
-    @Binding var isInteracting: Bool
-    @Binding var shouldAnimate: Bool
-
-    class Coordinator: NSObject, ChartViewDelegate {
-        var parent: StockLineChartView
-        var firstTouchHighlight: Highlight?
-        var secondTouchHighlight: Highlight?
-        var isShowingPercentage = false
-        var specialMarkerText: String? = nil  // 添加变量存储特殊点文本
-
-        init(_ parent: StockLineChartView) {
-            self.parent = parent
-        }
-        
-        /// 辅助方法：格式化日期为字符串（例如 "yyyy-MM-dd"）
-        private func formatDate(_ date: Date) -> String {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd"
-            return formatter.string(from: date)
-        }
-
-        func chartValueSelected(_ chartView: ChartViewBase, entry: ChartDataEntry, highlight: Highlight) {
-            // 单点选择
-            if secondTouchHighlight == nil {
-                let date = Date(timeIntervalSince1970: entry.x)
-                
-                // 检查是否是特殊时间点
-                let markerText = getMarkerTextForDate(date)
-                
-                // 如果是特殊点，则在 markerText 前先显示日期
-                if let text = markerText {
-                    let dateStr = formatDate(date)
-                    let combinedText = "\(dateStr) \(text)"
-                    parent.onSelectedPriceChange(nil, false, nil, nil, combinedText)
-                } else {
-                    parent.onSelectedPriceChange(entry.y, false, date, nil, nil)
-                }
-            }
-        }
-        
-        private func getMarkerTextForDate(_ date: Date) -> String? {
-            // 首先用日期格式化器获取精确到天的日期来比较
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateFormat = "yyyy-MM-dd"
-            let dateString = dateFormatter.string(from: date)
-            
-            // 重新解析为日期，确保只比较年月日
-            if let normalizedDate = dateFormatter.date(from: dateString) {
-                // 检查是否匹配全局标记
-                for (markerDate, text) in parent.globalTimeMarkers {
-                    let markerDateString = dateFormatter.string(from: markerDate)
-                    if let normalizedMarkerDate = dateFormatter.date(from: markerDateString),
-                       normalizedDate == normalizedMarkerDate {
-                        return text
-                    }
-                }
-                
-                // 检查是否匹配特定股票标记
-                for (markerDate, text) in parent.symbolTimeMarkers {
-                    let markerDateString = dateFormatter.string(from: markerDate)
-                    if let normalizedMarkerDate = dateFormatter.date(from: markerDateString),
-                       normalizedDate == normalizedMarkerDate {
-                        return text
-                    }
-                }
-            }
-            
-            return nil
-        }
-
-        func chartValueNothingSelected(_ chartView: ChartViewBase) {
-            parent.onSelectedPriceChange(nil, false, nil, nil, nil)  // 添加第五个参数 nil
-            firstTouchHighlight = nil
-            secondTouchHighlight = nil
-            parent.shouldAnimate = false
-        }
-
-        @objc func handleMultiTouchGesture(_ gestureRecognizer: MultiTouchLongPressGestureRecognizer) {
-            guard let chartView = gestureRecognizer.view as? LineChartView else { return }
-            
-            switch gestureRecognizer.state {
-            case .began, .changed:
-                parent.isInteracting = true
-                let touchPoints = gestureRecognizer.touchPoints
-                updateHighlights(for: touchPoints, in: chartView)
-            case .ended, .cancelled:
-                parent.isInteracting = false
-                chartView.highlightValues(nil)
-                firstTouchHighlight = nil
-                secondTouchHighlight = nil
-                parent.onSelectedPriceChange(nil, false, nil, nil, nil)  // 添加第五个参数 nil
-                parent.shouldAnimate = false
-            default:
-                break
-            }
-        }
-        
-        private func updateHighlights(for touchPoints: [CGPoint], in chartView: LineChartView) {
-            if let firstPoint = touchPoints.first {
-                firstTouchHighlight = chartView.getHighlightByTouchPoint(firstPoint)
-            } else {
-                firstTouchHighlight = nil
-            }
-            
-            if touchPoints.count > 1 {
-                secondTouchHighlight = chartView.getHighlightByTouchPoint(touchPoints[1])
-            } else {
-                secondTouchHighlight = nil
-            }
-            
-            updateChartHighlights(chartView)
-            calculatePriceDifference(chartView)
-        }
-        
-        private func updateChartHighlights(_ chartView: LineChartView) {
-            var highlights: [Highlight] = []
-            if let firstHighlight = firstTouchHighlight {
-                highlights.append(firstHighlight)
-            }
-            if let secondHighlight = secondTouchHighlight {
-                highlights.append(secondHighlight)
-            }
-            chartView.highlightValues(highlights)
-        }
-        
-        private func calculatePriceDifference(_ chartView: LineChartView) {
-            // 修改回调，添加特殊点文本
-            guard let firstHighlight = firstTouchHighlight,
-                  let secondHighlight = secondTouchHighlight,
-                  let firstEntry = chartView.data?.dataSet(at: 0)?
-                      .entryForXValue(firstHighlight.x, closestToY: firstHighlight.y),
-                  let secondEntry = chartView.data?.dataSet(at: 0)?
-                      .entryForXValue(secondHighlight.x, closestToY: secondHighlight.y) else {
-                // 只有一个触摸点
-                if let firstHighlight = firstTouchHighlight,
-                   let singleEntry = chartView.data?.dataSet(at: 0)?
-                    .entryForXValue(firstHighlight.x, closestToY: firstHighlight.y) {
-                    isShowingPercentage = false
-                    let date = Date(timeIntervalSince1970: singleEntry.x)
-                    let markerText = getMarkerTextForDate(date)
-                    
-                    // 如果是特殊点，则在 markerText 前增加时间显示
-                    if let text = markerText {
-                        let dateStr = formatDate(date)
-                        let combinedText = "\(dateStr) \(text)"
-                        parent.onSelectedPriceChange(nil, false, nil, nil, combinedText)
-                    } else {
-                        parent.onSelectedPriceChange(singleEntry.y, false, date, nil, nil)
-                    }
-                }
-                return
-            }
-            
-            // 根据时间戳确定先后
-            let (earlierEntry, laterEntry) = firstEntry.x < secondEntry.x
-                ? (firstEntry, secondEntry)
-                : (secondEntry, firstEntry)
-            
-            let priceDiffPercentage = ((laterEntry.y - earlierEntry.y) / earlierEntry.y) * 100
-            isShowingPercentage = true
-            let startDate = Date(timeIntervalSince1970: earlierEntry.x)
-            let endDate = Date(timeIntervalSince1970: laterEntry.x)
-            
-            // 双指交互下，无论是否有特殊点，都只显示日期和价格差异
-            // 不传递markerText，这样就不会显示事件文本
-            parent.onSelectedPriceChange(priceDiffPercentage, true, startDate, endDate, nil)
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
+struct SubSectorPerformance: Codable, Identifiable {
+    let id = UUID()
+    let name: String
+    let value: Double
+    let color: String
+    
+    private enum CodingKeys: String, CodingKey {
+        case name, value, color
     }
     
-    func makeUIView(context: Context) -> LineChartView {
-        let chartView = LineChartView()
-        chartView.delegate = context.coordinator
-
-        let multiTouchGesture = MultiTouchLongPressGestureRecognizer()
-        multiTouchGesture.addTarget(context.coordinator, action: #selector(Coordinator.handleMultiTouchGesture(_:)))
-        multiTouchGesture.cancelsTouchesInView = false
-        multiTouchGesture.delaysTouchesEnded = false
-
-        chartView.gestureRecognizers?.forEach { existingGesture in
-            existingGesture.require(toFail: multiTouchGesture)
-        }
-
-        chartView.addGestureRecognizer(multiTouchGesture)
-        configureChartView(chartView)
-        chartView.noDataText = ""
-        configureXAxis(chartView.xAxis)
-        return chartView
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        value = try container.decode(Double.self, forKey: .value)
+        color = try container.decode(String.self, forKey: .color)
     }
     
-    func updateUIView(_ chartView: LineChartView, context: Context) {
-        // 如果正在交互，不更新数据以防止突出显示被重置
-        if isInteracting { return }
-        if data.isEmpty {
-            chartView.clear()
-            return
-        }
-
-        configureXAxis(chartView.xAxis)
-        updateChartAppearance(chartView)
-        updateChartData(chartView)
-
-        CATransaction.begin()
-        CATransaction.setAnimationDuration(0.5)
-        CATransaction.commit()
-    }
-    
-    private func configureChartView(_ chartView: LineChartView) {
-        chartView.legend.enabled = false
-        chartView.rightAxis.enabled = false
-        chartView.dragEnabled = true
-        chartView.setScaleEnabled(true)
-        chartView.pinchZoomEnabled = true
-        chartView.highlightPerTapEnabled = true
-        chartView.highlightPerDragEnabled = true
-        chartView.doubleTapToZoomEnabled = true
-        configureXAxis(chartView.xAxis)
-        configureYAxis(chartView.leftAxis)
-    }
-    
-    private func updateChartAppearance(_ chartView: LineChartView) {
-        let textColor = isDarkMode ? UIColor.white : UIColor.black
-        let gridColor = isDarkMode
-            ? UIColor.gray.withAlphaComponent(0.3)
-            : UIColor.gray.withAlphaComponent(0.2)
-
-        chartView.xAxis.labelTextColor = textColor
-        chartView.leftAxis.labelTextColor = textColor
-        chartView.xAxis.gridColor = gridColor
-        chartView.leftAxis.gridColor = gridColor
-
-        chartView.xAxis.drawGridLinesEnabled = showGrid
-        chartView.leftAxis.drawGridLinesEnabled = showGrid
-        chartView.backgroundColor = isDarkMode ? .black : .white
-    }
-    
-    // 修改后的 createDataSet：直接使用原始数据，且不做平滑处理
-    private func createDataSet(entries: [ChartDataEntry]) -> LineChartDataSet {
-        // 不再预处理数据，直接使用原始 entries
-        let dataSet = LineChartDataSet(entries: entries, label: "Price")
-        
-        // 检查是否有负值
-        let hasNegative = entries.contains { $0.y < 0 }
-        
-        if isDarkMode {
-            let neonColor = UIColor(red: 0/255, green: 255/255, blue: 178/255, alpha: 1.0)
-            let gradientColors = [
-                neonColor.withAlphaComponent(0.8).cgColor,
-                neonColor.withAlphaComponent(0.0).cgColor
-            ]
-            dataSet.setColor(neonColor)
-            let gradient = CGGradient(
-                colorsSpace: nil,
-                colors: gradientColors as CFArray,
-                locations: [0.0, 1.0]
-            )!
-            dataSet.fill = LinearGradientFill(gradient: gradient, angle: hasNegative ? 270 : 90)
-        } else {
-            let gradientColors = [
-                UIColor.systemBlue.withAlphaComponent(0.8).cgColor,
-                UIColor.systemBlue.withAlphaComponent(0.0).cgColor
-            ]
-            dataSet.setColor(.systemBlue)
-            let gradient = CGGradient(
-                colorsSpace: nil,
-                colors: gradientColors as CFArray,
-                locations: [0.0, 1.0]
-            )!
-            dataSet.fill = LinearGradientFill(gradient: gradient, angle: hasNegative ? 270 : 90)
-        }
-        
-        dataSet.drawCirclesEnabled = false
-        dataSet.mode = .linear  // 使用线性连接，不做曲线平滑
-        dataSet.lineWidth = 1.0
-        dataSet.drawFilledEnabled = true
-        dataSet.drawValuesEnabled = false
-        dataSet.highlightEnabled = true
-        dataSet.highlightColor = .systemRed
-        dataSet.highlightLineWidth = 1
-        dataSet.highlightLineDashLengths = [5, 2]
-        
-        return dataSet
-    }
-
-    // 自定义多点触控手势识别器
-    class MultiTouchLongPressGestureRecognizer: UIGestureRecognizer {
-        private var touchDict: [UITouch: CGPoint] = [:]
-        
-        var activeTouches: [UITouch] {
-            Array(touchDict.keys).sorted { $0.timestamp < $1.timestamp }
-        }
-        
-        var touchPoints: [CGPoint] {
-            activeTouches.compactMap { touchDict[$0] }
-        }
-        
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-            touches.forEach { touch in
-                touchDict[touch] = touch.location(in: view)
-            }
-            if state == .possible {
-                state = .began
-            } else {
-                state = .changed
-            }
-        }
-        
-        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-            touches.forEach { touch in
-                touchDict[touch] = touch.location(in: view)
-            }
-            state = .changed
-        }
-        
-        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-            touches.forEach { touch in
-                touchDict.removeValue(forKey: touch)
-            }
-            if touchDict.isEmpty {
-                state = .ended
-            } else {
-                state = .changed
-            }
-        }
-        
-        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-            touches.forEach { touch in
-                touchDict.removeValue(forKey: touch)
-            }
-            if touchDict.isEmpty {
-                state = .cancelled
-            } else {
-                state = .changed
-            }
-        }
-        
-        override func reset() {
-            super.reset()
-            touchDict.removeAll()
-        }
-    }
-
-    private func configureXAxis(_ xAxis: XAxis) {
-        xAxis.labelPosition = .bottom
-        xAxis.valueFormatter = DateAxisValueFormatter(timeRange: timeRange)
-        xAxis.labelRotationAngle = 0
-        xAxis.labelFont = .systemFont(ofSize: 10)
-        
-        if case .all = timeRange {
-            if let firstDate = data.first?.date.timeIntervalSince1970,
-               let lastDate = data.last?.date.timeIntervalSince1970 {
-                let totalYears = (lastDate - firstDate) / (365 * 24 * 60 * 60)
-                if totalYears <= 5 {
-                    xAxis.labelCount = 5
-                    xAxis.granularity = 365 * 24 * 60 * 60
-                } else {
-                    xAxis.labelCount = min(Int(totalYears) / 2, 8)
-                    xAxis.granularity = (lastDate - firstDate) / Double(xAxis.labelCount)
-                }
-            }
-        } else {
-            switch timeRange {
-            case .twoYears, .fiveYears, .tenYears:
-                xAxis.granularity = 365 * 24 * 60 * 60
-                xAxis.labelCount = timeRange.labelCount
-            default:
-                xAxis.granularity = 30 * 24 * 60 * 60
-                switch timeRange {
-                case .threeMonths:
-                    xAxis.labelCount = 3
-                case .sixMonths:
-                    xAxis.labelCount = 6
-                case .oneYear:
-                    xAxis.labelCount = 6
-                default:
-                    xAxis.labelCount = 12
-                }
-            }
-        }
-        
-        xAxis.granularityEnabled = true
-        xAxis.drawGridLinesEnabled = showGrid
-    }
-
-    private func configureYAxis(_ leftAxis: YAxis) {
-        leftAxis.labelFont = .systemFont(ofSize: 10)
-        leftAxis.labelCount = 6
-        leftAxis.decimals = 2
-        leftAxis.drawGridLinesEnabled = true
-        leftAxis.drawZeroLineEnabled = true
-        leftAxis.zeroLineWidth = 0.5
-        leftAxis.zeroLineColor = .systemGray
-        leftAxis.granularity = 1
-        leftAxis.spaceTop = 0.1
-        leftAxis.spaceBottom = 0.1
-    }
-
-    private func updateChartData(_ chartView: LineChartView) {
-        // 将所有数据点全部显示，不做预处理
-        let entries = data.map {
-            ChartDataEntry(x: $0.date.timeIntervalSince1970, y: $0.price)
-        }
-        let dataSet = createDataSet(entries: entries)
-        
-        // 添加特殊标记（黄点/橙点），该函数遍历所有数据点
-        addSpecialMarkers(to: dataSet)
-        
-        chartView.leftAxis.drawZeroLineEnabled = false
-        chartView.data = LineChartData(dataSet: dataSet)
-        
-        if !entries.isEmpty {
-            let minX = entries.map { $0.x }.min() ?? 0
-            let maxX = entries.map { $0.x }.max() ?? 0
-            let minY = entries.map { $0.y }.min() ?? 0
-            let maxY = entries.map { $0.y }.max() ?? 0
-            let padding = (maxY - minY) * 0.1
-            
-            let priceRange = maxY - minY
-            let granularity = calculateGranularity(priceRange: priceRange)
-            
-            chartView.leftAxis.granularity = granularity
-            chartView.leftAxis.decimals = calculateDecimals(granularity: granularity)
-            
-            let adjustedMinY = minY > 0 ? max((minY - padding), 0) : (minY - padding)
-            
-            chartView.setVisibleXRange(minXRange: 30, maxXRange: maxX - minX)
-            chartView.leftAxis.axisMinimum = adjustedMinY
-            chartView.leftAxis.axisMaximum = maxY + padding
-            
-            chartView.moveViewToX(maxX)
-        }
-        
-        if shouldAnimate {
-            chartView.animate(xAxisDuration: 0.5)
-        }
-    }
-    
-    // 添加特殊标记的逻辑保持不变：
-    private func addSpecialMarkers(to dataSet: LineChartDataSet) {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
-        
-        // 遍历所有数据点，检查全局标记和股票特有标记
-        for entry in dataSet.entries {
-            let entryDate = Date(timeIntervalSince1970: entry.x)
-            let entryDateString = dateFormatter.string(from: entryDate)
-            
-            // 检查全局标记
-            for (date, _) in globalTimeMarkers {
-                let markerDateString = dateFormatter.string(from: date)
-                if markerDateString == entryDateString {
-                    // 添加黄色标记
-                    let circleImage = UIImage.circleImage(with: .yellow, size: CGSize(width: 8, height: 8))
-                    entry.icon = circleImage
-                }
-            }
-            
-            // 检查当前股票特有标记，优先级高于全局标记
-            for (date, _) in symbolTimeMarkers {
-                let markerDateString = dateFormatter.string(from: date)
-                if markerDateString == entryDateString {
-                    // 添加橙色标记
-                    let circleImage = UIImage.circleImage(with: .orange, size: CGSize(width: 8, height: 8))
-                    entry.icon = circleImage
-                }
-            }
-        }
-    }
-
-    private func calculateGranularity(priceRange: Double) -> Double {
-        switch abs(priceRange) {
-        case 0..<1:
-            return 0.1
-        case 1..<5:
-            return 0.2
-        case 5..<10:
-            return 0.5
-        case 10..<50:
-            return 1
-        case 50..<100:
-            return 2
-        case 100..<500:
-            return 5
-        case 500..<1000:
-            return 10
-        default:
-            return max(abs(priceRange) / 50, 1)
-        }
-    }
-
-    private func calculateDecimals(granularity: Double) -> Int {
-        if granularity >= 1 {
-            return 0
-        } else {
-            // 计算小数位数
-            return String(granularity)
-                .split(separator: ".")
-                .last?
-                .count ?? 2
-        }
-    }
-}
-
-// 安全数组访问扩展
-extension Array {
-    subscript(safe index: Index) -> Element? {
-        indices.contains(index) ? self[index] : nil
-    }
-}
-
-extension UIImage {
-    static func circleImage(with color: UIColor, size: CGSize) -> UIImage {
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { ctx in
-            let rect = CGRect(origin: .zero, size: size)
-            ctx.cgContext.setFillColor(color.cgColor)
-            ctx.cgContext.fillEllipse(in: rect)
-        }
+    init(name: String, value: Double, color: String) {
+        self.name = name
+        self.value = value
+        self.color = color
     }
 }
