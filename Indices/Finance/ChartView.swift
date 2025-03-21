@@ -108,13 +108,13 @@ struct ChartView: View {
     @State private var selectedTimeRange: TimeRange = .oneYear
     @State private var isLoading = true
     @State private var dragLocation: CGPoint?
-    @State private var secondDragLocation: CGPoint?
+    
     @State private var draggedPointIndex: Int?
-    @State private var secondDraggedPointIndex: Int?
+    
     @State private var draggedPoint: DatabaseManager.PriceData?
-    @State private var secondDraggedPoint: DatabaseManager.PriceData?
+    
     @State private var isDragging = false // 添加滑动状态跟踪
-    @State private var isDualDragging = false // 添加双指滑动状态跟踪
+    
     
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.presentationMode) var presentationMode
@@ -152,23 +152,7 @@ struct ChartView: View {
             VStack {
                 if let point = draggedPoint {
                     let pointDate = formatDate(point.date)
-                    if let secondPoint = secondDraggedPoint {
-                        let secondPointDate = formatDate(secondPoint.date)
-                        // 显示两个点的情况
-                        HStack {
-                            Text("\(pointDate): \(formatPrice(point.price))")
-                                .font(.system(size: 16, weight: .medium))
-                            Spacer()
-                            let percentChange = ((secondPoint.price - point.price) / point.price) * 100
-                            Text("\(secondPointDate): \(formatPrice(secondPoint.price)) (\(formatPercentage(percentChange)))")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(percentChange >= 0 ? .green : .red)
-                        }
-                        .padding(.horizontal)
-                        .padding(.vertical, 8)
-                        .background(Color(UIColor.systemGray6))
-                        .cornerRadius(8)
-                    } else {
+                    
                         // 显示单个点的情况
                         HStack {
                             Text("\(pointDate): \(formatPrice(point.price))")
@@ -187,8 +171,7 @@ struct ChartView: View {
                         .padding(.vertical, 8)
                         .background(Color(UIColor.systemGray6))
                         .cornerRadius(8)
-                    }
-                } else {
+                    
                     // 空白占位
                     Rectangle()
                         .fill(Color.clear)
@@ -292,31 +275,7 @@ struct ChartView: View {
                             }
                         }
                         
-                        // 拖动线 2 - 使用虚线
-                        if let location = secondDragLocation, let pointIndex = secondDraggedPointIndex {
-                            let x = CGFloat(pointIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
-                            
-                            Path { path in
-                                path.move(to: CGPoint(x: x, y: 0))
-                                path.addLine(to: CGPoint(x: x, y: geometry.size.height))
-                            }
-                            .stroke(style: StrokeStyle(lineWidth: 1, dash: [4]))
-                            .foregroundColor(Color.gray)
-                            
-                            // 高亮显示第二个点
-                            if let point = secondDraggedPoint {
-                                let y = geometry.size.height - CGFloat((point.price - minPrice) / priceRange) * geometry.size.height
-                                
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: 10, height: 10)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color.green, lineWidth: 2)
-                                    )
-                                    .position(x: x, y: y)
-                            }
-                        }
+                        
                     }
                     // 改进手势处理逻辑，使用dragGesture实现连续跟随效果
                     .contentShape(Rectangle()) // 确保整个区域都能接收手势
@@ -329,20 +288,7 @@ struct ChartView: View {
                                 isDragging = false
                             }
                     )
-                    // 添加双指手势
-                    .simultaneousGesture(
-                        // 使用MagnificationGesture检测双指操作
-                        MagnificationGesture(minimumScaleDelta: 0.01)
-                            .onChanged { _ in
-                                if !isDualDragging && draggedPoint != nil {
-                                    isDualDragging = true
-                                    // 保持第一个点的位置，启用第二个点
-                                    secondDragLocation = dragLocation
-                                    secondDraggedPointIndex = draggedPointIndex
-                                    secondDraggedPoint = draggedPoint
-                                }
-                            }
-                    )
+                    
                 }
                 .frame(height: 250)
                 .padding(.top, 20)
@@ -468,11 +414,11 @@ struct ChartView: View {
                 isLoading = false
                 // 重置拖动状态
                 dragLocation = nil
-                secondDragLocation = nil
+                
                 draggedPointIndex = nil
-                secondDraggedPointIndex = nil
+                
                 draggedPoint = nil
-                secondDraggedPoint = nil
+                
                 print("数据已更新到UI")
             }
         }
@@ -510,20 +456,13 @@ struct ChartView: View {
         let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
         let index = min(sampledChartData.count - 1, max(0, Int(location.x / horizontalStep)))
         
-        if isDualDragging {
-            // 第二个点移动
-            secondDragLocation = location
-            secondDraggedPointIndex = index
-            if index < sampledChartData.count {
-                secondDraggedPoint = sampledChartData[index]
-            }
-        } else {
-            // 第一个点移动
-            dragLocation = location
-            draggedPointIndex = index
-            if index < sampledChartData.count {
-                draggedPoint = sampledChartData[index]
-            }
+        
+        // 第一个点移动
+        dragLocation = location
+        draggedPointIndex = index
+        if index < sampledChartData.count {
+            draggedPoint = sampledChartData[index]
+            
         }
     }
     
