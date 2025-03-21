@@ -110,6 +110,41 @@ class DatabaseManager {
         return result
     }
     
+    struct EarningData {
+        let date: Date
+        let price: Double
+    }
+
+    func fetchEarningData(forSymbol symbol: String) -> [EarningData] {
+        var result: [EarningData] = []
+        let dateFormat = "yyyy-MM-dd"
+        let formatter = DateFormatter()
+        formatter.dateFormat = dateFormat
+        
+        let query = "SELECT date, price FROM Earning WHERE name = ?"
+        var statement: OpaquePointer?
+        
+        if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
+            sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
+            
+            while sqlite3_step(statement) == SQLITE_ROW {
+                if let dateString = sqlite3_column_text(statement, 0) {
+                    let dateStr = String(cString: dateString)
+                    let price = sqlite3_column_double(statement, 1)
+                    
+                    if let date = formatter.date(from: dateStr) {
+                        result.append(EarningData(date: date, price: price))
+                    }
+                }
+            }
+        } else {
+            print("Failed to prepare statement: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        
+        sqlite3_finalize(statement)
+        return result
+    }
+    
     // 添加辅助方法来检查表是否包含 volume 列
     private func checkIfTableHasVolume(tableName: String) -> Bool {
         var hasVolume = false

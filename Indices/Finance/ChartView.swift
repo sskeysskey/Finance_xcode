@@ -107,14 +107,23 @@ struct ChartView: View {
     @State private var sampledChartData: [DatabaseManager.PriceData] = [] // 采样后的数据
     @State private var selectedTimeRange: TimeRange = .oneYear
     @State private var isLoading = true
+    
+    @State private var earningData: [DatabaseManager.EarningData] = []
+    
+    // 单指滑动状态
     @State private var dragLocation: CGPoint?
-    
     @State private var draggedPointIndex: Int?
-    
     @State private var draggedPoint: DatabaseManager.PriceData?
+    @State private var isDragging = false
     
-    @State private var isDragging = false // 添加滑动状态跟踪
-    
+    // 双指滑动状态
+    @State private var isMultiTouch = false
+    @State private var firstTouchLocation: CGPoint?
+    @State private var secondTouchLocation: CGPoint?
+    @State private var firstTouchPointIndex: Int?
+    @State private var secondTouchPointIndex: Int?
+    @State private var firstTouchPoint: DatabaseManager.PriceData?
+    @State private var secondTouchPoint: DatabaseManager.PriceData?
     
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.presentationMode) var presentationMode
@@ -145,32 +154,68 @@ struct ChartView: View {
         max(maxPrice - minPrice, 0.01) // 避免除零
     }
     
+    // 计算两点之间的价格变化百分比
+    private var priceDifferencePercentage: Double? {
+        guard let first = firstTouchPoint?.price,
+              let second = secondTouchPoint?.price else {
+            return nil
+        }
+        
+        return ((second - first) / first) * 100.0
+    }
+    
     // MARK: - Body
     var body: some View {
         VStack(spacing: 0) {
             // Chart header with drag information
             VStack {
-                if let point = draggedPoint {
+                if isMultiTouch, let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
+                    // 双指模式：显示两点的信息和价格变化百分比
+                    let firstDate = formatDate(firstPoint.date)
+                    let secondDate = formatDate(secondPoint.date)
+                    let percentChange = priceDifferencePercentage ?? 0
+                    
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text("\(firstDate): \(formatPrice(firstPoint.price))")
+                                .font(.system(size: 16, weight: .medium))
+                            Text("\(secondDate): \(formatPrice(secondPoint.price))")
+                                .font(.system(size: 16, weight: .medium))
+                            Text("Change: \(formatPercentage(percentChange))")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(percentChange >= 0 ? .green : .red)
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .background(Color(UIColor.systemGray6))
+                    .cornerRadius(8)
+                    
+                    // 空白占位
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(height: 40)
+                } else if let point = draggedPoint {
+                    // 单指模式：显示单点信息和标记
                     let pointDate = formatDate(point.date)
                     
-                        // 显示单个点的情况
-                        HStack {
-                            Text("\(pointDate): \(formatPrice(point.price))")
-                                .font(.system(size: 16, weight: .medium))
-                            
-                            // 显示全局或特定标记信息
-                            if let markerText = getMarkerText(for: point.date) {
-                                Spacer()
-                                Text(markerText)
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.orange)
-                                    .lineLimit(2)
-                            }
+                    HStack {
+                        Text("\(pointDate): \(formatPrice(point.price))")
+                            .font(.system(size: 16, weight: .medium))
+                        
+                        // 显示全局或特定标记信息
+                        if let markerText = getMarkerText(for: point.date) {
+                            Spacer()
+                            Text(markerText)
+                                .font(.system(size: 14))
+                                .foregroundColor(.orange)
+                                .lineLimit(2)
                         }
-                        .padding(.horizontal)
-                        .padding(.vertical, 8)
-                        .background(Color(UIColor.systemGray6))
-                        .cornerRadius(8)
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .background(Color(UIColor.systemGray6))
+                    .cornerRadius(8)
                     
                     // 空白占位
                     Rectangle()
@@ -237,20 +282,87 @@ struct ChartView: View {
                         }
                         
                         // 绘制特殊时间点标记
-                        ForEach(getTimeMarkers(), id: \.id) { marker in
-                            if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, marker.date) }) {
-                                let x = CGFloat(index) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
-                                let y = geometry.size.height - CGFloat((sampledChartData[index].price - minPrice) / priceRange) * geometry.size.height
-                                
-                                Circle()
-                                    .fill(marker.isGlobal ? Color.red : Color.orange)
-                                    .frame(width: 8, height: 8)
-                                    .position(x: x, y: y)
+                        if !isMultiTouch { // 只在单指模式下显示标记
+                            ForEach(getTimeMarkers(), id: \.id) { marker in
+                                if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, marker.date) }) {
+                                    let x = CGFloat(index) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
+                                    let y = geometry.size.height - CGFloat((sampledChartData[index].price - minPrice) / priceRange) * geometry.size.height
+                                    
+                                    Circle()
+                                        .fill(marker.color) // 使用标记的颜色属性
+                                        .frame(width: 8, height: 8)
+                                        .position(x: x, y: y)
+                                }
                             }
                         }
                         
-                        // 拖动线 1 - 使用虚线
-                        if let location = dragLocation, let pointIndex = draggedPointIndex {
+                        if isMultiTouch {
+                            // 双指模式：绘制两条虚线
+                            if let firstIndex = firstTouchPointIndex, let firstPoint = firstTouchPoint {
+                                let x = CGFloat(firstIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
+                                let y = geometry.size.height - CGFloat((firstPoint.price - minPrice) / priceRange) * geometry.size.height
+                                
+                                // 第一条虚线
+                                Path { path in
+                                    path.move(to: CGPoint(x: x, y: 0))
+                                    path.addLine(to: CGPoint(x: x, y: geometry.size.height))
+                                }
+                                .stroke(style: StrokeStyle(lineWidth: 1, dash: [4]))
+                                .foregroundColor(Color.gray)
+                                
+                                // 第一个点的高亮显示
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 10, height: 10)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(chartColor, lineWidth: 2)
+                                    )
+                                    .position(x: x, y: y)
+                            }
+                            
+                            if let secondIndex = secondTouchPointIndex, let secondPoint = secondTouchPoint {
+                                let x = CGFloat(secondIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
+                                let y = geometry.size.height - CGFloat((secondPoint.price - minPrice) / priceRange) * geometry.size.height
+                                
+                                // 第二条虚线
+                                Path { path in
+                                    path.move(to: CGPoint(x: x, y: 0))
+                                    path.addLine(to: CGPoint(x: x, y: geometry.size.height))
+                                }
+                                .stroke(style: StrokeStyle(lineWidth: 1, dash: [4]))
+                                .foregroundColor(Color.gray)
+                                
+                                // 第二个点的高亮显示
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 10, height: 10)
+                                    .overlay(
+                                        Circle()
+                                            .stroke(chartColor, lineWidth: 2)
+                                    )
+                                    .position(x: x, y: y)
+                            }
+                            
+                            // 绘制两点之间的连线
+                            if let firstIndex = firstTouchPointIndex, let secondIndex = secondTouchPointIndex,
+                               let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
+                                let x1 = CGFloat(firstIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
+                                let y1 = geometry.size.height - CGFloat((firstPoint.price - minPrice) / priceRange) * geometry.size.height
+                                let x2 = CGFloat(secondIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
+                                let y2 = geometry.size.height - CGFloat((secondPoint.price - minPrice) / priceRange) * geometry.size.height
+                                
+                                Path { path in
+                                    path.move(to: CGPoint(x: x1, y: y1))
+                                    path.addLine(to: CGPoint(x: x2, y: y2))
+                                }
+                                .stroke(style: StrokeStyle(lineWidth: 1, dash: [2]))
+                                .foregroundColor(
+                                    secondPoint.price >= firstPoint.price ? Color.green : Color.red
+                                )
+                            }
+                        } else if let pointIndex = draggedPointIndex {
+                            // 单指模式：绘制单条虚线
                             let x = CGFloat(pointIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
                             
                             Path { path in
@@ -274,21 +386,41 @@ struct ChartView: View {
                                     .position(x: x, y: y)
                             }
                         }
-                        
-                        
                     }
-                    // 改进手势处理逻辑，使用dragGesture实现连续跟随效果
-                    .contentShape(Rectangle()) // 确保整个区域都能接收手势
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { value in
-                                updateDragLocation(value.location)
+                    // 使用自定义触摸处理视图以支持多指触控
+                    .overlay(
+                        MultiTouchHandler(
+                            onSingleTouchChanged: { location in
+                                isMultiTouch = false
+                                updateDragLocation(location)
+                            },
+                            onMultiTouchChanged: { first, second in
+                                isMultiTouch = true
+                                updateMultiTouchLocations(first, second)
+                            },
+                            onTouchesEnded: {
+                                // 当所有触摸结束时重置状态
+                                resetTouchStates()
+                            },
+                            onFirstTouchEnded: {
+                                // 第一个触摸结束，转为单指模式
+                                isMultiTouch = false
+                                // 如果第二个触摸点存在，将它设为单指模式的触摸点
+                                if let secondLocation = secondTouchLocation {
+                                    updateDragLocation(secondLocation)
+                                }
+                            },
+                            onSecondTouchEnded: {
+                                // 第二个触摸结束，转为单指模式
+                                isMultiTouch = false
+                                // 如果第一个触摸点存在，将它设为单指模式的触摸点
+                                if let firstLocation = firstTouchLocation {
+                                    updateDragLocation(firstLocation)
+                                }
                             }
-                            .onEnded { _ in
-                                isDragging = false
-                            }
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     )
-                    
                 }
                 .frame(height: 250)
                 .padding(.top, 20)
@@ -404,6 +536,10 @@ struct ChartView: View {
             )
             print("查询完成，获取到 \(newData.count) 条数据")
             
+            // 获取财报数据
+            let earnings = DatabaseManager.shared.fetchEarningData(forSymbol: symbol)
+            print("获取到 \(earnings.count) 条财报数据")
+            
             // 对长期数据进行采样，提高性能
             let sampledData = sampleData(newData, rate: selectedTimeRange.samplingRate())
             print("采样后数据点数: \(sampledData.count)")
@@ -411,17 +547,31 @@ struct ChartView: View {
             DispatchQueue.main.async {
                 chartData = newData
                 sampledChartData = sampledData
+                earningData = earnings
                 isLoading = false
-                // 重置拖动状态
-                dragLocation = nil
-                
-                draggedPointIndex = nil
-                
-                draggedPoint = nil
-                
+                // 重置触摸状态
+                resetTouchStates()
                 print("数据已更新到UI")
             }
         }
+    }
+    
+    // 重置所有触摸状态
+    private func resetTouchStates() {
+        // 重置单指状态
+        dragLocation = nil
+        draggedPointIndex = nil
+        draggedPoint = nil
+        isDragging = false
+        
+        // 重置双指状态
+        isMultiTouch = false
+        firstTouchLocation = nil
+        secondTouchLocation = nil
+        firstTouchPointIndex = nil
+        secondTouchPointIndex = nil
+        firstTouchPoint = nil
+        secondTouchPoint = nil
     }
     
     // 数据采样函数，用于优化大量数据的显示
@@ -448,30 +598,62 @@ struct ChartView: View {
         return result
     }
     
-    // 更新拖动位置和选中的数据点
-    private func updateDragLocation(_ location: CGPoint) {
-        guard !sampledChartData.isEmpty else { return }
+    // 从触摸位置计算数据索引
+    private func getIndexFromLocation(_ location: CGPoint) -> Int {
+        guard !sampledChartData.isEmpty else { return 0 }
         
         let width = UIScreen.main.bounds.width
         let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
-        let index = min(sampledChartData.count - 1, max(0, Int(location.x / horizontalStep)))
-        
-        
-        // 第一个点移动
-        dragLocation = location
-        draggedPointIndex = index
-        if index < sampledChartData.count {
-            draggedPoint = sampledChartData[index]
-            
-        }
+        return min(sampledChartData.count - 1, max(0, Int(location.x / horizontalStep)))
     }
     
-    // 获取时间点标记
+    // 更新单指拖动状态
+    private func updateDragLocation(_ location: CGPoint) {
+        guard !sampledChartData.isEmpty else { return }
+        
+        let index = getIndexFromLocation(location)
+        
+        dragLocation = location
+        draggedPointIndex = index
+        draggedPoint = sampledChartData[safe: index]
+        isDragging = true
+    }
+    
+    // 更新双指触摸状态
+    private func updateMultiTouchLocations(_ first: CGPoint, _ second: CGPoint) {
+        guard !sampledChartData.isEmpty else { return }
+        
+        let firstIndex = getIndexFromLocation(first)
+        let secondIndex = getIndexFromLocation(second)
+        
+        firstTouchLocation = first
+        secondTouchLocation = second
+        firstTouchPointIndex = firstIndex
+        secondTouchPointIndex = secondIndex
+        firstTouchPoint = sampledChartData[safe: firstIndex]
+        secondTouchPoint = sampledChartData[safe: secondIndex]
+    }
+    
+    // 修改TimeMarker结构
+    private enum MarkerType {
+        case global // 红点
+        case symbol // 橙色点
+        case earning // 蓝点
+    }
+
     private struct TimeMarker: Identifiable {
         let id = UUID()
         let date: Date
         let text: String
-        let isGlobal: Bool
+        let type: MarkerType
+        
+        var color: Color {
+            switch type {
+            case .global: return .red
+            case .symbol: return .orange
+            case .earning: return .blue
+            }
+        }
     }
     
     private func getTimeMarkers() -> [TimeMarker] {
@@ -480,7 +662,7 @@ struct ChartView: View {
         // 添加全局时间标记
         for (date, text) in dataService.globalTimeMarkers {
             if sampledChartData.contains(where: { isSameDay($0.date, date) }) {
-                markers.append(TimeMarker(date: date, text: text, isGlobal: true))
+                markers.append(TimeMarker(date: date, text: text, type: .global))
             }
         }
         
@@ -488,8 +670,17 @@ struct ChartView: View {
         if let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()] {
             for (date, text) in symbolMarkers {
                 if sampledChartData.contains(where: { isSameDay($0.date, date) }) {
-                    markers.append(TimeMarker(date: date, text: text, isGlobal: false))
+                    markers.append(TimeMarker(date: date, text: text, type: .symbol))
                 }
+            }
+        }
+        
+        // 添加财报数据标记
+        for earning in earningData {
+            if sampledChartData.contains(where: { isSameDay($0.date, earning.date) }) {
+                // 将价格转换为字符串作为标记文本
+                let earningText = String(format: "Earnings: %.2f", earning.price)
+                markers.append(TimeMarker(date: earning.date, text: earningText, type: .earning))
             }
         }
         
@@ -506,6 +697,11 @@ struct ChartView: View {
         if let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()],
            let text = symbolMarkers.first(where: { isSameDay($0.key, date) })?.value {
             return text
+        }
+        
+        // 检查财报数据标记
+        if let earningPoint = earningData.first(where: { isSameDay($0.date, date) }) {
+            return String(format: "Earnings: %.2f", earningPoint.price)
         }
         
         return nil
@@ -590,6 +786,113 @@ struct ChartView: View {
     }
 }
 
+// MARK: - 多触控处理视图
+struct MultiTouchHandler: UIViewRepresentable {
+    var onSingleTouchChanged: (CGPoint) -> Void
+    var onMultiTouchChanged: (CGPoint, CGPoint) -> Void
+    var onTouchesEnded: () -> Void
+    var onFirstTouchEnded: () -> Void
+    var onSecondTouchEnded: () -> Void
+    
+    func makeUIView(context: Context) -> UIView {
+        let view = MultitouchView()
+        view.onSingleTouchChanged = onSingleTouchChanged
+        view.onMultiTouchChanged = onMultiTouchChanged
+        view.onTouchesEnded = onTouchesEnded
+        view.onFirstTouchEnded = onFirstTouchEnded
+        view.onSecondTouchEnded = onSecondTouchEnded
+        view.backgroundColor = .clear
+        return view
+    }
+    
+    func updateUIView(_ uiView: UIView, context: Context) {
+        // 不需要更新
+    }
+    
+    class MultitouchView: UIView {
+        var onSingleTouchChanged: ((CGPoint) -> Void)?
+        var onMultiTouchChanged: ((CGPoint, CGPoint) -> Void)?
+        var onTouchesEnded: (() -> Void)?
+        var onFirstTouchEnded: (() -> Void)?
+        var onSecondTouchEnded: (() -> Void)?
+        
+        private var firstTouch: UITouch?
+        private var secondTouch: UITouch?
+        
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isMultipleTouchEnabled = true
+        }
+        
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+        
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+            guard let touch = touches.first else { return }
+            
+            if firstTouch == nil {
+                firstTouch = touch
+                updateTouches()
+            } else if secondTouch == nil {
+                secondTouch = touch
+                updateTouches()
+            }
+        }
+        
+        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+            updateTouches()
+        }
+        
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+            if touches.contains(where: { $0 == firstTouch }) {
+                // 第一个手指离开
+                if secondTouch != nil {
+                    // 如果第二个手指仍在，将其设为第一个
+                    firstTouch = secondTouch
+                    secondTouch = nil
+                    onFirstTouchEnded?()
+                } else {
+                    // 如果没有第二个手指，则结束所有触摸
+                    firstTouch = nil
+                    onTouchesEnded?()
+                }
+            } else if touches.contains(where: { $0 == secondTouch }) {
+                // 第二个手指离开
+                secondTouch = nil
+                onSecondTouchEnded?()
+            }
+            
+            updateTouches()
+        }
+        
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+            firstTouch = nil
+            secondTouch = nil
+            onTouchesEnded?()
+        }
+        
+        private func updateTouches() {
+            if let first = firstTouch, let second = secondTouch {
+                // 双指触摸
+                let firstLocation = first.location(in: self)
+                let secondLocation = second.location(in: self)
+                onMultiTouchChanged?(firstLocation, secondLocation)
+            } else if let first = firstTouch {
+                // 单指触摸
+                let location = first.location(in: self)
+                onSingleTouchChanged?(location)
+            }
+        }
+    }
+}
+
+// MARK: - 数组安全索引扩展
+extension Array {
+    subscript(safe index: Int) -> Element? {
+        return indices.contains(index) ? self[index] : nil
+    }
+}
 
 // MARK: - DescriptionView
 struct DescriptionView: View {
