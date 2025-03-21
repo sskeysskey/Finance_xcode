@@ -318,32 +318,14 @@ struct ChartView: View {
                             }
                         }
                     }
-                    // 改进手势处理逻辑，使用longPressGesture配合dragGesture实现连续跟随效果
+                    // 改进手势处理逻辑，使用dragGesture实现连续跟随效果
                     .contentShape(Rectangle()) // 确保整个区域都能接收手势
                     .gesture(
-                        // 长按手势，激活拖动状态
-                        LongPressGesture(minimumDuration: 0.1)
-                            .sequenced(before: DragGesture(minimumDistance: 0))
+                        DragGesture(minimumDistance: 0)
                             .onChanged { value in
-                                switch value {
-                                case .first(true):
-                                    // 长按开始，准备拖动
-                                    isDragging = true
-                                    isDualDragging = false
-                                    secondDragLocation = nil
-                                    secondDraggedPointIndex = nil
-                                    secondDraggedPoint = nil
-                                case .second(true, let drag):
-                                    // 拖动中
-                                    if let location = drag?.location {
-                                        updateDragLocation(location)
-                                    }
-                                default:
-                                    break
-                                }
+                                updateDragLocation(value.location)
                             }
                             .onEnded { _ in
-                                // 保持最后的拖动状态，不重置
                                 isDragging = false
                             }
                     )
