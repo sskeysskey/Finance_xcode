@@ -176,15 +176,13 @@ struct ChartView: View {
                     let percentChange = priceDifferencePercentage ?? 0
                     
                     HStack {
-                        VStack(alignment: .leading) {
-                            Text("\(firstDate): \(formatPrice(firstPoint.price))")
+                            Text("\(firstDate)")
                                 .font(.system(size: 16, weight: .medium))
-                            Text("\(secondDate): \(formatPrice(secondPoint.price))")
+                            Text("\(secondDate)")
                                 .font(.system(size: 16, weight: .medium))
-                            Text("Change: \(formatPercentage(percentChange))")
+                            Text("\(formatPercentage(percentChange))")
                                 .font(.system(size: 16, weight: .bold))
                                 .foregroundColor(percentChange >= 0 ? .green : .red)
-                        }
                     }
                     .padding(.horizontal)
                     .padding(.vertical, 8)
@@ -200,7 +198,7 @@ struct ChartView: View {
                     let pointDate = formatDate(point.date)
                     
                     HStack {
-                        Text("\(pointDate): \(formatPrice(point.price))")
+                        Text("\(pointDate)  \(formatPrice(point.price))")
                             .font(.system(size: 16, weight: .medium))
                         
                         // 显示全局或特定标记信息
@@ -715,7 +713,7 @@ struct ChartView: View {
     }
     
     private func formatPrice(_ price: Double) -> String {
-        return String(format: "$%.2f", price)
+        return String(format: "%.2f", price)
     }
     
     private func formatPercentage(_ value: Double) -> String {
