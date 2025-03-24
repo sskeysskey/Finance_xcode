@@ -505,7 +505,6 @@ struct ChartView: View {
     }
     
     // MARK: - Helper Methods
-    
     private func getDescriptions(for symbol: String) -> (String, String)? {
         // 检查是否为股票
         if let stock = dataService.descriptionData?.stocks.first(where: {
