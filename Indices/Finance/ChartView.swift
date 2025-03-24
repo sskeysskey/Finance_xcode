@@ -22,7 +22,6 @@ enum TimeRange {
         case .twoYears: return "2Y"
         case .fiveYears: return "5Y"
         case .tenYears: return "10Y"
-        
         }
     }
     
@@ -108,7 +107,6 @@ struct ChartView: View {
     @State private var sampledChartData: [DatabaseManager.PriceData] = [] // 采样后的数据
     @State private var selectedTimeRange: TimeRange = .oneYear
     @State private var isLoading = true
-    
     @State private var earningData: [DatabaseManager.EarningData] = []
     
     // 单指滑动状态
@@ -180,7 +178,6 @@ struct ChartView: View {
                     Rectangle()
                         .fill(Color.clear)
                         .frame(height: 80) // 固定三行文本的高度
-                    
                     VStack {
                         if isMultiTouch, let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
                             // 双指模式：显示两点的信息和价格变化百分比
@@ -504,7 +501,6 @@ struct ChartView: View {
                 }
                 .toggleStyle(SwitchToggleStyle(tint: .blue))
             }
-            
             .padding(.vertical, 30)
             
             // Action buttons
@@ -539,10 +535,8 @@ struct ChartView: View {
                         .foregroundColor(.blue)
                 }
             }
-            
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
-            
             Spacer() // 添加Spacer让所有内容靠顶部
         }
         .background(backgroundColor.edgesIgnoringSafeArea(.all))
