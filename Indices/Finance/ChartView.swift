@@ -126,6 +126,11 @@ struct ChartView: View {
     @State private var firstTouchPoint: DatabaseManager.PriceData?
     @State private var secondTouchPoint: DatabaseManager.PriceData?
     
+    // 标记点显示控制
+    @State private var showRedMarkers: Bool = false     // 全局标记(红色)默认关闭
+    @State private var showOrangeMarkers: Bool = true   // 股票特定标记(橙色)默认开启
+    @State private var showBlueMarkers: Bool = true     // 财报标记(蓝色)默认开启
+    
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.presentationMode) var presentationMode
     @EnvironmentObject var dataService: DataService
@@ -305,14 +310,19 @@ struct ChartView: View {
                         }
                         
                         // 绘制特殊时间点标记
-                        if !isMultiTouch { // 只在单指模式下显示标记
-                            ForEach(getTimeMarkers(), id: \.id) { marker in
-                                if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, marker.date) }) {
+                        ForEach(getTimeMarkers(), id: \.id) { marker in
+                            if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, marker.date) }) {
+                                // 根据标记类型和显示状态决定是否显示标记点
+                                let shouldShow = (marker.type == .global && showRedMarkers) ||
+                                                 (marker.type == .symbol && showOrangeMarkers) ||
+                                                 (marker.type == .earning && showBlueMarkers)
+                                
+                                if shouldShow {
                                     let x = CGFloat(index) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
                                     let y = geometry.size.height - CGFloat((sampledChartData[index].price - minPrice) / priceRange) * geometry.size.height
                                     
                                     Circle()
-                                        .fill(marker.color) // 使用标记的颜色属性
+                                        .fill(marker.color)
                                         .frame(width: 8, height: 8)
                                         .position(x: x, y: y)
                                 }
@@ -475,6 +485,28 @@ struct ChartView: View {
                 .padding(.vertical, 8)
             }
             
+            .padding(.vertical, 10)
+            
+            // 标记点显示控制开关
+            HStack(spacing: 10) {
+                // 橙色标记点(股票特定)开关
+                Toggle(isOn: $showOrangeMarkers) {
+                }
+                .toggleStyle(SwitchToggleStyle(tint: .orange))
+                
+                // 红色标记点(全局)开关
+                Toggle(isOn: $showRedMarkers) {
+                }
+                .toggleStyle(SwitchToggleStyle(tint: .red))
+                
+                // 蓝色标记点(财报)开关
+                Toggle(isOn: $showBlueMarkers) {
+                }
+                .toggleStyle(SwitchToggleStyle(tint: .blue))
+            }
+            
+            .padding(.vertical, 30)
+            
             // Action buttons
             HStack(spacing: 20) {
                 // Description
@@ -507,7 +539,9 @@ struct ChartView: View {
                         .foregroundColor(.blue)
                 }
             }
-            .padding(.vertical, 16)
+            
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
             
             Spacer() // 添加Spacer让所有内容靠顶部
         }
@@ -756,19 +790,19 @@ struct ChartView: View {
     }
     
     private func getMarkerText(for date: Date) -> String? {
-        // 检查全局标记
-        if let text = dataService.globalTimeMarkers.first(where: { isSameDay($0.key, date) })?.value {
+        // 检查全局标记，只有在显示红色标记的情况下返回
+        if showRedMarkers, let text = dataService.globalTimeMarkers.first(where: { isSameDay($0.key, date) })?.value {
             return text
         }
         
-        // 检查特定股票标记
-        if let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()],
+        // 检查特定股票标记，只有在显示橙色标记的情况下返回
+        if showOrangeMarkers, let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()],
            let text = symbolMarkers.first(where: { isSameDay($0.key, date) })?.value {
             return text
         }
         
-        // 检查财报数据标记
-        if let earningPoint = earningData.first(where: { isSameDay($0.date, date) }) {
+        // 检查财报数据标记，只有在显示蓝色标记的情况下返回
+        if showBlueMarkers, let earningPoint = earningData.first(where: { isSameDay($0.date, date) }) {
             return String(format: "%.2f", earningPoint.price)
         }
         
