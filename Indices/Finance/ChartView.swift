@@ -165,77 +165,77 @@ struct ChartView: View {
         return ((second - first) / first) * 100.0
     }
     
-    // MARK: - Body
     var body: some View {
         VStack(spacing: 0) {
-            // Chart header with drag information
+            // 固定高度的信息显示区域
             VStack {
-                if isMultiTouch, let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
-                    // 双指模式：显示两点的信息和价格变化百分比
-                    let firstDate = formatDate(firstPoint.date)
-                    let secondDate = formatDate(secondPoint.date)
-                    let percentChange = priceDifferencePercentage ?? 0
-                    
-                    HStack {
-                            Text("\(firstDate)")
-                                .font(.system(size: 16, weight: .medium))
-                            Text("\(secondDate)")
-                                .font(.system(size: 16, weight: .medium))
-                            Text("\(formatPercentage(percentChange))")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundColor(percentChange >= 0 ? .green : .red)
-                    }
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .background(Color(UIColor.systemGray6))
-                    .cornerRadius(8)
-                    
-                    // 空白占位
+                // 事件文本或时间价格信息区域
+                ZStack(alignment: .top) {
+                    // 背景空白区域，保持固定高度
                     Rectangle()
                         .fill(Color.clear)
-                        .frame(height: 40)
+                        .frame(height: 80) // 固定三行文本的高度
                     
-                } else if let point = draggedPoint {
-                    // 单指模式：显示单点信息和标记
-                    let pointDate = formatDate(point.date)
-                    
-                    HStack {
-                        Text("\(pointDate)  \(formatPrice(point.price))")
-                            .font(.system(size: 16, weight: .medium))
-                        
-                        // 显示全局或特定标记信息
-                        if let markerText = getMarkerText(for: point.date) {
-                            Spacer()
-                            Text(markerText)
-                                .font(.system(size: 14))
-                                .foregroundColor(.orange)
-                                .lineLimit(2)
+                    VStack {
+                        if isMultiTouch, let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
+                            // 双指模式：显示两点的信息和价格变化百分比
+                            let firstDate = formatDate(firstPoint.date)
+                            let secondDate = formatDate(secondPoint.date)
+                            let percentChange = priceDifferencePercentage ?? 0
+                            
+                            HStack {
+                                Text("\(firstDate)")
+                                    .font(.system(size: 16, weight: .medium))
+                                Text("\(secondDate)")
+                                    .font(.system(size: 16, weight: .medium))
+                                Text("\(formatPercentage(percentChange))")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundColor(percentChange >= 0 ? .green : .red)
+                            }
+                            .padding(.horizontal)
+                            .padding(.vertical, 8)
+                            .background(Color(UIColor.systemGray6))
+                            .cornerRadius(8)
+                            
+                        } else if let point = draggedPoint {
+                            // 单指模式：显示单点信息和标记
+                            let pointDate = formatDate(point.date)
+                            
+                            HStack {
+                                Text("\(pointDate)  \(formatPrice(point.price))")
+                                    .font(.system(size: 16, weight: .medium))
+                                
+                                // 显示全局或特定标记信息
+                                if let markerText = getMarkerText(for: point.date) {
+                                    Spacer()
+                                    Text(markerText)
+                                        .font(.system(size: 14))
+                                        .foregroundColor(.orange)
+                                        .lineLimit(2)
+                                }
+                            }
+                            .padding(.horizontal)
+                            .padding(.vertical, 8)
+                            .background(Color(UIColor.systemGray6))
+                            .cornerRadius(8)
                         }
                     }
                     .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .background(Color(UIColor.systemGray6))
-                    .cornerRadius(8)
-                    
-                    // 空白占位
-                    Rectangle()
-                        .fill(Color.clear)
-                        .frame(height: 40)
+                    .padding(.top, 10)
                 }
             }
-            .padding(.horizontal)
             
             // Chart
             if isLoading {
                 ProgressView()
                     .scaleEffect(1.5)
                     .padding()
-                    .frame(maxHeight: .infinity)
+                    .frame(height: 250) // 固定高度与图表一致
             } else if sampledChartData.isEmpty {
                 Text("No data available")
                     .font(.title2)
                     .foregroundColor(.gray)
-                    .frame(maxHeight: .infinity)
+                    .frame(height: 250) // 固定高度与图表一致
             } else {
                 // Chart canvas
                 ZStack {
@@ -423,7 +423,6 @@ struct ChartView: View {
                     )
                 }
                 .frame(height: 250)
-                .padding(.top, 20)
                 .padding(.bottom, 30) // 为 X 轴标签留出空间
             }
             
@@ -450,7 +449,7 @@ struct ChartView: View {
                     }
                 }
                 .padding(.horizontal)
-                .padding(.bottom, 8)
+                .padding(.vertical, 8)
             }
             
             // Action buttons
@@ -468,14 +467,12 @@ struct ChartView: View {
                 }) {
                     Text("Description")
                         .font(.system(size: 16, weight: .medium))
-                        .padding(.top, 0)
                         .foregroundColor(.green)
                 }
                 // Compare
                 NavigationLink(destination: CompareView(initialSymbol: symbol)) {
                     Text("Compare")
                         .font(.system(size: 16, weight: .medium))
-                        .padding(.top, 0)
                         .padding(.leading, 20)
                         .foregroundColor(.green)
                 }
@@ -483,14 +480,14 @@ struct ChartView: View {
                 NavigationLink(destination: SimilarView(symbol: symbol)) {
                     Text("Similar")
                         .font(.system(size: 16, weight: .medium))
-                        .padding(.top, 0)
                         .padding(.leading, 20)
                         .foregroundColor(.green)
                 }
             }
             .padding(.vertical, 16)
+            
+            Spacer() // 添加Spacer让所有内容靠顶部
         }
-        .padding(.top)
         .background(backgroundColor.edgesIgnoringSafeArea(.all))
         .navigationBarTitle(symbol, displayMode: .inline)
         .navigationBarBackButtonHidden(true)
