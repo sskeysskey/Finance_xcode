@@ -77,7 +77,7 @@ enum TimeRange {
         case .twoYears, .fiveYears, .tenYears:
             return 1 // 每1年一个刻度
         case .all:
-            return 3 // 每3年一个刻度
+            return 2 // 每3年一个刻度
         }
     }
     
@@ -105,7 +105,7 @@ struct ChartView: View {
     
     @State private var chartData: [DatabaseManager.PriceData] = []
     @State private var sampledChartData: [DatabaseManager.PriceData] = [] // 采样后的数据
-    @State private var selectedTimeRange: TimeRange = .oneYear
+    @State private var selectedTimeRange: TimeRange = .sixMonths
     @State private var isLoading = true
     @State private var earningData: [DatabaseManager.EarningData] = []
     
@@ -218,10 +218,10 @@ struct ChartView: View {
                                 
                                 // 显示全局或特定标记信息
                                 if let markerText = getMarkerText(for: point.date) {
-                                    Spacer()
                                     Text(markerText)
-                                        .font(.system(size: 14))
+                                        .font(.system(size: 18, weight: .medium))
                                         .foregroundColor(.orange)
+                                        .multilineTextAlignment(.leading)
                                         .lineLimit(2)
                                 }
                             }
@@ -797,7 +797,7 @@ struct ChartView: View {
         
         // 检查财报数据标记，只有在显示蓝色标记的情况下返回
         if showBlueMarkers, let earningPoint = earningData.first(where: { isSameDay($0.date, date) }) {
-            return String(format: "%.2f", earningPoint.price)
+            return String(format: "昨日财报：%.2f%%", earningPoint.price)
         }
         
         return nil
