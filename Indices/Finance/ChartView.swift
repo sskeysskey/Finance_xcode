@@ -490,21 +490,21 @@ struct ChartView: View {
                 }) {
                     Text("Description")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.green)
+                        .foregroundColor(.blue)
                 }
                 // Compare
                 NavigationLink(destination: CompareView(initialSymbol: symbol)) {
                     Text("Compare")
                         .font(.system(size: 16, weight: .medium))
                         .padding(.leading, 20)
-                        .foregroundColor(.green)
+                        .foregroundColor(.blue)
                 }
                 // Similar
                 NavigationLink(destination: SimilarView(symbol: symbol)) {
                     Text("Similar")
                         .font(.system(size: 16, weight: .medium))
                         .padding(.leading, 20)
-                        .foregroundColor(.green)
+                        .foregroundColor(.blue)
                 }
             }
             .padding(.vertical, 16)
@@ -886,24 +886,10 @@ struct MultiTouchHandler: UIViewRepresentable {
         }
         
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-            if touches.contains(where: { $0 == firstTouch }) {
-                // 第一个手指离开
-                if secondTouch != nil {
-                    // 如果第二个手指仍在，将其设为第一个
-                    firstTouch = secondTouch
-                    secondTouch = nil
-                    onFirstTouchEnded?()
-                } else {
-                    // 如果没有第二个手指，则结束所有触摸
-                    firstTouch = nil
-                    onTouchesEnded?()
-                }
-            } else if touches.contains(where: { $0 == secondTouch }) {
-                // 第二个手指离开
-                secondTouch = nil
-                onSecondTouchEnded?()
-            }
-            
+            // 不管哪个触控点结束，都重置所有触控状态，确保多指模式清空
+            firstTouch = nil
+            secondTouch = nil
+            onTouchesEnded?()
             updateTouches()
         }
         
