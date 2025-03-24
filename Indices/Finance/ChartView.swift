@@ -540,7 +540,33 @@ struct ChartView: View {
             Spacer() // 添加Spacer让所有内容靠顶部
         }
         .background(backgroundColor.edgesIgnoringSafeArea(.all))
-        .navigationBarTitle(symbol, displayMode: .inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 8) {
+                    Text(symbol)
+                        .font(.headline)
+                    
+                    if let marketCapItem = dataService.marketCapData[symbol.uppercased()] {
+                        Text(marketCapItem.marketCap)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        if let peRatio = marketCapItem.peRatio {
+                            Text("\(String(format: "%.2f", peRatio))")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    if let compareStock = dataService.compareData[symbol.uppercased()] {
+                        Text(compareStock)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline) // 保持导航栏标题显示为居中
         .onAppear {
             loadChartData()
         }
@@ -797,7 +823,7 @@ struct ChartView: View {
         
         // 检查财报数据标记，只有在显示蓝色标记的情况下返回
         if showBlueMarkers, let earningPoint = earningData.first(where: { isSameDay($0.date, date) }) {
-            return String(format: "昨日财报：%.2f%%", earningPoint.price)
+            return String(format: "昨日财报\n%.2f%%", earningPoint.price)
         }
         
         return nil
