@@ -233,9 +233,40 @@ struct CompareView: View {
         }
     }
     
+    func formatSymbol(_ symbol: String) -> String {
+        // 尝试加载 JSON 文件
+        guard let url = Bundle.main.url(forResource: "Sectors_All", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let sectorData = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: [String]] else {
+            return symbol
+        }
+        
+        // 遍历 JSON 中的所有 symbol 列表
+        for (_, symbolList) in sectorData {
+            // 如果输入的 symbol 与列表中的某个直接匹配，则直接返回
+            if symbolList.contains(symbol) {
+                return symbol
+            }
+            // 尝试将 symbol 全部转为大写匹配
+            let upperSymbol = symbol.uppercased()
+            if symbolList.contains(upperSymbol) {
+                return upperSymbol
+            }
+            // 尝试首字母大写匹配
+            let capitalizedSymbol = symbol.capitalized
+            if symbolList.contains(capitalizedSymbol) {
+                return capitalizedSymbol
+            }
+        }
+        
+        // 如果都没有匹配，则返回原始字符串
+        return symbol
+    }
+    
     private func startComparison() {
         errorMessage = nil
         
+        // 去除空格并过滤空字符串
         let trimmedSymbols = symbols
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -258,7 +289,10 @@ struct CompareView: View {
             return
         }
         
-        symbols = trimmedSymbols
+        // 使用 formatSymbol 函数格式化所有 symbol，
+        // 同时支持数据库中所有大写和首字母大写两种格式
+        symbols = trimmedSymbols.map { formatSymbol($0) }
+        
         navigateToComparison = true
     }
 }
