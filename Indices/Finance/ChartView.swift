@@ -499,15 +499,6 @@ struct ChartView: View {
         }
         .background(backgroundColor.edgesIgnoringSafeArea(.all))
         .navigationBarTitle(symbol, displayMode: .inline)
-        .navigationBarBackButtonHidden(true)
-        .navigationBarItems(leading: Button(action: {
-            presentationMode.wrappedValue.dismiss()
-        }) {
-            Image(systemName: "chevron.left")
-                .foregroundColor(.blue)
-            Text("Back")
-                .foregroundColor(.blue)
-        })
         .onAppear {
             loadChartData()
         }
