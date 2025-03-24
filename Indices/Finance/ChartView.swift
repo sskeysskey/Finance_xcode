@@ -641,7 +641,18 @@ struct ChartView: View {
         
         let width = UIScreen.main.bounds.width
         let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
-        return min(sampledChartData.count - 1, max(0, Int(location.x / horizontalStep)))
+        
+        // 计算相对位置
+        let relativeX = location.x
+        
+        // 特殊处理最后一个点的情况
+        if relativeX >= width - horizontalStep {
+            return sampledChartData.count - 1
+        }
+        
+        // 其他位置的正常计算
+        let index = Int(round(relativeX / horizontalStep))
+        return min(sampledChartData.count - 1, max(0, index))
     }
     
     // 更新单指拖动状态
