@@ -504,6 +504,7 @@ struct ChartView: View {
         }
     }
     
+    // MARK: - X轴刻度绘制
     private func getXAxisTicks() -> [Date] {
         guard !sampledChartData.isEmpty else { return [] }
         
