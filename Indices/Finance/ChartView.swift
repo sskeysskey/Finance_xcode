@@ -1,7 +1,7 @@
 import SwiftUI
 import Combine
 
-// MARK: - TimeRange
+// MARK: - 时间间隔切换
 enum TimeRange {
     case oneMonth
     case threeMonths
@@ -99,7 +99,7 @@ enum TimeRange {
     }
 }
 
-// MARK: - ChartView
+// MARK: - 页面布局
 struct ChartView: View {
     let symbol: String
     let groupName: String
@@ -130,7 +130,7 @@ struct ChartView: View {
     @Environment(\.presentationMode) var presentationMode
     @EnvironmentObject var dataService: DataService
     
-    // MARK: - Computed Properties
+    // 页面配置
     private var isDarkMode: Bool {
         colorScheme == .dark
     }
