@@ -65,22 +65,22 @@ enum TimeRange {
         }
     }
     
-//    func xAxisTickValue() -> Int {
-//        switch self {
-//        case .oneMonth:
-//            return 2 // 每2天一个刻度
-//        case .threeMonths:
-//            return 1 // 每1个月一个刻度
-//        case .sixMonths:
-//            return 1 // 每1个月一个刻度
-//        case .oneYear:
-//            return 1 // 每1个月一个刻度
-//        case .twoYears, .fiveYears, .tenYears:
-//            return 1 // 每1年一个刻度
-//        case .all:
-//            return 3 // 每3年一个刻度
-//        }
-//    }
+    func xAxisTickValue() -> Int {
+        switch self {
+        case .oneMonth:
+            return 2 // 每2天一个刻度
+        case .threeMonths:
+            return 1 // 每1个月一个刻度
+        case .sixMonths:
+            return 1 // 每1个月一个刻度
+        case .oneYear:
+            return 1 // 每1个月一个刻度
+        case .twoYears, .fiveYears, .tenYears:
+            return 1 // 每1年一个刻度
+        case .all:
+            return 3 // 每3年一个刻度
+        }
+    }
     
     // 添加采样率控制，优化长期数据加载
     func samplingRate() -> Int {
@@ -261,25 +261,25 @@ struct ChartView: View {
                         .stroke(chartColor, lineWidth: 2)
                         
                         // 绘制 X 轴刻度
-//                        ForEach(getXAxisTicks(), id: \.self) { date in
-//                            if let index = getIndexForDate(date) {
-//                                let x = CGFloat(index) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
-//                                let tickHeight: CGFloat = 5
-//                                
-//                                // 刻度线
-//                                Path { path in
-//                                    path.move(to: CGPoint(x: x, y: geometry.size.height))
-//                                    path.addLine(to: CGPoint(x: x, y: geometry.size.height - tickHeight))
-//                                }
-//                                .stroke(Color.gray, lineWidth: 1)
-//                                
-//                                // 刻度标签
-//                                Text(formatXAxisLabel(date))
-//                                    .font(.system(size: 10))
-//                                    .foregroundColor(.gray)
-//                                    .position(x: x, y: geometry.size.height + 10)
-//                            }
-//                        }
+                        ForEach(getXAxisTicks(), id: \.self) { date in
+                            if let index = getIndexForDate(date) {
+                                let x = CGFloat(index) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
+                                let tickHeight: CGFloat = 5
+                                
+                                // 刻度线
+                                Path { path in
+                                    path.move(to: CGPoint(x: x, y: geometry.size.height))
+                                    path.addLine(to: CGPoint(x: x, y: geometry.size.height - tickHeight))
+                                }
+                                .stroke(Color.gray, lineWidth: 1)
+                                
+                                // 刻度标签
+                                Text(formatXAxisLabel(date))
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.gray)
+                                    .position(x: x, y: geometry.size.height + 10)
+                            }
+                        }
                         
                         // 绘制特殊时间点标记
                         if !isMultiTouch { // 只在单指模式下显示标记
@@ -744,31 +744,31 @@ struct ChartView: View {
     }
     
     // 根据时间范围获取X轴刻度
-//    private func getXAxisTicks() -> [Date] {
-//        guard !sampledChartData.isEmpty else { return [] }
-//        
-//        var ticks: [Date] = []
-//        let calendar = Calendar.current
-//        let component = selectedTimeRange.xAxisTickInterval()
-//        let interval = selectedTimeRange.xAxisTickValue()
-//        
-//        if let startDate = sampledChartData.first?.date, let endDate = sampledChartData.last?.date {
-//            var currentDate = startDate
-//            
-//            while currentDate <= endDate {
-//                ticks.append(currentDate)
-//                
-//                // 添加下一个刻度
-//                if let nextDate = calendar.date(byAdding: component, value: interval, to: currentDate) {
-//                    currentDate = nextDate
-//                } else {
-//                    break
-//                }
-//            }
-//        }
-//        
-//        return ticks
-//    }
+    private func getXAxisTicks() -> [Date] {
+        guard !sampledChartData.isEmpty else { return [] }
+        
+        var ticks: [Date] = []
+        let calendar = Calendar.current
+        let component = selectedTimeRange.xAxisTickInterval()
+        let interval = selectedTimeRange.xAxisTickValue()
+        
+        if let startDate = sampledChartData.first?.date, let endDate = sampledChartData.last?.date {
+            var currentDate = startDate
+            
+            while currentDate <= endDate {
+                ticks.append(currentDate)
+                
+                // 添加下一个刻度
+                if let nextDate = calendar.date(byAdding: component, value: interval, to: currentDate) {
+                    currentDate = nextDate
+                } else {
+                    break
+                }
+            }
+        }
+        
+        return ticks
+    }
     
     private func getIndexForDate(_ date: Date) -> Int? {
         return sampledChartData.firstIndex { priceData in
