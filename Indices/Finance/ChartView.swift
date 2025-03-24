@@ -201,9 +201,18 @@ struct ChartView: View {
                             // 单指模式：显示单点信息和标记
                             let pointDate = formatDate(point.date)
                             
+                            // 计算价格变化百分比
+                            let percentChange = calculatePriceChangePercentage(from: point)
+                            
                             HStack {
                                 Text("\(pointDate)  \(formatPrice(point.price))")
                                     .font(.system(size: 16, weight: .medium))
+                                
+                                if let percentChange = percentChange {
+                                    Text(formatPercentage(percentChange))
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundColor(percentChange >= 0 ? .green : .red)
+                                }
                                 
                                 // 显示全局或特定标记信息
                                 if let markerText = getMarkerText(for: point.date) {
@@ -543,6 +552,12 @@ struct ChartView: View {
         case .twoYears, .fiveYears, .tenYears, .all:
             return .year
         }
+    }
+    
+    // 计算价格变化百分比
+    private func calculatePriceChangePercentage(from point: DatabaseManager.PriceData) -> Double? {
+        guard let latestPrice = sampledChartData.last?.price else { return nil }
+        return ((latestPrice - point.price) / point.price) * 100.0
     }
     
     // MARK: - Helper Methods
