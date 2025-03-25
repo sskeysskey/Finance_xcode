@@ -657,20 +657,35 @@ struct ChartView: View {
         secondTouchPoint = nil
     }
     
-    // 数据采样函数，用于优化大量数据的显示
+    // 4. 优化数据采样方法
     private func sampleData(_ data: [DatabaseManager.PriceData], rate: Int) -> [DatabaseManager.PriceData] {
         guard rate > 1, !data.isEmpty else { return data }
         
         var result: [DatabaseManager.PriceData] = []
         
-        // 始终包含第一个和最后一个点
+        // 始终包含第一个点
         if let first = data.first {
             result.append(first)
         }
         
-        // 按采样率添加中间点
+        // 使用更有效的价格变化采样策略
+        // 这种方法会保留价格变化明显的点，而不仅仅是等间隔采样
+        let priceChangeThreshold = 0.005 // 0.5%的价格变化阈值
+        
+        var lastIncludedIndex = 0
         for i in stride(from: rate, to: data.count - 1, by: rate) {
-            result.append(data[i])
+            let lastIncludedPrice = data[lastIncludedIndex].price
+            let currentPrice = data[i].price
+            
+            // 如果价格变化超过阈值，或者按采样率正常添加
+            if abs((currentPrice - lastIncludedPrice) / lastIncludedPrice) > priceChangeThreshold {
+                result.append(data[i])
+                lastIncludedIndex = i
+            } else if i % (rate * 2) == 0 {
+                // 仍然保持一定的时间间隔采样
+                result.append(data[i])
+                lastIncludedIndex = i
+            }
         }
         
         // 添加最后一个点
