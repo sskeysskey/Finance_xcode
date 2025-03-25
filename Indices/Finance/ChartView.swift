@@ -251,20 +251,6 @@ struct ChartView: View {
                 // Chart canvas
                 ZStack {
                     GeometryReader { geometry in
-                        // 绘制零线 - 当最低值小于 0 时，我们确保图表上方包含 0
-                        if minPrice < 0 {
-                            // 使用 0 作为上边界（如果所有值都是负的，maxPrice 就替换为 0）
-                            let effectiveMaxPrice = max(maxPrice, 0)
-                            let effectiveRange = effectiveMaxPrice - minPrice
-                            let zeroY = geometry.size.height - CGFloat((0 - minPrice) / effectiveRange) * geometry.size.height
-                            
-                            Path { path in
-                                path.move(to: CGPoint(x: 0, y: zeroY))
-                                path.addLine(to: CGPoint(x: geometry.size.width, y: zeroY))
-                            }
-                            .stroke(Color.gray.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4]))
-                        }
-                        
                         // 绘制价格线
                         Path { path in
                             let width = geometry.size.width
@@ -284,6 +270,20 @@ struct ChartView: View {
                             }
                         }
                         .stroke(chartColor, lineWidth: 2)
+                        
+                        // 绘制零线 - 当最低值小于 0 时，我们确保图表上方包含 0
+                        if minPrice < 0 {
+                            // 使用 0 作为上边界（如果所有值都是负的，maxPrice 就替换为 0）
+                            let effectiveMaxPrice = max(maxPrice, 0)
+                            let effectiveRange = effectiveMaxPrice - minPrice
+                            let zeroY = geometry.size.height - CGFloat((0 - minPrice) / effectiveRange) * geometry.size.height
+                            
+                            Path { path in
+                                path.move(to: CGPoint(x: 0, y: zeroY))
+                                path.addLine(to: CGPoint(x: geometry.size.width, y: zeroY))
+                            }
+                            .stroke(Color.gray.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                        }
                         
                         // 绘制 X 轴刻度
                         ForEach(getXAxisTicks(), id: \.self) { date in
