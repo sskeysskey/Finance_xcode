@@ -251,201 +251,173 @@ struct ChartView: View {
                 // Chart canvas
                 ZStack {
                     GeometryReader { geometry in
-                        // 绘制价格线
-                        Path { path in
-                            let width = geometry.size.width
-                            let height = geometry.size.height
+                        // 使用 Canvas 替代 Path 提高性能
+                        Canvas { context, size in
+                            // 绘制价格线
+                            let width = size.width
+                            let height = size.height
                             let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
                             
+                            // 创建价格线路径
+                            var pricePath = Path()
                             if let firstPoint = sampledChartData.first {
                                 let firstX = 0.0
                                 let firstY = height - CGFloat((firstPoint.price - minPrice) / priceRange) * height
-                                path.move(to: CGPoint(x: firstX, y: firstY))
+                                pricePath.move(to: CGPoint(x: firstX, y: firstY))
                                 
                                 for i in 1..<sampledChartData.count {
                                     let x = CGFloat(i) * horizontalStep
                                     let y = height - CGFloat((sampledChartData[i].price - minPrice) / priceRange) * height
-                                    path.addLine(to: CGPoint(x: x, y: y))
+                                    pricePath.addLine(to: CGPoint(x: x, y: y))
+                                }
+                            }
+                            
+                            // 绘制价格线
+                            context.stroke(pricePath, with: .color(chartColor), lineWidth: 2)
+                            
+                            // 绘制零线 - 当最低值小于 0 时
+                            if minPrice < 0 {
+                                let effectiveMaxPrice = max(maxPrice, 0)
+                                let effectiveRange = effectiveMaxPrice - minPrice
+                                let zeroY = height - CGFloat((0 - minPrice) / effectiveRange) * height
+                                
+                                var zeroPath = Path()
+                                zeroPath.move(to: CGPoint(x: 0, y: zeroY))
+                                zeroPath.addLine(to: CGPoint(x: width, y: zeroY))
+                                
+                                context.stroke(zeroPath, with: .color(Color.gray.opacity(0.5)), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                            }
+                            
+                            // 绘制 X 轴刻度和标记在这里
+                            let xAxisTicks = getXAxisTicks()
+                            for date in xAxisTicks {
+                                if let index = getIndexForDate(date) {
+                                    let x = CGFloat(index) * horizontalStep
+                                    var tickPath = Path()
+                                    tickPath.move(to: CGPoint(x: x, y: height))
+                                    tickPath.addLine(to: CGPoint(x: x, y: height - 5))
+                                    
+                                    context.stroke(tickPath, with: .color(Color.gray), lineWidth: 1)
+                                }
+                            }
+                            
+                            // 绘制标记点
+                            for marker in getTimeMarkers() {
+                                if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, marker.date) }) {
+                                    let shouldShow = (marker.type == .global && showRedMarkers) ||
+                                                     (marker.type == .symbol && showOrangeMarkers) ||
+                                                     (marker.type == .earning && showBlueMarkers)
+                                    
+                                    if shouldShow {
+                                        let x = CGFloat(index) * horizontalStep
+                                        let y = height - CGFloat((sampledChartData[index].price - minPrice) / priceRange) * height
+                                        
+                                        let markerPath = Path(ellipseIn: CGRect(x: x - 4, y: y - 4, width: 8, height: 8))
+                                        context.fill(markerPath, with: .color(marker.color))
+                                    }
+                                }
+                            }
+                            
+                            // 绘制触摸指示器
+                            if isMultiTouch {
+                                // 双指模式
+                                if let firstIndex = firstTouchPointIndex, let firstPoint = firstTouchPoint {
+                                    let x = CGFloat(firstIndex) * horizontalStep
+                                    let y = height - CGFloat((firstPoint.price - minPrice) / priceRange) * height
+                                    
+                                    // 第一条虚线
+                                    var linePath = Path()
+                                    linePath.move(to: CGPoint(x: x, y: 0))
+                                    linePath.addLine(to: CGPoint(x: x, y: height))
+                                    context.stroke(linePath, with: .color(Color.gray), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                                    
+                                    // 第一个点的高亮显示
+                                    let circlePath = Path(ellipseIn: CGRect(x: x - 5, y: y - 5, width: 10, height: 10))
+                                    context.fill(circlePath, with: .color(Color.white))
+                                    context.stroke(circlePath, with: .color(chartColor), lineWidth: 2)
+                                }
+                                
+                                if let secondIndex = secondTouchPointIndex, let secondPoint = secondTouchPoint {
+                                    let x = CGFloat(secondIndex) * horizontalStep
+                                    let y = height - CGFloat((secondPoint.price - minPrice) / priceRange) * height
+                                    
+                                    // 第二条虚线
+                                    var linePath = Path()
+                                    linePath.move(to: CGPoint(x: x, y: 0))
+                                    linePath.addLine(to: CGPoint(x: x, y: height))
+                                    context.stroke(linePath, with: .color(Color.gray), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                                    
+                                    // 第二个点的高亮显示
+                                    let circlePath = Path(ellipseIn: CGRect(x: x - 5, y: y - 5, width: 10, height: 10))
+                                    context.fill(circlePath, with: .color(Color.white))
+                                    context.stroke(circlePath, with: .color(chartColor), lineWidth: 2)
+                                }
+                                
+                                // 绘制两点之间的连线
+                                if let firstIndex = firstTouchPointIndex, let secondIndex = secondTouchPointIndex,
+                                   let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
+                                    let x1 = CGFloat(firstIndex) * horizontalStep
+                                    let y1 = height - CGFloat((firstPoint.price - minPrice) / priceRange) * height
+                                    let x2 = CGFloat(secondIndex) * horizontalStep
+                                    let y2 = height - CGFloat((secondPoint.price - minPrice) / priceRange) * height
+                                    
+                                    var connectPath = Path()
+                                    connectPath.move(to: CGPoint(x: x1, y: y1))
+                                    connectPath.addLine(to: CGPoint(x: x2, y: y2))
+                                    
+                                    let lineColor = secondPoint.price >= firstPoint.price ? Color.green : Color.red
+                                    context.stroke(connectPath, with: .color(lineColor), style: StrokeStyle(lineWidth: 1, dash: [2]))
+                                }
+                            } else if let pointIndex = draggedPointIndex {
+                                // 单指模式
+                                let x = CGFloat(pointIndex) * horizontalStep
+                                
+                                // 绘制垂直线
+                                var linePath = Path()
+                                linePath.move(to: CGPoint(x: x, y: 0))
+                                linePath.addLine(to: CGPoint(x: x, y: height))
+                                context.stroke(linePath, with: .color(Color.gray), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                                
+                                // 高亮当前点
+                                if let point = draggedPoint {
+                                    let y = height - CGFloat((point.price - minPrice) / priceRange) * height
+                                    
+                                    let circlePath = Path(ellipseIn: CGRect(x: x - 5, y: y - 5, width: 10, height: 10))
+                                    context.fill(circlePath, with: .color(Color.white))
+                                    context.stroke(circlePath, with: .color(chartColor), lineWidth: 2)
                                 }
                             }
                         }
-                        .stroke(chartColor, lineWidth: 2)
-                        
-                        // 绘制零线 - 当最低值小于 0 时，我们确保图表上方包含 0
-                        if minPrice < 0 {
-                            // 使用 0 作为上边界（如果所有值都是负的，maxPrice 就替换为 0）
-                            let effectiveMaxPrice = max(maxPrice, 0)
-                            let effectiveRange = effectiveMaxPrice - minPrice
-                            let zeroY = geometry.size.height - CGFloat((0 - minPrice) / effectiveRange) * geometry.size.height
-                            
-                            Path { path in
-                                path.move(to: CGPoint(x: 0, y: zeroY))
-                                path.addLine(to: CGPoint(x: geometry.size.width, y: zeroY))
-                            }
-                            .stroke(Color.gray.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4]))
-                        }
-                        
-                        // 绘制 X 轴刻度
+                        // X轴标签独立绘制，避免在Canvas内部绘制文本
                         ForEach(getXAxisTicks(), id: \.self) { date in
                             if let index = getIndexForDate(date) {
                                 let x = CGFloat(index) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
-                                let tickHeight: CGFloat = 5
-                                
-                                // 刻度线
-                                Path { path in
-                                    path.move(to: CGPoint(x: x, y: geometry.size.height))
-                                    path.addLine(to: CGPoint(x: x, y: geometry.size.height - tickHeight))
-                                }
-                                .stroke(Color.gray, lineWidth: 1)
-                                
-                                // 刻度标签
                                 Text(formatXAxisLabel(date))
                                     .font(.system(size: 10))
                                     .foregroundColor(.gray)
                                     .position(x: x, y: geometry.size.height + 10)
                             }
                         }
-                        
-                        // 绘制特殊时间点标记
-                        ForEach(getTimeMarkers(), id: \.id) { marker in
-                            if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, marker.date) }) {
-                                // 根据标记类型和显示状态决定是否显示标记点
-                                let shouldShow = (marker.type == .global && showRedMarkers) ||
-                                                 (marker.type == .symbol && showOrangeMarkers) ||
-                                                 (marker.type == .earning && showBlueMarkers)
-                                
-                                if shouldShow {
-                                    let x = CGFloat(index) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
-                                    let y = geometry.size.height - CGFloat((sampledChartData[index].price - minPrice) / priceRange) * geometry.size.height
-                                    
-                                    Circle()
-                                        .fill(marker.color)
-                                        .frame(width: 8, height: 8)
-                                        .position(x: x, y: y)
-                                }
-                            }
-                        }
-                        
-                        if isMultiTouch {
-                            // 双指模式：绘制两条虚线
-                            if let firstIndex = firstTouchPointIndex, let firstPoint = firstTouchPoint {
-                                let x = CGFloat(firstIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
-                                let y = geometry.size.height - CGFloat((firstPoint.price - minPrice) / priceRange) * geometry.size.height
-                                
-                                // 第一条虚线
-                                Path { path in
-                                    path.move(to: CGPoint(x: x, y: 0))
-                                    path.addLine(to: CGPoint(x: x, y: geometry.size.height))
-                                }
-                                .stroke(style: StrokeStyle(lineWidth: 1, dash: [4]))
-                                .foregroundColor(Color.gray)
-                                
-                                // 第一个点的高亮显示
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: 10, height: 10)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(chartColor, lineWidth: 2)
-                                    )
-                                    .position(x: x, y: y)
-                            }
-                            
-                            if let secondIndex = secondTouchPointIndex, let secondPoint = secondTouchPoint {
-                                let x = CGFloat(secondIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
-                                let y = geometry.size.height - CGFloat((secondPoint.price - minPrice) / priceRange) * geometry.size.height
-                                
-                                // 第二条虚线
-                                Path { path in
-                                    path.move(to: CGPoint(x: x, y: 0))
-                                    path.addLine(to: CGPoint(x: x, y: geometry.size.height))
-                                }
-                                .stroke(style: StrokeStyle(lineWidth: 1, dash: [4]))
-                                .foregroundColor(Color.gray)
-                                
-                                // 第二个点的高亮显示
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: 10, height: 10)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(chartColor, lineWidth: 2)
-                                    )
-                                    .position(x: x, y: y)
-                            }
-                            
-                            // 绘制两点之间的连线
-                            if let firstIndex = firstTouchPointIndex, let secondIndex = secondTouchPointIndex,
-                               let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
-                                let x1 = CGFloat(firstIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
-                                let y1 = geometry.size.height - CGFloat((firstPoint.price - minPrice) / priceRange) * geometry.size.height
-                                let x2 = CGFloat(secondIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
-                                let y2 = geometry.size.height - CGFloat((secondPoint.price - minPrice) / priceRange) * geometry.size.height
-                                
-                                Path { path in
-                                    path.move(to: CGPoint(x: x1, y: y1))
-                                    path.addLine(to: CGPoint(x: x2, y: y2))
-                                }
-                                .stroke(style: StrokeStyle(lineWidth: 1, dash: [2]))
-                                .foregroundColor(
-                                    secondPoint.price >= firstPoint.price ? Color.green : Color.red
-                                )
-                            }
-                        } else if let pointIndex = draggedPointIndex {
-                            // 单指模式：绘制单条虚线
-                            let x = CGFloat(pointIndex) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
-                            
-                            Path { path in
-                                path.move(to: CGPoint(x: x, y: 0))
-                                path.addLine(to: CGPoint(x: x, y: geometry.size.height))
-                            }
-                            .stroke(style: StrokeStyle(lineWidth: 1, dash: [4]))
-                            .foregroundColor(Color.gray)
-                            
-                            // 高亮显示当前点
-                            if let point = draggedPoint {
-                                let y = geometry.size.height - CGFloat((point.price - minPrice) / priceRange) * geometry.size.height
-                                
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: 10, height: 10)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(chartColor, lineWidth: 2)
-                                    )
-                                    .position(x: x, y: y)
-                            }
-                        }
                     }
-                    // 使用自定义触摸处理视图以支持多指触控
                     .overlay(
-                        MultiTouchHandler(
+                        // 2. 优化触摸处理视图
+                        OptimizedTouchHandler(
                             onSingleTouchChanged: { location in
-                                isMultiTouch = false
-                                updateDragLocation(location)
+                                // 使用防抖动技术减少过于频繁的更新
+                                withAnimation(.easeOut(duration: 0.1)) {
+                                    isMultiTouch = false
+                                    updateDragLocation(location)
+                                }
                             },
                             onMultiTouchChanged: { first, second in
-                                isMultiTouch = true
-                                updateMultiTouchLocations(first, second)
-                            },
-                            onTouchesEnded: {
-                                // 当所有触摸结束时重置状态
-                                resetTouchStates()
-                            },
-                            onFirstTouchEnded: {
-                                // 第一个触摸结束，转为单指模式
-                                isMultiTouch = false
-                                // 如果第二个触摸点存在，将它设为单指模式的触摸点
-                                if let secondLocation = secondTouchLocation {
-                                    updateDragLocation(secondLocation)
+                                withAnimation(.easeOut(duration: 0.1)) {
+                                    isMultiTouch = true
+                                    updateMultiTouchLocations(first, second)
                                 }
                             },
-                            onSecondTouchEnded: {
-                                // 第二个触摸结束，转为单指模式
-                                isMultiTouch = false
-                                // 如果第一个触摸点存在，将它设为单指模式的触摸点
-                                if let firstLocation = firstTouchLocation {
-                                    updateDragLocation(firstLocation)
+                            onTouchesEnded: {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    resetTouchStates()
                                 }
                             }
                         )
@@ -882,20 +854,18 @@ struct ChartView: View {
 }
 
 // MARK: - 多触控处理视图
-struct MultiTouchHandler: UIViewRepresentable {
+// 3. 改进的多触控处理视图
+// MARK: - 多触控处理视图
+struct OptimizedTouchHandler: UIViewRepresentable {
     var onSingleTouchChanged: (CGPoint) -> Void
     var onMultiTouchChanged: (CGPoint, CGPoint) -> Void
     var onTouchesEnded: () -> Void
-    var onFirstTouchEnded: () -> Void
-    var onSecondTouchEnded: () -> Void
     
     func makeUIView(context: Context) -> UIView {
-        let view = MultitouchView()
+        let view = OptimizedMultitouchView()
         view.onSingleTouchChanged = onSingleTouchChanged
         view.onMultiTouchChanged = onMultiTouchChanged
         view.onTouchesEnded = onTouchesEnded
-        view.onFirstTouchEnded = onFirstTouchEnded
-        view.onSecondTouchEnded = onSecondTouchEnded
         view.backgroundColor = .clear
         return view
     }
@@ -904,19 +874,19 @@ struct MultiTouchHandler: UIViewRepresentable {
         // 不需要更新
     }
     
-    class MultitouchView: UIView {
+    class OptimizedMultitouchView: UIView {
         var onSingleTouchChanged: ((CGPoint) -> Void)?
         var onMultiTouchChanged: ((CGPoint, CGPoint) -> Void)?
         var onTouchesEnded: (() -> Void)?
-        var onFirstTouchEnded: (() -> Void)?
-        var onSecondTouchEnded: (() -> Void)?
         
-        private var firstTouch: UITouch?
-        private var secondTouch: UITouch?
+        private var activeTouches: [UITouch: CGPoint] = [:]
+        private var lastUpdateTime: TimeInterval = 0
+        private let throttleInterval: TimeInterval = 0.016 // 约60fps
         
         override init(frame: CGRect) {
             super.init(frame: frame)
             isMultipleTouchEnabled = true
+            isUserInteractionEnabled = true
         }
         
         required init?(coder: NSCoder) {
@@ -924,45 +894,56 @@ struct MultiTouchHandler: UIViewRepresentable {
         }
         
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-            guard let touch = touches.first else { return }
-            
-            if firstTouch == nil {
-                firstTouch = touch
-                updateTouches()
-            } else if secondTouch == nil {
-                secondTouch = touch
-                updateTouches()
+            for touch in touches {
+                activeTouches[touch] = touch.location(in: self)
             }
+            updateTouches(force: true)
         }
         
         override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-            updateTouches()
+            // 更新移动的触摸点
+            for touch in touches {
+                activeTouches[touch] = touch.location(in: self)
+            }
+            
+            // 应用节流控制
+            let currentTime = CACurrentMediaTime()
+            if currentTime - lastUpdateTime > throttleInterval {
+                updateTouches()
+                lastUpdateTime = currentTime
+            }
         }
         
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-            // 不管哪个触控点结束，都重置所有触控状态，确保多指模式清空
-            firstTouch = nil
-            secondTouch = nil
-            onTouchesEnded?()
-            updateTouches()
+            // 移除结束的触摸点
+            for touch in touches {
+                activeTouches.removeValue(forKey: touch)
+            }
+            
+            if activeTouches.isEmpty {
+                onTouchesEnded?()
+            } else {
+                updateTouches(force: true)
+            }
         }
         
         override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-            firstTouch = nil
-            secondTouch = nil
+            activeTouches.removeAll()
             onTouchesEnded?()
         }
         
-        private func updateTouches() {
-            if let first = firstTouch, let second = secondTouch {
-                // 双指触摸
-                let firstLocation = first.location(in: self)
-                let secondLocation = second.location(in: self)
-                onMultiTouchChanged?(firstLocation, secondLocation)
-            } else if let first = firstTouch {
+        private func updateTouches(force: Bool = false) {
+            let touchCount = activeTouches.count
+            
+            if touchCount >= 2 {
+                // 双指或多指触摸，取前两个触摸点
+                let touchPoints = Array(activeTouches.values)
+                onMultiTouchChanged?(touchPoints[0], touchPoints[1])
+            } else if touchCount == 1 {
                 // 单指触摸
-                let location = first.location(in: self)
-                onSingleTouchChanged?(location)
+                if let location = activeTouches.values.first {
+                    onSingleTouchChanged?(location)
+                }
             }
         }
     }
