@@ -452,7 +452,7 @@ struct ChartView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     )
                 }
-                .frame(height: 250)
+                .frame(height: 300)
                 .padding(.bottom, 30) // 为 X 轴标签留出空间
             }
             
