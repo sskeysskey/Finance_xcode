@@ -148,7 +148,6 @@ struct ChartView: View {
     let symbol: String
     let groupName: String
     private let verticalPadding: CGFloat = 20  // 上下各20点的边距
-//    private let horizontalPadding: CGFloat = 16   // 左右边距
     
     @State private var chartData: [DatabaseManager.PriceData] = []
     @State private var sampledChartData: [DatabaseManager.PriceData] = [] // 采样后的数据
@@ -179,6 +178,7 @@ struct ChartView: View {
     // 3. 在ChartView中添加状态变量存储气泡数据
     @State private var bubbleMarkers: [BubbleMarker] = []
     @State private var shouldUpdateBubbles: Bool = true
+    @State private var showBubbles: Bool = true  // 浮窗显示开关默认打开
     
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.presentationMode) var presentationMode
@@ -441,14 +441,16 @@ struct ChartView: View {
                         }
                         
                         // 添加以下代码显示气泡
+                        // 修改浮窗显示逻辑，在overlay部分
                         .overlay(
                             ZStack {
-                                // 只在不拖动的情况下显示气泡
-                                if !isDragging && !isMultiTouch {
+                                // 只在不拖动的情况下，且浮窗开关打开时显示气泡
+                                if !isDragging && !isMultiTouch && showBubbles {
                                     ForEach(bubbleMarkers) { marker in
+                                        // 只显示那些对应颜色点被打开的浮窗
                                         if (marker.color == .red && showRedMarkers) ||
                                            (marker.color == .orange && showOrangeMarkers) ||
-                                           (marker.color == .blue && showBlueMarkers) {
+                                           (marker.color == .green && showBlueMarkers) {
                                             BubbleView(
                                                 text: marker.text,
                                                 color: marker.color,
@@ -534,8 +536,13 @@ struct ChartView: View {
             
             .padding(.vertical, 10)
             
-            // 标记点显示控制开关
+            // 修改标记点显示控制开关UI，添加新的浮窗开关
             HStack(spacing: 10) {
+                // 浮窗显示开关
+                Toggle(isOn: $showBubbles) {
+                }
+                .toggleStyle(SwitchToggleStyle(tint: .purple)) // 使用紫色区分浮窗开关
+                
                 // 橙色标记点(股票特定)开关
                 Toggle(isOn: $showOrangeMarkers) {
                 }
@@ -546,10 +553,10 @@ struct ChartView: View {
                 }
                 .toggleStyle(SwitchToggleStyle(tint: .red))
                 
-                // 蓝色标记点(财报)开关
+                // 绿色标记点(财报)开关
                 Toggle(isOn: $showBlueMarkers) {
                 }
-                .toggleStyle(SwitchToggleStyle(tint: .blue))
+                .toggleStyle(SwitchToggleStyle(tint: .green))
             }
             .padding(.vertical, 30)
             
@@ -774,7 +781,7 @@ struct ChartView: View {
                 
                 markers.append(BubbleMarker(
                     text: text,
-                    color: .blue,
+                    color: .green,
                     pointIndex: index,
                     date: earning.date,
                     position: CGPoint(x: x, y: y),
@@ -1124,7 +1131,7 @@ struct ChartView: View {
             switch type {
             case .global: return .red
             case .symbol: return .orange
-            case .earning: return .blue
+            case .earning: return .green
             }
         }
     }
