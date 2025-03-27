@@ -326,7 +326,6 @@ struct ChartView: View {
                                 }
                             }
                             
-                            // 绘制触摸指示器
                             // 触摸指示器相关绘制也需要使用新的 y 坐标计算方式
                             if isMultiTouch {
                                 // 第一个触摸点
