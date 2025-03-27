@@ -295,21 +295,7 @@ struct ChartView: View {
                                 context.stroke(zeroPath, with: .color(Color.gray.opacity(0.5)), style: StrokeStyle(lineWidth: 1, dash: [4]))
                             }
                             
-                            // 绘制 X 轴刻度和标记在这里
-                            let xAxisTicks = getXAxisTicks()
-                            for date in xAxisTicks {
-                                if let index = getIndexForDate(date) {
-                                    let x = CGFloat(index) * horizontalStep
-                                    var tickPath = Path()
-                                    tickPath.move(to: CGPoint(x: x, y: effectiveHeight))
-                                    tickPath.addLine(to: CGPoint(x: x, y: effectiveHeight - 5))
-                                    
-                                    context.stroke(tickPath, with: .color(Color.gray), lineWidth: 1)
-                                }
-                            }
-                            
                             // 绘制标记点
-                            // 例如标记点绘制:
                             for marker in getTimeMarkers() {
                                 if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, marker.date) }) {
                                     let shouldShow = (marker.type == .global && showRedMarkers) ||
