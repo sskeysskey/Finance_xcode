@@ -668,6 +668,15 @@ struct ChartView: View {
         let components = calendar.dateComponents([.day], from: startDate, to: endDate)
         let totalDays = components.day ?? 0
         
+        // 计算数据密度：时间跨度（天）/ 数据点数量
+        let dataDensity = totalDays / data.count
+        
+        // 如果数据密度低（每个数据点间隔超过2天），则不进行采样
+        if dataDensity > 2 {
+            print("数据密度低 (每\(dataDensity)天一个数据点)，不进行采样")
+            return data
+        }
+        
         // 根据实际数据跨度动态调整采样率
         var adjustedRate = rate
         
@@ -787,6 +796,7 @@ struct ChartView: View {
         // 按日期排序结果
         result.sort { $0.date < $1.date }
         
+        print("原始数据点: \(data.count), 采样后数据点: \(result.count), 采样率: \(adjustedRate)")
         return result
     }
     
