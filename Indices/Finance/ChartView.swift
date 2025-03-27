@@ -668,8 +668,33 @@ struct ChartView: View {
             result.append(first)
         }
         
-        // 使用更有效的价格变化采样策略
-        // 这种方法会保留价格变化明显的点，而不仅仅是等间隔采样
+        // 获取所有特殊事件点的日期
+        var specialDates: [Date] = []
+        
+        // 添加全局时间标记（红点）
+        for (date, _) in dataService.globalTimeMarkers {
+            if data.contains(where: { isSameDay($0.date, date) }) {
+                specialDates.append(date)
+            }
+        }
+        
+        // 添加特定股票的时间标记（橙点）
+        if let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()] {
+            for (date, _) in symbolMarkers {
+                if data.contains(where: { isSameDay($0.date, date) }) {
+                    specialDates.append(date)
+                }
+            }
+        }
+        
+        // 添加财报数据标记（蓝点）
+        for earning in earningData {
+            if data.contains(where: { isSameDay($0.date, earning.date) }) {
+                specialDates.append(earning.date)
+            }
+        }
+        
+        // 使用更有效的价格变化采样策略，这种方法会保留价格变化明显的点，而不仅仅是等间隔采样
         let priceChangeThreshold = 0.005 // 0.5%的价格变化阈值
         
         var lastIncludedIndex = 0
@@ -677,8 +702,11 @@ struct ChartView: View {
             let lastIncludedPrice = data[lastIncludedIndex].price
             let currentPrice = data[i].price
             
-            // 如果价格变化超过阈值，或者按采样率正常添加
-            if abs((currentPrice - lastIncludedPrice) / lastIncludedPrice) > priceChangeThreshold {
+            // 检查当前日期是否是特殊事件点
+            let isSpecialDate = specialDates.contains(where: { isSameDay(data[i].date, $0) })
+            
+            // 如果是特殊事件点，或价格变化超过阈值，或者按采样率正常添加
+            if isSpecialDate || abs((currentPrice - lastIncludedPrice) / lastIncludedPrice) > priceChangeThreshold {
                 result.append(data[i])
                 lastIncludedIndex = i
             } else if i % (rate * 2) == 0 {
@@ -692,6 +720,18 @@ struct ChartView: View {
         if let last = data.last, result.last?.id != last.id {
             result.append(last)
         }
+        
+        // 确保所有特殊事件点都被包含在结果中
+        for date in specialDates {
+            // 如果特殊日期的数据点尚未包含在结果中，则添加
+            if !result.contains(where: { isSameDay($0.date, date) }),
+               let dataPoint = data.first(where: { isSameDay($0.date, date) }) {
+                result.append(dataPoint)
+            }
+        }
+        
+        // 按日期排序结果
+        result.sort { $0.date < $1.date }
         
         return result
     }
