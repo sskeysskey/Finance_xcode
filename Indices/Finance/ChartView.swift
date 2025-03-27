@@ -98,6 +98,51 @@ enum TimeRange {
     }
 }
 
+// 1. 首先添加一个气泡视图组件
+struct BubbleView: View {
+    let text: String
+    let color: Color
+    let pointX: CGFloat
+    let pointY: CGFloat
+    
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12))
+            .lineLimit(3)
+            .multilineTextAlignment(.center)
+            .padding(8)
+            .background(color.opacity(0.2))
+            .foregroundColor(color)
+            .cornerRadius(8)
+            .overlay(
+                // 添加小三角形指向特殊点
+                GeometryReader { geo in
+                    Path { path in
+                        let width = geo.size.width
+                        let height = geo.size.height
+                        
+                        path.move(to: CGPoint(x: width/2 - 5, y: height))
+                        path.addLine(to: CGPoint(x: width/2, y: height + 5))
+                        path.addLine(to: CGPoint(x: width/2 + 5, y: height))
+                        path.closeSubpath()
+                    }
+                    .fill(color.opacity(0.2))
+                }
+            )
+    }
+}
+
+// 2. 添加Marker结构体表示需要显示气泡的信息
+struct BubbleMarker: Identifiable {
+    let id = UUID()
+    let text: String
+    let color: Color
+    let pointIndex: Int
+    let date: Date
+    var position: CGPoint = .zero // 将在计算布局时设置
+    var size: CGSize = .zero      // 将在计算布局时设置
+}
+
 // MARK: - 页面布局
 struct ChartView: View {
     let symbol: String
@@ -129,6 +174,10 @@ struct ChartView: View {
     @State private var showRedMarkers: Bool = false     // 全局标记(红色)默认关闭
     @State private var showOrangeMarkers: Bool = true   // 股票特定标记(橙色)默认开启
     @State private var showBlueMarkers: Bool = true     // 财报标记(蓝色)默认开启
+    
+    // 3. 在ChartView中添加状态变量存储气泡数据
+    @State private var bubbleMarkers: [BubbleMarker] = []
+    @State private var shouldUpdateBubbles: Bool = true
     
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.presentationMode) var presentationMode
@@ -388,6 +437,33 @@ struct ChartView: View {
                                 }
                             }
                         }
+                        
+                        // 添加以下代码显示气泡
+                        .overlay(
+                            ZStack {
+                                // 只在不拖动的情况下显示气泡
+                                if !isDragging && !isMultiTouch {
+                                    ForEach(bubbleMarkers) { marker in
+                                        if (marker.color == .red && showRedMarkers) ||
+                                           (marker.color == .orange && showOrangeMarkers) ||
+                                           (marker.color == .blue && showBlueMarkers) {
+                                            BubbleView(
+                                                text: marker.text,
+                                                color: marker.color,
+                                                pointX: marker.position.x,
+                                                pointY: marker.position.y
+                                            )
+                                            .frame(width: marker.size.width)
+                                            .position(x: marker.position.x, y: marker.position.y - 40) // 气泡位于点上方
+                                            .opacity(0.9)
+                                            .transition(.opacity)
+                                            .animation(.easeInOut(duration: 0.3), value: marker.id)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                        
                         // X轴标签独立绘制，避免在Canvas内部绘制文本
                         ForEach(getXAxisTicks(), id: \.self) { date in
                             if let index = getIndexForDate(date) {
@@ -634,9 +710,183 @@ struct ChartView: View {
                 isLoading = false
                 // 重置触摸状态
                 resetTouchStates()
+                // 添加调用更新气泡
+                updateBubbleMarkers()
                 print("数据已更新到UI")
             }
         }
+    }
+    
+    // 添加气泡布局计算方法
+    private func updateBubbleMarkers() {
+        let width = UIScreen.main.bounds.width
+        let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
+        let maxLabelWidth: CGFloat = 120 // 气泡最大宽度
+        
+        var markers: [BubbleMarker] = []
+        
+        // 添加全局标记(红色)
+        for (date, text) in dataService.globalTimeMarkers {
+            if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, date) }) {
+                let x = CGFloat(index) * horizontalStep
+                let y = getYForPrice(sampledChartData[index].price)
+                
+                markers.append(BubbleMarker(
+                    text: text,
+                    color: .red,
+                    pointIndex: index,
+                    date: date,
+                    position: CGPoint(x: x, y: y),
+                    size: CGSize(width: min(max(text.count * 7, 40), Int(maxLabelWidth)), height: 0)
+                ))
+            }
+        }
+        
+        // 添加股票特定标记(橙色)
+        if let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()] {
+            for (date, text) in symbolMarkers {
+                if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, date) }) {
+                    let x = CGFloat(index) * horizontalStep
+                    let y = getYForPrice(sampledChartData[index].price)
+                    
+                    markers.append(BubbleMarker(
+                        text: text,
+                        color: .orange,
+                        pointIndex: index,
+                        date: date,
+                        position: CGPoint(x: x, y: y),
+                        size: CGSize(width: min(max(text.count * 7, 40), Int(maxLabelWidth)), height: 0)
+                    ))
+                }
+            }
+        }
+        
+        // 添加财报标记(蓝色)
+        for earning in earningData {
+            if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, earning.date) }) {
+                let x = CGFloat(index) * horizontalStep
+                let y = getYForPrice(sampledChartData[index].price)
+                
+                // 财报显示格式
+                let text = "财报: \(String(format: "%.2f%%", earning.price))"
+                
+                markers.append(BubbleMarker(
+                    text: text,
+                    color: .blue,
+                    pointIndex: index,
+                    date: earning.date,
+                    position: CGPoint(x: x, y: y),
+                    size: CGSize(width: min(max(text.count * 7, 40), Int(maxLabelWidth)), height: 0)
+                ))
+            }
+        }
+        
+        // 优化气泡布局以减少重叠
+        let optimizedMarkers = optimizeBubbleLayout(markers, canvasWidth: width, canvasHeight: 320)
+        
+        withAnimation {
+            self.bubbleMarkers = optimizedMarkers
+        }
+    }
+    
+    // 计算给定价格对应的Y坐标
+    private func getYForPrice(_ price: Double) -> CGFloat {
+        // 考虑上下边距，这里假设verticalPadding = 20
+        let height: CGFloat = 320 // 与Chart高度保持一致
+        let effectiveHeight = height - (verticalPadding * 2)
+        let normalizedY = CGFloat((price - minPrice) / priceRange)
+        return height - verticalPadding - (normalizedY * effectiveHeight)
+    }
+
+    // 气泡布局优化算法
+    private func optimizeBubbleLayout(_ markers: [BubbleMarker], canvasWidth: CGFloat, canvasHeight: CGFloat) -> [BubbleMarker] {
+        guard !markers.isEmpty else { return [] }
+        
+        var optimizedMarkers = markers
+        
+        // 首先将气泡分为上半部分和下半部分
+        let midY = canvasHeight / 2
+        var upperMarkers = optimizedMarkers.filter { $0.position.y <= midY }
+        var lowerMarkers = optimizedMarkers.filter { $0.position.y > midY }
+        
+        // 按X坐标排序
+        upperMarkers.sort { $0.position.x < $1.position.x }
+        lowerMarkers.sort { $0.position.x < $1.position.x }
+        
+        // 分层排列上半部分气泡
+        var layers: [[BubbleMarker]] = []
+        let bubbleHeight: CGFloat = 50 // 估计气泡高度
+        let bubbleSpacing: CGFloat = 10 // 水平间距
+        
+        for marker in upperMarkers {
+            var placed = false
+            
+            // 尝试放入现有层
+            for i in 0..<layers.count {
+                if layers[i].isEmpty || (marker.position.x - layers[i].last!.position.x > layers[i].last!.size.width / 2 + bubbleSpacing) {
+                    layers[i].append(marker)
+                    placed = true
+                    break
+                }
+            }
+            
+            // 如果无法放入现有层，创建新层
+            if !placed {
+                layers.append([marker])
+            }
+        }
+        
+        // 应用计算后的Y偏移
+        var offsetY: CGFloat = 20 // 顶部起始偏移
+        for (_, layer) in layers.enumerated() {
+            for marker in layer {
+                if let index = optimizedMarkers.firstIndex(where: { $0.id == marker.id }) {
+                    optimizedMarkers[index].position.y = offsetY
+                }
+            }
+            offsetY += bubbleHeight
+        }
+        
+        // 类似处理下半部分气泡
+        layers = []
+        offsetY = canvasHeight - bubbleHeight
+        
+        for marker in lowerMarkers {
+            var placed = false
+            
+            for i in 0..<layers.count {
+                if layers[i].isEmpty || (marker.position.x - layers[i].last!.position.x > layers[i].last!.size.width / 2 + bubbleSpacing) {
+                    layers[i].append(marker)
+                    placed = true
+                    break
+                }
+            }
+            
+            if !placed {
+                layers.append([marker])
+            }
+        }
+        
+        for (_, layer) in layers.enumerated() {
+            for marker in layer {
+                if let index = optimizedMarkers.firstIndex(where: { $0.id == marker.id }) {
+                    optimizedMarkers[index].position.y = offsetY
+                }
+            }
+            offsetY -= bubbleHeight
+        }
+        
+        // 调整X坐标确保气泡不超出边界
+        for i in 0..<optimizedMarkers.count {
+            let halfWidth = optimizedMarkers[i].size.width / 2
+            if optimizedMarkers[i].position.x - halfWidth < 0 {
+                optimizedMarkers[i].position.x = halfWidth
+            } else if optimizedMarkers[i].position.x + halfWidth > canvasWidth {
+                optimizedMarkers[i].position.x = canvasWidth - halfWidth
+            }
+        }
+        
+        return optimizedMarkers
     }
     
     // 重置所有触摸状态
@@ -655,6 +905,14 @@ struct ChartView: View {
         secondTouchPointIndex = nil
         firstTouchPoint = nil
         secondTouchPoint = nil
+        
+        // 拖动结束后，如果气泡应该显示，则更新气泡
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            if !self.isDragging && !self.isMultiTouch {
+                self.shouldUpdateBubbles = true
+                self.updateBubbleMarkers()
+            }
+        }
     }
     
     // 4. 优化数据采样方法
