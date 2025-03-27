@@ -340,6 +340,7 @@ struct ChartView: View {
                                     linePath.addLine(to: CGPoint(x: x, y: size.height - verticalPadding))
                                     context.stroke(linePath, with: .color(Color.gray), style: StrokeStyle(lineWidth: 1, dash: [4]))
                                     
+                                    // 第一个点的高亮显示
                                     let circlePath = Path(ellipseIn: CGRect(x: x - 5, y: y - 5, width: 10, height: 10))
                                     context.fill(circlePath, with: .color(Color.white))
                                     context.stroke(circlePath, with: .color(chartColor), lineWidth: 2)
