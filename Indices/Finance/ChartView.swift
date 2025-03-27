@@ -102,6 +102,7 @@ enum TimeRange {
 struct ChartView: View {
     let symbol: String
     let groupName: String
+    private let verticalPadding: CGFloat = 20  // 上下各20点的边距
     
     @State private var chartData: [DatabaseManager.PriceData] = []
     @State private var sampledChartData: [DatabaseManager.PriceData] = [] // 采样后的数据
@@ -253,21 +254,27 @@ struct ChartView: View {
                     GeometryReader { geometry in
                         // 使用 Canvas 替代 Path 提高性能
                         Canvas { context, size in
+                            // 考虑边距后的实际绘制高度
+                            let effectiveHeight = size.height - (verticalPadding * 2)
+                            // 修改所有 y 坐标计算，加入边距因素
+                            let priceToY: (Double) -> CGFloat = { price in
+                                let normalizedY = CGFloat((price - minPrice) / priceRange)
+                                return size.height - verticalPadding - (normalizedY * effectiveHeight)
+                            }
+                            
                             // 绘制价格线
                             let width = size.width
-                            let height = size.height
                             let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
                             
-                            // 创建价格线路径
                             var pricePath = Path()
                             if let firstPoint = sampledChartData.first {
                                 let firstX = 0.0
-                                let firstY = height - CGFloat((firstPoint.price - minPrice) / priceRange) * height
+                                let firstY = priceToY(firstPoint.price)
                                 pricePath.move(to: CGPoint(x: firstX, y: firstY))
                                 
                                 for i in 1..<sampledChartData.count {
                                     let x = CGFloat(i) * horizontalStep
-                                    let y = height - CGFloat((sampledChartData[i].price - minPrice) / priceRange) * height
+                                    let y = priceToY(sampledChartData[i].price)
                                     pricePath.addLine(to: CGPoint(x: x, y: y))
                                 }
                             }
@@ -279,7 +286,7 @@ struct ChartView: View {
                             if minPrice < 0 {
                                 let effectiveMaxPrice = max(maxPrice, 0)
                                 let effectiveRange = effectiveMaxPrice - minPrice
-                                let zeroY = height - CGFloat((0 - minPrice) / effectiveRange) * height
+                                let zeroY = size.height - verticalPadding - CGFloat((0 - minPrice) / effectiveRange) * effectiveHeight
                                 
                                 var zeroPath = Path()
                                 zeroPath.move(to: CGPoint(x: 0, y: zeroY))
@@ -294,23 +301,24 @@ struct ChartView: View {
                                 if let index = getIndexForDate(date) {
                                     let x = CGFloat(index) * horizontalStep
                                     var tickPath = Path()
-                                    tickPath.move(to: CGPoint(x: x, y: height))
-                                    tickPath.addLine(to: CGPoint(x: x, y: height - 5))
+                                    tickPath.move(to: CGPoint(x: x, y: effectiveHeight))
+                                    tickPath.addLine(to: CGPoint(x: x, y: effectiveHeight - 5))
                                     
                                     context.stroke(tickPath, with: .color(Color.gray), lineWidth: 1)
                                 }
                             }
                             
                             // 绘制标记点
+                            // 例如标记点绘制:
                             for marker in getTimeMarkers() {
                                 if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, marker.date) }) {
                                     let shouldShow = (marker.type == .global && showRedMarkers) ||
-                                                     (marker.type == .symbol && showOrangeMarkers) ||
-                                                     (marker.type == .earning && showBlueMarkers)
+                                                   (marker.type == .symbol && showOrangeMarkers) ||
+                                                   (marker.type == .earning && showBlueMarkers)
                                     
                                     if shouldShow {
                                         let x = CGFloat(index) * horizontalStep
-                                        let y = height - CGFloat((sampledChartData[index].price - minPrice) / priceRange) * height
+                                        let y = priceToY(sampledChartData[index].price)
                                         
                                         let markerPath = Path(ellipseIn: CGRect(x: x - 4, y: y - 4, width: 8, height: 8))
                                         context.fill(markerPath, with: .color(marker.color))
@@ -319,32 +327,33 @@ struct ChartView: View {
                             }
                             
                             // 绘制触摸指示器
+                            // 触摸指示器相关绘制也需要使用新的 y 坐标计算方式
                             if isMultiTouch {
-                                // 双指模式
+                                // 第一个触摸点
                                 if let firstIndex = firstTouchPointIndex, let firstPoint = firstTouchPoint {
                                     let x = CGFloat(firstIndex) * horizontalStep
-                                    let y = height - CGFloat((firstPoint.price - minPrice) / priceRange) * height
+                                    let y = priceToY(firstPoint.price)
                                     
-                                    // 第一条虚线
                                     var linePath = Path()
-                                    linePath.move(to: CGPoint(x: x, y: 0))
-                                    linePath.addLine(to: CGPoint(x: x, y: height))
+                                    linePath.move(to: CGPoint(x: x, y: verticalPadding))
+                                    linePath.addLine(to: CGPoint(x: x, y: size.height - verticalPadding))
                                     context.stroke(linePath, with: .color(Color.gray), style: StrokeStyle(lineWidth: 1, dash: [4]))
                                     
-                                    // 第一个点的高亮显示
                                     let circlePath = Path(ellipseIn: CGRect(x: x - 5, y: y - 5, width: 10, height: 10))
                                     context.fill(circlePath, with: .color(Color.white))
                                     context.stroke(circlePath, with: .color(chartColor), lineWidth: 2)
                                 }
                                 
+                                // 第二个触摸点
                                 if let secondIndex = secondTouchPointIndex, let secondPoint = secondTouchPoint {
                                     let x = CGFloat(secondIndex) * horizontalStep
-                                    let y = height - CGFloat((secondPoint.price - minPrice) / priceRange) * height
+                                    let y = priceToY(secondPoint.price)  // 使用 priceToY 函数
                                     
                                     // 第二条虚线
                                     var linePath = Path()
                                     linePath.move(to: CGPoint(x: x, y: 0))
-                                    linePath.addLine(to: CGPoint(x: x, y: height))
+                                    linePath.addLine(to: CGPoint(x: x, y: verticalPadding))
+                                    linePath.addLine(to: CGPoint(x: x, y: size.height - verticalPadding))
                                     context.stroke(linePath, with: .color(Color.gray), style: StrokeStyle(lineWidth: 1, dash: [4]))
                                     
                                     // 第二个点的高亮显示
@@ -357,9 +366,9 @@ struct ChartView: View {
                                 if let firstIndex = firstTouchPointIndex, let secondIndex = secondTouchPointIndex,
                                    let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
                                     let x1 = CGFloat(firstIndex) * horizontalStep
-                                    let y1 = height - CGFloat((firstPoint.price - minPrice) / priceRange) * height
+                                    let y1 = priceToY(firstPoint.price)  // 使用 priceToY 函数
                                     let x2 = CGFloat(secondIndex) * horizontalStep
-                                    let y2 = height - CGFloat((secondPoint.price - minPrice) / priceRange) * height
+                                    let y2 = priceToY(secondPoint.price)  // 使用 priceToY 函数
                                     
                                     var connectPath = Path()
                                     connectPath.move(to: CGPoint(x: x1, y: y1))
@@ -369,18 +378,15 @@ struct ChartView: View {
                                     context.stroke(connectPath, with: .color(lineColor), style: StrokeStyle(lineWidth: 1, dash: [2]))
                                 }
                             } else if let pointIndex = draggedPointIndex {
-                                // 单指模式
                                 let x = CGFloat(pointIndex) * horizontalStep
                                 
-                                // 绘制垂直线
                                 var linePath = Path()
-                                linePath.move(to: CGPoint(x: x, y: 0))
-                                linePath.addLine(to: CGPoint(x: x, y: height))
+                                linePath.move(to: CGPoint(x: x, y: verticalPadding))
+                                linePath.addLine(to: CGPoint(x: x, y: size.height - verticalPadding))
                                 context.stroke(linePath, with: .color(Color.gray), style: StrokeStyle(lineWidth: 1, dash: [4]))
                                 
-                                // 高亮当前点
                                 if let point = draggedPoint {
-                                    let y = height - CGFloat((point.price - minPrice) / priceRange) * height
+                                    let y = priceToY(point.price)
                                     
                                     let circlePath = Path(ellipseIn: CGRect(x: x - 5, y: y - 5, width: 10, height: 10))
                                     context.fill(circlePath, with: .color(Color.white))
@@ -424,7 +430,7 @@ struct ChartView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     )
                 }
-                .frame(height: 300)
+                .frame(height: 320)
                 .padding(.bottom, 30) // 为 X 轴标签留出空间
             }
             
