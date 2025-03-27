@@ -181,15 +181,22 @@ struct ChartView: View {
                         .frame(height: 80) // 固定三行文本的高度
                     VStack {
                         if isMultiTouch, let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
-                            // 双指模式：显示两点的信息和价格变化百分比
-                            let firstDate = formatDate(firstPoint.date)
-                            let secondDate = formatDate(secondPoint.date)
+                            // 获取两个时间点
+                            let date1 = firstPoint.date
+                            let date2 = secondPoint.date
+                            
+                            // 确定显示顺序：较早的日期显示在左边
+                            let (earlierDate, laterDate) = date1 < date2
+                                ? (formatDate(date1), formatDate(date2))
+                                : (formatDate(date2), formatDate(date1))
+                            
+                            // 百分比计算仍然保持原有逻辑（基于触摸顺序）
                             let percentChange = priceDifferencePercentage ?? 0
                             
                             HStack {
-                                Text("\(firstDate)")
+                                Text("\(earlierDate)")
                                     .font(.system(size: 16, weight: .medium))
-                                Text("\(secondDate)")
+                                Text("\(laterDate)")
                                     .font(.system(size: 16, weight: .medium))
                                 Text("\(formatPercentage(percentChange))")
                                     .font(.system(size: 16, weight: .bold))
