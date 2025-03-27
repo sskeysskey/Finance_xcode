@@ -148,6 +148,7 @@ struct ChartView: View {
     let symbol: String
     let groupName: String
     private let verticalPadding: CGFloat = 20  // 上下各20点的边距
+//    private let horizontalPadding: CGFloat = 16   // 左右边距
     
     @State private var chartData: [DatabaseManager.PriceData] = []
     @State private var sampledChartData: [DatabaseManager.PriceData] = [] // 采样后的数据
@@ -312,6 +313,7 @@ struct ChartView: View {
                         Canvas { context, size in
                             // 考虑边距后的实际绘制高度
                             let effectiveHeight = size.height - (verticalPadding * 2)
+                            
                             // 修改所有 y 坐标计算，加入边距因素
                             let priceToY: (Double) -> CGFloat = { price in
                                 let normalizedY = CGFloat((price - minPrice) / priceRange)
