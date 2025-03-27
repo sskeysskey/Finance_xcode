@@ -661,6 +661,60 @@ struct ChartView: View {
     private func sampleData(_ data: [DatabaseManager.PriceData], rate: Int) -> [DatabaseManager.PriceData] {
         guard rate > 1, !data.isEmpty else { return data }
         
+        // 计算数据的实际时间跨度
+        let calendar = Calendar.current
+        let startDate = data.first?.date ?? Date()
+        let endDate = data.last?.date ?? Date()
+        let components = calendar.dateComponents([.day], from: startDate, to: endDate)
+        let totalDays = components.day ?? 0
+        
+        // 根据实际数据跨度动态调整采样率
+        var adjustedRate = rate
+        
+        // 根据实际数据时长调整采样率
+        if selectedTimeRange == .twoYears && totalDays < 365*2 {
+            // 如果选择2Y但实际数据少于2年，使用1Y的采样率(或不采样)
+            adjustedRate = totalDays < 365 ? 1 : selectedTimeRange.samplingRate() / 2
+        } else if selectedTimeRange == .fiveYears && totalDays < 365*5 {
+            // 如果选择5Y但实际数据少于5年，逐级降低采样率
+            if totalDays < 365 {
+                adjustedRate = 1
+            } else if totalDays < 365*2 {
+                adjustedRate = TimeRange.twoYears.samplingRate()
+            } else {
+                adjustedRate = max(2, selectedTimeRange.samplingRate() / 2)
+            }
+        } else if selectedTimeRange == .tenYears && totalDays < 365*10 {
+            // 如果选择10Y但实际数据少于10年，逐级降低采样率
+            if totalDays < 365 {
+                adjustedRate = 1
+            } else if totalDays < 365*2 {
+                adjustedRate = TimeRange.twoYears.samplingRate()
+            } else if totalDays < 365*5 {
+                adjustedRate = TimeRange.fiveYears.samplingRate()
+            } else {
+                adjustedRate = max(5, selectedTimeRange.samplingRate() / 2)
+            }
+        } else if selectedTimeRange == .all && totalDays < 365*15 {
+            // 如果选择All但实际数据少于预期，逐级降低采样率
+            if totalDays < 365 {
+                adjustedRate = 1
+            } else if totalDays < 365*2 {
+                adjustedRate = TimeRange.twoYears.samplingRate()
+            } else if totalDays < 365*5 {
+                adjustedRate = TimeRange.fiveYears.samplingRate()
+            } else if totalDays < 365*10 {
+                adjustedRate = TimeRange.tenYears.samplingRate()
+            } else {
+                adjustedRate = max(10, selectedTimeRange.samplingRate() / 2)
+            }
+        }
+        
+        // 如果调整后的采样率为1，则直接返回原始数据
+        if adjustedRate <= 1 {
+            return data
+        }
+
         var result: [DatabaseManager.PriceData] = []
         
         // 始终包含第一个点
@@ -698,7 +752,7 @@ struct ChartView: View {
         let priceChangeThreshold = 0.005 // 0.5%的价格变化阈值
         
         var lastIncludedIndex = 0
-        for i in stride(from: rate, to: data.count - 1, by: rate) {
+        for i in stride(from: adjustedRate, to: data.count - 1, by: adjustedRate) {
             let lastIncludedPrice = data[lastIncludedIndex].price
             let currentPrice = data[i].price
             
@@ -709,7 +763,7 @@ struct ChartView: View {
             if isSpecialDate || abs((currentPrice - lastIncludedPrice) / lastIncludedPrice) > priceChangeThreshold {
                 result.append(data[i])
                 lastIncludedIndex = i
-            } else if i % (rate * 2) == 0 {
+            } else if i % (adjustedRate * 2) == 0 {
                 // 仍然保持一定的时间间隔采样
                 result.append(data[i])
                 lastIncludedIndex = i
