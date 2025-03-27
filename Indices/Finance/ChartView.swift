@@ -334,6 +334,7 @@ struct ChartView: View {
                                     let x = CGFloat(firstIndex) * horizontalStep
                                     let y = priceToY(firstPoint.price)
                                     
+                                    // 第一条虚线
                                     var linePath = Path()
                                     linePath.move(to: CGPoint(x: x, y: verticalPadding))
                                     linePath.addLine(to: CGPoint(x: x, y: size.height - verticalPadding))
