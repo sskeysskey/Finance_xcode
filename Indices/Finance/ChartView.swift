@@ -777,7 +777,20 @@ struct ChartView: View {
                 let y = getYForPrice(sampledChartData[index].price)
                 
                 // 财报显示格式
-                let text = "财报: \(String(format: "%.2f%%", earning.price))"
+                // 获取当天价格
+                let currentPrice = sampledChartData[index].price
+                // 获取最新价格（数组最后一个元素的价格）
+                let latestPrice = sampledChartData.last?.price ?? currentPrice
+                // 计算价格变化百分比
+                let priceChangePercent = ((latestPrice - currentPrice) / currentPrice) * 100
+                
+                // 格式化日期
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "MM-dd"
+                let dateStr = dateFormatter.string(from: earning.date)
+                
+                // 构建显示文本
+                let text = "\(dateStr) \(String(format: "%+.2f%%", priceChangePercent))\n\(String(format: "%.2f%%", earning.price))"
                 
                 markers.append(BubbleMarker(
                     text: text,
