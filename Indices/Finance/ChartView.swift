@@ -154,6 +154,8 @@ struct ChartView: View {
     @State private var selectedTimeRange: TimeRange = .sixMonths
     @State private var isLoading = true
     @State private var earningData: [DatabaseManager.EarningData] = []
+    // 预计算渲染点，减少Canvas内重复计算
+    @State private var renderedPoints: [RenderedPoint] = []
     
     // 单指滑动状态
     @State private var dragLocation: CGPoint?
@@ -183,6 +185,28 @@ struct ChartView: View {
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.presentationMode) var presentationMode
     @EnvironmentObject var dataService: DataService
+    
+    private struct RenderedPoint {
+        let x: CGFloat
+        let y: CGFloat
+        let date: Date
+        let price: Double
+        let dataIndex: Int
+    }
+    
+    private func updateRenderedPoints() {
+        let width = UIScreen.main.bounds.width
+        let height: CGFloat = 320
+        let effectiveHeight = height - (verticalPadding * 2)
+        let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
+        
+        renderedPoints = sampledChartData.enumerated().map { index, point in
+            let x = CGFloat(index) * horizontalStep
+            let normalizedY = CGFloat((point.price - minPrice) / priceRange)
+            let y = height - verticalPadding - (normalizedY * effectiveHeight)
+            return RenderedPoint(x: x, y: y, date: point.date, price: point.price, dataIndex: index)
+        }
+    }
     
     // 页面配置
     private var isDarkMode: Bool {
@@ -324,21 +348,16 @@ struct ChartView: View {
                             let width = size.width
                             let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
                             
-                            var pricePath = Path()
-                            if let firstPoint = sampledChartData.first {
-                                let firstX = 0.0
-                                let firstY = priceToY(firstPoint.price)
-                                pricePath.move(to: CGPoint(x: firstX, y: firstY))
+                            if !renderedPoints.isEmpty {
+                                var pricePath = Path()
+                                pricePath.move(to: CGPoint(x: renderedPoints[0].x, y: renderedPoints[0].y))
                                 
-                                for i in 1..<sampledChartData.count {
-                                    let x = CGFloat(i) * horizontalStep
-                                    let y = priceToY(sampledChartData[i].price)
-                                    pricePath.addLine(to: CGPoint(x: x, y: y))
+                                for i in 1..<renderedPoints.count {
+                                    pricePath.addLine(to: CGPoint(x: renderedPoints[i].x, y: renderedPoints[i].y))
                                 }
+                                // 绘制价格线
+                                context.stroke(pricePath, with: .color(chartColor), lineWidth: 2)
                             }
-                            
-                            // 绘制价格线
-                            context.stroke(pricePath, with: .color(chartColor), lineWidth: 2)
                             
                             // 绘制零线 - 当最低值小于 0 时
                             if minPrice < 0 {
@@ -717,6 +736,7 @@ struct ChartView: View {
                 sampledChartData = sampledData
                 earningData = earnings
                 isLoading = false
+                updateRenderedPoints() // 添加这一行
                 // 重置触摸状态
                 resetTouchStates()
                 // 添加调用更新气泡
