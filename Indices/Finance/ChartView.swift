@@ -632,6 +632,13 @@ struct ChartView: View {
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
+                        
+                        // 新增显示 pb 的部分
+                        if let pb = marketCapItem.pb {
+                            Text("\(String(format: "%.2f", pb))")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
                     }
                     
                     if let compareStock = dataService.compareData[symbol.uppercased()] {

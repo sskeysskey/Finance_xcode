@@ -38,15 +38,17 @@ struct SearchETF: Identifiable, Codable, SearchDescribableItem {
 }
 
 struct MarketCapDataItem {
-    let marketCap: String // 改为 String 类型
+    let marketCap: String   // 格式化后的市值字符串（例如 "219B"）
     let peRatio: Double?
-    
-    init(marketCap: Double, peRatio: Double?) {
+    let pb: Double?         // 新增 pb 属性
+
+    init(marketCap: Double, peRatio: Double?, pb: Double?) {
         self.marketCap = Self.formatMarketCap(marketCap)
         self.peRatio = peRatio
+        self.pb = pb
     }
     
-    // 将格式化方法移到结构体内部作为静态方法
+    // 将市值格式化为以B为单位的字符串
     private static func formatMarketCap(_ cap: Double) -> String {
         String(format: "%.0fB", cap / 1_000_000_000)
     }
@@ -316,10 +318,20 @@ class DataService: ObservableObject {
                     let values = parts[1].split(separator: ",")
                     
                     if values.count >= 2 {
+                        // 解析市值
                         if let marketCap = Double(values[0].trimmingCharacters(in: .whitespaces)) {
+                            // 解析 peRatio
                             let peRatioString = values[1].trimmingCharacters(in: .whitespaces)
                             let peRatio = peRatioString == "--" ? nil : Double(peRatioString)
-                            marketCapData[symbol] = MarketCapDataItem(marketCap: marketCap, peRatio: peRatio)
+                            
+                            // 解析 pb（如果存在）
+                            var pb: Double? = nil
+                            if values.count >= 3 {
+                                let pbString = values[2].trimmingCharacters(in: .whitespaces)
+                                pb = Double(pbString)
+                            }
+                            
+                            marketCapData[symbol] = MarketCapDataItem(marketCap: marketCap, peRatio: peRatio, pb: pb)
                         }
                     }
                 }
