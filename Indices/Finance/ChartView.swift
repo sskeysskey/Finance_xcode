@@ -243,6 +243,40 @@ struct ChartView: View {
         return ((second - first) / first) * 100.0
     }
     
+    private func findClosestDataPoint(to targetDate: Date, in data: [DatabaseManager.PriceData]) -> DatabaseManager.PriceData? {
+        let calendar = Calendar.current
+        
+        // 首先尝试在同一月份内查找
+        let targetMonth = calendar.component(.month, from: targetDate)
+        let targetYear = calendar.component(.year, from: targetDate)
+        
+        // 筛选同年同月的数据点
+        let sameMonthData = data.filter { point in
+            let pointMonth = calendar.component(.month, from: point.date)
+            let pointYear = calendar.component(.year, from: point.date)
+            return pointMonth == targetMonth && pointYear == targetYear
+        }
+        
+        if !sameMonthData.isEmpty {
+            // 在同月数据中找最近的点
+            return sameMonthData.min { point1, point2 in
+                abs(point1.date.timeIntervalSince(targetDate)) < abs(point2.date.timeIntervalSince(targetDate))
+            }
+        }
+        
+        // 如果同月没有数据，则在前后一个月范围内查找
+        let monthRange = 1 // 可以调整这个值来改变查找范围
+        let extendedData = data.filter { point in
+            let components = calendar.dateComponents([.month], from: targetDate, to: point.date)
+            guard let monthDiff = components.month else { return false }
+            return abs(monthDiff) <= monthRange
+        }
+        
+        return extendedData.min { point1, point2 in
+            abs(point1.date.timeIntervalSince(targetDate)) < abs(point2.date.timeIntervalSince(targetDate))
+        }
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // 固定高度的信息显示区域
@@ -763,15 +797,30 @@ struct ChartView: View {
         
         // 添加全局标记(红色)
         for (date, text) in dataService.globalTimeMarkers {
-            if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, date) }) {
-                let x = CGFloat(index) * horizontalStep
-                let y = getYForPrice(sampledChartData[index].price)
+            if let exactIndex = sampledChartData.firstIndex(where: { isSameDay($0.date, date) }) {
+                // 精确匹配的情况
+                let x = CGFloat(exactIndex) * horizontalStep
+                let y = getYForPrice(sampledChartData[exactIndex].price)
                 
                 markers.append(BubbleMarker(
                     text: text,
                     color: .red,
-                    pointIndex: index,
+                    pointIndex: exactIndex,
                     date: date,
+                    position: CGPoint(x: x, y: y),
+                    size: CGSize(width: min(max(text.count * 7, 40), Int(maxLabelWidth)), height: 0)
+                ))
+            } else if let closestPoint = findClosestDataPoint(to: date, in: sampledChartData),
+                      let closestIndex = sampledChartData.firstIndex(where: { $0.date == closestPoint.date }) {
+                // 最近匹配的情况
+                let x = CGFloat(closestIndex) * horizontalStep
+                let y = getYForPrice(closestPoint.price)
+                
+                markers.append(BubbleMarker(
+                    text: text,
+                    color: .red,
+                    pointIndex: closestIndex,
+                    date: closestPoint.date,
                     position: CGPoint(x: x, y: y),
                     size: CGSize(width: min(max(text.count * 7, 40), Int(maxLabelWidth)), height: 0)
                 ))
@@ -781,15 +830,30 @@ struct ChartView: View {
         // 添加股票特定标记(橙色)
         if let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()] {
             for (date, text) in symbolMarkers {
-                if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, date) }) {
-                    let x = CGFloat(index) * horizontalStep
-                    let y = getYForPrice(sampledChartData[index].price)
+                if let exactIndex = sampledChartData.firstIndex(where: { isSameDay($0.date, date) }) {
+                    // 精确匹配的情况
+                    let x = CGFloat(exactIndex) * horizontalStep
+                    let y = getYForPrice(sampledChartData[exactIndex].price)
                     
                     markers.append(BubbleMarker(
                         text: text,
                         color: .orange,
-                        pointIndex: index,
+                        pointIndex: exactIndex,
                         date: date,
+                        position: CGPoint(x: x, y: y),
+                        size: CGSize(width: min(max(text.count * 7, 40), Int(maxLabelWidth)), height: 0)
+                    ))
+                } else if let closestPoint = findClosestDataPoint(to: date, in: sampledChartData),
+                          let closestIndex = sampledChartData.firstIndex(where: { $0.date == closestPoint.date }) {
+                    // 最近匹配的情况
+                    let x = CGFloat(closestIndex) * horizontalStep
+                    let y = getYForPrice(closestPoint.price)
+                    
+                    markers.append(BubbleMarker(
+                        text: text,
+                        color: .orange,
+                        pointIndex: closestIndex,
+                        date: closestPoint.date,
                         position: CGPoint(x: x, y: y),
                         size: CGSize(width: min(max(text.count * 7, 40), Int(maxLabelWidth)), height: 0)
                     ))
@@ -797,16 +861,16 @@ struct ChartView: View {
             }
         }
         
-        // 添加财报标记(蓝色)
+        // 添加财报标记(绿色)
         for earning in earningData {
-            if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, earning.date) }) {
-                let x = CGFloat(index) * horizontalStep
-                let y = getYForPrice(sampledChartData[index].price)
+            if let exactIndex = sampledChartData.firstIndex(where: { isSameDay($0.date, earning.date) }) {
+                // 精确匹配的情况
+                let x = CGFloat(exactIndex) * horizontalStep
+                let y = getYForPrice(sampledChartData[exactIndex].price)
                 
-                // 财报显示格式
                 // 获取当天价格
-                let currentPrice = sampledChartData[index].price
-                // 获取最新价格（数组最后一个元素的价格）
+                let currentPrice = sampledChartData[exactIndex].price
+                // 获取最新价格
                 let latestPrice = sampledChartData.last?.price ?? currentPrice
                 // 计算价格变化百分比
                 let priceChangePercent = ((latestPrice - currentPrice) / currentPrice) * 100
@@ -822,8 +886,33 @@ struct ChartView: View {
                 markers.append(BubbleMarker(
                     text: text,
                     color: .green,
-                    pointIndex: index,
+                    pointIndex: exactIndex,
                     date: earning.date,
+                    position: CGPoint(x: x, y: y),
+                    size: CGSize(width: min(max(text.count * 7, 40), Int(maxLabelWidth)), height: 0)
+                ))
+            } else if let closestPoint = findClosestDataPoint(to: earning.date, in: sampledChartData),
+                      let closestIndex = sampledChartData.firstIndex(where: { $0.date == closestPoint.date }) {
+                // 最近匹配的情况
+                let x = CGFloat(closestIndex) * horizontalStep
+                let y = getYForPrice(closestPoint.price)
+                
+                // 使用最近点的价格计算
+                let currentPrice = closestPoint.price
+                let latestPrice = sampledChartData.last?.price ?? currentPrice
+                let priceChangePercent = ((latestPrice - currentPrice) / currentPrice) * 100
+                
+                let dateFormatter = DateFormatter()
+                dateFormatter.dateFormat = "MM-dd"
+                let dateStr = dateFormatter.string(from: earning.date) // 使用原始财报日期
+                
+                let text = "\(dateStr) \(String(format: "%+.2f%%", priceChangePercent))\n\(String(format: "%.2f%%", earning.price))"
+                
+                markers.append(BubbleMarker(
+                    text: text,
+                    color: .green,
+                    pointIndex: closestIndex,
+                    date: closestPoint.date,
                     position: CGPoint(x: x, y: y),
                     size: CGSize(width: min(max(text.count * 7, 40), Int(maxLabelWidth)), height: 0)
                 ))
@@ -1091,12 +1180,16 @@ struct ChartView: View {
             result.append(last)
         }
         
-        // 确保所有特殊事件点都被包含在结果中
+        // 在 sampleData 方法中的特殊点处理部分
         for date in specialDates {
-            // 如果特殊日期的数据点尚未包含在结果中，则添加
-            if !result.contains(where: { isSameDay($0.date, date) }),
-               let dataPoint = data.first(where: { isSameDay($0.date, date) }) {
-                result.append(dataPoint)
+            if !result.contains(where: { isSameDay($0.date, date) }) {
+                if let exactMatch = data.first(where: { isSameDay($0.date, date) }) {
+                    // 有精确匹配的情况
+                    result.append(exactMatch)
+                } else if let closestPoint = findClosestDataPoint(to: date, in: data) {
+                    // 使用最近的数据点
+                    result.append(closestPoint)
+                }
             }
         }
         
@@ -1179,28 +1272,36 @@ struct ChartView: View {
     private func getTimeMarkers() -> [TimeMarker] {
         var markers: [TimeMarker] = []
         
-        // 添加全局时间标记
+        // 处理全局时间标记
         for (date, text) in dataService.globalTimeMarkers {
-            if sampledChartData.contains(where: { isSameDay($0.date, date) }) {
-                markers.append(TimeMarker(date: date, text: text, type: .global))
+            if let exactMatch = sampledChartData.first(where: { isSameDay($0.date, date) }) {
+                // 情况1：有准确匹配
+                markers.append(TimeMarker(date: exactMatch.date, text: text, type: .global))
+            } else if let closestPoint = findClosestDataPoint(to: date, in: sampledChartData) {
+                // 情况2和3：使用最近的数据点
+                markers.append(TimeMarker(date: closestPoint.date, text: text, type: .global))
             }
         }
         
-        // 添加特定股票的时间标记
+        // 处理特定股票的时间标记
         if let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()] {
             for (date, text) in symbolMarkers {
-                if sampledChartData.contains(where: { isSameDay($0.date, date) }) {
-                    markers.append(TimeMarker(date: date, text: text, type: .symbol))
+                if let exactMatch = sampledChartData.first(where: { isSameDay($0.date, date) }) {
+                    markers.append(TimeMarker(date: exactMatch.date, text: text, type: .symbol))
+                } else if let closestPoint = findClosestDataPoint(to: date, in: sampledChartData) {
+                    markers.append(TimeMarker(date: closestPoint.date, text: text, type: .symbol))
                 }
             }
         }
         
-        // 添加财报数据标记
+        // 处理财报数据标记
         for earning in earningData {
-            if sampledChartData.contains(where: { isSameDay($0.date, earning.date) }) {
-                // 将价格转换为字符串作为标记文本
+            if let exactMatch = sampledChartData.first(where: { isSameDay($0.date, earning.date) }) {
                 let earningText = String(format: "%.2f", earning.price)
-                markers.append(TimeMarker(date: earning.date, text: earningText, type: .earning))
+                markers.append(TimeMarker(date: exactMatch.date, text: earningText, type: .earning))
+            } else if let closestPoint = findClosestDataPoint(to: earning.date, in: sampledChartData) {
+                let earningText = String(format: "%.2f", earning.price)
+                markers.append(TimeMarker(date: closestPoint.date, text: earningText, type: .earning))
             }
         }
         
@@ -1208,20 +1309,46 @@ struct ChartView: View {
     }
     
     private func getMarkerText(for date: Date) -> String? {
-        // 检查全局标记，只有在显示红色标记的情况下返回
-        if showRedMarkers, let text = dataService.globalTimeMarkers.first(where: { isSameDay($0.key, date) })?.value {
-            return text
+        // 检查全局标记
+        if showRedMarkers {
+            if let text = dataService.globalTimeMarkers.first(where: { isSameDay($0.key, date) })?.value {
+                return text
+            }
+            // 检查是否是最近匹配的点
+            if let (_, text) = dataService.globalTimeMarkers.first(where: {
+                let closestPoint = findClosestDataPoint(to: $0.key, in: sampledChartData)
+                return closestPoint?.date == date
+            }) {
+                return text
+            }
         }
         
-        // 检查特定股票标记，只有在显示橙色标记的情况下返回
-        if showOrangeMarkers, let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()],
-           let text = symbolMarkers.first(where: { isSameDay($0.key, date) })?.value {
-            return text
+        // 检查特定股票标记
+        if showOrangeMarkers, let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()] {
+            if let text = symbolMarkers.first(where: { isSameDay($0.key, date) })?.value {
+                return text
+            }
+            // 检查是否是最近匹配的点
+            if let (_, text) = symbolMarkers.first(where: {
+                let closestPoint = findClosestDataPoint(to: $0.key, in: sampledChartData)
+                return closestPoint?.date == date
+            }) {
+                return text
+            }
         }
         
-        // 检查财报数据标记，只有在显示蓝色标记的情况下返回
-        if showBlueMarkers, let earningPoint = earningData.first(where: { isSameDay($0.date, date) }) {
-            return String(format: "昨日财报\n%.2f%%", earningPoint.price)
+        // 检查财报数据标记
+        if showBlueMarkers {
+            if let earningPoint = earningData.first(where: { isSameDay($0.date, date) }) {
+                return String(format: "昨日财报\n%.2f%%", earningPoint.price)
+            }
+            // 检查是否是最近匹配的点
+            if let earningPoint = earningData.first(where: {
+                let closestPoint = findClosestDataPoint(to: $0.date, in: sampledChartData)
+                return closestPoint?.date == date
+            }) {
+                return String(format: "昨日财报\n%.2f%%", earningPoint.price)
+            }
         }
         
         return nil
