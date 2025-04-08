@@ -58,17 +58,19 @@ class SearchResult: Identifiable, ObservableObject {
     @Published var tag: [String]
     @Published var marketCap: String?
     @Published var peRatio: String?
+    @Published var pb: String?  // 添加 pb 属性
     @Published var compare: String?
     @Published var volume: String?
     
     init(symbol: String, name: String, tag: [String],
-         marketCap: String? = nil, peRatio: String? = nil,
+         marketCap: String? = nil, peRatio: String? = nil, pb: String? = nil,
          compare: String? = nil, volume: String? = nil) {
         self.symbol = symbol
         self.name = name
         self.tag = tag
         self.marketCap = marketCap
         self.peRatio = peRatio
+        self.pb = pb  // 初始化 pb
         self.compare = compare
         self.volume = volume
     }
@@ -443,6 +445,11 @@ struct SearchResultRow: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
+                if let pb = result.pb, pb != "--" {  // 添加 PB 的显示
+                                    Text(pb)
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
                 if let compare = result.compare {
                     Text(compare)
                         .font(.subheadline)
@@ -621,6 +628,7 @@ class SearchViewModel: ObservableObject {
                 let data = dataService.marketCapData[upperSymbol]
                 let marketCap = data?.marketCap
                 let peRatioStr = data?.peRatio != nil ? String(format: "%.2f", data!.peRatio!) : "--"
+                let pbStr = data?.pb != nil ? String(format: "%.2f", data!.pb!) : "--"  // 添加 PB 格式化
                 
                 let result = SearchResult(
                     symbol: item.symbol,
@@ -628,6 +636,7 @@ class SearchViewModel: ObservableObject {
                     tag: item.tag,
                     marketCap: marketCap,
                     peRatio: peRatioStr,
+                    pb: pbStr,  // 添加 PB 数据
                     compare: dataService.compareData[upperSymbol]
                 )
                 
