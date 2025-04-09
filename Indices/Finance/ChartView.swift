@@ -14,14 +14,14 @@ enum TimeRange {
     
     var title: String {
         switch self {
-        case .oneMonth: return "1M"
-        case .threeMonths: return "3M"
+        case .oneMonth: return "1"
+        case .threeMonths: return "3"
         case .sixMonths: return "6M"
         case .oneYear: return "1Y"
         case .all: return "All"
-        case .twoYears: return "2Y"
-        case .fiveYears: return "5Y"
-        case .tenYears: return "10Y"
+        case .twoYears: return "2"
+        case .fiveYears: return "5"
+        case .tenYears: return "10"
         }
     }
     
@@ -563,7 +563,7 @@ struct ChartView: View {
             
             // Time range buttons
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 15) {
+                HStack(spacing: 7) {
                     ForEach([TimeRange.oneMonth, .threeMonths, .sixMonths, .oneYear, .all, .twoYears, .fiveYears, .tenYears], id: \.title) { range in
                         Button(action: {
                             selectedTimeRange = range
@@ -591,25 +591,27 @@ struct ChartView: View {
             
             // 修改标记点显示控制开关UI，添加新的浮窗开关
             HStack(spacing: 10) {
+                // 绿色标记点(财报)开关
+                Toggle(isOn: $showBlueMarkers) {
+                }
+                .toggleStyle(SwitchToggleStyle(tint: .green))
+                
                 // 浮窗显示开关
                 Toggle(isOn: $showBubbles) {
                 }
                 .toggleStyle(SwitchToggleStyle(tint: .purple)) // 使用紫色区分浮窗开关
-                
-                // 橙色标记点(股票特定)开关
-                Toggle(isOn: $showOrangeMarkers) {
-                }
-                .toggleStyle(SwitchToggleStyle(tint: .orange))
                 
                 // 红色标记点(全局)开关
                 Toggle(isOn: $showRedMarkers) {
                 }
                 .toggleStyle(SwitchToggleStyle(tint: .red))
                 
-                // 绿色标记点(财报)开关
-                Toggle(isOn: $showBlueMarkers) {
+                // 橙色标记点(股票特定)开关
+                Toggle(isOn: $showOrangeMarkers) {
                 }
-                .toggleStyle(SwitchToggleStyle(tint: .green))
+                .toggleStyle(SwitchToggleStyle(tint: .orange))
+                
+                .padding(.horizontal)
             }
             .padding(.vertical, 30)
             
