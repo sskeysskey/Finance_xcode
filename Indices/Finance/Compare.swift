@@ -89,7 +89,7 @@ struct CompareView: View {
     @FocusState private var focusedField: Int?
     
     // Default start date: year 2014
-    @State private var startDate: Date = Calendar.current.date(from: DateComponents(year: 2014))!
+    @State private var startDate: Date = Calendar.current.date(from: DateComponents(year: 2024))!
     
     // Uppercase toggle
     @State private var shouldUppercase = true
