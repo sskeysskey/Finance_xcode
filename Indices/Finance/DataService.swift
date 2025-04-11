@@ -62,6 +62,11 @@ struct EarningRelease: Identifiable {
 }
 
 class DataService: ObservableObject {
+    // MARK: - Singleton
+    static let shared = DataService()
+    init() {}
+    
+    // MARK: - Published properties
     @Published var topGainers: [Stock] = []
     @Published var topLosers: [Stock] = []
     @Published var etfGainers: [ETF] = []
@@ -85,15 +90,47 @@ class DataService: ObservableObject {
     @Published var globalTimeMarkers: [Date: String] = [:]
     @Published var symbolTimeMarkers: [String: [Date: String]] = [:]
     
+    private var isDataLoaded = false
+    private var loadingTask: Task<Void, Never>?
+    private let cache = NSCache<NSString, AnyObject>()
+    
+    // MARK: - Public methods
+    func loadDataIfNeeded() {
+        guard !isDataLoaded else { return }
+        
+        loadingTask?.cancel()
+        loadingTask = Task {
+            await loadDataAsync()
+        }
+    }
+    
     func loadData() {
         loadMarketCapData()
-        loadCompareStock()
-        loadCompareETFs()
         loadDescriptionData()
         loadSectorsData()
         loadCompareData()
         loadSectorsPanel()
         loadEarningRelease() // 添加这行
+    }
+    
+    // MARK: - Private methods
+    private func loadDataAsync() async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await self.loadCompareStockAsync() }
+            group.addTask { await self.loadCompareETFsAsync() }
+        }
+        
+        await MainActor.run {
+            self.isDataLoaded = true
+        }
+    }
+    
+    private func loadFromCache<T>(_ key: String) -> T? {
+        return cache.object(forKey: key as NSString) as? T
+    }
+    
+    private func saveToCache<T>(_ value: T, forKey key: String) {
+        cache.setObject(value as AnyObject, forKey: key as NSString)
     }
     
     // 添加新的加载方法
@@ -152,38 +189,76 @@ class DataService: ObservableObject {
         }
     }
     
-    private func loadCompareStock() {
-        guard let url = Bundle.main.url(forResource: "CompareStock", withExtension: "txt") else { return }
-        do {
-            let content = try String(contentsOf: url, encoding: .utf8)
-            let lines = content.split(separator: "\n")
+    private func loadCompareStockAsync() async {
+            if let cached: ([Stock], [Stock]) = loadFromCache("compareStock") {
+                await MainActor.run {
+                    self.topGainers = cached.0
+                    self.topLosers = cached.1
+                }
+                return
+            }
             
-            let topGainersLines = lines.prefix(20)
-            let topLosersLines = lines.suffix(20).reversed()
+            guard let url = Bundle.main.url(forResource: "CompareStock", withExtension: "txt") else { return }
             
-            topGainers = topGainersLines.compactMap { parseStockLine(String($0)) }
-            topLosers = topLosersLines.compactMap { parseStockLine(String($0)) }
-        } catch {
-            print("Error loading comparestock.txt: \(error)")
+            do {
+                let content = try String(contentsOf: url, encoding: .utf8)
+                let lines = content.split(separator: "\n")
+                
+                let topGainersLines = lines.prefix(20)
+                let topLosersLines = lines.suffix(20).reversed()
+                
+                let newTopGainers = topGainersLines.compactMap { parseStockLine(String($0)) }
+                let newTopLosers = topLosersLines.compactMap { parseStockLine(String($0)) }
+                
+                saveToCache((newTopGainers, newTopLosers), forKey: "compareStock")
+                await MainActor.run {
+                    self.topGainers = newTopGainers
+                    self.topLosers = newTopLosers
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = "加载 CompareStock.txt 失败: \(error.localizedDescription)"
+                }
+            }
         }
-    }
-    
-    private func loadCompareETFs() {
-        guard let url = Bundle.main.url(forResource: "CompareETFs", withExtension: "txt") else { return }
-        do {
-            let content = try String(contentsOf: url, encoding: .utf8)
-            let lines = content.split(separator: "\n")
+        
+        private func loadCompareETFsAsync() async {
+            if let cached: ([ETF], [ETF]) = loadFromCache("compareETFs") {
+                await MainActor.run {
+                    self.etfGainers = cached.0
+                    self.etfLosers = cached.1
+                }
+                return
+            }
             
-            let parsedETFs = lines.compactMap { parseETFLine(String($0)) }
-            let etfGainersList = parsedETFs.filter { $0.numericValue > 0 }.sorted { $0.numericValue > $1.numericValue }.prefix(20)
-            let etfLosersList = parsedETFs.filter { $0.numericValue < 0 }.sorted { $0.numericValue < $1.numericValue }.prefix(20)
+            guard let url = Bundle.main.url(forResource: "CompareETFs", withExtension: "txt") else { return }
             
-            etfGainers = Array(etfGainersList)
-            etfLosers = Array(etfLosersList)
-        } catch {
-            print("Error loading compareetfs.txt: \(error)")
+            do {
+                let content = try String(contentsOf: url, encoding: .utf8)
+                let lines = content.split(separator: "\n")
+                
+                let parsedETFs = lines.compactMap { parseETFLine(String($0)) }
+                let etfGainersList = parsedETFs.filter { $0.numericValue > 0 }
+                    .sorted { $0.numericValue > $1.numericValue }
+                    .prefix(20)
+                let etfLosersList = parsedETFs.filter { $0.numericValue < 0 }
+                    .sorted { $0.numericValue < $1.numericValue }
+                    .prefix(20)
+                
+                let newETFGainers = Array(etfGainersList)
+                let newETFLosers = Array(etfLosersList)
+                
+                saveToCache((newETFGainers, newETFLosers), forKey: "compareETFs")
+                await MainActor.run {
+                    self.etfGainers = newETFGainers
+                    self.etfLosers = newETFLosers
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = "加载 CompareETFs.txt 失败: \(error.localizedDescription)"
+                }
+            }
         }
-    }
     
     private func loadSectorsPanel() {
         guard let url = Bundle.main.url(forResource: "Sectors_panel", withExtension: "json") else {

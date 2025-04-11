@@ -12,7 +12,6 @@ protocol MarketItem: Identifiable, Codable {
 
 // MARK: - MarketItem 扩展
 extension MarketItem {
-    /// 根据 value 中的字符串数字（移除 "%" 等字符）转换为 Double
     var numericValue: Double {
         Double(value.replacingOccurrences(of: "%", with: "")) ?? 0.0
     }
@@ -26,14 +25,6 @@ struct Stock: MarketItem {
     let symbol: String
     let value: String
     let descriptions: String
-    
-    init(groupName: String, rawSymbol: String, symbol: String, value: String, descriptions: String) {
-        self.groupName = groupName
-        self.rawSymbol = rawSymbol
-        self.symbol = symbol
-        self.value = value
-        self.descriptions = descriptions
-    }
 }
 
 // MARK: - ETF Model
@@ -44,14 +35,6 @@ struct ETF: MarketItem {
     let symbol: String
     let value: String
     let descriptions: String
-    
-    init(groupName: String, rawSymbol: String, symbol: String, value: String, descriptions: String) {
-        self.groupName = groupName
-        self.rawSymbol = rawSymbol
-        self.symbol = symbol
-        self.value = value
-        self.descriptions = descriptions
-    }
 }
 
 // MARK: - 单个 Market Item 行视图
@@ -82,6 +65,7 @@ struct MarketItemRow<T: MarketItem>: View {
 struct MarketListView<T: MarketItem>: View {
     let title: String
     let items: [T]
+    @StateObject private var dataService = DataService.shared // 使用单例
     
     var body: some View {
         List(items) { item in
@@ -91,7 +75,6 @@ struct MarketListView<T: MarketItem>: View {
     }
 }
 
-// MARK: - 别名简化
 typealias StockListView = MarketListView<Stock>
 typealias ETFListView = MarketListView<ETF>
 
@@ -109,40 +92,39 @@ struct TopContentView: View {
 
 // MARK: - 自定义底部标签栏
 struct CustomTabBar: View {
-    @ObservedObject var dataService = DataService()
+    @StateObject private var dataService = DataService.shared // 使用单例
     
     var body: some View {
         HStack(spacing: 0) {
             NavigationLink(
-                destination: StockListView(title: "Top Gainers", items: dataService.topGainers)
-                    .onAppear { dataService.loadData() }
+                destination: LazyView(StockListView(title: "Top Gainers", items: dataService.topGainers))
             ) {
                 TabItemView(title: "涨幅榜", imageName: "arrow.up")
             }
             
             NavigationLink(
-                destination: StockListView(title: "Top Losers", items: dataService.topLosers)
-                    .onAppear { dataService.loadData() }
+                destination: LazyView(StockListView(title: "Top Losers", items: dataService.topLosers))
             ) {
                 TabItemView(title: "跌幅榜", imageName: "arrow.down")
             }
             
             NavigationLink(
-                destination: ETFListView(title: "ETF Gainers", items: dataService.etfGainers)
-                    .onAppear { dataService.loadData() }
+                destination: LazyView(ETFListView(title: "ETF Gainers", items: dataService.etfGainers))
             ) {
                 TabItemView(title: "ETF涨幅", imageName: "chart.line.uptrend.xyaxis")
             }
             
             NavigationLink(
-                destination: ETFListView(title: "ETF Losers", items: dataService.etfLosers)
-                    .onAppear { dataService.loadData() }
+                destination: LazyView(ETFListView(title: "ETF Losers", items: dataService.etfLosers))
             ) {
                 TabItemView(title: "ETF跌幅", imageName: "chart.line.downtrend.xyaxis")
             }
         }
         .frame(height: 50)
         .background(Color(.systemBackground))
+        .onAppear {
+            dataService.loadDataIfNeeded()
+        }
     }
 }
 
@@ -160,5 +142,18 @@ struct TabItemView: View {
         }
         .foregroundColor(.blue)
         .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - 懒加载视图包装器
+struct LazyView<Content: View>: View {
+    let build: () -> Content
+    
+    init(_ build: @autoclosure @escaping () -> Content) {
+        self.build = build
+    }
+    
+    var body: Content {
+        build()
     }
 }

@@ -424,7 +424,8 @@ struct ComparisonChartView: View {
                     $0.date >= dateRange.start && $0.date <= dateRange.end
                 }
                 // 修改数据采样方法，确保保留最新的数据点
-                filteredData = filteredData.smartSampled(maxPoints: filteredData.count / 5)
+                // 使用 LTTB 算法进行采样，阈值可以根据图表的显示需求进行调整，比如 100 个点
+                filteredData = filteredData.lttbSampled(threshold: 100)
                 tempData[symbol] = filteredData
             }
             
@@ -438,28 +439,75 @@ struct ComparisonChartView: View {
 
 // MARK: - Array Extension
 extension Array where Element == DatabaseManager.PriceData {
-    func sampled(step: Int) -> [DatabaseManager.PriceData] {
-        stride(from: 0, to: count, by: step).map { self[$0] }
-    }
-    
-    // 添加新的智能采样方法，确保保留最后几个数据点
-    func smartSampled(maxPoints: Int) -> [DatabaseManager.PriceData] {
-        guard count > maxPoints else { return self }
+    /// 使用 Largest Triangle Three Buckets (LTTB) 算法对数据进行下采样，
+    /// 以保留曲线的关键形状特征。
+    ///
+    /// - Parameter threshold: 目标输出的数据点数，必须>=3。
+    /// - Returns: 下采样后的数据数组
+    func lttbSampled(threshold: Int) -> [DatabaseManager.PriceData] {
+        let count = self.count
+        // 如果数据点过少或目标点数不合理，则直接返回原始数据
+        guard threshold >= 3, count > threshold else {
+            return self
+        }
         
-        // 至少保留最后10个数据点或者总数据的20%，取较小值
-        let reserveCount = Swift.min(10, Int(Double(count) * 0.2))
-        let lastElements = Array(suffix(reserveCount))
+        // 第一步：计算每个桶的大小（除去头尾）
+        let bucketSize = Double(count - 2) / Double(threshold - 2)
+        var sampled: [DatabaseManager.PriceData] = []
         
-        // 对剩余部分进行采样
-        let remainingElementsCount = count - reserveCount
-        let sampleStep = Swift.max(1, remainingElementsCount / (Swift.max(1, maxPoints - reserveCount)))
+        // 始终保留第一个数据点
+        sampled.append(self[0])
+        var a = 0  // a 记录上一次选中的点的索引
         
-        let sampledMainPart = Array(prefix(remainingElementsCount)).enumerated()
-            .filter { $0.offset % sampleStep == 0 }
-            .map { $0.element }
+        // 遍历除头尾以外的桶
+        for i in 0..<(threshold - 2) {
+            // 当前桶在数据中的起始和结束索引（注意+1跳过第一个固定点）
+            let bucketStart = Int(floor(Double(i) * bucketSize)) + 1
+            let bucketEnd = Int(floor(Double(i + 1) * bucketSize)) + 1
+            
+            // 计算下个桶的平均值，用于后续三角形面积计算
+            let nextBucketEnd = Swift.min(bucketEnd, count)
+            var avgX = 0.0
+            var avgY = 0.0
+            let rangeCount = Double(nextBucketEnd - bucketStart)
+            for j in bucketStart..<nextBucketEnd {
+                avgX += self[j].date.timeIntervalSince1970
+                avgY += self[j].price
+            }
+            avgX /= rangeCount
+            avgY /= rangeCount
+            
+            // 当前桶用于候选点选择
+            let currentBucketStart = Int(floor(Double(i) * bucketSize)) + 1
+            let currentBucketEnd = Int(floor(Double(i + 1) * bucketSize)) + 1
+            let currentBucket = currentBucketStart..<Swift.min(currentBucketEnd, count)
+            
+            var maxArea = -Double.infinity
+            var maxAreaIndex = currentBucketStart
+            let pointA = self[a]
+            let ax = pointA.date.timeIntervalSince1970
+            let ay = pointA.price
+            
+            // 遍历当前桶中的所有点，计算以 pointA、当前候选点和下个桶均值构成的三角形面积，
+            // 选择面积最大的那个点。
+            for j in currentBucket {
+                let bx = self[j].date.timeIntervalSince1970
+                let by = self[j].price
+                let area = abs((ax - avgX) * (by - ay) - (ax - bx) * (avgY - ay))
+                if area > maxArea {
+                    maxArea = area
+                    maxAreaIndex = j
+                }
+            }
+            
+            // 添加选中的点，并将 a 设置为新采样点的索引
+            sampled.append(self[maxAreaIndex])
+            a = maxAreaIndex
+        }
         
-        // 组合采样部分和保留的最新数据
-        return sampledMainPart + lastElements
+        // 最后始终保留最后一个数据点
+        sampled.append(self[count - 1])
+        return sampled
     }
 }
 
