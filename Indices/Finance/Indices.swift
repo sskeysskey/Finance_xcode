@@ -77,21 +77,19 @@ struct SectorsPanel: Decodable {
         for key in orderedKeys {
             let codingKey = DynamicCodingKeys(stringValue: key)!
             let symbolsContainer = try container.nestedContainer(keyedBy: DynamicCodingKeys.self, forKey: codingKey)
-            var symbols: [IndicesSymbol] = []
-            
             let orderedSymbolKeys = symbolsContainer.allKeys
                 .map { $0.stringValue }
                 .sorted()
             
             if key == "Economics" {
-                // 特殊处理 Economics 分组
+                // 原 Economics 分组特殊处理
                 var groupedSymbols: [String: [IndicesSymbol]] = [:]
                 
                 for symbolKey in orderedSymbolKeys {
                     let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
                     let symbolValue = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
                     
-                    // 解析前缀数字
+                    // 按前缀数字分组
                     if let prefixNumber = symbolValue.split(separator: " ").first,
                        let _ = Int(prefixNumber) {
                         let group = String(prefixNumber)
@@ -110,20 +108,51 @@ struct SectorsPanel: Decodable {
                     }
                 }
                 
-                // 创建子分组
                 let subSectors = groupedSymbols.sorted(by: { $0.key < $1.key }).map { group, groupSymbols in
                     IndicesSector(name: group, symbols: groupSymbols)
                 }
                 
-                // 创建 Economics 主分组
                 let economicsSector = IndicesSector(
                     name: key,
-                    symbols: [], // Economics 主分组不直接包含 symbols
+                    symbols: [],
                     subSectors: subSectors
                 )
                 sectors.append(economicsSector)
+            } else if key == "Commodities" {
+                // Commodities 分组特殊处理：添加“重要”子分组，把 CrudeOil 和 HuangJin 放到其中
+                var importantSymbols: [IndicesSymbol] = []
+                var normalSymbols: [IndicesSymbol] = []
+                
+                for symbolKey in orderedSymbolKeys {
+                    let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
+                    let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
+                    let symbol = IndicesSymbol(symbol: symbolKey, name: symbolName, value: "", tags: nil)
+                    
+                    if symbolKey == "CrudeOil" || symbolKey == "HuangJin" {
+                        importantSymbols.append(symbol)
+                    } else {
+                        normalSymbols.append(symbol)
+                    }
+                }
+                
+                if !importantSymbols.isEmpty {
+                    var subSectors: [IndicesSector] = []
+                    // “重要”子分组
+                    subSectors.append(IndicesSector(name: "重要", symbols: importantSymbols))
+                    // 若还有其他 symbol，则增加“其他”子分组
+                    if !normalSymbols.isEmpty {
+                        subSectors.append(IndicesSector(name: "其他", symbols: normalSymbols))
+                    }
+                    let commoditiesSector = IndicesSector(name: key, symbols: [], subSectors: subSectors)
+                    sectors.append(commoditiesSector)
+                } else if !normalSymbols.isEmpty {
+                    // 如果没有重要 symbol，则常规处理
+                    let commoditiesSector = IndicesSector(name: key, symbols: normalSymbols)
+                    sectors.append(commoditiesSector)
+                }
             } else {
-                // 其他分组的常规处理
+                // 其他分组常规处理
+                var symbols: [IndicesSymbol] = []
                 for symbolKey in orderedSymbolKeys {
                     let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
                     let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
@@ -242,26 +271,24 @@ struct SectorDetailView: View {
     
     var body: some View {
         ScrollView {
-            if sector.name == "Economics" {
-                // Economics 特殊处理
-                if let subSectors = sector.subSectors {
-                    ForEach(subSectors, id: \.name) { subSector in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(subSector.name)
-                                .font(.headline)
-                                .padding(.horizontal)
-                                .padding(.top, 16)
-                            
-                            LazyVStack(spacing: 0) {
-                                ForEach(loadSymbolsForSubSector(subSector.symbols)) { symbol in
-                                    SymbolItemView(symbol: symbol, sectorName: sector.name)
-                                }
+            // 如果存在子分组则遍历每个子分组显示
+            if let subSectors = sector.subSectors, !subSectors.isEmpty {
+                ForEach(subSectors, id: \.name) { subSector in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(subSector.name)
+                            .font(.headline)
+                            .padding(.horizontal)
+                            .padding(.top, 16)
+                        
+                        LazyVStack(spacing: 0) {
+                            ForEach(loadSymbolsForSubSector(subSector.symbols)) { symbol in
+                                SymbolItemView(symbol: symbol, sectorName: sector.name)
                             }
                         }
                     }
                 }
             } else {
-                // 常规处理
+                // 否则按原规则显示当前分组的 symbol 数组
                 LazyVStack(spacing: 0) {
                     ForEach(symbols) { symbol in
                         SymbolItemView(symbol: symbol, sectorName: sector.name)
@@ -283,20 +310,20 @@ struct SectorDetailView: View {
             )
         }
         .onAppear {
-            if sector.name != "Economics" {
+            // 如果没有子分组，则加载 symbol 数组
+            if sector.subSectors == nil || sector.subSectors!.isEmpty {
                 loadSymbols()
             }
         }
     }
     
-    // 添加新方法处理子分组的 symbols
     func loadSymbolsForSubSector(_ symbols: [IndicesSymbol]) -> [IndicesSymbol] {
         let compareMap = dataService.compareData
         return symbols.map { symbol in
             var updatedSymbol = symbol
             let value = compareMap[symbol.symbol.uppercased()] ??
-                       compareMap[symbol.symbol] ??
-                       "N/A"
+                        compareMap[symbol.symbol] ??
+                        "N/A"
             updatedSymbol.value = value
             
             if let description = dataService.descriptionData?.stocks.first(where: {
@@ -316,8 +343,8 @@ struct SectorDetailView: View {
         self.symbols = sector.symbols.map { symbol in
             var updatedSymbol = symbol
             let value = compareMap[symbol.symbol.uppercased()] ??
-                       compareMap[symbol.symbol] ??
-                       "N/A"
+                        compareMap[symbol.symbol] ??
+                        "N/A"
             updatedSymbol.value = value
             
             if let description = dataService.descriptionData?.stocks.first(where: {

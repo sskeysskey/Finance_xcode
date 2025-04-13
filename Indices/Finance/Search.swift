@@ -799,8 +799,9 @@ class SearchViewModel: ObservableObject {
         }
         self.searchHistory.insert(trimmedTerm, at: 0)
         
-        if self.searchHistory.count > 10 {
-            self.searchHistory = Array(self.searchHistory.prefix(10))
+        // 增加搜索历史记录保存条目的数量
+        if self.searchHistory.count > 20 {
+            self.searchHistory = Array(self.searchHistory.prefix(20))
         }
         UserDefaults.standard.set(searchHistory, forKey: "stockSearchHistory")
     }
