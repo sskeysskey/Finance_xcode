@@ -150,6 +150,38 @@ struct SectorsPanel: Decodable {
                     let commoditiesSector = IndicesSector(name: key, symbols: normalSymbols)
                     sectors.append(commoditiesSector)
                 }
+            } else if key == "Currencies" {
+                // Currencies 分组特殊处理：添加“重要”子分组，把 USDJPY 和 USDCNY 放到其中
+                var importantSymbols: [IndicesSymbol] = []
+                var normalSymbols: [IndicesSymbol] = []
+                
+                for symbolKey in orderedSymbolKeys {
+                    let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
+                    let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
+                    let symbol = IndicesSymbol(symbol: symbolKey, name: symbolName, value: "", tags: nil)
+                    
+                    if symbolKey == "USDJPY" || symbolKey == "USDCNY" {
+                        importantSymbols.append(symbol)
+                    } else {
+                        normalSymbols.append(symbol)
+                    }
+                }
+                
+                if !importantSymbols.isEmpty {
+                    var subSectors: [IndicesSector] = []
+                    // “重要”子分组
+                    subSectors.append(IndicesSector(name: "重要", symbols: importantSymbols))
+                    // 如果还有其他 symbol，则增加“其他”子分组
+                    if !normalSymbols.isEmpty {
+                        subSectors.append(IndicesSector(name: "其他", symbols: normalSymbols))
+                    }
+                    let currenciesSector = IndicesSector(name: key, symbols: [], subSectors: subSectors)
+                    sectors.append(currenciesSector)
+                } else if !normalSymbols.isEmpty {
+                    // 如果没有特别的 symbol，则常规处理
+                    let currenciesSector = IndicesSector(name: key, symbols: normalSymbols)
+                    sectors.append(currenciesSector)
+                }
             } else {
                 // 其他分组常规处理
                 var symbols: [IndicesSymbol] = []
