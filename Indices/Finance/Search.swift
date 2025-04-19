@@ -179,6 +179,8 @@ struct SearchView: View {
     @State private var showChartView: Bool = false
     @State private var selectedSymbolForChart: SelectedSymbol? = nil
     @State private var selectedSymbolForDescription: SelectedSymbol? = nil
+    @State private var clipboardContent: String = ""
+    @State private var showClipboardBar: Bool = false
     
     @State private var collapsedGroups: [MatchCategory: Bool] = [:]
     let isSearchActive: Bool
@@ -194,6 +196,34 @@ struct SearchView: View {
             searchBar
                 .padding()
             
+            // 剪贴板小条
+            if showClipboardBar {
+                HStack {
+                    Image(systemName: "doc.on.clipboard")
+                        .foregroundColor(.gray)
+                    Text(clipboardContent)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .background(Color(.systemGray5))
+                .cornerRadius(8)
+                .padding(.horizontal)
+                .onTapGesture {
+                    // 粘贴并隐藏小条
+                    searchText = clipboardContent
+                    withAnimation {
+                        showClipboardBar = false
+                        showSearchHistory = false
+                    }
+                    // 你可以根据需要自动触发搜索：
+                     startSearch()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             ZStack {
                 if showSearchHistory {
                     SearchHistoryView(viewModel: viewModel) { term in
@@ -264,16 +294,28 @@ struct SearchView: View {
                             showSearchHistory = true
                             groupedSearchResults = []
                         }
+                    } else {
+                        // 每当输入变化，隐藏剪贴板小条
+                        withAnimation { showClipboardBar = false }
                     }
                 }
                 
                 if showClearButton {
                     Button(action: {
+                        // 原有逻辑
                         searchText = ""
                         withAnimation {
                             showSearchHistory = true
                             groupedSearchResults = []
                             isSearchFieldFocused = true
+                        }
+                        // 新增：读取剪贴板并展示
+                        if let content = UIPasteboard.general.string,
+                           !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            clipboardContent = content
+                            withAnimation {
+                                showClipboardBar = true
+                            }
                         }
                     }) {
                         Image(systemName: "xmark.circle.fill")
