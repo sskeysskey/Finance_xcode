@@ -431,22 +431,40 @@ struct SearchView: View {
     }
     
     func startSearch() {
-        guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let trimmed = searchText.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
         isSearchFieldFocused = false
         isLoading = true
         showSearchHistory = false
-        
-        viewModel.performSearch(query: searchText) { groupedResults in
+
+        viewModel.performSearch(query: trimmed) { groupedResults in
             DispatchQueue.main.async {
                 withAnimation {
+                    // 1. 先赋值
                     self.groupedSearchResults = groupedResults
                     self.isLoading = false
+                    
+                    // 2. 初始化折叠状态
                     for group in groupedResults {
-                        if collapsedGroups[group.category] == nil {
-                            collapsedGroups[group.category] = false
+                        if self.collapsedGroups[group.category] == nil {
+                            self.collapsedGroups[group.category] = false
                         }
                     }
                 }
+                
+                // 3. 自动判断首个结果
+                if
+                    let firstGroup = groupedResults.first,
+                    // 记得 results 本来就是按 score 排好序的
+                    let firstEntry = firstGroup.results.first,
+                    trimmed.uppercased() == firstEntry.result.symbol.uppercased()
+                {
+                    // 4. 直接打开 chart 或 description
+                    self.handleResultSelection(result: firstEntry.result)
+                    return
+                }
+                
+                // 如果不一致，就正常停留在列表
             }
         }
     }
