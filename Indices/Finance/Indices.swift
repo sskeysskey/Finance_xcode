@@ -160,7 +160,7 @@ struct SectorsPanel: Decodable {
                     let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
                     let symbol = IndicesSymbol(symbol: symbolKey, name: symbolName, value: "", tags: nil)
                     
-                    if symbolKey == "USDJPY" || symbolKey == "USDCNY" || symbolKey == "DXY" || symbolKey == "CNYI" || symbolKey == "JPYI" || symbolKey == "CHFI"{
+                    if symbolKey == "USDJPY" || symbolKey == "USDCNY" || symbolKey == "DXY" || symbolKey == "CNYI" || symbolKey == "JPYI" || symbolKey == "CHFI" || symbolKey == "EURI" {
                         importantSymbols.append(symbol)
                     } else {
                         normalSymbols.append(symbol)

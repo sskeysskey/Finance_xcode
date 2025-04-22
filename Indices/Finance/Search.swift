@@ -272,16 +272,33 @@ struct SearchView: View {
     private var searchBar: some View {
         HStack {
             ZStack(alignment: .trailing) {
-                TextField("请输入要搜索的关键字", text: $searchText, onEditingChanged: { isEditing in
-                    withAnimation {
-                        showSearchHistory = isEditing && searchText.isEmpty
-                        if isEditing && searchText.isEmpty {
-                            groupedSearchResults = []
+                TextField(
+                    "请输入要搜索的关键字",
+                    text: $searchText,
+                    onEditingChanged: { isEditing in
+                        withAnimation {
+                            // 控制搜索历史的展示
+                            showSearchHistory = isEditing && searchText.isEmpty
+                            if isEditing && searchText.isEmpty {
+                                groupedSearchResults = []
+                            }
                         }
+                        // 当开始编辑且文本为空时，读取剪贴板并展示小条
+                        if isEditing && searchText.isEmpty {
+                            if let content = UIPasteboard.general.string?
+                                .trimmingCharacters(in: .whitespacesAndNewlines),
+                               !content.isEmpty {
+                                clipboardContent = content
+                                withAnimation {
+                                    showClipboardBar = true
+                                }
+                            }
+                        }
+                    },
+                    onCommit: {
+                        startSearch()
                     }
-                }, onCommit: {
-                    startSearch()
-                })
+                )
                 .focused($isSearchFieldFocused)
                 .padding(10)
                 .padding(.trailing, showClearButton ? 30 : 10)
@@ -295,23 +312,23 @@ struct SearchView: View {
                             groupedSearchResults = []
                         }
                     } else {
-                        // 每当输入变化，隐藏剪贴板小条
+                        // 输入时隐藏剪贴板小条
                         withAnimation { showClipboardBar = false }
                     }
                 }
-                
+
                 if showClearButton {
                     Button(action: {
-                        // 原有逻辑
                         searchText = ""
                         withAnimation {
                             showSearchHistory = true
                             groupedSearchResults = []
                             isSearchFieldFocused = true
                         }
-                        // 新增：读取剪贴板并展示
-                        if let content = UIPasteboard.general.string,
-                           !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        // 点击清除时读取剪贴板
+                        if let content = UIPasteboard.general.string?
+                            .trimmingCharacters(in: .whitespacesAndNewlines),
+                           !content.isEmpty {
                             clipboardContent = content
                             withAnimation {
                                 showClipboardBar = true
@@ -326,7 +343,7 @@ struct SearchView: View {
                     .transition(.opacity)
                 }
             }
-            
+
             Button(action: {
                 startSearch()
                 isSearchFieldFocused = false
