@@ -151,7 +151,7 @@ struct SectorsPanel: Decodable {
                     sectors.append(commoditiesSector)
                 }
             } else if key == "Currencies" {
-                // Currencies 分组特殊处理：添加“重要”子分组，把 USDJPY 和 USDCNY 放到其中
+                // Currencies 分组特殊处理：添加“重要”子分组，把 USDJPY 和 USDCNY 和 DXY 和 CNYI 放到其中
                 var importantSymbols: [IndicesSymbol] = []
                 var normalSymbols: [IndicesSymbol] = []
                 
@@ -160,7 +160,7 @@ struct SectorsPanel: Decodable {
                     let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
                     let symbol = IndicesSymbol(symbol: symbolKey, name: symbolName, value: "", tags: nil)
                     
-                    if symbolKey == "USDJPY" || symbolKey == "USDCNY" || symbolKey == "DXY" {
+                    if symbolKey == "USDJPY" || symbolKey == "USDCNY" || symbolKey == "DXY" || symbolKey == "CNYI" || symbolKey == "JPYI" || symbolKey == "CHFI"{
                         importantSymbols.append(symbol)
                     } else {
                         normalSymbols.append(symbol)
