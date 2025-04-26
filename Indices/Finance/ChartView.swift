@@ -391,6 +391,14 @@ struct ChartView: View {
                                 }
                                 // 绘制价格线
                                 context.stroke(pricePath, with: .color(chartColor), lineWidth: 2)
+                                // —— 在这里加上小黑点 ——
+                                if [.oneMonth, .threeMonths].contains(selectedTimeRange) {
+                                    // renderedPoints 里每个点就是我们事先计算好的 (x,y)
+                                    for pt in renderedPoints {
+                                        let dotRect = CGRect(x: pt.x - 2, y: pt.y - 2, width: 4, height: 4)
+                                        context.fill(Path(ellipseIn: dotRect), with: .color(.black))
+                                    }
+                                }
                             }
                             
                             // 绘制零线 - 当最低值小于 0 时
