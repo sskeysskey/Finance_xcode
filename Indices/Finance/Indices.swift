@@ -119,7 +119,7 @@ struct SectorsPanel: Decodable {
                 )
                 sectors.append(economicsSector)
             } else if key == "Commodities" {
-                // Commodities 分组特殊处理：添加“重要”子分组，把 CrudeOil 和 HuangJin 放到其中
+                // Commodities 分组特殊处理：添加“重要”子分组，把 CrudeOil 和 Huangjin 放到其中
                 var importantSymbols: [IndicesSymbol] = []
                 var normalSymbols: [IndicesSymbol] = []
                 
@@ -128,7 +128,7 @@ struct SectorsPanel: Decodable {
                     let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
                     let symbol = IndicesSymbol(symbol: symbolKey, name: symbolName, value: "", tags: nil)
                     
-                    if symbolKey == "CrudeOil" || symbolKey == "HuangJin" {
+                    if symbolKey == "CrudeOil" || symbolKey == "Huangjin" {
                         importantSymbols.append(symbol)
                     } else {
                         normalSymbols.append(symbol)

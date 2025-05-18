@@ -235,32 +235,33 @@ struct CompareView: View {
     }
     
     func formatSymbol(_ symbol: String) -> String {
-        // 尝试加载 JSON 文件
+        // 1. 将输入的 symbol 转换为全大写，用于不区分大小写的比较
+        let uppercasedInputSymbol = symbol.uppercased()
+        
+        // 2. 尝试加载 JSON 文件
         guard let url = Bundle.main.url(forResource: "Sectors_All", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let sectorData = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: [String]] else {
+            // 如果 JSON 文件加载失败，或者格式不正确，则返回原始输入的 symbol
             return symbol
         }
         
-        // 遍历 JSON 中的所有 symbol 列表
+        // 3. 遍历 JSON 数据中的所有 symbol 列表
         for (_, symbolList) in sectorData {
-            // 如果输入的 symbol 与列表中的某个直接匹配，则直接返回
-            if symbolList.contains(symbol) {
-                return symbol
-            }
-            // 尝试将 symbol 全部转为大写匹配
-            let upperSymbol = symbol.uppercased()
-            if symbolList.contains(upperSymbol) {
-                return upperSymbol
-            }
-            // 尝试首字母大写匹配
-            let capitalizedSymbol = symbol.capitalized
-            if symbolList.contains(capitalizedSymbol) {
-                return capitalizedSymbol
+            // 4. 遍历当前列表中的每一个原始 JSON symbol
+            for originalJsonSymbol in symbolList {
+                // 5. 将 JSON 中的 symbol 也转换为全大写进行比较
+                let uppercasedJsonSymbol = originalJsonSymbol.uppercased()
+
+                // 6. 如果转换后的大写输入 symbol 与转换后的大写 JSON symbol 完全匹配
+                if uppercasedInputSymbol == uppercasedJsonSymbol {
+                    // 7. 匹配成功，返回在 JSON 文件中具有原始大小写格式的 symbol
+                    return originalJsonSymbol
+                }
             }
         }
         
-        // 如果都没有匹配，则返回原始字符串
+        // 8. 如果遍历完所有 JSON 数据都没有找到匹配项，则返回原始输入的 symbol
         return symbol
     }
     
@@ -290,8 +291,8 @@ struct CompareView: View {
             return
         }
         
-        // 使用 formatSymbol 函数格式化所有 symbol，
-        // 同时支持数据库中所有大写和首字母大写两种格式
+        // 使用修改后的 formatSymbol 函数格式化所有 symbol
+        // 这将确保如果找到匹配项，则使用 JSON 中的原始大小写格式
         symbols = trimmedSymbols.map { formatSymbol($0) }
         
         navigateToComparison = true
