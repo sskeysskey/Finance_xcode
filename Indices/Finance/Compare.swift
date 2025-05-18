@@ -214,7 +214,8 @@ struct CompareView: View {
                 if initialSymbol.isEmpty {
                     symbols.append("")
                 } else {
-                    symbols.append(shouldUppercase ? initialSymbol.uppercased() : initialSymbol)
+                    // 直接使用 initialSymbol，保持其原始大小写
+                                symbols.append(initialSymbol)
                 }
                 symbols.append("")
                 
