@@ -2,10 +2,16 @@ import Foundation
 import LocalAuthentication
 import Security
 import SwiftUI
+import Combine
 
 struct Credentials: Codable {
     let username: String
     let password: String
+}
+
+final class SessionStore: ObservableObject {
+    @Published var isLoggedIn: Bool = false
+    @Published var username: String = ""
 }
 
 //—————————————————————————————

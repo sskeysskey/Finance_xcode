@@ -59,9 +59,10 @@ struct MyView: View {
                                 .padding(.bottom, 8)    // Space between header and its items
                         ) {
                             NavigationLinkRow(title: "账户设定", destination: Text("账户设定页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
-                            NavigationLinkRow(title: "存款 / 提款", destination: Text("存款 / 提款页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
-                            NavigationLinkRow(title: "转户至第一证券", destination: Text("转户至第一证券页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
-                            NavigationLinkRow(title: "开新账户", destination: Text("开新账户页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                                // THIS IS THE LINE TO CHANGE:
+                                NavigationLinkRow(title: "存款 / 提款", destination: DepositWithdrawView(), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                                NavigationLinkRow(title: "转户至第一证券", destination: Text("转户至第一证券页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                                NavigationLinkRow(title: "开新账户", destination: Text("开新账户页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
                         }
                         .listRowSeparator(.hidden, edges: .top) // Hide separator above the first section's content
                         .listRowSeparatorTint(secondaryTextColor.opacity(0.3)) // Style for separators within section
