@@ -7,87 +7,69 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A36A5D462CFF47F800FE9AB4 /* Sectors_All.json in Resources */ = {isa = PBXBuildFile; fileRef = A36A5D452CFF47F800FE9AB4 /* Sectors_All.json */; };
-		A36A5DA62CFF62FA00FE9AB4 /* CompareStock.txt in Resources */ = {isa = PBXBuildFile; fileRef = A36A5DA52CFF62FA00FE9AB4 /* CompareStock.txt */; };
-		A36A5DA82CFF630900FE9AB4 /* CompareETFs.txt in Resources */ = {isa = PBXBuildFile; fileRef = A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */; };
-		A3B0B6F42D964C1A00C2E7BA /* DGCharts in Frameworks */ = {isa = PBXBuildFile; productRef = A3B0B6F32D964C1A00C2E7BA /* DGCharts */; };
-		A3B8865C2D7F1235000C707B /* Earnings_Release_new.txt in Resources */ = {isa = PBXBuildFile; fileRef = A3B8865B2D7F1235000C707B /* Earnings_Release_new.txt */; };
-		A3BF5AB52CFCA9F100F7578C /* Finance.db in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5AB42CFCA9F100F7578C /* Finance.db */; };
-		A3BF5AB72CFCAA0C00F7578C /* description.json in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5AB62CFCAA0C00F7578C /* description.json */; };
-		A3BF5AB92CFCAA2500F7578C /* Compare_All.txt in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5AB82CFCAA2500F7578C /* Compare_All.txt */; };
-		A3BF5ABB2CFCAA5300F7578C /* marketcap_pe.txt in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5ABA2CFCAA5300F7578C /* marketcap_pe.txt */; };
-		A3BF5ABD2CFCAA9500F7578C /* Sectors_panel.json in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5ABC2CFCAA9500F7578C /* Sectors_panel.json */; };
-		A3DE55B72D1D459A0073BEB2 /* tags_weight.json in Resources */ = {isa = PBXBuildFile; fileRef = A3DE55B62D1D459A0073BEB2 /* tags_weight.json */; };
+		A3B0A5A42DDED66000112373 /* Password.json in Resources */ = {isa = PBXBuildFile; fileRef = A3B0A5A32DDED66000112373 /* Password.json */; };
+		A3B0A5A62DDEDD2F00112373 /* Firstrade.db in Resources */ = {isa = PBXBuildFile; fileRef = A3B0A5A52DDEDD2F00112373 /* Firstrade.db */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		A3BF5A8C2CFCA71100F7578C /* PBXContainerItemProxy */ = {
+		A3B0A5842DDED5C600112373 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
-			containerPortal = A3BF5A732CFCA71000F7578C /* Project object */;
+			containerPortal = A3B0A56E2DDED5C500112373 /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = A3BF5A7A2CFCA71000F7578C;
-			remoteInfo = Indices;
+			remoteGlobalIDString = A3B0A5752DDED5C500112373;
+			remoteInfo = Firstrade;
 		};
-		A3BF5A962CFCA71100F7578C /* PBXContainerItemProxy */ = {
+		A3B0A58E2DDED5C600112373 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
-			containerPortal = A3BF5A732CFCA71000F7578C /* Project object */;
+			containerPortal = A3B0A56E2DDED5C500112373 /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = A3BF5A7A2CFCA71000F7578C;
-			remoteInfo = Indices;
+			remoteGlobalIDString = A3B0A5752DDED5C500112373;
+			remoteInfo = Firstrade;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		A36A5D452CFF47F800FE9AB4 /* Sectors_All.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = Sectors_All.json; path = ../../Financial_System/Modules/Sectors_All.json; sourceTree = "<group>"; };
-		A36A5DA52CFF62FA00FE9AB4 /* CompareStock.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = CompareStock.txt; path = ../../News/CompareStock.txt; sourceTree = "<group>"; };
-		A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = CompareETFs.txt; path = ../../News/CompareETFs.txt; sourceTree = "<group>"; };
-		A3B8865B2D7F1235000C707B /* Earnings_Release_new.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = Earnings_Release_new.txt; path = ../../News/Earnings_Release_new.txt; sourceTree = "<group>"; };
-		A3BF5A7B2CFCA71000F7578C /* Finance.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Finance.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		A3BF5A8B2CFCA71100F7578C /* FinanceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FinanceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A3BF5A952CFCA71100F7578C /* FinanceUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FinanceUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A3BF5AB42CFCA9F100F7578C /* Finance.db */ = {isa = PBXFileReference; lastKnownFileType = file; name = Finance.db; path = ../../Database/Finance.db; sourceTree = "<group>"; };
-		A3BF5AB62CFCAA0C00F7578C /* description.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = description.json; path = ../../Financial_System/Modules/description.json; sourceTree = "<group>"; };
-		A3BF5AB82CFCAA2500F7578C /* Compare_All.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = Compare_All.txt; path = ../../News/backup/Compare_All.txt; sourceTree = "<group>"; };
-		A3BF5ABA2CFCAA5300F7578C /* marketcap_pe.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = marketcap_pe.txt; path = ../../News/backup/marketcap_pe.txt; sourceTree = "<group>"; };
-		A3BF5ABC2CFCAA9500F7578C /* Sectors_panel.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = Sectors_panel.json; path = ../../Financial_System/Modules/Sectors_panel.json; sourceTree = "<group>"; };
-		A3DE55B62D1D459A0073BEB2 /* tags_weight.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = tags_weight.json; path = ../../Financial_System/Modules/tags_weight.json; sourceTree = "<group>"; };
+		A3B0A5762DDED5C500112373 /* Firstrade.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Firstrade.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A3B0A5832DDED5C600112373 /* FirstradeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FirstradeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A3B0A58D2DDED5C600112373 /* FirstradeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FirstradeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A3B0A5A32DDED66000112373 /* Password.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = Password.json; path = ../../Financial_System/Modules/Password.json; sourceTree = "<group>"; };
+		A3B0A5A52DDEDD2F00112373 /* Firstrade.db */ = {isa = PBXFileReference; lastKnownFileType = file; name = Firstrade.db; path = ../../Database/Firstrade.db; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		A3BF5A7D2CFCA71000F7578C /* Finance */ = {
+		A3B0A5782DDED5C500112373 /* Firstrade */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = Finance;
+			path = Firstrade;
 			sourceTree = "<group>";
 		};
-		A3BF5A8E2CFCA71100F7578C /* FinanceTests */ = {
+		A3B0A5862DDED5C600112373 /* FirstradeTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = FinanceTests;
+			path = FirstradeTests;
 			sourceTree = "<group>";
 		};
-		A3BF5A982CFCA71100F7578C /* FinanceUITests */ = {
+		A3B0A5902DDED5C600112373 /* FirstradeUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = FinanceUITests;
+			path = FirstradeUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		A3BF5A782CFCA71000F7578C /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				A3B0B6F42D964C1A00C2E7BA /* DGCharts in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		A3BF5A882CFCA71100F7578C /* Frameworks */ = {
+		A3B0A5732DDED5C500112373 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A3BF5A922CFCA71100F7578C /* Frameworks */ = {
+		A3B0A5802DDED5C600112373 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A3B0A58A2DDED5C600112373 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -97,189 +79,165 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A3BF5A722CFCA71000F7578C = {
+		A3B0A56D2DDED5C500112373 = {
 			isa = PBXGroup;
 			children = (
-				A3B8865B2D7F1235000C707B /* Earnings_Release_new.txt */,
-				A3DE55B62D1D459A0073BEB2 /* tags_weight.json */,
-				A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */,
-				A36A5DA52CFF62FA00FE9AB4 /* CompareStock.txt */,
-				A36A5D452CFF47F800FE9AB4 /* Sectors_All.json */,
-				A3BF5ABC2CFCAA9500F7578C /* Sectors_panel.json */,
-				A3BF5ABA2CFCAA5300F7578C /* marketcap_pe.txt */,
-				A3BF5AB82CFCAA2500F7578C /* Compare_All.txt */,
-				A3BF5AB62CFCAA0C00F7578C /* description.json */,
-				A3BF5AB42CFCA9F100F7578C /* Finance.db */,
-				A3BF5A7D2CFCA71000F7578C /* Finance */,
-				A3BF5A8E2CFCA71100F7578C /* FinanceTests */,
-				A3BF5A982CFCA71100F7578C /* FinanceUITests */,
-				A3FEEA992CFF1B2200F151D7 /* Frameworks */,
-				A3BF5A7C2CFCA71000F7578C /* Products */,
+				A3B0A5A52DDEDD2F00112373 /* Firstrade.db */,
+				A3B0A5A32DDED66000112373 /* Password.json */,
+				A3B0A5782DDED5C500112373 /* Firstrade */,
+				A3B0A5862DDED5C600112373 /* FirstradeTests */,
+				A3B0A5902DDED5C600112373 /* FirstradeUITests */,
+				A3B0A5772DDED5C500112373 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		A3BF5A7C2CFCA71000F7578C /* Products */ = {
+		A3B0A5772DDED5C500112373 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A3BF5A7B2CFCA71000F7578C /* Finance.app */,
-				A3BF5A8B2CFCA71100F7578C /* FinanceTests.xctest */,
-				A3BF5A952CFCA71100F7578C /* FinanceUITests.xctest */,
+				A3B0A5762DDED5C500112373 /* Firstrade.app */,
+				A3B0A5832DDED5C600112373 /* FirstradeTests.xctest */,
+				A3B0A58D2DDED5C600112373 /* FirstradeUITests.xctest */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		A3FEEA992CFF1B2200F151D7 /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A3BF5A7A2CFCA71000F7578C /* Finance */ = {
+		A3B0A5752DDED5C500112373 /* Firstrade */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A3BF5A9F2CFCA71100F7578C /* Build configuration list for PBXNativeTarget "Finance" */;
+			buildConfigurationList = A3B0A5972DDED5C600112373 /* Build configuration list for PBXNativeTarget "Firstrade" */;
 			buildPhases = (
-				A3BF5A772CFCA71000F7578C /* Sources */,
-				A3BF5A782CFCA71000F7578C /* Frameworks */,
-				A3BF5A792CFCA71000F7578C /* Resources */,
+				A3B0A5722DDED5C500112373 /* Sources */,
+				A3B0A5732DDED5C500112373 /* Frameworks */,
+				A3B0A5742DDED5C500112373 /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A3B0A5F82DDEE27200112373 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				A3BF5A7D2CFCA71000F7578C /* Finance */,
+				A3B0A5782DDED5C500112373 /* Firstrade */,
 			);
-			name = Finance;
+			name = Firstrade;
 			packageProductDependencies = (
-				A3B0B6F32D964C1A00C2E7BA /* DGCharts */,
 			);
-			productName = Indices;
-			productReference = A3BF5A7B2CFCA71000F7578C /* Finance.app */;
+			productName = Firstrade;
+			productReference = A3B0A5762DDED5C500112373 /* Firstrade.app */;
 			productType = "com.apple.product-type.application";
 		};
-		A3BF5A8A2CFCA71100F7578C /* FinanceTests */ = {
+		A3B0A5822DDED5C600112373 /* FirstradeTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A3BF5AA22CFCA71100F7578C /* Build configuration list for PBXNativeTarget "FinanceTests" */;
+			buildConfigurationList = A3B0A59A2DDED5C600112373 /* Build configuration list for PBXNativeTarget "FirstradeTests" */;
 			buildPhases = (
-				A3BF5A872CFCA71100F7578C /* Sources */,
-				A3BF5A882CFCA71100F7578C /* Frameworks */,
-				A3BF5A892CFCA71100F7578C /* Resources */,
+				A3B0A57F2DDED5C600112373 /* Sources */,
+				A3B0A5802DDED5C600112373 /* Frameworks */,
+				A3B0A5812DDED5C600112373 /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				A3BF5A8D2CFCA71100F7578C /* PBXTargetDependency */,
+				A3B0A5852DDED5C600112373 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				A3BF5A8E2CFCA71100F7578C /* FinanceTests */,
+				A3B0A5862DDED5C600112373 /* FirstradeTests */,
 			);
-			name = FinanceTests;
+			name = FirstradeTests;
 			packageProductDependencies = (
 			);
-			productName = IndicesTests;
-			productReference = A3BF5A8B2CFCA71100F7578C /* FinanceTests.xctest */;
+			productName = FirstradeTests;
+			productReference = A3B0A5832DDED5C600112373 /* FirstradeTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		A3BF5A942CFCA71100F7578C /* FinanceUITests */ = {
+		A3B0A58C2DDED5C600112373 /* FirstradeUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A3BF5AA52CFCA71100F7578C /* Build configuration list for PBXNativeTarget "FinanceUITests" */;
+			buildConfigurationList = A3B0A59D2DDED5C600112373 /* Build configuration list for PBXNativeTarget "FirstradeUITests" */;
 			buildPhases = (
-				A3BF5A912CFCA71100F7578C /* Sources */,
-				A3BF5A922CFCA71100F7578C /* Frameworks */,
-				A3BF5A932CFCA71100F7578C /* Resources */,
+				A3B0A5892DDED5C600112373 /* Sources */,
+				A3B0A58A2DDED5C600112373 /* Frameworks */,
+				A3B0A58B2DDED5C600112373 /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				A3BF5A972CFCA71100F7578C /* PBXTargetDependency */,
+				A3B0A58F2DDED5C600112373 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				A3BF5A982CFCA71100F7578C /* FinanceUITests */,
+				A3B0A5902DDED5C600112373 /* FirstradeUITests */,
 			);
-			name = FinanceUITests;
+			name = FirstradeUITests;
 			packageProductDependencies = (
 			);
-			productName = IndicesUITests;
-			productReference = A3BF5A952CFCA71100F7578C /* FinanceUITests.xctest */;
+			productName = FirstradeUITests;
+			productReference = A3B0A58D2DDED5C600112373 /* FirstradeUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		A3BF5A732CFCA71000F7578C /* Project object */ = {
+		A3B0A56E2DDED5C500112373 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1610;
+				LastSwiftUpdateCheck = 1630;
 				LastUpgradeCheck = 1630;
 				TargetAttributes = {
-					A3BF5A7A2CFCA71000F7578C = {
-						CreatedOnToolsVersion = 16.1;
+					A3B0A5752DDED5C500112373 = {
+						CreatedOnToolsVersion = 16.3;
 					};
-					A3BF5A8A2CFCA71100F7578C = {
-						CreatedOnToolsVersion = 16.1;
-						TestTargetID = A3BF5A7A2CFCA71000F7578C;
+					A3B0A5822DDED5C600112373 = {
+						CreatedOnToolsVersion = 16.3;
+						TestTargetID = A3B0A5752DDED5C500112373;
 					};
-					A3BF5A942CFCA71100F7578C = {
-						CreatedOnToolsVersion = 16.1;
-						TestTargetID = A3BF5A7A2CFCA71000F7578C;
+					A3B0A58C2DDED5C600112373 = {
+						CreatedOnToolsVersion = 16.3;
+						TestTargetID = A3B0A5752DDED5C500112373;
 					};
 				};
 			};
-			buildConfigurationList = A3BF5A762CFCA71000F7578C /* Build configuration list for PBXProject "Finance" */;
+			buildConfigurationList = A3B0A5712DDED5C500112373 /* Build configuration list for PBXProject "Firstrade" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
 			);
-			mainGroup = A3BF5A722CFCA71000F7578C;
+			mainGroup = A3B0A56D2DDED5C500112373;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A3B0B6F22D964AE200C2E7BA /* XCRemoteSwiftPackageReference "Charts" */,
+				A3B0A5F62DDEE1CB00112373 /* XCRemoteSwiftPackageReference "SQLite.swift" */,
 			);
 			preferredProjectObjectVersion = 77;
-			productRefGroup = A3BF5A7C2CFCA71000F7578C /* Products */;
+			productRefGroup = A3B0A5772DDED5C500112373 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				A3BF5A7A2CFCA71000F7578C /* Finance */,
-				A3BF5A8A2CFCA71100F7578C /* FinanceTests */,
-				A3BF5A942CFCA71100F7578C /* FinanceUITests */,
+				A3B0A5752DDED5C500112373 /* Firstrade */,
+				A3B0A5822DDED5C600112373 /* FirstradeTests */,
+				A3B0A58C2DDED5C600112373 /* FirstradeUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A3BF5A792CFCA71000F7578C /* Resources */ = {
+		A3B0A5742DDED5C500112373 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A3B8865C2D7F1235000C707B /* Earnings_Release_new.txt in Resources */,
-				A3DE55B72D1D459A0073BEB2 /* tags_weight.json in Resources */,
-				A36A5DA82CFF630900FE9AB4 /* CompareETFs.txt in Resources */,
-				A36A5DA62CFF62FA00FE9AB4 /* CompareStock.txt in Resources */,
-				A36A5D462CFF47F800FE9AB4 /* Sectors_All.json in Resources */,
-				A3BF5ABD2CFCAA9500F7578C /* Sectors_panel.json in Resources */,
-				A3BF5ABB2CFCAA5300F7578C /* marketcap_pe.txt in Resources */,
-				A3BF5AB92CFCAA2500F7578C /* Compare_All.txt in Resources */,
-				A3BF5AB72CFCAA0C00F7578C /* description.json in Resources */,
-				A3BF5AB52CFCA9F100F7578C /* Finance.db in Resources */,
+				A3B0A5A62DDEDD2F00112373 /* Firstrade.db in Resources */,
+				A3B0A5A42DDED66000112373 /* Password.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A3BF5A892CFCA71100F7578C /* Resources */ = {
+		A3B0A5812DDED5C600112373 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A3BF5A932CFCA71100F7578C /* Resources */ = {
+		A3B0A58B2DDED5C600112373 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -289,21 +247,21 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A3BF5A772CFCA71000F7578C /* Sources */ = {
+		A3B0A5722DDED5C500112373 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A3BF5A872CFCA71100F7578C /* Sources */ = {
+		A3B0A57F2DDED5C600112373 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		A3BF5A912CFCA71100F7578C /* Sources */ = {
+		A3B0A5892DDED5C600112373 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -313,20 +271,24 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		A3BF5A8D2CFCA71100F7578C /* PBXTargetDependency */ = {
+		A3B0A5852DDED5C600112373 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = A3BF5A7A2CFCA71000F7578C /* Finance */;
-			targetProxy = A3BF5A8C2CFCA71100F7578C /* PBXContainerItemProxy */;
+			target = A3B0A5752DDED5C500112373 /* Firstrade */;
+			targetProxy = A3B0A5842DDED5C600112373 /* PBXContainerItemProxy */;
 		};
-		A3BF5A972CFCA71100F7578C /* PBXTargetDependency */ = {
+		A3B0A58F2DDED5C600112373 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = A3BF5A7A2CFCA71000F7578C /* Finance */;
-			targetProxy = A3BF5A962CFCA71100F7578C /* PBXContainerItemProxy */;
+			target = A3B0A5752DDED5C500112373 /* Firstrade */;
+			targetProxy = A3B0A58E2DDED5C600112373 /* PBXContainerItemProxy */;
+		};
+		A3B0A5F82DDEE27200112373 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = A3B0A5F72DDEE27200112373 /* SQLite */;
 		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		A3BF5A9D2CFCA71100F7578C /* Debug */ = {
+		A3B0A5952DDED5C600112373 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -379,7 +341,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -390,7 +352,7 @@
 			};
 			name = Debug;
 		};
-		A3BF5A9E2CFCA71100F7578C /* Release */ = {
+		A3B0A5962DDED5C600112373 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -437,7 +399,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -447,15 +409,14 @@
 			};
 			name = Release;
 		};
-		A3BF5AA02CFCA71100F7578C /* Debug */ = {
+		A3B0A5982DDED5C600112373 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_ASSET_PATHS = "\"Finance/Preview Content\"";
+				DEVELOPMENT_TEAM = X9B2ZJZ4H7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -468,7 +429,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = zhangyan.Indices;
+				PRODUCT_BUNDLE_IDENTIFIER = zhangyan.Firstrade;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -476,15 +437,14 @@
 			};
 			name = Debug;
 		};
-		A3BF5AA12CFCA71100F7578C /* Release */ = {
+		A3B0A5992DDED5C600112373 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_ASSET_PATHS = "\"Finance/Preview Content\"";
+				DEVELOPMENT_TEAM = X9B2ZJZ4H7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -497,7 +457,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = zhangyan.Indices;
+				PRODUCT_BUNDLE_IDENTIFIER = zhangyan.Firstrade;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -505,109 +465,113 @@
 			};
 			name = Release;
 		};
-		A3BF5AA32CFCA71100F7578C /* Debug */ = {
+		A3B0A59B2DDED5C600112373 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = X9B2ZJZ4H7;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = zhangyan.IndicesTests;
+				PRODUCT_BUNDLE_IDENTIFIER = zhangyan.FirstradeTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Finance.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Finance";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Firstrade.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Firstrade";
 			};
 			name = Debug;
 		};
-		A3BF5AA42CFCA71100F7578C /* Release */ = {
+		A3B0A59C2DDED5C600112373 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = X9B2ZJZ4H7;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = zhangyan.IndicesTests;
+				PRODUCT_BUNDLE_IDENTIFIER = zhangyan.FirstradeTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Finance.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Finance";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Firstrade.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Firstrade";
 			};
 			name = Release;
 		};
-		A3BF5AA62CFCA71100F7578C /* Debug */ = {
+		A3B0A59E2DDED5C600112373 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = X9B2ZJZ4H7;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = zhangyan.IndicesUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = zhangyan.FirstradeUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = Indices;
+				TEST_TARGET_NAME = Firstrade;
 			};
 			name = Debug;
 		};
-		A3BF5AA72CFCA71100F7578C /* Release */ = {
+		A3B0A59F2DDED5C600112373 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = X9B2ZJZ4H7;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = zhangyan.IndicesUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = zhangyan.FirstradeUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_TARGET_NAME = Indices;
+				TEST_TARGET_NAME = Firstrade;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A3BF5A762CFCA71000F7578C /* Build configuration list for PBXProject "Finance" */ = {
+		A3B0A5712DDED5C500112373 /* Build configuration list for PBXProject "Firstrade" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A3BF5A9D2CFCA71100F7578C /* Debug */,
-				A3BF5A9E2CFCA71100F7578C /* Release */,
+				A3B0A5952DDED5C600112373 /* Debug */,
+				A3B0A5962DDED5C600112373 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A3BF5A9F2CFCA71100F7578C /* Build configuration list for PBXNativeTarget "Finance" */ = {
+		A3B0A5972DDED5C600112373 /* Build configuration list for PBXNativeTarget "Firstrade" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A3BF5AA02CFCA71100F7578C /* Debug */,
-				A3BF5AA12CFCA71100F7578C /* Release */,
+				A3B0A5982DDED5C600112373 /* Debug */,
+				A3B0A5992DDED5C600112373 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A3BF5AA22CFCA71100F7578C /* Build configuration list for PBXNativeTarget "FinanceTests" */ = {
+		A3B0A59A2DDED5C600112373 /* Build configuration list for PBXNativeTarget "FirstradeTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A3BF5AA32CFCA71100F7578C /* Debug */,
-				A3BF5AA42CFCA71100F7578C /* Release */,
+				A3B0A59B2DDED5C600112373 /* Debug */,
+				A3B0A59C2DDED5C600112373 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A3BF5AA52CFCA71100F7578C /* Build configuration list for PBXNativeTarget "FinanceUITests" */ = {
+		A3B0A59D2DDED5C600112373 /* Build configuration list for PBXNativeTarget "FirstradeUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A3BF5AA62CFCA71100F7578C /* Debug */,
-				A3BF5AA72CFCA71100F7578C /* Release */,
+				A3B0A59E2DDED5C600112373 /* Debug */,
+				A3B0A59F2DDED5C600112373 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -615,23 +579,23 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		A3B0B6F22D964AE200C2E7BA /* XCRemoteSwiftPackageReference "Charts" */ = {
+		A3B0A5F62DDEE1CB00112373 /* XCRemoteSwiftPackageReference "SQLite.swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/danielgindi/Charts.git";
+			repositoryURL = "https://github.com/stephencelis/SQLite.swift.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 5.1.0;
+				minimumVersion = 0.15.3;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		A3B0B6F32D964C1A00C2E7BA /* DGCharts */ = {
+		A3B0A5F72DDEE27200112373 /* SQLite */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = A3B0B6F22D964AE200C2E7BA /* XCRemoteSwiftPackageReference "Charts" */;
-			productName = DGCharts;
+			package = A3B0A5F62DDEE1CB00112373 /* XCRemoteSwiftPackageReference "SQLite.swift" */;
+			productName = SQLite;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
-	rootObject = A3BF5A732CFCA71000F7578C /* Project object */;
+	rootObject = A3B0A56E2DDED5C500112373 /* Project object */;
 }
