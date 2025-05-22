@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import LocalAuthentication   // ← 新增
 import Security
 
 struct Credentials: Codable {
@@ -63,11 +64,11 @@ struct LoginView: View {
     @State private var isPasswordPlaceholder: Bool = false
     @State private var actualPassword: String = ""
     @State private var rememberAll: Bool = false
+
     @State private var showingAlert = false
     @State private var alertMessage = ""
     @State private var isLoggedIn = false
 
-    // UserDefaults & Keychain 配置
     private let userKey = "rememberedUsernameKey"
     private let pwdAccount = "rememberedPasswordKey"
     private let keychainService = Bundle.main.bundleIdentifier ?? "com.myapp.login"
@@ -102,13 +103,12 @@ struct LoginView: View {
                         }
                         .padding(.horizontal, 30)
 
-                        // 密码（占位态 vs 输入态）
+                        // 密码 + Face ID 按钮
                         VStack(alignment: .leading, spacing: 5) {
                             Text("密码")
                                 .font(.caption).foregroundColor(.gray)
                             HStack {
                                 if isPasswordPlaceholder {
-                                    // 显示固定 6 个星号
                                     Text("******")
                                         .padding(12)
                                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -118,7 +118,6 @@ struct LoginView: View {
                                         .overlay(RoundedRectangle(cornerRadius: 8)
                                             .stroke(Color.gray.opacity(0.5), lineWidth: 1))
                                         .onTapGesture {
-                                            // 一旦点击，就进入真正的 SecureField
                                             isPasswordPlaceholder = false
                                             passwordInput = ""
                                         }
@@ -131,22 +130,25 @@ struct LoginView: View {
                                         .overlay(RoundedRectangle(cornerRadius: 8)
                                             .stroke(Color.gray.opacity(0.5), lineWidth: 1))
                                 }
-                                Image(systemName: "faceid")
-                                    .foregroundColor(.gray)
-                                    .padding(.trailing, 10)
+
+                                // ← 把 Image 换成 Button
+                                Button(action: authenticateWithBiometrics) {
+                                    Image(systemName: "faceid")
+                                        .font(.system(size: 24))
+                                        .foregroundColor(.gray)
+                                        .padding(.trailing, 10)
+                                }
                             }
                         }
                         .padding(.horizontal, 30)
 
-                        // 合并后的“记住用户名和密码”
                         Toggle(isOn: $rememberAll) {
-                            Text("记住用户名和密码")
+                            Text("记住我的用户名和密码")
                                 .foregroundColor(.white)
                         }
                         .padding(.horizontal, 30)
                         .tint(Color(red: 70/255, green: 130/255, blue: 220/255))
 
-                        // 登录按钮
                         Button(action: login) {
                             Text("登入")
                                 .font(.headline).foregroundColor(.white)
@@ -174,7 +176,9 @@ struct LoginView: View {
                 .navigationTitle("登入")
                 .navigationBarTitleDisplayMode(.inline)
                 .alert(isPresented: $showingAlert) {
-                    Alert(title: Text("提示"), message: Text(alertMessage), dismissButton: .default(Text("好的")))
+                    Alert(title: Text("提示"),
+                          message: Text(alertMessage),
+                          dismissButton: .default(Text("好的")))
                 }
                 .onAppear(perform: loadRemembered)
             }
@@ -182,54 +186,85 @@ struct LoginView: View {
         .accentColor(Color(red: 70/255, green: 130/255, blue: 220/255))
     }
 
-    // MARK: - 载入上次记忆
+    // MARK: ———————— 生物识别认证 ————————
+    private func authenticateWithBiometrics() {
+        let context = LAContext()
+        context.localizedCancelTitle = "取消"
+        var error: NSError?
+        // 1. 检查设备是否支持
+        if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
+            let reason = "使用 Face ID 完成登录"
+            context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
+                                   localizedReason: reason) { success, evalError in
+                DispatchQueue.main.async {
+                    if success {
+                        // 2. 读取 Keychain 密码
+                        guard let pw = KeychainHelper.shared.read(service: keychainService,
+                                                                  account: pwdAccount) else {
+                            alertMessage = "未检测到已保存的密码，请先正常登录并勾选“记住”"
+                            showingAlert = true
+                            return
+                        }
+                        // 填回界面
+                        actualPassword = pw
+                        isPasswordPlaceholder = true
+                        passwordInput = pw
+                        // 3. 自动触发登录
+                        login()
+                    } else {
+                        alertMessage = "认证失败，请手动输入密码"
+                        showingAlert = true
+                    }
+                }
+            }
+        } else {
+            alertMessage = "此设备不支持 Face ID"
+            showingAlert = true
+        }
+    }
+
+    // MARK: ———————— 原有加载/登录流程 ————————
     private func loadRemembered() {
         if let u = UserDefaults.standard.string(forKey: userKey),
            let pw = KeychainHelper.shared.read(service: keychainService, account: pwdAccount) {
             usernameInput = u
             actualPassword = pw
+            passwordInput = pw
             isPasswordPlaceholder = true
             rememberAll = true
         }
     }
 
-    // MARK: - 登录逻辑
     private func login() {
-        // 假定你已有从本地 JSON 解出的正确用户名/密码：
+        // 从 JSON 里加载正确凭证
         guard let stored = loadCredentials() else { return }
-
-        // 取密码：如果还在“占位”状态 => 用 actualPassword，否则用用户在 SecureField 里打的
+        // 如果在“占位”态，则用 actualPassword，否则用用户新输入的 passwordInput
         let attemptPwd = isPasswordPlaceholder ? actualPassword : passwordInput
-
         if usernameInput == stored.username && attemptPwd == stored.password {
-            // 登录成功
             if rememberAll {
-                // 记用户名
                 UserDefaults.standard.set(usernameInput, forKey: userKey)
-                // 记密码
                 KeychainHelper.shared.save(stored.password,
                                            service: keychainService,
                                            account: pwdAccount)
             } else {
-                // 清理
                 UserDefaults.standard.removeObject(forKey: userKey)
-                KeychainHelper.shared.delete(service: keychainService, account: pwdAccount)
+                KeychainHelper.shared.delete(service: keychainService,
+                                             account: pwdAccount)
             }
             isLoggedIn = true
         } else {
             alertMessage = "用户名或密码错误。"
             showingAlert = true
-            // 清空输入，回到“输入”模式
-            passwordInput = ""
             isPasswordPlaceholder = false
+            passwordInput = ""
         }
     }
 
-    // MARK: - 从 JSON 载入“正确”凭证，仅示例
     private func loadCredentials() -> Credentials? {
-        guard let url = Bundle.main.url(forResource: "Password", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let creds = try? JSONDecoder().decode(Credentials.self, from: data)
+        guard
+          let url = Bundle.main.url(forResource: "Password", withExtension: "json"),
+          let data = try? Data(contentsOf: url),
+          let creds = try? JSONDecoder().decode(Credentials.self, from: data)
         else {
             alertMessage = "配置文件丢失或格式错误。"
             showingAlert = true
