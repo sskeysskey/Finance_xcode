@@ -4,12 +4,12 @@ import SQLite3
 import Combine
 
 struct MainTabView: View {
-    let username: String
+    @EnvironmentObject private var session: SessionStore
     @StateObject private var vm = BalanceViewModel()
 
     var body: some View {
         TabView {
-            PortfolioView(username: username, vm: vm)
+            PortfolioView(username: session.username, vm: vm)
                 .tabItem {
                     Image(systemName: "briefcase.fill")
                     Text("持仓")
@@ -33,13 +33,14 @@ struct MainTabView: View {
                     Text("订单现况")
                 }
 
-            Text("我的")
+            MyView()
                 .tabItem {
                     Image(systemName: "person")
                     Text("我的")
                 }
         }
         .accentColor(Color(red: 70/255, green: 130/255, blue: 220/255))
+        .environmentObject(session)
     }
 }
 

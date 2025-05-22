@@ -1,10 +1,20 @@
 import SwiftUI
 
 @main
-struct FristradeAppApp: App { // 确保这里的名字和你的项目名一致
+struct FristradeAppApp: App {
+    // ① 全局状态
+    @StateObject private var session = SessionStore()
+
     var body: some Scene {
         WindowGroup {
-            LoginView() // 或者 ContentView() 如果你没改名
+            // ② 根据登录状态切换
+            if session.isLoggedIn {
+                MainTabView()
+                    .environmentObject(session)
+            } else {
+                LoginView()
+                    .environmentObject(session)
+            }
         }
     }
 }

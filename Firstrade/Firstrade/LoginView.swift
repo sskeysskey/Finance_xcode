@@ -1,7 +1,7 @@
-import SwiftUI
 import Foundation
 import LocalAuthentication
 import Security
+import SwiftUI
 
 struct Credentials: Codable {
     let username: String
@@ -19,27 +19,28 @@ final class KeychainHelper {
         let data = Data(string.utf8)
         delete(service: service, account: account)  // 先删
         let query: [String: Any] = [
-            kSecClass as String:       kSecClassGenericPassword,
+            kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecValueData as String:   data,
+            kSecValueData as String: data,
         ]
         SecItemAdd(query as CFDictionary, nil)
     }
 
     func read(service: String, account: String) -> String? {
         let query: [String: Any] = [
-            kSecClass as String:         kSecClassGenericPassword,
-            kSecAttrService as String:   service,
-            kSecAttrAccount as String:   account,
-            kSecReturnData as String:    kCFBooleanTrue as Any,
-            kSecMatchLimit as String:    kSecMatchLimitOne,
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: kCFBooleanTrue as Any,
+            kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         guard status == errSecSuccess,
-              let data = item as? Data,
-              let str = String(data: data, encoding: .utf8) else {
+            let data = item as? Data,
+            let str = String(data: data, encoding: .utf8)
+        else {
             return nil
         }
         return str
@@ -47,7 +48,7 @@ final class KeychainHelper {
 
     func delete(service: String, account: String) {
         let query: [String: Any] = [
-            kSecClass as String:       kSecClassGenericPassword,
+            kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
@@ -59,6 +60,7 @@ final class KeychainHelper {
 // LoginView.swift
 //—————————————————————————————
 struct LoginView: View {
+    @EnvironmentObject private var session: SessionStore
     @State private var usernameInput: String = ""
     @State private var passwordInput: String = ""
     @State private var isPasswordPlaceholder: Bool = false
@@ -67,7 +69,6 @@ struct LoginView: View {
 
     @State private var showingAlert = false
     @State private var alertMessage = ""
-    @State private var isLoggedIn = false
 
     private let userKey = "rememberedUsernameKey"
     private let pwdAccount = "rememberedPasswordKey"
@@ -75,11 +76,11 @@ struct LoginView: View {
 
     var body: some View {
         NavigationView {
-            if isLoggedIn {
-                MainTabView(username: usernameInput)
+            if session.isLoggedIn {
+                MainTabView()
             } else {
                 ZStack {
-                    Color(red: 25/255, green: 30/255, blue: 39/255)
+                    Color(red: 25 / 255, green: 30 / 255, blue: 39 / 255)
                         .ignoresSafeArea()
                     VStack(spacing: 20) {
                         Spacer().frame(height: 30)
@@ -93,13 +94,14 @@ struct LoginView: View {
                                 .font(.caption).foregroundColor(.gray)
                             TextField("", text: $usernameInput)
                                 .padding(12)
-                                .background(Color(red: 40/255, green: 45/255, blue: 55/255))
+                                .background(Color(red: 40 / 255, green: 45 / 255, blue: 55 / 255))
                                 .foregroundColor(.white)
                                 .cornerRadius(8)
                                 .autocapitalization(.none)
                                 .disableAutocorrection(true)
-                                .overlay(RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.gray.opacity(0.5), lineWidth: 1))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.gray.opacity(0.5), lineWidth: 1))
                         }
                         .padding(.horizontal, 30)
 
@@ -112,11 +114,15 @@ struct LoginView: View {
                                     Text("******")
                                         .padding(12)
                                         .frame(maxWidth: .infinity, alignment: .leading)
-                                        .background(Color(red: 40/255, green: 45/255, blue: 55/255))
+                                        .background(
+                                            Color(red: 40 / 255, green: 45 / 255, blue: 55 / 255)
+                                        )
                                         .foregroundColor(.white.opacity(0.7))
                                         .cornerRadius(8)
-                                        .overlay(RoundedRectangle(cornerRadius: 8)
-                                            .stroke(Color.gray.opacity(0.5), lineWidth: 1))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(Color.gray.opacity(0.5), lineWidth: 1)
+                                        )
                                         .onTapGesture {
                                             isPasswordPlaceholder = false
                                             passwordInput = ""
@@ -124,11 +130,14 @@ struct LoginView: View {
                                 } else {
                                     SecureField("", text: $passwordInput)
                                         .padding(12)
-                                        .background(Color(red: 40/255, green: 45/255, blue: 55/255))
+                                        .background(
+                                            Color(red: 40 / 255, green: 45 / 255, blue: 55 / 255)
+                                        )
                                         .foregroundColor(.white)
                                         .cornerRadius(8)
-                                        .overlay(RoundedRectangle(cornerRadius: 8)
-                                            .stroke(Color.gray.opacity(0.5), lineWidth: 1))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(Color.gray.opacity(0.5), lineWidth: 1))
                                 }
 
                                 // ← 把 Image 换成 Button
@@ -147,13 +156,13 @@ struct LoginView: View {
                                 .foregroundColor(.white)
                         }
                         .padding(.horizontal, 30)
-                        .tint(Color(red: 70/255, green: 130/255, blue: 220/255))
+                        .tint(Color(red: 70 / 255, green: 130 / 255, blue: 220 / 255))
 
                         Button(action: login) {
                             Text("登入")
                                 .font(.headline).foregroundColor(.white)
                                 .frame(maxWidth: .infinity).padding()
-                                .background(Color(red: 70/255, green: 130/255, blue: 220/255))
+                                .background(Color(red: 70 / 255, green: 130 / 255, blue: 220 / 255))
                                 .cornerRadius(8)
                         }
                         .padding(.horizontal, 30)
@@ -164,7 +173,8 @@ struct LoginView: View {
                         }) {
                             Text("忘记登入用户名或密码")
                                 .font(.footnote)
-                                .foregroundColor(Color(red: 70/255, green: 130/255, blue: 220/255))
+                                .foregroundColor(
+                                    Color(red: 70 / 255, green: 130 / 255, blue: 220 / 255))
                         }
 
                         Spacer()
@@ -176,14 +186,20 @@ struct LoginView: View {
                 .navigationTitle("登入")
                 .navigationBarTitleDisplayMode(.inline)
                 .alert(isPresented: $showingAlert) {
+                    Alert(
+                        title: Text("提示"),
+                        message: Text(alertMessage),
+                        dismissButton: .default(Text("好的")))
+                }
+                .onAppear(perform: loadRemembered)
+                .alert(isPresented: $showingAlert) {
                     Alert(title: Text("提示"),
                           message: Text(alertMessage),
                           dismissButton: .default(Text("好的")))
                 }
-                .onAppear(perform: loadRemembered)
             }
         }
-        .accentColor(Color(red: 70/255, green: 130/255, blue: 220/255))
+        .accentColor(Color(red: 70 / 255, green: 130 / 255, blue: 220 / 255))
     }
 
     // MARK: ———————— 生物识别认证 ————————
@@ -194,13 +210,18 @@ struct LoginView: View {
         // 1. 检查设备是否支持
         if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
             let reason = "使用 Face ID 完成登录"
-            context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,
-                                   localizedReason: reason) { success, evalError in
+            context.evaluatePolicy(
+                .deviceOwnerAuthenticationWithBiometrics,
+                localizedReason: reason
+            ) { success, evalError in
                 DispatchQueue.main.async {
                     if success {
                         // 2. 读取 Keychain 密码
-                        guard let pw = KeychainHelper.shared.read(service: keychainService,
-                                                                  account: pwdAccount) else {
+                        guard
+                            let pw = KeychainHelper.shared.read(
+                                service: keychainService,
+                                account: pwdAccount)
+                        else {
                             alertMessage = "未检测到已保存的密码，请先正常登录并勾选“记住”"
                             showingAlert = true
                             return
@@ -226,7 +247,8 @@ struct LoginView: View {
     // MARK: ———————— 原有加载/登录流程 ————————
     private func loadRemembered() {
         if let u = UserDefaults.standard.string(forKey: userKey),
-           let pw = KeychainHelper.shared.read(service: keychainService, account: pwdAccount) {
+            let pw = KeychainHelper.shared.read(service: keychainService, account: pwdAccount)
+        {
             usernameInput = u
             actualPassword = pw
             passwordInput = pw
@@ -241,17 +263,23 @@ struct LoginView: View {
         // 如果在“占位”态，则用 actualPassword，否则用用户新输入的 passwordInput
         let attemptPwd = isPasswordPlaceholder ? actualPassword : passwordInput
         if usernameInput == stored.username && attemptPwd == stored.password {
+            // 记住凭证
             if rememberAll {
                 UserDefaults.standard.set(usernameInput, forKey: userKey)
-                KeychainHelper.shared.save(stored.password,
-                                           service: keychainService,
-                                           account: pwdAccount)
+                KeychainHelper.shared.save(
+                    stored.password,
+                    service: keychainService,
+                    account: pwdAccount)
             } else {
                 UserDefaults.standard.removeObject(forKey: userKey)
-                KeychainHelper.shared.delete(service: keychainService,
-                                             account: pwdAccount)
+                KeychainHelper.shared.delete(
+                    service: keychainService,
+                    account: pwdAccount)
             }
-            isLoggedIn = true
+            // ← 登录成功，写入全局 Session
+            session.username = usernameInput
+            session.isLoggedIn = true
+
         } else {
             alertMessage = "用户名或密码错误。"
             showingAlert = true
@@ -260,11 +288,12 @@ struct LoginView: View {
         }
     }
 
+    // … 生物识别逻辑保持不变，只要最终调用 login() 即可 …
     private func loadCredentials() -> Credentials? {
         guard
-          let url = Bundle.main.url(forResource: "Password", withExtension: "json"),
-          let data = try? Data(contentsOf: url),
-          let creds = try? JSONDecoder().decode(Credentials.self, from: data)
+            let url = Bundle.main.url(forResource: "Password", withExtension: "json"),
+            let data = try? Data(contentsOf: url),
+            let creds = try? JSONDecoder().decode(Credentials.self, from: data)
         else {
             alertMessage = "配置文件丢失或格式错误。"
             showingAlert = true
