@@ -1,79 +1,136 @@
 import SwiftUI
 import Foundation
+import Security
 
 struct Credentials: Codable {
     let username: String
     let password: String
 }
 
+//—————————————————————————————
+// 简易 Keychain Helper
+//—————————————————————————————
+final class KeychainHelper {
+    static let shared = KeychainHelper()
+    private init() {}
+
+    func save(_ string: String, service: String, account: String) {
+        let data = Data(string.utf8)
+        delete(service: service, account: account)  // 先删
+        let query: [String: Any] = [
+            kSecClass as String:       kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String:   data,
+        ]
+        SecItemAdd(query as CFDictionary, nil)
+    }
+
+    func read(service: String, account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String:         kSecClassGenericPassword,
+            kSecAttrService as String:   service,
+            kSecAttrAccount as String:   account,
+            kSecReturnData as String:    kCFBooleanTrue as Any,
+            kSecMatchLimit as String:    kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess,
+              let data = item as? Data,
+              let str = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return str
+    }
+
+    func delete(service: String, account: String) {
+        let query: [String: Any] = [
+            kSecClass as String:       kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+}
+
+//—————————————————————————————
+// LoginView.swift
+//—————————————————————————————
 struct LoginView: View {
-    // @State 属性用于存储用户输入和界面状态
     @State private var usernameInput: String = ""
     @State private var passwordInput: String = ""
-    @State private var rememberUsername: Bool = false
+    @State private var isPasswordPlaceholder: Bool = false
+    @State private var actualPassword: String = ""
+    @State private var rememberAll: Bool = false
     @State private var showingAlert = false
     @State private var alertMessage = ""
-    @State private var isLoggedIn = false // 用于导航到成功页面
+    @State private var isLoggedIn = false
 
-    // UserDefaults key
-    private let rememberedUsernameKey = "rememberedUsernameKey"
+    // UserDefaults & Keychain 配置
+    private let userKey = "rememberedUsernameKey"
+    private let pwdAccount = "rememberedPasswordKey"
+    private let keychainService = Bundle.main.bundleIdentifier ?? "com.myapp.login"
 
     var body: some View {
         NavigationView {
             if isLoggedIn {
-                // 成功登录后显示的视图
                 MainTabView(username: usernameInput)
             } else {
-                // 登录表单
                 ZStack {
-                    // 背景颜色，模仿截图的深色背景
                     Color(red: 25/255, green: 30/255, blue: 39/255)
                         .ignoresSafeArea()
-
                     VStack(spacing: 20) {
-                        Spacer().frame(height: 30) // 顶部留白
-
+                        Spacer().frame(height: 30)
                         Text("Firstrade 欢迎您")
-                            .font(.title2)
-                            .foregroundColor(.white)
-
+                            .font(.title2).foregroundColor(.white)
                         Spacer().frame(height: 30)
 
-                        // 用户名输入框
+                        // 用户名
                         VStack(alignment: .leading, spacing: 5) {
                             Text("登录用户名")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                            TextField("", text: $usernameInput) // Placeholder 由外部 Text 实现
+                                .font(.caption).foregroundColor(.gray)
+                            TextField("", text: $usernameInput)
                                 .padding(12)
                                 .background(Color(red: 40/255, green: 45/255, blue: 55/255))
                                 .foregroundColor(.white)
                                 .cornerRadius(8)
                                 .autocapitalization(.none)
                                 .disableAutocorrection(true)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.gray.opacity(0.5), lineWidth: 1)
-                                )
+                                .overlay(RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.gray.opacity(0.5), lineWidth: 1))
                         }
                         .padding(.horizontal, 30)
 
-                        // 密码输入框
+                        // 密码（占位态 vs 输入态）
                         VStack(alignment: .leading, spacing: 5) {
                             Text("密码")
-                                .font(.caption)
-                                .foregroundColor(.gray)
+                                .font(.caption).foregroundColor(.gray)
                             HStack {
-                                SecureField("", text: $passwordInput) // Placeholder 由外部 Text 实现
-                                    .padding(12)
-                                    .background(Color(red: 40/255, green: 45/255, blue: 55/255))
-                                    .foregroundColor(.white)
-                                    .cornerRadius(8)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(Color.gray.opacity(0.5), lineWidth: 1)
-                                    )
-                                // 仿照图片中的面容ID图标，这里用一个系统图标代替
+                                if isPasswordPlaceholder {
+                                    // 显示固定 6 个星号
+                                    Text("******")
+                                        .padding(12)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(Color(red: 40/255, green: 45/255, blue: 55/255))
+                                        .foregroundColor(.white.opacity(0.7))
+                                        .cornerRadius(8)
+                                        .overlay(RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color.gray.opacity(0.5), lineWidth: 1))
+                                        .onTapGesture {
+                                            // 一旦点击，就进入真正的 SecureField
+                                            isPasswordPlaceholder = false
+                                            passwordInput = ""
+                                        }
+                                } else {
+                                    SecureField("", text: $passwordInput)
+                                        .padding(12)
+                                        .background(Color(red: 40/255, green: 45/255, blue: 55/255))
+                                        .foregroundColor(.white)
+                                        .cornerRadius(8)
+                                        .overlay(RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color.gray.opacity(0.5), lineWidth: 1))
+                                }
                                 Image(systemName: "faceid")
                                     .foregroundColor(.gray)
                                     .padding(.trailing, 10)
@@ -81,175 +138,103 @@ struct LoginView: View {
                         }
                         .padding(.horizontal, 30)
 
-
-                        // 记住用户名
-                        Toggle(isOn: $rememberUsername) {
-                            Text("记住我的用户名")
+                        // 合并后的“记住用户名和密码”
+                        Toggle(isOn: $rememberAll) {
+                            Text("记住用户名和密码")
                                 .foregroundColor(.white)
                         }
                         .padding(.horizontal, 30)
-                        .tint(Color(red: 70/255, green: 130/255, blue: 220/255)) // 设置Toggle的颜色
+                        .tint(Color(red: 70/255, green: 130/255, blue: 220/255))
 
                         // 登录按钮
                         Button(action: login) {
                             Text("登入")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding()
+                                .font(.headline).foregroundColor(.white)
+                                .frame(maxWidth: .infinity).padding()
                                 .background(Color(red: 70/255, green: 130/255, blue: 220/255))
                                 .cornerRadius(8)
                         }
                         .padding(.horizontal, 30)
 
-                        // 忘记密码链接
-                        Button(action: forgotPassword) {
+                        Button(action: {
+                            alertMessage = "“忘记密码”功能尚未实现。"
+                            showingAlert = true
+                        }) {
                             Text("忘记登入用户名或密码")
                                 .font(.footnote)
                                 .foregroundColor(Color(red: 70/255, green: 130/255, blue: 220/255))
                         }
 
-                        Spacer() // 将内容推向顶部
-
+                        Spacer()
                         Text("v3.15.1-3003860")
-                            .font(.caption2)
-                            .foregroundColor(.gray)
+                            .font(.caption2).foregroundColor(.gray)
                             .padding(.bottom, 20)
                     }
                 }
-                .navigationTitle("登入") // 导航栏标题
-                .navigationBarTitleDisplayMode(.inline) // 标题居中
-                .toolbar { // 添加返回按钮 (虽然在根视图可能不直接显示，但结构上是好的)
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button(action: {
-                            // 通常用于返回操作，但在此根登录视图中可能不需要
-                            // 如果这是从其他地方导航过来的，这里可以 dismiss
-                            print("Back button tapped")
-                        }) {
-                            Image(systemName: "chevron.left")
-                                .foregroundColor(Color(red: 70/255, green: 130/255, blue: 220/255))
-                        }
-                    }
+                .navigationTitle("登入")
+                .navigationBarTitleDisplayMode(.inline)
+                .alert(isPresented: $showingAlert) {
+                    Alert(title: Text("提示"), message: Text(alertMessage), dismissButton: .default(Text("好的")))
                 }
-                .alert(isPresented: $showingAlert) { // 登录失败时的弹窗
-                    Alert(title: Text("登录失败"), message: Text(alertMessage), dismissButton: .default(Text("好的")))
-                }
-                .onAppear(perform: loadRememberedUsername) // 视图出现时加载记住的用户名
+                .onAppear(perform: loadRemembered)
             }
         }
-        .accentColor(Color(red: 70/255, green: 130/255, blue: 220/255)) // 设置 NavigationView 的强调色，影响返回按钮等
+        .accentColor(Color(red: 70/255, green: 130/255, blue: 220/255))
     }
 
-    // MARK: - Functions
-
-    func loadCredentials() -> Credentials? {
-        // 从 Bundle 中获取 password.json 文件的 URL
-        guard let url = Bundle.main.url(forResource: "Password", withExtension: "json") else {
-            print("Error: password.json not found.")
-            alertMessage = "配置文件丢失。"
-            showingAlert = true
-            return nil
-        }
-
-        do {
-            // 读取文件数据
-            let data = try Data(contentsOf: url)
-            // 解码 JSON 数据到 Credentials 结构体
-            let decoder = JSONDecoder()
-            let credentials = try decoder.decode(Credentials.self, from: data)
-            return credentials
-        } catch {
-            print("Error decoding password.json: \(error)")
-            alertMessage = "无法读取配置：\(error.localizedDescription)"
-            showingAlert = true
-            return nil
+    // MARK: - 载入上次记忆
+    private func loadRemembered() {
+        if let u = UserDefaults.standard.string(forKey: userKey),
+           let pw = KeychainHelper.shared.read(service: keychainService, account: pwdAccount) {
+            usernameInput = u
+            actualPassword = pw
+            isPasswordPlaceholder = true
+            rememberAll = true
         }
     }
 
-    func login() {
-        guard let storedCredentials = loadCredentials() else {
-            return // 错误已在 loadCredentials 中处理
-        }
+    // MARK: - 登录逻辑
+    private func login() {
+        // 假定你已有从本地 JSON 解出的正确用户名/密码：
+        guard let stored = loadCredentials() else { return }
 
-        // 验证用户名和密码
-        if usernameInput == storedCredentials.username && passwordInput == storedCredentials.password {
-            print("Login successful!")
-            alertMessage = "登录成功！" // 可以不显示，直接导航
-            // showingAlert = true // 如果想显示成功信息
+        // 取密码：如果还在“占位”状态 => 用 actualPassword，否则用用户在 SecureField 里打的
+        let attemptPwd = isPasswordPlaceholder ? actualPassword : passwordInput
 
-            // 处理“记住用户名”
-            if rememberUsername {
-                UserDefaults.standard.set(usernameInput, forKey: rememberedUsernameKey)
+        if usernameInput == stored.username && attemptPwd == stored.password {
+            // 登录成功
+            if rememberAll {
+                // 记用户名
+                UserDefaults.standard.set(usernameInput, forKey: userKey)
+                // 记密码
+                KeychainHelper.shared.save(stored.password,
+                                           service: keychainService,
+                                           account: pwdAccount)
             } else {
-                UserDefaults.standard.removeObject(forKey: rememberedUsernameKey)
+                // 清理
+                UserDefaults.standard.removeObject(forKey: userKey)
+                KeychainHelper.shared.delete(service: keychainService, account: pwdAccount)
             }
-
-            isLoggedIn = true // 触发导航
+            isLoggedIn = true
         } else {
-            print("Login failed: Invalid username or password.")
             alertMessage = "用户名或密码错误。"
             showingAlert = true
-            passwordInput = "" // 清空密码输入框
+            // 清空输入，回到“输入”模式
+            passwordInput = ""
+            isPasswordPlaceholder = false
         }
     }
 
-    func forgotPassword() {
-        print("Forgot password tapped.")
-        alertMessage = "“忘记密码”功能尚未实现。"
-        showingAlert = true
-    }
-
-    func loadRememberedUsername() {
-        if let rememberedUser = UserDefaults.standard.string(forKey: rememberedUsernameKey) {
-            usernameInput = rememberedUser
-            rememberUsername = true // 如果加载了用户名，也应该勾选记住我
+    // MARK: - 从 JSON 载入“正确”凭证，仅示例
+    private func loadCredentials() -> Credentials? {
+        guard let url = Bundle.main.url(forResource: "Password", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let creds = try? JSONDecoder().decode(Credentials.self, from: data)
+        else {
+            alertMessage = "配置文件丢失或格式错误。"
+            showingAlert = true
+            return nil
         }
-    }
-}
-
-// MARK: - Success View (Placeholder)
-// 成功登录后跳转的视图
-struct SuccessView: View {
-    @Environment(\.presentationMode) var presentationMode // 用于返回
-
-    var body: some View {
-        ZStack {
-            Color(red: 25/255, green: 30/255, blue: 39/255)
-                .ignoresSafeArea()
-            VStack {
-                Text("登录成功!")
-                    .font(.largeTitle)
-                    .foregroundColor(.white)
-                Text("欢迎来到 Fristrade!")
-                    .font(.title2)
-                    .foregroundColor(.gray)
-                Spacer().frame(height: 50)
-                Button("登出") {
-                    // 在实际应用中，这里会清除登录状态并返回到LoginView
-                    // 对于这个简单的例子，我们可能需要一种方式来重置 LoginView 的 isLoggedIn 状态
-                    // 但由于 isLoggedIn 是 LoginView 的 @State，直接返回并不能重置它
-                    // 一个更健壮的解决方案会使用 @EnvironmentObject 或其他状态管理技术
-                    // 这里我们简单地关闭这个视图，但它不会自动将 LoginView 的 isLoggedIn 设回 false
-                    // 最好的做法是在 App 主结构体中管理登录状态
-                    print("Logout tapped - this example doesn't fully reset LoginView's state easily.")
-                    // presentationMode.wrappedValue.dismiss() // 这会返回，但 LoginView 仍会认为已登录
-                    // 要真正登出并返回登录页，通常需要更改 App 级别的状态
-                }
-                .padding()
-                .foregroundColor(.white)
-                .background(Color.red)
-                .cornerRadius(8)
-            }
-        }
-        .navigationTitle("主页")
-        .navigationBarBackButtonHidden(true) // 隐藏默认返回按钮，因为我们是在导航栈的顶层
-    }
-}
-
-
-// MARK: - Preview
-struct LoginView_Previews: PreviewProvider {
-    static var previews: some View {
-        LoginView()
+        return creds
     }
 }
