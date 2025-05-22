@@ -123,10 +123,6 @@ struct MyView: View {
     }
 
     private func logout() {
-        // Clear local memory (original logic)
-        // UserDefaults.standard.removeObject(forKey: userKey)
-        // KeychainHelper.shared.delete(service: keychainService, account: pwdAccount)
-        
         // Go back to login page (original logic)
         session.isLoggedIn = false
         session.username = ""
