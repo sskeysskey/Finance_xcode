@@ -27,10 +27,10 @@ struct MainTabView: View {
                     Text("市场")
                 }
 
-            Text("资产")
+            Text("订单现况")
                 .tabItem {
                     Image(systemName: "rectangle.stack")
-                    Text("资产")
+                    Text("订单现况")
                 }
 
             MyView()
@@ -40,7 +40,7 @@ struct MainTabView: View {
                 }
         }
         .accentColor(Color(red: 70/255, green: 130/255, blue: 220/255))
-        .environmentObject(session)
+//        .environmentObject(session)
     }
 }
 
