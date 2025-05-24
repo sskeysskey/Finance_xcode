@@ -5,20 +5,20 @@ struct AssetsView: View {
     @State private var showingDateFilter = false
 
     // 颜色定义
-    private let pageBackgroundColor = Color(red: 25/255, green: 30/255, blue: 39/255)
+    private let pageBackgroundColor = Color(red: 25 / 255, green: 30 / 255, blue: 39 / 255)
     private let textColor = Color.white
     private let secondaryTextColor = Color.gray
-    private let chartLineColor = Color.gray // 曲线颜色
+    private let chartLineColor = Color.gray  // 曲线颜色
     private let positiveReturnColor = Color.green
     private let negativeReturnColor = Color.red
 
     // タブの定義 (新股盈亏は削除)
-    private enum AssetSubTab: String, CaseIterable, Identifiable {
-        case assetAnalysis = "资产分析"
-        case profitLossAnalysis = "盈亏分析"
-        var id: String { self.rawValue }
-    }
-    @State private var selectedSubTab: AssetSubTab = .assetAnalysis
+    // private enum AssetSubTab: String, CaseIterable, Identifiable {
+    //     case assetAnalysis = "资产分析"
+    //     case profitLossAnalysis = "盈亏分析"
+    //     var id: String { self.rawValue }
+    // }
+    // @State private var selectedSubTab: AssetSubTab = .assetAnalysis
 
     // 日付フォーマッタ (グラフのX軸用)
     private let chartDateFormatter: DateFormatter = {
@@ -34,20 +34,20 @@ struct AssetsView: View {
 
                 VStack(spacing: 0) {
                     // 上部タブ (资产分析 / 盈亏分析)
-                    Picker("分析类型", selection: $selectedSubTab) {
-                        ForEach(AssetSubTab.allCases) { tab in
-                            Text(tab.rawValue).tag(tab)
-                        }
-                    }
-                    .pickerStyle(SegmentedPickerStyle())
-                    .padding(.horizontal)
-                    .padding(.top, 10)
-                    .background(pageBackgroundColor) // SegmentedPickerの背景が透明にならないように
-                    .onChange(of: selectedSubTab) { _ in
-                        // 必要に応じてタブ変更時の処理を記述
-                        // 現在はどちらのタブも同じデータを表示するため、特別な処理は不要
-                        print("Selected sub-tab: \(selectedSubTab.rawValue)")
-                    }
+                    // Picker("分析类型", selection: $selectedSubTab) {
+                    //     ForEach(AssetSubTab.allCases) { tab in
+                    //         Text(tab.rawValue).tag(tab)
+                    //     }
+                    // }
+                    // .pickerStyle(SegmentedPickerStyle())
+                    // .padding(.horizontal)
+                    // .padding(.top, 10)
+                    // .background(pageBackgroundColor) // SegmentedPickerの背景が透明にならないように
+                    // .onChange(of: selectedSubTab) { _ in
+                    //     // 必要に応じてタブ変更時の処理を記述
+                    //     // 現在はどちらのタブも同じデータを表示するため、特別な処理は不要
+                    //     print("Selected sub-tab: \(selectedSubTab.rawValue)")
+                    // }
 
                     // 走势分析セクション
                     trendAnalysisControlsSection
@@ -60,11 +60,11 @@ struct AssetsView: View {
                     // 折れ線グラフエリア
                     chartArea
                         .padding(.top, 10)
-                        .padding(.bottom, 5) // X軸ラベルとの間隔
+                        .padding(.bottom, 5)  // X軸ラベルとの間隔
 
                     // グラフのX軸ラベル (開始日と終了日)
                     xAxisLabels
-                        .padding(.horizontal, 25) // グラフの左右マージンに合わせる
+                        .padding(.horizontal, 25)  // グラフの左右マージンに合わせる
 
                     Spacer()
                 }
@@ -162,14 +162,14 @@ struct AssetsView: View {
             )
         }
     }
-    
+
     private var returnSummarySection: some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack {
                 Text("收益率走势")
                     .font(.headline)
                     .foregroundColor(textColor)
-                Image(systemName: "square.and.arrow.up") // デザイン画像のアイコン
+                Image(systemName: "square.and.arrow.up")  // デザイン画像のアイコン
                     .foregroundColor(secondaryTextColor)
                 Spacer()
             }
@@ -180,24 +180,34 @@ struct AssetsView: View {
                     Text("累计收益 · USD")
                         .font(.caption)
                         .foregroundColor(secondaryTextColor)
-                    Text(String(format: "%@%.2f", viewModel.cumulativeReturn >= 0 ? "+" : "", viewModel.cumulativeReturn))
-                        .font(.title2.bold())
-                        .foregroundColor(viewModel.cumulativeReturn >= 0 ? positiveReturnColor : negativeReturnColor)
+                    Text(
+                        String(
+                            format: "%@%.2f", viewModel.cumulativeReturn >= 0 ? "+" : "",
+                            viewModel.cumulativeReturn)
+                    )
+                    .font(.title2.bold())
+                    .foregroundColor(
+                        viewModel.cumulativeReturn >= 0 ? positiveReturnColor : negativeReturnColor)
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 4) {
-                    HStack(spacing: 4) { // デザイン画像のテキストとアイコン
-                        Text("收益率·时间加权")
+                    HStack(spacing: 4) {  // デザイン画像のテキストとアイコン
+                        Text("收益率")
                             .font(.caption)
                             .foregroundColor(secondaryTextColor)
                         // Image(systemName: "chevron.down") // デザイン画像のアイコン、意味が不明瞭なため一旦コメントアウト
                         //    .font(.caption)
                         //    .foregroundColor(secondaryTextColor)
                     }
-                    Text(String(format: "%@%.2f%%", viewModel.returnRate * 100 >= 0 ? "+" : "", viewModel.returnRate * 100))
-                        .font(.title3.bold())
-                        // デザイン画像ではオレンジだが、意味合い的には収益率なので緑/赤
-                        .foregroundColor(viewModel.returnRate >= 0 ? positiveReturnColor : negativeReturnColor)
+                    Text(
+                        String(
+                            format: "%@%.2f%%", viewModel.returnRate * 100 >= 0 ? "+" : "",
+                            viewModel.returnRate * 100)
+                    )
+                    .font(.title3.bold())
+                    // デザイン画像ではオレンジだが、意味合い的には収益率なので緑/赤
+                    .foregroundColor(
+                        viewModel.returnRate >= 0 ? positiveReturnColor : negativeReturnColor)
                 }
             }
             .padding(.horizontal)
@@ -209,7 +219,7 @@ struct AssetsView: View {
             if viewModel.isLoading {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: textColor))
-                    .frame(height: 220) // グラフの高さに合わせる
+                    .frame(height: 220)  // グラフの高さに合わせる
                     .frame(maxWidth: .infinity)
             } else if let errorMsg = viewModel.errorMessage, viewModel.chartData.isEmpty {
                 // データがなく、エラーがある場合のみエラーメッセージを大きく表示
@@ -227,8 +237,8 @@ struct AssetsView: View {
                     axisColor: secondaryTextColor,
                     axisLabelColor: secondaryTextColor
                 )
-                .frame(height: 220) // グラフの高さを指定
-                .padding(.horizontal, 15) // グラフ描画エリアの左右パディング
+                .frame(height: 220)  // グラフの高さを指定
+                .padding(.horizontal, 15)  // グラフ描画エリアの左右パディング
 
                 // グラフの下に軽微なエラーメッセージを表示（データはあるが、一部情報が欠けている場合など）
                 if let errorMsg = viewModel.errorMessage, !viewModel.chartData.isEmpty {
@@ -247,16 +257,17 @@ struct AssetsView: View {
             if let firstDate = viewModel.chartData.first?.date {
                 Text(chartDateFormatter.string(from: firstDate))
             } else {
-                Text("----/--/--") // データがない場合のプレースホルダー
+                Text("----/--/--")  // データがない場合のプレースホルダー
             }
             Spacer()
-            if let lastDate = viewModel.chartData.last?.date, viewModel.chartData.count > 1 { // データが2つ以上ある場合のみ終了日を表示
+            if let lastDate = viewModel.chartData.last?.date, viewModel.chartData.count > 1 {  // データが2つ以上ある場合のみ終了日を表示
                 Text(chartDateFormatter.string(from: lastDate))
-            } else if viewModel.chartData.count == 1, let firstDate = viewModel.chartData.first?.date {
-                 Text(chartDateFormatter.string(from: firstDate)) // データが1つの場合は開始日と同じ
-            }
-            else {
-                Text("----/--/--") // データがない場合のプレースホルダー
+            } else if viewModel.chartData.count == 1,
+                let firstDate = viewModel.chartData.first?.date
+            {
+                Text(chartDateFormatter.string(from: firstDate))  // データが1つの場合は開始日と同じ
+            } else {
+                Text("----/--/--")  // データがない場合のプレースホルダー
             }
         }
         .font(.caption)
@@ -268,6 +279,6 @@ struct AssetsView: View {
 struct AssetsView_Previews: PreviewProvider {
     static var previews: some View {
         AssetsView()
-            .preferredColorScheme(.dark) // ダークモードでプレビュー
+            .preferredColorScheme(.dark)  // ダークモードでプレビュー
     }
 }
