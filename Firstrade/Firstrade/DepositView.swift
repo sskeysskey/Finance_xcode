@@ -300,11 +300,11 @@ struct DepositWithdrawView: View {
             }
             .padding(.horizontal)
             
-            Text("点击转账记录查看详细信息")
-                .font(.system(size: 12)) // Adjusted font
-                .foregroundColor(secondaryTextColor)
-                .padding(.horizontal)
-                .padding(.bottom, 10) // Increased bottom padding
+//            Text("点击转账记录查看详细信息")
+//                .font(.system(size: 12)) // Adjusted font
+//                .foregroundColor(secondaryTextColor)
+//                .padding(.horizontal)
+//                .padding(.bottom, 10) // Increased bottom padding
 
             List {
                 if viewModel.transactions.isEmpty && !viewModel.isLoadingPage && viewModel.databaseError == nil {

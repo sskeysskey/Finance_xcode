@@ -1,6 +1,6 @@
-import SwiftUI
 import Combine
 import SQLite3
+import SwiftUI
 
 // グラフのデータポイント用構造体
 struct DealDataPoint: Identifiable, Equatable {
@@ -28,7 +28,11 @@ class AssetsViewModel: ObservableObject {
     @Published var customStartDate: Date =
         Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @Published var customEndDate: Date = Date()
-    @Published var isFilterActive: Bool = false  // "筛选"ボタンがアクティブかどうか
+    @Published var isFilterActive: Bool = false
+
+    // 追加: 表示用の整形済みカスタム日付文字列
+    @Published var displayCustomStartDateString: String? = nil
+    @Published var displayCustomEndDateString: String? = nil
 
     @Published var chartData: [DealDataPoint] = []
     @Published var cumulativeReturn: Double = 0.0
@@ -41,8 +45,8 @@ class AssetsViewModel: ObservableObject {
     private var db: OpaquePointer?
     private let dbPath: String
 
-    // 日付フォーマッタ
-    private let dbDateFormatter: DateFormatter = {
+    // private から internal に変更 (Viewでフォーマットする場合に備えて。今回はViewModelで整形)
+    internal let dbDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
@@ -107,15 +111,24 @@ class AssetsViewModel: ObservableObject {
     // MARK: - Data Fetching and Processing
     func selectTimeRange(_ range: TimeRangeOption) {
         selectedTimeRange = range
-        // isFilterActive は selectedTimeRange の didSet で処理
+        if range != .custom {
+            isFilterActive = false
+            displayCustomStartDateString = nil  // カスタム日付表示をクリア
+            displayCustomEndDateString = nil  // カスタム日付表示をクリア
+        }
+        // isFilterActive は、カスタムフィルターが適用されたときに applyCustomDateRange で true に設定されます。
+        // 他のボタンが押されたときは、ここで false に設定します。
         fetchDataForSelectedRange()
     }
 
     func applyCustomDateRange(start: Date, end: Date) {
         customStartDate = start
         customEndDate = end
-        selectedTimeRange = .custom  // 内部的にカスタム範囲が選択されたことを示す
-        isFilterActive = true  // フィルターボタンをアクティブにする
+        selectedTimeRange = .custom
+        isFilterActive = true
+        // 整形済み日付文字列を更新
+        displayCustomStartDateString = dbDateFormatter.string(from: start)
+        displayCustomEndDateString = dbDateFormatter.string(from: end)
         fetchDataForSelectedRange()
     }
 
@@ -138,9 +151,6 @@ class AssetsViewModel: ObservableObject {
         let dealsQuery =
             "SELECT date, value FROM Deals WHERE date >= ? AND date <= ? ORDER BY date ASC;"
         var stmtDeals: OpaquePointer?
-
-        // SQLITE_TRANSIENTの代わりに unsafeBitCast を使用
-        let SQLITE_TRANSIENT_VALUE = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
         if sqlite3_prepare_v2(db, dealsQuery, -1, &stmtDeals, nil) == SQLITE_OK {
             // 修正箇所 1
@@ -264,7 +274,7 @@ class AssetsViewModel: ObservableObject {
 
     private func getDatesForCurrentSelection() -> (start: Date, end: Date) {
         let calendar = Calendar.current
-        let today = Date()  // endDateは基本的に今日
+        let today = Date()
 
         switch selectedTimeRange {
         case .all:
@@ -296,7 +306,6 @@ class AssetsViewModel: ObservableObject {
     }
 }
 
-
 struct AssetsView: View {
     @StateObject private var viewModel = AssetsViewModel()
     @State private var showingDateFilter = false
@@ -308,6 +317,7 @@ struct AssetsView: View {
     private let chartLineColor = Color.gray  // 曲线颜色
     private let positiveReturnColor = Color.green
     private let negativeReturnColor = Color.red
+    private let accentDateColor = Color.blue  // 日付の強調色としてオレンジを定義
 
     // タブの定義 (新股盈亏は削除)
     // private enum AssetSubTab: String, CaseIterable, Identifiable {
@@ -350,9 +360,44 @@ struct AssetsView: View {
                     trendAnalysisControlsSection
                         .padding(.top, 15)
 
-                    // 收益率走势セクション
+                    // --- ここから追加 ---
+                    // フィルターがアクティブで、日付文字列が利用可能な場合に表示
+                    if viewModel.isFilterActive,
+                        let startDateStr = viewModel.displayCustomStartDateString,
+                        let endDateStr = viewModel.displayCustomEndDateString
+                    {
+                        HStack(spacing: 5) {
+                            Text("   ")
+                                .font(.subheadline)  // フォントサイズを調整
+                                .foregroundColor(self.secondaryTextColor)
+                                .padding(.leading, 16)  // 左端のパディング
+                            Text(startDateStr)
+                                .font(.headline.bold())  // サイズを大きく、太字に
+                                .foregroundColor(self.accentDateColor)  // 目立つ色 (オレンジ)
+
+                            Text("    ～～   ")
+                                .font(.subheadline)
+                                .foregroundColor(self.secondaryTextColor)
+                                .padding(.horizontal, 2)  // "到" の左右に少しスペース
+
+                            Text(endDateStr)
+                                .font(.headline.bold())
+                                .foregroundColor(self.accentDateColor)
+
+                            Spacer()  // 右側の余白を埋めて全体を左寄せにする
+                        }
+                        .frame(maxWidth: .infinity)  // HStackを画面幅いっぱいに広げる
+                        .padding(.vertical, 12)  // 上下のパディング
+                        // 背景色をページ背景より少し明るく、または区別できる色に
+                        .background(viewModel.defaultButtonBackgroundColor.opacity(0.85))
+                        // .background(Color(red: 35/255, green: 40/255, blue: 50/255)) // 例: 少し明るい背景
+                        .padding(.top, 15)  // 上の trendAnalysisControlsSection との間隔
+                    }
+                    // --- ここまで追加 ---
+
                     returnSummarySection
-                        .padding(.top, 20)
+                        // 上に要素が追加された場合も考慮し、一貫したスペースを保つ
+                        .padding(.top, 15)  // 上の要素 (trendAnalysisControlsSection または追加された日付行) との間隔
 
                     // 折れ線グラフエリア
                     chartArea
@@ -366,11 +411,11 @@ struct AssetsView: View {
                     Spacer()
                 }
             }
-            .navigationTitle("我的资产")
+            .navigationTitle("资产走势分析")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("我的资产").font(.headline).foregroundColor(textColor)
+                    Text("资产走势分析").font(.headline).foregroundColor(textColor)
                 }
                 // 右上のアイコンは指示になかったため省略
             }
@@ -398,11 +443,9 @@ struct AssetsView: View {
     private var trendAnalysisControlsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("走势分析")
+                Text(" ")
                     .font(.headline)
                     .foregroundColor(textColor)
-                Image(systemName: "info.circle")
-                    .foregroundColor(secondaryTextColor)
                 Spacer()
             }
             .padding(.horizontal)
@@ -480,11 +523,9 @@ struct AssetsView: View {
     private var returnSummarySection: some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack {
-                Text("收益率走势")
+                Text("  ")
                     .font(.headline)
                     .foregroundColor(textColor)
-                Image(systemName: "square.and.arrow.up")  // デザイン画像のアイコン
-                    .foregroundColor(secondaryTextColor)
                 Spacer()
             }
             .padding(.horizontal)
@@ -596,22 +637,23 @@ struct DateFilterView: View {
     @Environment(\.presentationMode) var presentationMode
 
     // 色定義
-    private let pageBackgroundColor = Color(red: 25/255, green: 30/255, blue: 39/255)
+    private let pageBackgroundColor = Color(red: 25 / 255, green: 30 / 255, blue: 39 / 255)
     private let textColor = Color.white
-    private let accentButtonColor = Color(hex: "3B82F6") // Firstradeの標準的なアクセントカラー
+    private let accentButtonColor = Color(hex: "3B82F6")  // Firstradeの標準的なアクセントカラー
 
     @State private var tempStartDate: Date
     @State private var tempEndDate: Date
     @State private var dateError: String? = nil
 
-    init(startDate: Binding<Date>, endDate: Binding<Date>, onApply: @escaping (Date, Date) -> Void) {
+    init(startDate: Binding<Date>, endDate: Binding<Date>, onApply: @escaping (Date, Date) -> Void)
+    {
         _startDate = startDate
         _endDate = endDate
         self.onApply = onApply
         _tempStartDate = State(initialValue: startDate.wrappedValue)
         _tempEndDate = State(initialValue: endDate.wrappedValue)
     }
-    
+
     var body: some View {
         NavigationView {
             ZStack {
@@ -624,16 +666,19 @@ struct DateFilterView: View {
 
                     DatePicker("起始日期", selection: $tempStartDate, displayedComponents: .date)
                         .foregroundColor(textColor)
-                        .colorScheme(.dark) // DatePickerのUIをダークテーマに
-                        .accentColor(accentButtonColor) // カレンダー内の選択色
+                        .colorScheme(.dark)  // DatePickerのUIをダークテーマに
+                        .accentColor(accentButtonColor)  // カレンダー内の選択色
                         .padding(.horizontal)
 
-                    DatePicker("截止日期", selection: $tempEndDate, in: tempStartDate..., displayedComponents: .date)
-                        .foregroundColor(textColor)
-                        .colorScheme(.dark)
-                        .accentColor(accentButtonColor)
-                        .padding(.horizontal)
-                    
+                    DatePicker(
+                        "截止日期", selection: $tempEndDate, in: tempStartDate...,
+                        displayedComponents: .date
+                    )
+                    .foregroundColor(textColor)
+                    .colorScheme(.dark)
+                    .accentColor(accentButtonColor)
+                    .padding(.horizontal)
+
                     if let error = dateError {
                         Text(error)
                             .font(.caption)
@@ -677,9 +722,9 @@ struct DateFilterView: View {
                     .foregroundColor(accentButtonColor)
                 }
             }
-            .toolbarColorScheme(.dark, for: .navigationBar) // ナビゲーションバーのアイテムを明るく
+            .toolbarColorScheme(.dark, for: .navigationBar)  // ナビゲーションバーのアイテムを明るく
         }
-        .navigationViewStyle(StackNavigationViewStyle()) // モーダル表示に適したスタイル
+        .navigationViewStyle(StackNavigationViewStyle())  // モーダル表示に適したスタイル
     }
 }
 
@@ -693,7 +738,7 @@ struct LineChartView: View {
     private var minY: Double { (dataPoints.map { $0.value }.min() ?? 0) }
     private var ySpread: Double {
         let spread = maxY - minY
-        return spread == 0 ? 1 : spread // 0除算を避ける
+        return spread == 0 ? 1 : spread  // 0除算を避ける
     }
 
     var body: some View {
@@ -705,24 +750,25 @@ struct LineChartView: View {
             } else {
                 Path { path in
                     // グラフの描画領域を少し内側にオフセットする（ラベルのため）
-                    let drawingWidth = geometry.size.width * 0.9 // 左右に5%ずつのマージン
-                    let drawingHeight = geometry.size.height * 0.9 // 上下に5%ずつのマージン
+                    let drawingWidth = geometry.size.width * 0.9  // 左右に5%ずつのマージン
+                    let drawingHeight = geometry.size.height * 0.9  // 上下に5%ずつのマージン
                     let xOffset = geometry.size.width * 0.05
                     let yOffset = geometry.size.height * 0.05
 
                     for i in dataPoints.indices {
                         let dataPoint = dataPoints[i]
-                        
+
                         // X座標の計算 (データポイントの数に基づいて均等に配置)
                         let xPosition: CGFloat
                         if dataPoints.count == 1 {
-                            xPosition = drawingWidth / 2 // データが1つなら中央に
+                            xPosition = drawingWidth / 2  // データが1つなら中央に
                         } else {
                             xPosition = CGFloat(i) * (drawingWidth / CGFloat(dataPoints.count - 1))
                         }
-                        
+
                         // Y座標の計算 (Y軸は反転し、スプレッドに基づいてスケーリング)
-                        let yPosition = drawingHeight * (1 - CGFloat((dataPoint.value - minY) / ySpread))
+                        let yPosition =
+                            drawingHeight * (1 - CGFloat((dataPoint.value - minY) / ySpread))
 
                         let actualX = xPosition + xOffset
                         let actualY = yPosition + yOffset
