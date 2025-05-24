@@ -1,12 +1,12 @@
-import SwiftUI
-import SQLite3
 import Combine
+import SQLite3
+import SwiftUI
 
 struct TransactionRecord: Identifiable {
     let id: Int
     let date: String
     let value: Double
-    let type: Int // 0 for deposit, 1 for withdrawal
+    let type: Int  // 0 for deposit, 1 for withdrawal
 
     var transactionTypeString: String {
         type == 0 ? "存款" : "提款"
@@ -37,7 +37,8 @@ class DepositWithdrawViewModel: ObservableObject {
 
     init() {
         guard let path = Bundle.main.path(forResource: "Firstrade", ofType: "db") else {
-            let errorMsg = "❌ Failed to find Firstrade.db in bundle. Ensure it's added to the target and 'Copy Bundle Resources'."
+            let errorMsg =
+                "❌ Failed to find Firstrade.db in bundle. Ensure it's added to the target and 'Copy Bundle Resources'."
             print(errorMsg)
             self.dbPath = ""
             self.databaseError = errorMsg
@@ -46,12 +47,12 @@ class DepositWithdrawViewModel: ObservableObject {
         }
         self.dbPath = path
         print("Database path: \(dbPath)")
-        
+
         if !openDatabase() {
             // Error already set in openDatabase()
             return
         }
-        fetchTransactions(isRefresh: true) // Initial fetch
+        fetchTransactions(isRefresh: true)  // Initial fetch
     }
 
     deinit {
@@ -68,7 +69,8 @@ class DepositWithdrawViewModel: ObservableObject {
             databaseError = nil
             return true
         } else {
-            let errorMsg = "❌ Error opening database \(dbPath): \(String(cString: sqlite3_errmsg(db)))"
+            let errorMsg =
+                "❌ Error opening database \(dbPath): \(String(cString: sqlite3_errmsg(db)))"
             print(errorMsg)
             databaseError = errorMsg
             if db != nil {
@@ -84,10 +86,10 @@ class DepositWithdrawViewModel: ObservableObject {
         print("🔄 Refreshing transactions...")
         currentPage = 0
         transactions = []
-        canLoadMorePages = true // Reset ability to load more
-        databaseError = nil // Clear previous errors
-        
-        if db == nil { // Attempt to reopen if closed
+        canLoadMorePages = true  // Reset ability to load more
+        databaseError = nil  // Clear previous errors
+
+        if db == nil {  // Attempt to reopen if closed
             guard openDatabase() else { return }
         }
         fetchTransactions(isRefresh: true)
@@ -105,11 +107,10 @@ class DepositWithdrawViewModel: ObservableObject {
 
         isLoadingPage = true
         if isRefresh {
-             DispatchQueue.main.async { // Ensure UI updates on main thread for refresh start
+            DispatchQueue.main.async {  // Ensure UI updates on main thread for refresh start
                 self.transactions = []
-             }
+            }
         }
-
 
         // Ensure DB is open
         if db == nil {
@@ -121,10 +122,11 @@ class DepositWithdrawViewModel: ObservableObject {
                 return
             }
         }
-        
+
         let offset = currentPage * itemsPerPage
         // Note: SQLite date strings 'YYYY-MM-DD' can be sorted lexicographically for date order.
-        let query = "SELECT id, date, value, type FROM Deposit ORDER BY date DESC LIMIT \(itemsPerPage) OFFSET \(offset);"
+        let query =
+            "SELECT id, date, value, type FROM Deposit ORDER BY date DESC LIMIT \(itemsPerPage) OFFSET \(offset);"
         var statement: OpaquePointer?
 
         print("➡️ Preparing query: \(query)")
@@ -135,10 +137,10 @@ class DepositWithdrawViewModel: ObservableObject {
                 // Ensure date is read correctly; it should be TEXT in DB
                 let dateChars = sqlite3_column_text(statement, 1)
                 let date = dateChars != nil ? String(cString: dateChars!) : "Unknown Date"
-                
+
                 let value = sqlite3_column_double(statement, 2)
                 let type = Int(sqlite3_column_int(statement, 3))
-                
+
                 let record = TransactionRecord(id: id, date: date, value: value, type: type)
                 newTransactions.append(record)
             }
@@ -150,17 +152,19 @@ class DepositWithdrawViewModel: ObservableObject {
                 } else {
                     self.transactions.append(contentsOf: newTransactions)
                 }
-                
+
                 if !newTransactions.isEmpty {
-                     self.currentPage += 1
+                    self.currentPage += 1
                 }
-               
+
                 self.canLoadMorePages = newTransactions.count == self.itemsPerPage
                 self.isLoadingPage = false
-                self.databaseError = nil // Clear error on successful fetch
-                print("✅ Fetched \(newTransactions.count) transactions. Total: \(self.transactions.count). Current Page: \(self.currentPage). Can load more: \(self.canLoadMorePages)")
+                self.databaseError = nil  // Clear error on successful fetch
+                print(
+                    "✅ Fetched \(newTransactions.count) transactions. Total: \(self.transactions.count). Current Page: \(self.currentPage). Can load more: \(self.canLoadMorePages)"
+                )
                 if newTransactions.isEmpty && !isRefresh {
-                     print("ℹ️ Fetched an empty page, likely end of data.")
+                    print("ℹ️ Fetched an empty page, likely end of data.")
                 }
             }
         } else {
@@ -174,22 +178,24 @@ class DepositWithdrawViewModel: ObservableObject {
     }
 }
 
-
 struct DepositWithdrawView: View {
     @StateObject private var viewModel = DepositWithdrawViewModel()
 
     // Colors matching the screenshot
-    let pageBackgroundColor = Color(red: 25/255, green: 30/255, blue: 39/255) // #191E27
-    let cardBackgroundColor = Color(red: 40/255, green: 45/255, blue: 55/255)
+    let pageBackgroundColor = Color(red: 25 / 255, green: 30 / 255, blue: 39 / 255)  // #191E27
+    let cardBackgroundColor = Color(red: 40 / 255, green: 45 / 255, blue: 55 / 255)
     let primaryTextColor = Color.white
     let secondaryTextColor = Color.gray
-    let accentColor = Color(hex: "3B82F6") // Blue for button and highlights
+    let accentColor = Color(hex: "3B82F6")  // Blue for button and highlights
 
     // Account details from the image (hardcoded as per image)
-    let userEmail = "sskeysys@hotmail.com" // From image
-    let accountType = "ACH SAVINGS"    // From image
-    let bankName = "China Merchants Bank (*2056)" // From image
-    let bankStatus = "已开通"         // From image
+    let userEmail = "sskeysys@hotmail.com"  // From image
+    // --- MODIFICATION START ---
+    // Original: let accountType = "ACH SAVINGS Powered by Standard chartered"    // From image
+    let accountType = "ACH SAVINGS\nPowered by Standard chartered"  // From image
+    // --- MODIFICATION END ---
+    let bankName = "China Merchants Bank (*2056)"  // From image
+    let bankStatus = "已开通"  // From image
 
     var body: some View {
         ZStack {
@@ -198,14 +204,14 @@ struct DepositWithdrawView: View {
             VStack(spacing: 0) {
                 accountInfoSection
                     .padding(.horizontal)
-                    .padding(.top, 10) // Adjusted top padding
+                    .padding(.top, 10)  // Adjusted top padding
 
                 requestTransferButton
                     .padding(.horizontal)
-                    .padding(.vertical, 20) // Increased vertical padding
+                    .padding(.vertical, 20)  // Increased vertical padding
 
                 transferHistorySection
-                
+
                 if let errorMsg = viewModel.databaseError {
                     Text(errorMsg)
                         .foregroundColor(.red)
@@ -216,57 +222,57 @@ struct DepositWithdrawView: View {
         .navigationTitle("存款 / 提款")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-             ToolbarItem(placement: .principal) {
-                 Text("存款 / 提款")
-                     .font(.headline)
-                     .foregroundColor(primaryTextColor)
-             }
+            ToolbarItem(placement: .principal) {
+                Text("存款 / 提款")
+                    .font(.headline)
+                    .foregroundColor(primaryTextColor)
+            }
         }
-        .toolbarColorScheme(.dark, for: .navigationBar) // Match MyView's toolbar style
+        .toolbarColorScheme(.dark, for: .navigationBar)  // Match MyView's toolbar style
         .onAppear {
             if viewModel.transactions.isEmpty && viewModel.canLoadMorePages {
-                 print("DepositWithdrawView appeared, initial data load if needed.")
-                 // ViewModel's init already calls fetch. This is a fallback.
-                 // viewModel.fetchTransactions(isRefresh: true)
+                print("DepositWithdrawView appeared, initial data load if needed.")
+                // ViewModel's init already calls fetch. This is a fallback.
+                // viewModel.fetchTransactions(isRefresh: true)
             }
         }
     }
 
     private var accountInfoSection: some View {
-        VStack(alignment: .leading, spacing: 10) { // Increased spacing
-            HStack(spacing: 12) { // Increased spacing
+        VStack(alignment: .leading, spacing: 10) {  // Increased spacing
+            HStack(spacing: 12) {  // Increased spacing
                 Image(systemName: "building.columns.fill")
-                    .font(.system(size: 30)) // Slightly larger icon
+                    .font(.system(size: 30))  // Slightly larger icon
                     .foregroundColor(accentColor)
-                VStack(alignment: .leading, spacing: 2) { // Reduced inner spacing
+                VStack(alignment: .leading, spacing: 2) {  // Reduced inner spacing
                     Text(userEmail)
-                        .font(.system(size: 16, weight: .medium)) // Adjusted font
+                        .font(.system(size: 16, weight: .medium))  // Adjusted font
                         .foregroundColor(primaryTextColor)
                     Text(accountType)
-                        .font(.system(size: 13)) // Adjusted font
+                        .font(.system(size: 13))  // Adjusted font
                         .foregroundColor(secondaryTextColor)
                 }
             }
             Text(bankName)
-                .font(.system(size: 15, weight: .medium)) // Adjusted font
+                .font(.system(size: 15, weight: .medium))  // Adjusted font
                 .foregroundColor(primaryTextColor)
-                .padding(.top, 4) // Added small top padding
+                .padding(.top, 4)  // Added small top padding
 
             HStack {
                 Text("银行设定状态: \(bankStatus)")
-                    .font(.system(size: 13)) // Adjusted font
+                    .font(.system(size: 13))  // Adjusted font
                     .foregroundColor(secondaryTextColor)
                 Spacer()
                 Button("删除银行设定") {
                     print("Delete bank setting tapped (not implemented)")
                 }
-                .font(.system(size: 13, weight: .medium)) // Adjusted font
+                .font(.system(size: 13, weight: .medium))  // Adjusted font
                 .foregroundColor(accentColor)
             }
         }
-        .padding(16) // Standard padding
+        .padding(16)  // Standard padding
         .background(cardBackgroundColor)
-        .cornerRadius(12) // Slightly larger corner radius
+        .cornerRadius(12)  // Slightly larger corner radius
     }
 
     private var requestTransferButton: some View {
@@ -274,10 +280,10 @@ struct DepositWithdrawView: View {
             print("Request transfer tapped (not implemented)")
         }) {
             Text("要求转账")
-                .font(.system(size: 17, weight: .semibold)) // Adjusted font
+                .font(.system(size: 17, weight: .semibold))  // Adjusted font
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 48) // Explicit height
+                .frame(height: 48)  // Explicit height
                 .background(accentColor)
                 .cornerRadius(8)
         }
@@ -287,34 +293,36 @@ struct DepositWithdrawView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("转账记录")
-                    .font(.system(size: 18, weight: .bold)) // Adjusted font
+                    .font(.system(size: 18, weight: .bold))  // Adjusted font
                     .foregroundColor(primaryTextColor)
                 Spacer()
                 Button(action: {
                     viewModel.refreshTransactions()
                 }) {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 16, weight: .medium)) // Adjusted icon size
+                        .font(.system(size: 16, weight: .medium))  // Adjusted icon size
                         .foregroundColor(accentColor)
                 }
             }
             .padding(.horizontal)
-            
-//            Text("点击转账记录查看详细信息")
-//                .font(.system(size: 12)) // Adjusted font
-//                .foregroundColor(secondaryTextColor)
-//                .padding(.horizontal)
-//                .padding(.bottom, 10) // Increased bottom padding
+
+            //            Text("点击转账记录查看详细信息")
+            //                .font(.system(size: 12)) // Adjusted font
+            //                .foregroundColor(secondaryTextColor)
+            //                .padding(.horizontal)
+            //                .padding(.bottom, 10) // Increased bottom padding
 
             List {
-                if viewModel.transactions.isEmpty && !viewModel.isLoadingPage && viewModel.databaseError == nil {
-                     Text("没有转账记录。")
-                         .font(.system(size: 15))
-                         .foregroundColor(secondaryTextColor)
-                         .frame(maxWidth: .infinity, alignment: .center)
-                         .padding(.vertical, 20)
-                         .listRowBackground(pageBackgroundColor)
-                         .listRowSeparator(.hidden)
+                if viewModel.transactions.isEmpty && !viewModel.isLoadingPage
+                    && viewModel.databaseError == nil
+                {
+                    Text("没有转账记录。")
+                        .font(.system(size: 15))
+                        .foregroundColor(secondaryTextColor)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 20)
+                        .listRowBackground(pageBackgroundColor)
+                        .listRowSeparator(.hidden)
                 } else {
                     ForEach(viewModel.transactions) { record in
                         TransactionRowView(record: record)
@@ -322,8 +330,12 @@ struct DepositWithdrawView: View {
                             .listRowSeparator(.automatic, edges: .bottom)
                             .listRowSeparatorTint(secondaryTextColor.opacity(0.3))
                             .onAppear {
-                                if record.id == viewModel.transactions.last?.id && viewModel.canLoadMorePages && !viewModel.isLoadingPage {
-                                    print("📜 Reached last item (\(record.id) - \(record.date)), attempting to load more.")
+                                if record.id == viewModel.transactions.last?.id
+                                    && viewModel.canLoadMorePages && !viewModel.isLoadingPage
+                                {
+                                    print(
+                                        "📜 Reached last item (\(record.id) - \(record.date)), attempting to load more."
+                                    )
                                     viewModel.fetchTransactions()
                                 }
                             }
@@ -333,15 +345,18 @@ struct DepositWithdrawView: View {
                 if viewModel.isLoadingPage {
                     HStack {
                         Spacer()
-                        ProgressView().progressViewStyle(CircularProgressViewStyle(tint: primaryTextColor))
+                        ProgressView().progressViewStyle(
+                            CircularProgressViewStyle(tint: primaryTextColor))
                         Spacer()
                     }
                     .listRowBackground(pageBackgroundColor)
                     .listRowSeparator(.hidden)
                     .padding(.vertical, 10)
                 }
-                 
-                if !viewModel.canLoadMorePages && !viewModel.transactions.isEmpty && !viewModel.isLoadingPage {
+
+                if !viewModel.canLoadMorePages && !viewModel.transactions.isEmpty
+                    && !viewModel.isLoadingPage
+                {
                     Text("没有更多记录了")
                         .font(.caption)
                         .foregroundColor(secondaryTextColor)
@@ -362,42 +377,45 @@ struct TransactionRowView: View {
     let record: TransactionRecord
     let primaryTextColor = Color.white
     let secondaryTextColor = Color.gray
-    let statusCompletedColor = Color.green // Or use secondaryTextColor as per design
-    let statusRejectedColor = Color.red   // For future if status is available
+    let statusCompletedColor = Color.green  // Or use secondaryTextColor as per design
+    let statusRejectedColor = Color.red  // For future if status is available
 
     var body: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 4) { // Added spacing
+            VStack(alignment: .leading, spacing: 4) {  // Added spacing
                 Text(record.transactionTypeString)
-                    .font(.system(size: 16, weight: .medium)) // Adjusted font
+                    .font(.system(size: 16, weight: .medium))  // Adjusted font
                     .foregroundColor(primaryTextColor)
-                Text(record.date) // Date format from DB: YYYY-MM-DD
-                    .font(.system(size: 13)) // Adjusted font
+                Text(record.date)  // Date format from DB: YYYY-MM-DD
+                    .font(.system(size: 13))  // Adjusted font
                     .foregroundColor(secondaryTextColor)
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 4) { // Added spacing
+            VStack(alignment: .trailing, spacing: 4) {  // Added spacing
                 Text(record.formattedValue)
-                    .font(.system(size: 16, weight: .medium)) // Adjusted font
+                    .font(.system(size: 16, weight: .medium))  // Adjusted font
                     .foregroundColor(primaryTextColor)
-                
+
                 // Status display (currently always "已完成" from DB)
                 // Design image shows "已完成" in gray, "已驳回" in a different color (likely red, though image is monochrome for status)
                 Text(record.status)
-                    .font(.system(size: 13)) // Adjusted font
-                    .foregroundColor(record.status == "已驳回" ? statusRejectedColor : (record.status == "已完成" ? secondaryTextColor : secondaryTextColor))
+                    .font(.system(size: 13))  // Adjusted font
+                    .foregroundColor(
+                        record.status == "已驳回"
+                            ? statusRejectedColor
+                            : (record.status == "已完成" ? secondaryTextColor : secondaryTextColor))
             }
         }
-        .padding(.vertical, 10) // Increased vertical padding for row
+        .padding(.vertical, 10)  // Increased vertical padding for row
     }
 }
 
 // Preview Provider for DepositWithdrawView (optional, but helpful)
 struct DepositWithdrawView_Previews: PreviewProvider {
     static var previews: some View {
-        NavigationView { // Wrap in NavigationView for previewing navigation bar
+        NavigationView {  // Wrap in NavigationView for previewing navigation bar
             DepositWithdrawView()
         }
-        .preferredColorScheme(.dark) // Preview in dark mode
+        .preferredColorScheme(.dark)  // Preview in dark mode
     }
 }
