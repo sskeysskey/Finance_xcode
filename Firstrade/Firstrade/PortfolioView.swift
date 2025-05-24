@@ -27,10 +27,10 @@ struct MainTabView: View {
                     Text("市场")
                 }
 
-            Text("订单现况")
+            Text("资产")
                 .tabItem {
                     Image(systemName: "rectangle.stack")
-                    Text("订单现况")
+                    Text("资产")
                 }
 
             MyView()
