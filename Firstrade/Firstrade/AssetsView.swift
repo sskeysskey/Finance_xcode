@@ -489,10 +489,28 @@ struct AssetsView: View {
         }
     }
 
+    // MARK: - 修正箇所
     private var filterButton: some View {
         Button(action: {
-            // viewModel.selectedTimeRange = .custom // 内部的にカスタムを選択状態にする
-            // viewModel.isFilterActive = true      // フィルターボタンを強調
+            // 筛选ボタンが押されたときに、DateFilterView に渡すデフォルトの日付を設定します。
+            // viewModel の dbDateFormatter を使用して日付文字列を Date オブジェクトに変換します。
+            let defaultStartDateString = "2022-01-01"
+            let defaultEndDateString = "2023-01-01"
+
+            if let newStartDate = viewModel.dbDateFormatter.date(from: defaultStartDateString),
+                let newEndDate = viewModel.dbDateFormatter.date(from: defaultEndDateString)
+            {
+                // viewModel のカスタム日付プロパティを更新します。
+                // これにより、DateFilterView が表示される際にこれらの日付が初期値として使用されます。
+                viewModel.customStartDate = newStartDate
+                viewModel.customEndDate = newEndDate
+            } else {
+                // 日付の解析に失敗した場合のフォールバック処理です。
+                // エラーメッセージをコンソールに出力し、既存のカスタム日付（またはViewModelの初期デフォルト値）が使用されます。
+                print("错误：无法解析筛选的默认自定义日期。将使用ViewModel当前的自定义日期或其初始默认值。")
+            }
+
+            // DateFilterView を表示します。
             showingDateFilter = true
         }) {
             HStack(spacing: 4) {
@@ -519,6 +537,7 @@ struct AssetsView: View {
             )
         }
     }
+    // MARK: - 修正箇所ここまで
 
     private var returnSummarySection: some View {
         VStack(alignment: .leading, spacing: 15) {
@@ -650,6 +669,9 @@ struct DateFilterView: View {
         _startDate = startDate
         _endDate = endDate
         self.onApply = onApply
+        // tempStartDate と tempEndDate は、親ビューから渡されたバインディングの現在の値で初期化されます。
+        // AssetsView の filterButton アクションで viewModel.customStartDate と viewModel.customEndDate が
+        // 更新されていれば、ここでその新しい値が tempStartDate と tempEndDate の初期値となります。
         _tempStartDate = State(initialValue: startDate.wrappedValue)
         _tempEndDate = State(initialValue: endDate.wrappedValue)
     }

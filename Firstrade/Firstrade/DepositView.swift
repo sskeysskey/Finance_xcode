@@ -192,7 +192,7 @@ struct DepositWithdrawView: View {
     let userEmail = "sskeysys@hotmail.com"  // From image
     // --- MODIFICATION START ---
     // Original: let accountType = "ACH SAVINGS Powered by Standard chartered"    // From image
-    let accountType = "ACH SAVINGS\nPowered by Standard chartered"  // From image
+    let accountType = "ACH SAVINGS\nPowered by Standard Chartered"  // From image
     // --- MODIFICATION END ---
     let bankName = "China Merchants Bank (*2056)"  // From image
     let bankStatus = "已开通"  // From image
