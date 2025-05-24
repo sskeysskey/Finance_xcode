@@ -27,10 +27,11 @@ struct MainTabView: View {
                     Text("市场")
                 }
 
-            Text("订单现况")
+            AssetsView() // <<< 新しい「资产」ページをここに追加
                 .tabItem {
-                    Image(systemName: "rectangle.stack")
-                    Text("订单现况")
+                    // Image(systemName: "rectangle.stack") // 元のアイコン
+                    Image(systemName: "chart.pie.fill") // デザイン画像のアイコンに近いものに変更 (任意)
+                    Text("资产")
                 }
 
             MyView()
