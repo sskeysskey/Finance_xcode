@@ -163,17 +163,17 @@ struct PortfolioView: View {
             .toolbar {
                 // 左侧公文包
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Image(systemName: "briefcase")
-                        .foregroundColor(.white)
+//                    Image(systemName: "briefcase")
+//                        .foregroundColor(.white)
                 }
                 // 右侧菜单 / 通知 / 搜索
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    Button(action: {}) {
-                        Image(systemName: "line.horizontal.3")
-                    }
-                    Button(action: {}) {
-                        Image(systemName: "bell")
-                    }
+//                    Button(action: {}) {
+//                        Image(systemName: "line.horizontal.3")
+//                    }
+//                    Button(action: {}) {
+//                        Image(systemName: "bell")
+//                    }
                     Button(action: {}) {
                         Image(systemName: "magnifyingglass")
                     }

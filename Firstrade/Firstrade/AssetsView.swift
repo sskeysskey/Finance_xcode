@@ -334,88 +334,104 @@ struct AssetsView: View {
         return formatter
     }()
 
+    // MARK: - Colors for Transaction History (as per new request)
+    private let timelineActualColor = Color.gray.opacity(0.4)
+    private var dotBuyActualColor: Color { positiveReturnColor } // Reuse existing
+    private var dotSellActualColor: Color { negativeReturnColor } // Reuse existing
+    private let dotOtherActualColor = Color(white: 0.6)
+    private var accentColorForTabUnderline: Color { accentDateColor }
+
+
     var body: some View {
         NavigationView {
             ZStack {
                 pageBackgroundColor.ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    // 上部タブ (资产分析 / 盈亏分析)
-                    // Picker("分析类型", selection: $selectedSubTab) {
-                    //     ForEach(AssetSubTab.allCases) { tab in
-                    //         Text(tab.rawValue).tag(tab)
-                    //     }
-                    // }
-                    // .pickerStyle(SegmentedPickerStyle())
-                    // .padding(.horizontal)
-                    // .padding(.top, 10)
-                    // .background(pageBackgroundColor) // SegmentedPickerの背景が透明にならないように
-                    // .onChange(of: selectedSubTab) { _ in
-                    //     // 必要に応じてタブ変更時の処理を記述
-                    //     // 現在はどちらのタブも同じデータを表示するため、特別な処理は不要
-                    //     print("Selected sub-tab: \(selectedSubTab.rawValue)")
-                    // }
+                ScrollView { // Added ScrollView to accommodate new section
+                    VStack(spacing: 0) {
+                        // 上部タブ (资产分析 / 盈亏分析)
+                        // Picker("分析类型", selection: $selectedSubTab) {
+                        //     ForEach(AssetSubTab.allCases) { tab in
+                        //         Text(tab.rawValue).tag(tab)
+                        //     }
+                        // }
+                        // .pickerStyle(SegmentedPickerStyle())
+                        // .padding(.horizontal)
+                        // .padding(.top, 10)
+                        // .background(pageBackgroundColor) // SegmentedPickerの背景が透明にならないように
+                        // .onChange(of: selectedSubTab) { _ in
+                        //     // 必要に応じてタブ変更時の処理を記述
+                        //     // 現在はどちらのタブも同じデータを表示するため、特別な処理は不要
+                        //     print("Selected sub-tab: \(selectedSubTab.rawValue)")
+                        // }
 
-                    // 走势分析セクション
-                    trendAnalysisControlsSection
-                        .padding(.top, 15)
+                        // 走势分析セクション
+                        trendAnalysisControlsSection
+                            .padding(.top, 15)
 
-                    // --- ここから追加 ---
-                    // フィルターがアクティブで、日付文字列が利用可能な場合に表示
-                    if viewModel.isFilterActive,
-                        let startDateStr = viewModel.displayCustomStartDateString,
-                        let endDateStr = viewModel.displayCustomEndDateString
-                    {
-                        HStack(spacing: 5) {
-                            Text("   ")
-                                .font(.subheadline)  // フォントサイズを調整
-                                .foregroundColor(self.secondaryTextColor)
-                                .padding(.leading, 16)  // 左端のパディング
-                            Text(startDateStr)
-                                .font(.headline.bold())  // サイズを大きく、太字に
-                                .foregroundColor(self.accentDateColor)  // 目立つ色 (オレンジ)
+                        // --- ここから追加 ---
+                        // フィルターがアクティブで、日付文字列が利用可能な場合に表示
+                        if viewModel.isFilterActive,
+                            let startDateStr = viewModel.displayCustomStartDateString,
+                            let endDateStr = viewModel.displayCustomEndDateString
+                        {
+                            HStack(spacing: 5) {
+                                Text("   ")
+                                    .font(.subheadline)  // フォントサイズを調整
+                                    .foregroundColor(self.secondaryTextColor)
+                                    .padding(.leading, 16)  // 左端のパディング
+                                Text(startDateStr)
+                                    .font(.headline.bold())  // サイズを大きく、太字に
+                                    .foregroundColor(self.accentDateColor)  // 目立つ色 (オレンジ)
 
-                            Text("    ～～   ")
-                                .font(.subheadline)
-                                .foregroundColor(self.secondaryTextColor)
-                                .padding(.horizontal, 2)  // "到" の左右に少しスペース
+                                Text("    ～～   ")
+                                    .font(.subheadline)
+                                    .foregroundColor(self.secondaryTextColor)
+                                    .padding(.horizontal, 2)  // "到" の左右に少しスペース
 
-                            Text(endDateStr)
-                                .font(.headline.bold())
-                                .foregroundColor(self.accentDateColor)
+                                Text(endDateStr)
+                                    .font(.headline.bold())
+                                    .foregroundColor(self.accentDateColor)
 
-                            Spacer()  // 右側の余白を埋めて全体を左寄せにする
+                                Spacer()  // 右側の余白を埋めて全体を左寄せにする
+                            }
+                            .frame(maxWidth: .infinity)  // HStackを画面幅いっぱいに広げる
+                            .padding(.vertical, 12)  // 上下のパディング
+                            // 背景色をページ背景より少し明るく、または区別できる色に
+                            .background(viewModel.defaultButtonBackgroundColor.opacity(0.85))
+                            // .background(Color(red: 35/255, green: 40/255, blue: 50/255)) // 例: 少し明るい背景
+                            .padding(.top, 15)  // 上の trendAnalysisControlsSection との間隔
                         }
-                        .frame(maxWidth: .infinity)  // HStackを画面幅いっぱいに広げる
-                        .padding(.vertical, 12)  // 上下のパディング
-                        // 背景色をページ背景より少し明るく、または区別できる色に
-                        .background(viewModel.defaultButtonBackgroundColor.opacity(0.85))
-                        // .background(Color(red: 35/255, green: 40/255, blue: 50/255)) // 例: 少し明るい背景
-                        .padding(.top, 15)  // 上の trendAnalysisControlsSection との間隔
+                        // --- ここまで追加 ---
+
+                        returnSummarySection
+                            // 上に要素が追加された場合も考慮し、一貫したスペースを保つ
+                            .padding(.top, 15)  // 上の要素 (trendAnalysisControlsSection または追加された日付行) との間隔
+
+                        // 折れ線グラフエリア
+                        chartArea
+                            .padding(.top, 10)
+                            .padding(.bottom, 5)  // X軸ラベルとの間隔
+
+                        // グラフのX軸ラベル (開始日と終了日)
+                        xAxisLabels
+                            .padding(.horizontal, 25)  // グラフの左右マージンに合わせる
+                            .padding(.bottom, 20) // Add some space before the new section
+
+                        // --- NEW TRANSACTION HISTORY SECTION ---
+                        transactionHistorySection
+                            .padding(.top, 10) // Spacing from elements above
+                        // --- END NEW TRANSACTION HISTORY SECTION ---
+
+                        // Spacer() // Removed Spacer from here, ScrollView handles empty space
                     }
-                    // --- ここまで追加 ---
-
-                    returnSummarySection
-                        // 上に要素が追加された場合も考慮し、一貫したスペースを保つ
-                        .padding(.top, 15)  // 上の要素 (trendAnalysisControlsSection または追加された日付行) との間隔
-
-                    // 折れ線グラフエリア
-                    chartArea
-                        .padding(.top, 10)
-                        .padding(.bottom, 5)  // X軸ラベルとの間隔
-
-                    // グラフのX軸ラベル (開始日と終了日)
-                    xAxisLabels
-                        .padding(.horizontal, 25)  // グラフの左右マージンに合わせる
-
-                    Spacer()
                 }
             }
             .navigationTitle("资产走势分析")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("资产走势分析").font(.headline).foregroundColor(textColor)
+                    Text("资产走势分析   (ZhangYan)").font(.headline).foregroundColor(textColor)
                 }
                 // 右上のアイコンは指示になかったため省略
             }
@@ -647,6 +663,108 @@ struct AssetsView: View {
         .font(.caption)
         .foregroundColor(secondaryTextColor)
     }
+
+    // MARK: - New Transaction History Section (as per request)
+    private var transactionHistorySection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Tab-like header
+            HStack(spacing: 0) {
+                // VStack 包含 "账户记录" 和 下划线，现在是第一个元素
+                VStack(spacing: 3) {
+                    Text("账户记录")
+                        .font(.system(size: 15, weight: .medium))
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 20)
+                        .foregroundColor(textColor) // "账户记录" 保持 textColor，因为它现在是选中的/主要的
+                    Rectangle()
+                        .frame(width: 40, height: 2.5) // 修改这里：增加了 width 使其变短，40 是一个示例值，您可以根据需要调整
+                        .foregroundColor(accentColorForTabUnderline)
+                }
+
+                // "订单现况" 现在是第二个元素
+                Text("订单现况")
+                    .font(.system(size: 15, weight: .medium))
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 20)
+                    .foregroundColor(secondaryTextColor) // "订单现况" 保持 secondaryTextColor
+
+                Spacer()
+            }
+            .padding(.leading) // Align with content below
+            .padding(.bottom, 8)
+
+            // List of transactions
+            VStack(alignment: .leading, spacing: 0) {
+                transactionRowView(month: "3月", day: "25", year: "2025", transactionType: "卖出 CHAU", transactionDetails: "38.68 股数 @ $16.88", dotColor: dotSellActualColor)
+                transactionRowView(month: "3月", day: "19", year: "2025", transactionType: "买进 CHAU", transactionDetails: "38.68 @ $25.36", dotColor: dotBuyActualColor)
+                transactionRowView(month: "12月", day: "01", year: "2024", transactionType: "卖出 IBIT", transactionDetails: "14 股数 @ $35.64", dotColor: dotSellActualColor)
+                transactionRowView(month: "6月", day: "05", year: "2024", transactionType: "取款", transactionDetails: "$5,000.00", dotColor: dotOtherActualColor)
+                transactionRowView(month: "6月", day: "01", year: "2024", transactionType: "买进 IBIT", transactionDetails: "14 股数 @ $36.04", dotColor: dotBuyActualColor)
+                // 利息 (Interest) entry for 9月 16 is intentionally omitted as per request
+                transactionRowView(month: "5月", day: "27", year: "2024", transactionType: "卖出 TLT", transactionDetails: "23.84 @ $25.36", dotColor: dotBuyActualColor)
+                transactionRowView(month: "5月", day: "19", year: "2024", transactionType: "买进 TLT", transactionDetails: "23.84 @ $29.36", dotColor: dotBuyActualColor)
+            }
+            .padding(.leading, 20) // Indent the transaction list slightly for the timeline
+            .padding(.trailing, 15) // Overall right padding
+        }
+    }
+
+    private func transactionRowView(
+        month: String, day: String, year: String,
+        transactionType: String, transactionDetails: String,
+        dotColor: Color
+    ) -> some View {
+        HStack(alignment: .center, spacing: 10) { // Adjusted spacing
+            // Date Column
+            VStack(alignment: .center, spacing: 2) {
+                Text(month)
+                    .font(.caption)
+                    .foregroundColor(secondaryTextColor)
+                Text(day)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundColor(textColor)
+                Text(year)
+                    .font(.caption)
+                    .foregroundColor(secondaryTextColor)
+            }
+            .frame(width: 40) // Date column width
+
+            // Timeline Column
+            ZStack {
+                // The continuous vertical line for this row's segment
+                Rectangle()
+                    .fill(timelineActualColor) // Use the defined timeline color
+                    .frame(width: 1.5)
+
+                // Circle to "punch out" the line behind the dot
+                Circle()
+                    .fill(pageBackgroundColor) // Use the main page background color
+                    .frame(width: 12, height: 12) // Size of the punch-out
+
+                // The actual colored dot
+                Circle()
+                    .fill(dotColor)
+                    .frame(width: 8, height: 8) // Size of the transaction dot
+            }
+            .frame(width: 12) // Width of the timeline ZStack
+
+            // Details Column
+            VStack(alignment: .leading, spacing: 3) {
+                Text(transactionType)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(textColor)
+                Text(transactionDetails)
+                    .font(.system(size: 12))
+                    .foregroundColor(secondaryTextColor)
+                    .fixedSize(horizontal: false, vertical: true) // Allow text to wrap
+            }
+            .padding(.leading, 4) // Small space after timeline
+
+            Spacer() // Pushes content to the left
+        }
+        .padding(.vertical, 12) // Vertical padding for the row, defines its height and spacing
+    }
+
 }
 
 struct DateFilterView: View {
