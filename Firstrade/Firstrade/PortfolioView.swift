@@ -21,11 +21,11 @@ struct MainTabView: View {
                     Text("自选股")
                 }
 
-            Text("市场")
-                .tabItem {
-                    Image(systemName: "globe")
-                    Text("市场")
-                }
+//            Text("市场")
+//                .tabItem {
+//                    Image(systemName: "globe")
+//                    Text("市场")
+//                }
 
             AssetsView() // <<< 新しい「资产」ページをここに追加
                 .tabItem {
