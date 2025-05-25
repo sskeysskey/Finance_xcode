@@ -188,7 +188,7 @@ struct SummaryCard: View {
 
     // 只保留整数金额，百分比保留两位小数
     private func fmt(_ v: Double) -> String {
-        String(format: "$%.0f", v)
+        String(format: "$%.2f", v) // 将 %.0f 修改为 %.2f，表示显示两位小数
     }
     private func fmtChange(_ v: Double) -> String {
         let sign = v >= 0 ? "+" : "−"

@@ -443,9 +443,9 @@ struct AssetsView: View {
     private var trendAnalysisControlsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(" ")
-                    .font(.headline)
-                    .foregroundColor(textColor)
+//                Text(" ")
+//                    .font(.headline)
+//                    .foregroundColor(textColor)
                 Spacer()
             }
             .padding(.horizontal)
@@ -542,9 +542,9 @@ struct AssetsView: View {
     private var returnSummarySection: some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack {
-                Text("  ")
-                    .font(.headline)
-                    .foregroundColor(textColor)
+//                Text("  ")
+//                    .font(.headline)
+//                    .foregroundColor(textColor)
                 Spacer()
             }
             .padding(.horizontal)
