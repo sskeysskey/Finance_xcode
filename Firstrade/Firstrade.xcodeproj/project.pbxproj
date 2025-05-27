@@ -115,7 +115,6 @@
 			buildRules = (
 			);
 			dependencies = (
-				A3B0A5F82DDEE27200112373 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A3B0A5782DDED5C500112373 /* Firstrade */,
@@ -206,7 +205,6 @@
 			mainGroup = A3B0A56D2DDED5C500112373;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A3B0A5F62DDEE1CB00112373 /* XCRemoteSwiftPackageReference "SQLite.swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A3B0A5772DDED5C500112373 /* Products */;
@@ -280,10 +278,6 @@
 			isa = PBXTargetDependency;
 			target = A3B0A5752DDED5C500112373 /* Firstrade */;
 			targetProxy = A3B0A58E2DDED5C600112373 /* PBXContainerItemProxy */;
-		};
-		A3B0A5F82DDEE27200112373 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			productRef = A3B0A5F72DDEE27200112373 /* SQLite */;
 		};
 /* End PBXTargetDependency section */
 
@@ -579,25 +573,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		A3B0A5F62DDEE1CB00112373 /* XCRemoteSwiftPackageReference "SQLite.swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/stephencelis/SQLite.swift.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.15.3;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		A3B0A5F72DDEE27200112373 /* SQLite */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A3B0A5F62DDEE1CB00112373 /* XCRemoteSwiftPackageReference "SQLite.swift" */;
-			productName = SQLite;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A3B0A56E2DDED5C500112373 /* Project object */;
 }

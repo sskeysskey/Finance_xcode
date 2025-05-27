@@ -67,8 +67,8 @@ struct WatchlistView: View {
                             showingWatchlistSelectionSheet = true
                             print("Favorites menu tapped.")
                         }) {
-                            Image(systemName: "line.3.horizontal")
-                                .foregroundColor(navigationBarItemColor)
+//                            Image(systemName: "line.3.horizontal")
+//                                .foregroundColor(navigationBarItemColor)
                         }
                     }
                 }
