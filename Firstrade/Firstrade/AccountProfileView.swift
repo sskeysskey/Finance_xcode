@@ -1,17 +1,17 @@
 import SwiftUI
 
 // MARK: - Common Colors (can be centralized if used across many files)
-fileprivate let pageBackgroundColorGlobal = Color(red: 25/255, green: 30/255, blue: 39/255) // #191E27
-fileprivate let primaryTextColorGlobal = Color.white
-fileprivate let secondaryTextColorGlobal = Color(white: 0.65) // For dimmer text like account numbers in headers
-fileprivate let descriptiveTextColorGlobal = Color(white: 0.75) // For body/description text
-fileprivate let separatorColorGlobal = Color(white: 0.35)
-fileprivate let accentBlueColorGlobal = Color(hex: "3B82F6") // Standard blue for buttons
+private let pageBackgroundColorGlobal = Color(red: 25 / 255, green: 30 / 255, blue: 39 / 255)  // #191E27
+private let primaryTextColorGlobal = Color.white
+private let secondaryTextColorGlobal = Color(white: 0.65)  // For dimmer text like account numbers in headers
+private let descriptiveTextColorGlobal = Color(white: 0.75)  // For body/description text
+private let separatorColorGlobal = Color(white: 0.35)
+private let accentBlueColorGlobal = Color(hex: "3B82F6")  // Standard blue for buttons
 
 // MARK: - Account Profile View and its components
 
 struct AccountProfileView: View {
-    let accountNumber: String = "90185542" // Sample data
+    let accountNumber: String = "90185542"  // Sample data
 
     var body: some View {
         ZStack {
@@ -21,15 +21,17 @@ struct AccountProfileView: View {
                 // Account Number Display - Using the new reusable header
                 AccountHeaderView(
                     accountNumber: accountNumber,
-                    textColor: secondaryTextColorGlobal, // Dimmer text for header
+                    textColor: secondaryTextColorGlobal,  // Dimmer text for header
                     iconName: "line.horizontal.3"
                 )
-                .padding(.leading, 16) // Original padding for this specific layout
+                .padding(.leading, 16)  // Original padding for this specific layout
                 .padding(.top, 20)
                 .padding(.bottom, 25)
 
                 // Trading Privileges Row - MODIFIED
-                NavigationLink(destination: TradingPrivilegesView(accountNumber: self.accountNumber)) {
+                NavigationLink(
+                    destination: TradingPrivilegesView(accountNumber: self.accountNumber)
+                ) {
                     AccountDetailRow(
                         title: "Trading Privileges",
                         details: "Margin, Options, Extended Hour Trading"
@@ -74,7 +76,7 @@ struct AccountDetailRow: View {
                     .foregroundColor(primaryTextColorGlobal)
                 Text(details)
                     .font(.system(size: 14))
-                    .foregroundColor(secondaryTextColorGlobal) // Dimmer subtitle
+                    .foregroundColor(secondaryTextColorGlobal)  // Dimmer subtitle
                     .lineLimit(1)
             }
             Spacer()
@@ -94,7 +96,7 @@ struct AccountDetailRow: View {
 struct AccountHeaderView: View {
     let accountNumber: String
     let textColor: Color
-    let iconName: String // e.g., "line.horizontal.3"
+    let iconName: String  // e.g., "line.horizontal.3"
 
     var body: some View {
         HStack(spacing: 8) {
@@ -126,8 +128,9 @@ struct TradingPrivilegesView: View {
     let accountNumber: String
 
     // Colors specific to or customized for TradingPrivilegesView
-    private let checkmarkColor = Color(red: 64/255, green: 192/255, blue: 160/255) // Tealish green
-    private let enrolledBadgeBackgroundColor = Color(red: 70/255, green: 115/255, blue: 95/255) // Muted dark green
+    private let checkmarkColor = Color(red: 64 / 255, green: 192 / 255, blue: 160 / 255)  // Tealish green
+    private let enrolledBadgeBackgroundColor = Color(
+        red: 70 / 255, green: 115 / 255, blue: 95 / 255)  // Muted dark green
     private let enrolledBadgeTextColor = Color.white
 
     var body: some View {
@@ -135,15 +138,16 @@ struct TradingPrivilegesView: View {
             pageBackgroundColorGlobal.ignoresSafeArea()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) { // Overall container for content
-                    // Account Number Header
-                    AccountHeaderView(
-                        accountNumber: accountNumber,
-                        textColor: secondaryTextColorGlobal, // Dimmer text for header
-                        iconName: "line.horizontal.3"
-                    )
-                    .padding(.top, 5) // Reduced top padding as it's inside ScrollView with Nav Bar
-                    .padding(.bottom, 20)
+                VStack(alignment: .leading, spacing: 0) {  // Overall container for content
+                    // THIS SECTION HAS BEEN REMOVED:
+                    // // Account Number Header
+                    // AccountHeaderView(
+                    //     accountNumber: accountNumber,
+                    //     textColor: secondaryTextColorGlobal, // Dimmer text for header
+                    //     iconName: "line.horizontal.3"
+                    // )
+                    // .padding(.top, 5)
+                    // .padding(.bottom, 20)
 
                     // Margin Trading Section
                     TradingSectionView(
@@ -151,14 +155,14 @@ struct TradingPrivilegesView: View {
                         description: "This account is not yet approved for margin.",
                         buttonText: "Upgrade",
                         buttonAction: {
-                            print("Margin Upgrade Tapped")
+//                            print("Margin Upgrade Tapped for account: \(accountNumber)")  // accountNumber might still be useful for actions
                             // Add navigation or action logic here
                         },
                         items: [],
                         statusBadgeText: nil,
                         colors: sectionColors
                     )
-                    CustomDividerView(color: separatorColorGlobal, leadingPadding: 0) // Full width divider
+                    CustomDividerView(color: separatorColorGlobal, leadingPadding: 0)  // Full width divider
 
                     // Options Trading Section
                     TradingSectionView(
@@ -172,31 +176,31 @@ struct TradingPrivilegesView: View {
                         items: [
                             "Write Covered Calls",
                             "Write Cash-Secured Equity Puts",
-                            "Purchase Calls and Puts"
+                            "Purchase Calls and Puts",
                         ],
                         statusBadgeText: nil,
                         colors: sectionColors
                     )
-                    CustomDividerView(color: separatorColorGlobal, leadingPadding: 0) // Full width divider
+                    CustomDividerView(color: separatorColorGlobal, leadingPadding: 0)  // Full width divider
 
                     // Extended Hour Trading Section
                     TradingSectionView(
                         title: "Extended Hour Trading",
                         description: "This account is approved for Extended Hour Trading",
-                        buttonText: nil, // No button
+                        buttonText: nil,  // No button
                         buttonAction: {},
                         items: [],
                         statusBadgeText: "Enrolled",
                         colors: sectionColors
                     )
                     // No divider after the last section
-                    
-                    Spacer() // Ensures content pushes up if ScrollView is not full
+
+                    Spacer()  // Ensures content pushes up if ScrollView is not full
                 }
-                .padding(.horizontal, 16) // Horizontal padding for all content inside ScrollView
+                .padding(.horizontal, 16)  // Horizontal padding for all content inside ScrollView
             }
         }
-        .navigationTitle("Account Profile") // Title remains "Account Profile" as per screenshot
+        .navigationTitle("Account Profile")  // Title remains "Account Profile" as per screenshot
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -207,14 +211,14 @@ struct TradingPrivilegesView: View {
             // Back button will be automatically handled by NavigationView
         }
     }
-    
+
     private var sectionColors: TradingSectionView.Colors {
         TradingSectionView.Colors(
             primaryText: primaryTextColorGlobal,
-            descriptionText: descriptiveTextColorGlobal, // Specific color for descriptions
-            sectionTitle: primaryTextColorGlobal, // Section titles are primary white
+            descriptionText: descriptiveTextColorGlobal,  // Specific color for descriptions
+            sectionTitle: primaryTextColorGlobal,  // Section titles are primary white
             buttonBackground: accentBlueColorGlobal,
-            buttonText: primaryTextColorGlobal, // White text on blue button
+            buttonText: primaryTextColorGlobal,  // White text on blue button
             checkmark: checkmarkColor,
             badgeBackground: enrolledBadgeBackgroundColor,
             badgeText: enrolledBadgeTextColor
@@ -254,7 +258,7 @@ struct TradingSectionView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(colors.badgeText)
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 5) // Adjusted padding for badge
+                        .padding(.vertical, 5)  // Adjusted padding for badge
                         .background(colors.badgeBackground)
                         .clipShape(Capsule())
                 }
@@ -263,11 +267,11 @@ struct TradingSectionView: View {
 
             Text(description)
                 .font(.system(size: 15))
-                .foregroundColor(colors.descriptionText) // Use specific description color
+                .foregroundColor(colors.descriptionText)  // Use specific description color
                 .lineSpacing(4)
 
             if !items.isEmpty {
-                VStack(alignment: .leading, spacing: 10) { // Increased spacing for checklist items
+                VStack(alignment: .leading, spacing: 10) {  // Increased spacing for checklist items
                     ForEach(items, id: \.self) { item in
                         HStack(spacing: 10) {
                             Image(systemName: "checkmark")
@@ -275,11 +279,11 @@ struct TradingSectionView: View {
                                 .font(.system(size: 14, weight: .semibold))
                             Text(item)
                                 .font(.system(size: 15))
-                                .foregroundColor(colors.descriptionText) // Checklist items also use description color
+                                .foregroundColor(colors.descriptionText)  // Checklist items also use description color
                         }
                     }
                 }
-                .padding(.top, 8) // Space before checklist
+                .padding(.top, 8)  // Space before checklist
             }
 
             if let btnText = buttonText {
@@ -295,6 +299,6 @@ struct TradingSectionView: View {
                 .padding(.top, 16)
             }
         }
-        .padding(.bottom, 20) // Space after section content before a potential divider
+        .padding(.bottom, 20)  // Space after section content before a potential divider
     }
 }
