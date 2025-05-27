@@ -31,9 +31,9 @@ struct MyView: View {
                                 .padding(.top, 20)      // Space above the first section
                                 .padding(.bottom, 8)    // Space between header and its items
                         ) {
-                            NavigationLinkRow(title: "Profile", destination: Text("Account and Setting"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                            NavigationLinkRow(title: "Account Profile", destination: Text("Account Profile"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
                                 // THIS IS THE LINE TO CHANGE:
-                                NavigationLinkRow(title: "Deposit/Withdrawal", destination: DepositWithdrawView(), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                                NavigationLinkRow(title: "Deposit / Withdrawal", destination: DepositWithdrawView(), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
 //                                NavigationLinkRow(title: "转户至第一证券", destination: Text("转户至第一证券页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
                                 NavigationLinkRow(title: "Open a New Account", destination: Text("Open new"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
                         }
