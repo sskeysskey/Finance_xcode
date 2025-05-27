@@ -275,15 +275,14 @@ struct DepositWithdrawView: View {
         .cornerRadius(12)  // Slightly larger corner radius
     }
 
+    // 上記を下記に置き換えます：
     private var requestTransferButton: some View {
-        Button(action: {
-            print("Request transfer tapped (not implemented)")
-        }) {
+        NavigationLink(destination: RequestTransferView()) { // ◀️ ここを変更
             Text("Request Transfer")
-                .font(.system(size: 17, weight: .semibold))  // Adjusted font
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 48)  // Explicit height
+                .frame(height: 48)
                 .background(accentColor)
                 .cornerRadius(8)
         }
