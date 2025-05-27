@@ -1,5 +1,5 @@
+import SQLite3  // SQLiteを使用するためにインポート
 import SwiftUI
-import SQLite3 // SQLiteを使用するためにインポート
 
 // 取引タイプを定義
 enum TransferType: String, CaseIterable, Identifiable {
@@ -9,7 +9,7 @@ enum TransferType: String, CaseIterable, Identifiable {
 }
 
 class RequestTransferViewModel: ObservableObject {
-    @Published var selectedTransferType: TransferType = .withdraw // デフォルトは "Withdraw"
+    @Published var selectedTransferType: TransferType = .withdraw  // デフォルトは "Withdraw"
     @Published var amountString: String = ""
     @Published var latestBalance: Double = 0.0
     @Published var databaseError: String? = nil
@@ -58,11 +58,12 @@ class RequestTransferViewModel: ObservableObject {
             databaseError = nil
             return true
         } else {
-            let errorMsg = "❌ Error opening database \(dbPath): \(String(cString: sqlite3_errmsg(db)))"
+            let errorMsg =
+                "❌ Error opening database \(dbPath): \(String(cString: sqlite3_errmsg(db)))"
             print(errorMsg)
             databaseError = errorMsg
             if db != nil {
-                sqlite3_close(db) // エラー時は閉じる
+                sqlite3_close(db)  // エラー時は閉じる
                 db = nil
             }
             return false
@@ -95,13 +96,15 @@ class RequestTransferViewModel: ObservableObject {
                 print(errorMsg)
                 DispatchQueue.main.async {
                     self.databaseError = errorMsg
-                    self.latestBalance = 0.0 // データがない場合は0に
+                    self.latestBalance = 0.0  // データがない場合は0に
                 }
             }
             sqlite3_finalize(statement)
         } else {
             let errorMessage = String(cString: sqlite3_errmsg(db))
-            print("❌ SELECT statement for balance could not be prepared: \(errorMessage). Query: \(query)")
+            print(
+                "❌ SELECT statement for balance could not be prepared: \(errorMessage). Query: \(query)"
+            )
             DispatchQueue.main.async {
                 self.databaseError = "Failed to fetch balance: \(errorMessage)"
             }
@@ -120,7 +123,7 @@ struct RequestTransferView: View {
     private let cardBackgroundColor = Color(red: 40 / 255, green: 45 / 255, blue: 55 / 255)
     private let primaryTextColor = Color.white
     private let secondaryTextColor = Color.gray
-    private let accentColor = Color(hex: "3B82F6") // FirstradeApp.swiftのColor extensionが必要
+    private let accentColor = Color(hex: "3B82F6")  // FirstradeApp.swiftのColor extensionが必要
 
     var body: some View {
         ZStack {
@@ -138,10 +141,10 @@ struct RequestTransferView: View {
                 }
 
                 // MARK: - Transfer Type Selection
-//                Text("Please select transfer type")
-//                    .font(.headline)
-//                    .foregroundColor(primaryTextColor)
-//                    .padding(.horizontal)
+                //                Text("Please select transfer type")
+                //                    .font(.headline)
+                //                    .foregroundColor(primaryTextColor)
+                //                    .padding(.horizontal)
 
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(TransferType.allCases) { type in
@@ -149,8 +152,11 @@ struct RequestTransferView: View {
                             viewModel.selectedTransferType = type
                         }) {
                             HStack {
-                                Image(systemName: viewModel.selectedTransferType == type ? "largecircle.fill.circle" : "circle")
-                                    .foregroundColor(accentColor)
+                                Image(
+                                    systemName: viewModel.selectedTransferType == type
+                                        ? "largecircle.fill.circle" : "circle"
+                                )
+                                .foregroundColor(accentColor)
                                 Text(type.rawValue)
                                     .foregroundColor(primaryTextColor)
                                 Spacer()
@@ -189,7 +195,7 @@ struct RequestTransferView: View {
                         .padding(12)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(Color(red: 30/255, green: 35/255, blue: 45/255)) // Slightly different for input field
+                                .fill(Color(red: 30 / 255, green: 35 / 255, blue: 45 / 255))  // Slightly different for input field
                         )
                         .keyboardType(.decimalPad)
                     Text("Minimum amount is $1.00")
@@ -201,20 +207,24 @@ struct RequestTransferView: View {
                 .background(cardBackgroundColor)
                 .cornerRadius(8)
                 .padding(.horizontal)
-                
+
                 Spacer()
 
                 // MARK: - Preview Button
                 Button(action: {
                     // Preview button action (to be implemented later)
-                    print("Preview tapped. Amount: \(viewModel.amountString), Type: \(viewModel.selectedTransferType.rawValue)")
+                    print(
+                        "Preview tapped. Amount: \(viewModel.amountString), Type: \(viewModel.selectedTransferType.rawValue)"
+                    )
                 }) {
                     Text("Submit")
                         .font(.headline)
                         .foregroundColor(viewModel.isPreviewButtonEnabled ? .white : .gray)
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(accentColor.opacity(viewModel.isPreviewButtonEnabled ? 1.0 : 0.5))
+                        .background(
+                            accentColor.opacity(viewModel.isPreviewButtonEnabled ? 1.0 : 0.5)
+                        )
                         .cornerRadius(8)
                 }
                 .disabled(!viewModel.isPreviewButtonEnabled)
@@ -237,14 +247,5 @@ struct RequestTransferView: View {
             // ViewModelのinitでデータ取得が開始されるが、必要に応じて再取得
             // viewModel.fetchLatestBalance()
         }
-    }
-}
-
-struct RequestTransferView_Previews: PreviewProvider {
-    static var previews: some View {
-        NavigationView {
-            RequestTransferView()
-        }
-        .preferredColorScheme(.dark)
     }
 }
