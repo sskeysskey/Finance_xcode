@@ -209,7 +209,7 @@ struct RequestTransferView: View {
                     // Preview button action (to be implemented later)
                     print("Preview tapped. Amount: \(viewModel.amountString), Type: \(viewModel.selectedTransferType.rawValue)")
                 }) {
-                    Text("Preview")
+                    Text("Submit")
                         .font(.headline)
                         .foregroundColor(viewModel.isPreviewButtonEnabled ? .white : .gray)
                         .frame(maxWidth: .infinity)
