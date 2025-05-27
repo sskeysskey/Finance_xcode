@@ -31,7 +31,7 @@ struct MyView: View {
                                 .padding(.top, 20)      // Space above the first section
                                 .padding(.bottom, 8)    // Space between header and its items
                         ) {
-                            NavigationLinkRow(title: "Account Profile", destination: AccountProfileView(), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor) //  Modification here.
+                            NavigationLinkRow(title: "Profile", destination: AccountProfileView(), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor) //  Modification here.
                                 // THIS IS THE LINE TO CHANGE:
                                 NavigationLinkRow(title: "Deposit / Withdrawal", destination: DepositWithdrawView(), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
 //                                NavigationLinkRow(title: "转户至第一证券", destination: Text("转户至第一证券页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
@@ -40,18 +40,18 @@ struct MyView: View {
                         .listRowSeparator(.hidden, edges: .top) // Hide separator above the first section's content
                         .listRowSeparatorTint(secondaryTextColor.opacity(0.3)) // Style for separators within section
                         
-                        // Section "Setting"
-                        Section(
-                            header: Text("SETTING")
-                                .font(.system(size: 16))
-                                .foregroundColor(primaryTextColor)
-                                .padding(.leading, 16) // Indent header
-                                .padding(.top, 15)      // Space above this section header
-                                .padding(.bottom, 8)
-                        ) {
-                            NavigationLinkRow(title: "App Setting", destination: Text("help"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
-                        }
-                        .listRowSeparatorTint(secondaryTextColor.opacity(0.3)) // Style for separators within section
+//                        // Section "Setting"
+//                        Section(
+//                            header: Text("SETTING")
+//                                .font(.system(size: 16))
+//                                .foregroundColor(primaryTextColor)
+//                                .padding(.leading, 16) // Indent header
+//                                .padding(.top, 15)      // Space above this section header
+//                                .padding(.bottom, 8)
+//                        ) {
+//                            NavigationLinkRow(title: "App Setting", destination: Text("help"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+//                        }
+//                        .listRowSeparatorTint(secondaryTextColor.opacity(0.3)) // Style for separators within section
 
                         // Section "Setting"
                         Section(
@@ -95,11 +95,11 @@ struct MyView: View {
                         .padding(.bottom, 20) // Padding at the very bottom
                 }
             }
-            .navigationTitle("Account & Setting")
+            .navigationTitle("Account Profile")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) { // Center the navigation bar title
-                    Text("Account & Setting")
+                    Text("Account Profile")
                         .font(.headline)
                         .foregroundColor(primaryTextColor)
                 }

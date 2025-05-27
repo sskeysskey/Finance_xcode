@@ -7,6 +7,9 @@ private let secondaryTextColorGlobal = Color(white: 0.65)  // For dimmer text li
 private let descriptiveTextColorGlobal = Color(white: 0.75)  // For body/description text
 private let separatorColorGlobal = Color(white: 0.35)
 private let accentBlueColorGlobal = Color(hex: "3B82F6")  // Standard blue for buttons
+fileprivate let certifiedBadgeBackgroundColor = Color(red: 70/255, green: 115/255, blue: 95/255) // Muted dark green (same as "Enrolled")
+fileprivate let certifiedBadgeTextColor = Color.white
+fileprivate let infoBoxBackgroundColor = Color(red: 40/255, green: 48/255, blue: 60/255) // Darker blue-gray for info box
 
 // MARK: - Account Profile View and its components
 
@@ -39,8 +42,8 @@ struct AccountProfileView: View {
                 }
                 CustomDividerView(color: separatorColorGlobal, leadingPadding: 16)
 
-                // Required Documents Row
-                NavigationLink(destination: Text("Required Documents Details View (Placeholder)")) {
+                // MODIFIED: NavigationLink for Required Documents
+                NavigationLink(destination: RequiredDocumentsView(accountNumber: self.accountNumber)) {
                     AccountDetailRow(
                         title: "Required Documents",
                         details: "W-8BEN"
@@ -300,5 +303,96 @@ struct TradingSectionView: View {
             }
         }
         .padding(.bottom, 20)  // Space after section content before a potential divider
+    }
+}
+
+// MARK: - Required Documents View (NEW)
+
+struct RequiredDocumentsView: View {
+    let accountNumber: String
+
+    // Sample data for the view
+    let lastFiledDate: String = "08/16/2024"
+    let renewedByDate: String = "12/31/2027"
+    let infoText: String = "*W-8BEN form must be renewed every three years."
+
+    var body: some View {
+        ZStack {
+            pageBackgroundColorGlobal.ignoresSafeArea()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) { // Consistent spacing for content blocks
+                    AccountHeaderView(
+                        accountNumber: accountNumber,
+                        textColor: secondaryTextColorGlobal,
+                        iconName: "line.horizontal.3"
+                    )
+                    // No horizontal padding here, as the parent VStack will have it.
+                    .padding(.bottom, 10) // Reduced bottom padding slightly, adjust as needed
+
+                    // W-8BEN Form Section
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("W-8BEN Form")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(primaryTextColorGlobal)
+                            Spacer()
+                            Text("Certified")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(certifiedBadgeTextColor)
+                                .padding(.horizontal, 12) // Slightly more horizontal padding for balance
+                                .padding(.vertical, 6)   // Slightly more vertical padding
+                                .background(certifiedBadgeBackgroundColor)
+                                .clipShape(Capsule())
+                        }
+
+                        Text("Last filed: \(lastFiledDate)")
+                            .font(.system(size: 15))
+                            .foregroundColor(descriptiveTextColorGlobal)
+
+                        Text("Renewed by: \(renewedByDate)")
+                            .font(.system(size: 15))
+                            .foregroundColor(descriptiveTextColorGlobal)
+                            .padding(.bottom, 8) // Add a bit of space before the info box
+
+                        // Info Box
+                        Text(infoText)
+                            .font(.system(size: 14))
+                            .foregroundColor(primaryTextColorGlobal.opacity(0.9)) // Slightly less bright for info text
+                            .padding(12) // Uniform padding inside the box
+                            .frame(maxWidth: .infinity, alignment: .leading) // Ensure it takes full width
+                            .background(infoBoxBackgroundColor)
+                            .cornerRadius(8)
+                            .padding(.bottom, 16) // Space after info box before button
+
+                        // Renew Button
+                        Button(action: {
+                            print("Renew button tapped for W-8BEN, account: \(accountNumber)")
+                            // Add renew action logic here
+                        }) {
+                            Text("Renew")
+                                .font(.system(size: 17, weight: .medium))
+                                .foregroundColor(primaryTextColorGlobal)
+                                .frame(height: 48)
+                                .frame(maxWidth: .infinity)
+                                .background(accentBlueColorGlobal)
+                                .cornerRadius(8)
+                        }
+                    }
+                    Spacer() // Pushes content up if ScrollView is not full
+                }
+                .padding(.horizontal, 16) // Horizontal padding for all content inside ScrollView
+                .padding(.top, 5)        // Top padding for the content area inside ScrollView
+            }
+        }
+        .navigationTitle("Account Profile") // Title remains "Account Profile"
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Text("Account Profile")
+                    .font(.headline)
+                    .foregroundColor(primaryTextColorGlobal)
+            }
+        }
     }
 }
