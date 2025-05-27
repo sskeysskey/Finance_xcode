@@ -9,7 +9,7 @@ struct TransactionRecord: Identifiable {
     let type: Int  // 0 for deposit, 1 for withdrawal
 
     var transactionTypeString: String {
-        type == 0 ? "存款" : "提款"
+        type == 0 ? "Deposit" : "Withdrawal"
     }
 
     var formattedValue: String {
@@ -20,7 +20,7 @@ struct TransactionRecord: Identifiable {
     // As per database structure, status is not available. Defaulting to "已完成".
     // The design image's "已驳回" for 2024-08-21 $1000 cannot be derived from the current DB.
     var status: String {
-        return "已完成"
+        return "Complete"
     }
 }
 
@@ -195,7 +195,7 @@ struct DepositWithdrawView: View {
     let accountType = "ACH SAVINGS\nPowered by Standard Chartered"  // From image
     // --- MODIFICATION END ---
     let bankName = "China Merchants Bank (*2056)"  // From image
-    let bankStatus = "已开通"  // From image
+    let bankStatus = "Active"  // From image
 
     var body: some View {
         ZStack {
@@ -219,11 +219,11 @@ struct DepositWithdrawView: View {
                 }
             }
         }
-        .navigationTitle("存款 / 提款")
+        .navigationTitle("Deposit / Withdrawal")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text("存款 / 提款")
+                Text("Deposit / Withdrawal")
                     .font(.headline)
                     .foregroundColor(primaryTextColor)
             }
@@ -259,11 +259,11 @@ struct DepositWithdrawView: View {
                 .padding(.top, 4)  // Added small top padding
 
             HStack {
-                Text("银行设定状态: \(bankStatus)")
+                Text("Profile Status: \(bankStatus)")
                     .font(.system(size: 13))  // Adjusted font
                     .foregroundColor(secondaryTextColor)
                 Spacer()
-                Button("删除银行设定") {
+                Button("Delete Profile") {
                     print("Delete bank setting tapped (not implemented)")
                 }
                 .font(.system(size: 13, weight: .medium))  // Adjusted font
@@ -279,7 +279,7 @@ struct DepositWithdrawView: View {
         Button(action: {
             print("Request transfer tapped (not implemented)")
         }) {
-            Text("要求转账")
+            Text("Request Transfer")
                 .font(.system(size: 17, weight: .semibold))  // Adjusted font
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
@@ -292,7 +292,7 @@ struct DepositWithdrawView: View {
     private var transferHistorySection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("转账记录")
+                Text("Transfer History")
                     .font(.system(size: 18, weight: .bold))  // Adjusted font
                     .foregroundColor(primaryTextColor)
                 Spacer()
@@ -316,7 +316,7 @@ struct DepositWithdrawView: View {
                 if viewModel.transactions.isEmpty && !viewModel.isLoadingPage
                     && viewModel.databaseError == nil
                 {
-                    Text("没有转账记录。")
+                    Text("No Transfer History")
                         .font(.system(size: 15))
                         .foregroundColor(secondaryTextColor)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -357,7 +357,7 @@ struct DepositWithdrawView: View {
                 if !viewModel.canLoadMorePages && !viewModel.transactions.isEmpty
                     && !viewModel.isLoadingPage
                 {
-                    Text("没有更多记录了")
+                    Text("No more records")
                         .font(.caption)
                         .foregroundColor(secondaryTextColor)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -401,9 +401,9 @@ struct TransactionRowView: View {
                 Text(record.status)
                     .font(.system(size: 13))  // Adjusted font
                     .foregroundColor(
-                        record.status == "已驳回"
+                        record.status == "Rejected"
                             ? statusRejectedColor
-                            : (record.status == "已完成" ? secondaryTextColor : secondaryTextColor))
+                            : (record.status == "Complete" ? secondaryTextColor : secondaryTextColor))
             }
         }
         .padding(.vertical, 10)  // Increased vertical padding for row

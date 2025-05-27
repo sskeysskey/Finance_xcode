@@ -24,36 +24,36 @@ struct MyView: View {
                     List {
                         // Section "账户"
                         Section(
-                            header: Text("账户")
+                            header: Text("ACCOUNT")
                                 .font(.system(size: 16))
                                 .foregroundColor(primaryTextColor)
                                 .padding(.leading, 16) // Indent header to align with row content
                                 .padding(.top, 20)      // Space above the first section
                                 .padding(.bottom, 8)    // Space between header and its items
                         ) {
-                            NavigationLinkRow(title: "账户设定", destination: Text("账户设定页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                            NavigationLinkRow(title: "Profile", destination: Text("Account and Setting"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
                                 // THIS IS THE LINE TO CHANGE:
-                                NavigationLinkRow(title: "存款 / 提款", destination: DepositWithdrawView(), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
-                                NavigationLinkRow(title: "转户至第一证券", destination: Text("转户至第一证券页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
-                                NavigationLinkRow(title: "开新账户", destination: Text("开新账户页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                                NavigationLinkRow(title: "Deposit/Withdrawal", destination: DepositWithdrawView(), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+//                                NavigationLinkRow(title: "转户至第一证券", destination: Text("转户至第一证券页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                                NavigationLinkRow(title: "Open a New Account", destination: Text("Open new"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
                         }
                         .listRowSeparator(.hidden, edges: .top) // Hide separator above the first section's content
                         .listRowSeparatorTint(secondaryTextColor.opacity(0.3)) // Style for separators within section
 
                         // Section "支援中心"
                         Section(
-                            header: Text("支援中心")
+                            header: Text("SUPPORT")
                                 .font(.system(size: 16))
                                 .foregroundColor(primaryTextColor)
                                 .padding(.leading, 16) // Indent header
                                 .padding(.top, 15)      // Space above this section header
                                 .padding(.bottom, 8)
                         ) {
-                            NavigationLinkRow(title: "帮助中心", destination: Text("帮助中心页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
-                            NavigationLinkRow(title: "联系我们", destination: Text("联系我们页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
-                            NavigationLinkRow(title: "公开声明", destination: Text("公开声明页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
-                            NavigationLinkRow(title: "APP使用指南", destination: Text("APP使用指南页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
-                            NavigationLinkRow(title: "此版本中的新增功能", destination: Text("此版本中的新增功能页面"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                            NavigationLinkRow(title: "Help Center", destination: Text("help"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                            NavigationLinkRow(title: "Contact Us", destination: Text("contact"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                            NavigationLinkRow(title: "Terms & Disclosures", destination: Text("Terms"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                            NavigationLinkRow(title: "App Guide", destination: Text("APP Guide"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                            NavigationLinkRow(title: "What's new in this release", destination: Text("new feature"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
                         }
                         .listRowSeparatorTint(secondaryTextColor.opacity(0.3))
                     }
@@ -63,7 +63,7 @@ struct MyView: View {
 
                     // Logout Button
                     Button(action: logout) {
-                        Text("登出")
+                        Text("Log Out")
                             .font(.system(size: 17, weight: .medium))
                             .foregroundColor(primaryTextColor)
                             .frame(height: 48)
@@ -82,11 +82,11 @@ struct MyView: View {
                         .padding(.bottom, 20) // Padding at the very bottom
                 }
             }
-            .navigationTitle("账户及应用设定")
+            .navigationTitle("Account & Setting")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) { // Center the navigation bar title
-                    Text("账户及应用设定")
+                    Text("Account & Setting")
                         .font(.headline)
                         .foregroundColor(primaryTextColor)
                 }

@@ -12,32 +12,32 @@ struct MainTabView: View {
             PortfolioView(username: session.username, vm: vm)
                 .tabItem {
                     Image(systemName: "briefcase.fill")
-                    Text("持仓")
+                    Text("Positions")
                 }
 
-            Text("自选股")
+            Text("Watchlist")
                 .tabItem {
                     Image(systemName: "star")
-                    Text("自选股")
+                    Text("Watchlist")
                 }
 
-//            Text("市场")
-//                .tabItem {
-//                    Image(systemName: "globe")
-//                    Text("市场")
-//                }
+            Text("Markets")
+                .tabItem {
+                    Image(systemName: "globe")
+                    Text("Markets")
+                }
 
             AssetsView() // <<< 新しい「资产」ページをここに追加
                 .tabItem {
                     // Image(systemName: "rectangle.stack") // 元のアイコン
                     Image(systemName: "chart.pie.fill") // デザイン画像のアイコンに近いものに変更 (任意)
-                    Text("资产")
+                    Text("Assets")
                 }
 
             MyView()
                 .tabItem {
                     Image(systemName: "person")
-                    Text("我的")
+                    Text("Account")
                 }
         }
         .accentColor(Color(red: 70/255, green: 130/255, blue: 220/255))
@@ -59,13 +59,13 @@ class BalanceViewModel: ObservableObject {
     func fetchBalances() {
         // 从 Bundle 中找到数据库文件
         guard let dbURL = Bundle.main.url(forResource: "Firstrade", withExtension: "db") else {
-            print("❌ 找不到 Firstrade.db")
+            print("❌ Can't find Firstrade.db")
             return
         }
 
         var db: OpaquePointer?
         guard sqlite3_open(dbURL.path, &db) == SQLITE_OK else {
-            print("❌ 无法打开数据库")
+            print("❌ Can't open DATABASE")
             return
         }
         defer { sqlite3_close(db) }
@@ -90,7 +90,7 @@ class BalanceViewModel: ObservableObject {
 
         // 至少要有两条数据
         guard records.count >= 2 else {
-            print("⚠️ Balance 表中数据不足 2 天")
+            print("⚠️ Balance DATA not in 2 days")
             return
         }
 
@@ -115,7 +115,7 @@ struct PortfolioView: View {
     let username: String
     @ObservedObject var vm: BalanceViewModel
     @State private var selectedSegment = 0
-    private let segments = ["持仓"]    // 这里只放一个
+    private let segments = ["POSITION"]    // 这里只放一个
 
     var body: some View {
         NavigationView {
@@ -139,14 +139,14 @@ struct PortfolioView: View {
                     Image(systemName: "tray")
                         .font(.largeTitle)
                         .foregroundColor(.gray.opacity(0.7))
-                    Text("您没有持任何仓位")
+                    Text("No current positions")
                         .foregroundColor(.gray)
                     Button(action: {
-                        // 搜索操作
+                        // search operation
                     }) {
                         HStack {
                             Image(systemName: "magnifyingglass")
-                            Text("搜索代号")
+                            Text("Search for a symbol")
                         }
                         .padding(.vertical, 8)
                         .padding(.horizontal, 16)
@@ -202,14 +202,14 @@ struct SummaryCard: View {
         HStack(alignment: .top, spacing: 0) {  // ← alignment: .top
             // 左侧：账户总值 + 现金购买力
             VStack(alignment: .leading, spacing: 6) {
-                Text("账户总值")
+                Text("Total Account Value")
                     .font(.caption)
                     .foregroundColor(.gray)
                 Text(fmt(vm.totalBalance))
                     .font(.title2)
                     .foregroundColor(.white)
 
-                Text("现金购买力")
+                Text("Cash BP")
                     .font(.caption2)
                     .foregroundColor(.gray)
                 Text(fmt(vm.cashBuyingPower))
@@ -220,7 +220,7 @@ struct SummaryCard: View {
 
             // 右侧：今日变动
             VStack(alignment: .leading, spacing: 6) {
-                Text("今日变动")
+                Text("Today's Change")
                     .font(.caption)
                     .foregroundColor(.gray)
 

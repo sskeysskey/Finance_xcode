@@ -11,13 +11,13 @@ struct DealDataPoint: Identifiable, Equatable {
 
 // 期間選択オプション
 enum TimeRangeOption: String, CaseIterable, Identifiable {
-    case all = "全部"
+    case all = "All"
     // case last3Months = "近三个月"
     // case last6Months = "近半年"
     // case yearToDate = "年初至今"
-    case last1Year = "近一年"  // 変更
-    case last2Years = "近两年"  // 変更
-    case custom = "筛选"  // "筛选" はボタンのラベルとして使用
+    case last1Year = " 1 Year"  // 変更
+    case last2Years = "2 Years"  // 変更
+    case custom = "Filter"  // "筛选" はボタンのラベルとして使用
 
     var id: String { self.rawValue }
 }
@@ -69,7 +69,7 @@ class AssetsViewModel: ObservableObject {
             return
         }
         self.dbPath = path
-        print("资产页面数据库路径: \(dbPath)")
+        print("assets_db_path: \(dbPath)")
 
         if !openDatabase() {
             // openDatabase内でerrorMessageが設定されます
@@ -427,11 +427,11 @@ struct AssetsView: View {
                     }
                 }
             }
-            .navigationTitle("资产走势分析")
+            .navigationTitle("Analysis of Asset")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("资产走势分析   (ZhangYan)").font(.headline).foregroundColor(textColor)
+                    Text("Analysis of Asset  (ZhangYan)").font(.headline).foregroundColor(textColor)
                 }
                 // 右上のアイコンは指示になかったため省略
             }
@@ -567,7 +567,7 @@ struct AssetsView: View {
 
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("累计收益 · USD")
+                    Text("Accumulated Earnings · USD")
                         .font(.caption)
                         .foregroundColor(secondaryTextColor)
                     Text(
@@ -582,7 +582,7 @@ struct AssetsView: View {
                 Spacer()
                 VStack(alignment: .trailing, spacing: 4) {
                     HStack(spacing: 4) {  // デザイン画像のテキストとアイコン
-                        Text("收益率")
+                        Text("Yield Rate")
                             .font(.caption)
                             .foregroundColor(secondaryTextColor)
                         // Image(systemName: "chevron.down") // デザイン画像のアイコン、意味が不明瞭なため一旦コメントアウト
@@ -671,18 +671,18 @@ struct AssetsView: View {
             HStack(spacing: 0) {
                 // VStack 包含 "账户记录" 和 下划线，现在是第一个元素
                 VStack(spacing: 3) {
-                    Text("账户记录")
+                    Text("Account Records")
                         .font(.system(size: 15, weight: .medium))
                         .padding(.vertical, 10)
                         .padding(.horizontal, 20)
                         .foregroundColor(textColor) // "账户记录" 保持 textColor，因为它现在是选中的/主要的
                     Rectangle()
-                        .frame(width: 40, height: 2.5) // 修改这里：增加了 width 使其变短，40 是一个示例值，您可以根据需要调整
+                        .frame(width: 80, height: 2.5) // 修改这里：增加了 width 使其变短，40 是一个示例值，您可以根据需要调整
                         .foregroundColor(accentColorForTabUnderline)
                 }
 
                 // "订单现况" 现在是第二个元素
-                Text("订单现况")
+                Text("Order Status")
                     .font(.system(size: 15, weight: .medium))
                     .padding(.vertical, 10)
                     .padding(.horizontal, 20)
@@ -695,14 +695,14 @@ struct AssetsView: View {
 
             // List of transactions
             VStack(alignment: .leading, spacing: 0) {
-                transactionRowView(month: "3月", day: "25", year: "2025", transactionType: "卖出 CHAU", transactionDetails: "38.68 股数 @ $16.88", dotColor: dotSellActualColor)
-                transactionRowView(month: "3月", day: "19", year: "2025", transactionType: "买进 CHAU", transactionDetails: "38.68 @ $25.36", dotColor: dotBuyActualColor)
-                transactionRowView(month: "12月", day: "01", year: "2024", transactionType: "卖出 IBIT", transactionDetails: "14 股数 @ $35.64", dotColor: dotSellActualColor)
-                transactionRowView(month: "6月", day: "05", year: "2024", transactionType: "取款", transactionDetails: "$5,000.00", dotColor: dotOtherActualColor)
-                transactionRowView(month: "6月", day: "01", year: "2024", transactionType: "买进 IBIT", transactionDetails: "14 股数 @ $36.04", dotColor: dotBuyActualColor)
+                transactionRowView(month: "Mar", day: "25", year: "2025", transactionType: "Sell CHAU", transactionDetails: "38.68 Shares @ $16.88", dotColor: dotSellActualColor)
+                transactionRowView(month: "Mar", day: "19", year: "2025", transactionType: "Buy CHAU", transactionDetails: "38.68 Shares @ $25.36", dotColor: dotBuyActualColor)
+                transactionRowView(month: "Dec", day: "01", year: "2024", transactionType: "Sell IBIT", transactionDetails: "14 Shares @ $35.64", dotColor: dotSellActualColor)
+                transactionRowView(month: "Jun", day: "05", year: "2024", transactionType: "Withdraw", transactionDetails: "$5,000.00", dotColor: dotOtherActualColor)
+                transactionRowView(month: "Jun", day: "01", year: "2024", transactionType: "Buy IBIT", transactionDetails: "14 Shares @ $36.04", dotColor: dotBuyActualColor)
                 // 利息 (Interest) entry for 9月 16 is intentionally omitted as per request
-                transactionRowView(month: "5月", day: "27", year: "2024", transactionType: "卖出 TLT", transactionDetails: "23.84 @ $25.36", dotColor: dotBuyActualColor)
-                transactionRowView(month: "5月", day: "19", year: "2024", transactionType: "买进 TLT", transactionDetails: "23.84 @ $29.36", dotColor: dotBuyActualColor)
+                transactionRowView(month: "May", day: "27", year: "2024", transactionType: "Sell TLT", transactionDetails: "23.84 Shares @ $25.36", dotColor: dotBuyActualColor)
+                transactionRowView(month: "May", day: "19", year: "2024", transactionType: "Buy TLT", transactionDetails: "23.84 Shares @ $29.36", dotColor: dotBuyActualColor)
             }
             .padding(.leading, 20) // Indent the transaction list slightly for the timeline
             .padding(.trailing, 15) // Overall right padding
@@ -799,19 +799,19 @@ struct DateFilterView: View {
             ZStack {
                 pageBackgroundColor.ignoresSafeArea()
                 VStack(spacing: 20) {
-                    Text("选择日期范围")
+                    Text("Date Range")
                         .font(.title2.bold())
                         .foregroundColor(textColor)
                         .padding(.top, 30)
 
-                    DatePicker("起始日期", selection: $tempStartDate, displayedComponents: .date)
+                    DatePicker("START", selection: $tempStartDate, displayedComponents: .date)
                         .foregroundColor(textColor)
                         .colorScheme(.dark)  // DatePickerのUIをダークテーマに
                         .accentColor(accentButtonColor)  // カレンダー内の選択色
                         .padding(.horizontal)
 
                     DatePicker(
-                        "截止日期", selection: $tempEndDate, in: tempStartDate...,
+                        "END", selection: $tempEndDate, in: tempStartDate...,
                         displayedComponents: .date
                     )
                     .foregroundColor(textColor)
@@ -835,7 +835,7 @@ struct DateFilterView: View {
                         onApply(tempStartDate, tempEndDate)
                         presentationMode.wrappedValue.dismiss()
                     }) {
-                        Text("确定")
+                        Text("OK")
                             .font(.headline)
                             .foregroundColor(.white)
                             .frame(height: 48)
@@ -853,10 +853,10 @@ struct DateFilterView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("筛选日期").foregroundColor(textColor)
+                    Text("Filter Date").foregroundColor(textColor)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("取消") {
+                    Button("Cancel") {
                         presentationMode.wrappedValue.dismiss()
                     }
                     .foregroundColor(accentButtonColor)
@@ -884,7 +884,7 @@ struct LineChartView: View {
     var body: some View {
         GeometryReader { geometry in
             if dataPoints.isEmpty {
-                Text("图表无可用数据")
+                Text("No Data for Chart")
                     .foregroundColor(axisLabelColor)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {

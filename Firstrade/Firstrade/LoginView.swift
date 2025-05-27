@@ -90,13 +90,13 @@ struct LoginView: View {
                         .ignoresSafeArea()
                     VStack(spacing: 20) {
                         Spacer().frame(height: 30)
-                        Text("Firstrade 欢迎您")
+                        Text("Welcome")
                             .font(.title2).foregroundColor(.white)
                         Spacer().frame(height: 30)
 
                         // 用户名
                         VStack(alignment: .leading, spacing: 5) {
-                            Text("登录用户名")
+                            Text("Username")
                                 .font(.caption).foregroundColor(.gray)
                             TextField("", text: $usernameInput)
                                 .padding(12)
@@ -113,7 +113,7 @@ struct LoginView: View {
 
                         // 密码 + Face ID 按钮
                         VStack(alignment: .leading, spacing: 5) {
-                            Text("密码")
+                            Text("Passowrd")
                                 .font(.caption).foregroundColor(.gray)
                             HStack {
                                 if isPasswordPlaceholder {
@@ -148,7 +148,7 @@ struct LoginView: View {
 
                                 // ← 把 Image 换成 Button
                                 Button(action: authenticateWithBiometrics) {
-                                    Image(systemName: "faceid")
+                                    Image(systemName: "Face ID")
                                         .font(.system(size: 24))
                                         .foregroundColor(.gray)
                                         .padding(.trailing, 10)
@@ -158,14 +158,14 @@ struct LoginView: View {
                         .padding(.horizontal, 30)
 
                         Toggle(isOn: $rememberAll) {
-                            Text("记住我的用户名和密码")
+                            Text("Remember me")
                                 .foregroundColor(.white)
                         }
                         .padding(.horizontal, 30)
                         .tint(Color(red: 70 / 255, green: 130 / 255, blue: 220 / 255))
 
                         Button(action: login) {
-                            Text("登入")
+                            Text("Log In")
                                 .font(.headline).foregroundColor(.white)
                                 .frame(maxWidth: .infinity).padding()
                                 .background(Color(red: 70 / 255, green: 130 / 255, blue: 220 / 255))
@@ -174,10 +174,10 @@ struct LoginView: View {
                         .padding(.horizontal, 30)
 
                         Button(action: {
-                            alertMessage = "“忘记密码”功能尚未实现。"
+                            alertMessage = "Error Code 466"
                             showingAlert = true
                         }) {
-                            Text("忘记登入用户名或密码")
+                            Text("Forgot username&password")
                                 .font(.footnote)
                                 .foregroundColor(
                                     Color(red: 70 / 255, green: 130 / 255, blue: 220 / 255))
@@ -189,19 +189,19 @@ struct LoginView: View {
                             .padding(.bottom, 20)
                     }
                 }
-                .navigationTitle("登入")
+                .navigationTitle("Login")
                 .navigationBarTitleDisplayMode(.inline)
                 .alert(isPresented: $showingAlert) {
                     Alert(
-                        title: Text("提示"),
+                        title: Text("Tips"),
                         message: Text(alertMessage),
-                        dismissButton: .default(Text("好的")))
+                        dismissButton: .default(Text("OK")))
                 }
                 .onAppear(perform: loadRemembered)
                 .alert(isPresented: $showingAlert) {
-                    Alert(title: Text("提示"),
+                    Alert(title: Text("Tips"),
                           message: Text(alertMessage),
-                          dismissButton: .default(Text("好的")))
+                          dismissButton: .default(Text("OK")))
                 }
             }
         }
@@ -211,11 +211,11 @@ struct LoginView: View {
     // MARK: ———————— 生物识别认证 ————————
     private func authenticateWithBiometrics() {
         let context = LAContext()
-        context.localizedCancelTitle = "取消"
+        context.localizedCancelTitle = "Cancel"
         var error: NSError?
         // 1. 检查设备是否支持
         if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) {
-            let reason = "使用 Face ID 完成登录"
+            let reason = "Use Face ID"
             context.evaluatePolicy(
                 .deviceOwnerAuthenticationWithBiometrics,
                 localizedReason: reason
@@ -228,7 +228,7 @@ struct LoginView: View {
                                 service: keychainService,
                                 account: pwdAccount)
                         else {
-                            alertMessage = "未检测到已保存的密码，请先正常登录并勾选“记住”"
+                            alertMessage = "no password, check 'remember me' first."
                             showingAlert = true
                             return
                         }
@@ -239,13 +239,13 @@ struct LoginView: View {
                         // 3. 自动触发登录
                         login()
                     } else {
-                        alertMessage = "认证失败，请手动输入密码"
+                        alertMessage = "Verified failed."
                         showingAlert = true
                     }
                 }
             }
         } else {
-            alertMessage = "此设备不支持 Face ID"
+            alertMessage = "Not Support Face ID"
             showingAlert = true
         }
     }
@@ -287,7 +287,7 @@ struct LoginView: View {
             session.isLoggedIn = true
 
         } else {
-            alertMessage = "用户名或密码错误。"
+            alertMessage = "Name&Password Wrong"
             showingAlert = true
             isPasswordPlaceholder = false
             passwordInput = ""
@@ -301,7 +301,7 @@ struct LoginView: View {
             let data = try? Data(contentsOf: url),
             let creds = try? JSONDecoder().decode(Credentials.self, from: data)
         else {
-            alertMessage = "配置文件丢失或格式错误。"
+            alertMessage = "profile lost or Setting Wrong"
             showingAlert = true
             return nil
         }
