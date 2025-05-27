@@ -27,7 +27,7 @@ struct MyView: View {
                             header: Text("ACCOUNT")
                                 .font(.system(size: 16))
                                 .foregroundColor(primaryTextColor)
-                                .padding(.leading, 16) // Indent header to align with row content
+//                                .padding(.leading, 16) // Indent header to align with row content
                                 .padding(.top, 20)      // Space above the first section
                                 .padding(.bottom, 8)    // Space between header and its items
                         ) {
@@ -58,7 +58,7 @@ struct MyView: View {
                             header: Text("SUPPORT")
                                 .font(.system(size: 16))
                                 .foregroundColor(primaryTextColor)
-                                .padding(.leading, 16) // Indent header
+//                                .padding(.leading, 16) // Indent header
                                 .padding(.top, 15)      // Space above this section header
                                 .padding(.bottom, 8)
                         ) {

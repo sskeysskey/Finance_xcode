@@ -15,15 +15,15 @@ struct MainTabView: View {
                     Text("Positions")
                 }
 
-            Text("Watchlist")
+            WatchlistView() // Use the newly created WatchlistView
                 .tabItem {
-                    Image(systemName: "star")
+                    Image(systemName: "star") // SwiftUI will use "star.fill" when selected
                     Text("Watchlist")
                 }
 
-            Text("Markets")
+            MarketsView()
                 .tabItem {
-                    Image(systemName: "globe")
+                    Image(systemName: "safari.fill") // Using safari.fill as a compass-like icon
                     Text("Markets")
                 }
 
