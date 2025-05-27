@@ -39,8 +39,21 @@ struct MyView: View {
                         }
                         .listRowSeparator(.hidden, edges: .top) // Hide separator above the first section's content
                         .listRowSeparatorTint(secondaryTextColor.opacity(0.3)) // Style for separators within section
+                        
+                        // Section "Setting"
+                        Section(
+                            header: Text("SETTING")
+                                .font(.system(size: 16))
+                                .foregroundColor(primaryTextColor)
+                                .padding(.leading, 16) // Indent header
+                                .padding(.top, 15)      // Space above this section header
+                                .padding(.bottom, 8)
+                        ) {
+                            NavigationLinkRow(title: "App Setting", destination: Text("help"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                        }
+                        .listRowSeparatorTint(secondaryTextColor.opacity(0.3)) // Style for separators within section
 
-                        // Section "支援中心"
+                        // Section "Setting"
                         Section(
                             header: Text("SUPPORT")
                                 .font(.system(size: 16))
