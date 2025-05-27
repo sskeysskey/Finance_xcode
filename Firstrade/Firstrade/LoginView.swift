@@ -148,7 +148,7 @@ struct LoginView: View {
 
                                 // ← 把 Image 换成 Button
                                 Button(action: authenticateWithBiometrics) {
-                                    Image(systemName: "Face ID")
+                                    Image(systemName: "faceid")
                                         .font(.system(size: 24))
                                         .foregroundColor(.gray)
                                         .padding(.trailing, 10)
