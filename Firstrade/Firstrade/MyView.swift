@@ -40,18 +40,19 @@ struct MyView: View {
                         .listRowSeparator(.hidden, edges: .top) // Hide separator above the first section's content
                         .listRowSeparatorTint(secondaryTextColor.opacity(0.3)) // Style for separators within section
                         
-//                        // Section "Setting"
-//                        Section(
-//                            header: Text("SETTING")
-//                                .font(.system(size: 16))
-//                                .foregroundColor(primaryTextColor)
+                        // Section "Setting"
+                        Section(
+                            header: Text("SETTING")
+                                .font(.system(size: 16))
+                                .foregroundColor(primaryTextColor)
 //                                .padding(.leading, 16) // Indent header
-//                                .padding(.top, 15)      // Space above this section header
-//                                .padding(.bottom, 8)
-//                        ) {
-//                            NavigationLinkRow(title: "App Setting", destination: Text("help"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
-//                        }
-//                        .listRowSeparatorTint(secondaryTextColor.opacity(0.3)) // Style for separators within section
+                                .padding(.top, 15)      // Space above this section header
+                                .padding(.bottom, 8)
+                        ) {
+                            NavigationLinkRow(title: "App Setting", destination: Text("Setting"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                            NavigationLinkRow(title: "Trading Preferences", destination: Text("Preferences"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+                        }
+                        .listRowSeparatorTint(secondaryTextColor.opacity(0.3)) // Style for separators within section
 
                         // Section "Setting"
                         Section(
@@ -63,7 +64,7 @@ struct MyView: View {
                                 .padding(.bottom, 8)
                         ) {
                             NavigationLinkRow(title: "Help Center", destination: Text("help"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
-                            NavigationLinkRow(title: "Contact Us", destination: Text("contact"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
+//                            NavigationLinkRow(title: "Contact Us", destination: Text("contact"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
                             NavigationLinkRow(title: "Terms & Disclosures", destination: Text("Terms"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
                             NavigationLinkRow(title: "App Guide", destination: Text("APP Guide"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
                             NavigationLinkRow(title: "What's new in this release", destination: Text("new feature"), pageBackgroundColor: rowBackgroundColor, textColor: primaryTextColor)
