@@ -47,7 +47,7 @@ struct AccountProfileView: View {
                 NavigationLink(destination: RequiredDocumentsView(accountNumber: self.accountNumber)) {
                     AccountDetailRow(
                         title: "Required Documents",
-                        details: "W-8BEN"
+                        details: "HMRC Assessment Tax"
                         // showChevron defaults to true
                     )
                 }
