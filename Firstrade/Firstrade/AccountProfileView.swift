@@ -1,33 +1,33 @@
 import SwiftUI
 
 // MARK: - Common Colors (can be centralized if used across many files)
-private let pageBackgroundColorGlobal = Color(red: 25 / 255, green: 30 / 255, blue: 39 / 255)  // #191E27
+private let pageBackgroundColorGlobal = Color(red: 25 / 255, green: 30 / 255, blue: 39 / 255) // #191E27
 private let primaryTextColorGlobal = Color.white
-private let secondaryTextColorGlobal = Color(white: 0.65)  // For dimmer text like account numbers in headers
-private let descriptiveTextColorGlobal = Color(white: 0.75)  // For body/description text
+private let secondaryTextColorGlobal = Color(white: 0.65) // For dimmer text like account numbers in headers
+private let descriptiveTextColorGlobal = Color(white: 0.75) // For body/description text
 private let separatorColorGlobal = Color(white: 0.35)
-private let accentBlueColorGlobal = Color(hex: "3B82F6")  // Standard blue for buttons
+private let accentBlueColorGlobal = Color(hex: "3B82F6") // Standard blue for buttons
 fileprivate let certifiedBadgeBackgroundColor = Color(red: 70/255, green: 115/255, blue: 95/255) // Muted dark green (same as "Enrolled")
 fileprivate let certifiedBadgeTextColor = Color.white
 fileprivate let infoBoxBackgroundColor = Color(red: 40/255, green: 48/255, blue: 60/255) // Darker blue-gray for info box
 
 // MARK: - Account Profile View and its components
-
 struct AccountProfileView: View {
-    let accountNumber: String = "90185542"  // Sample data
+    let accountNumber: String = "90185542" // Sample data
+    let phoneNumber: String = "139****705" // Sample data
+    let email: String = "sskey***@hotmail.com" // Sample data
 
     var body: some View {
         ZStack {
             pageBackgroundColorGlobal.ignoresSafeArea()
-
             VStack(alignment: .leading, spacing: 0) {
                 // Account Number Display - Using the new reusable header
                 AccountHeaderView(
                     accountNumber: accountNumber,
-                    textColor: secondaryTextColorGlobal,  // Dimmer text for header
+                    textColor: secondaryTextColorGlobal, // Dimmer text for header
                     iconName: "line.horizontal.3"
                 )
-                .padding(.leading, 16)  // Original padding for this specific layout
+                .padding(.leading, 16) // Original padding for this specific layout
                 .padding(.top, 20)
                 .padding(.bottom, 25)
 
@@ -38,6 +38,7 @@ struct AccountProfileView: View {
                     AccountDetailRow(
                         title: "Trading Privileges",
                         details: "Margin, Options, Extended Hour Trading"
+                        // showChevron defaults to true
                     )
                 }
                 CustomDividerView(color: separatorColorGlobal, leadingPadding: 16)
@@ -47,9 +48,29 @@ struct AccountProfileView: View {
                     AccountDetailRow(
                         title: "Required Documents",
                         details: "W-8BEN"
+                        // showChevron defaults to true
                     )
                 }
                 CustomDividerView(color: separatorColorGlobal, leadingPadding: 16)
+
+                // NEW: Phone Number Row
+                AccountDetailRow(
+                    title: "Phone Number",
+                    details: phoneNumber,
+                    showChevron: false // Do not show chevron
+                )
+                CustomDividerView(color: separatorColorGlobal, leadingPadding: 16)
+
+                // NEW: Email Row
+                AccountDetailRow(
+                    title: "Email",
+                    details: email,
+                    showChevron: false // Do not show chevron
+                )
+                // Consider if a divider is needed after the last static item
+                // For consistency with above, we'll add it.
+                CustomDividerView(color: separatorColorGlobal, leadingPadding: 16)
+
 
                 Spacer()
             }
@@ -70,6 +91,7 @@ struct AccountProfileView: View {
 struct AccountDetailRow: View {
     let title: String
     let details: String
+    var showChevron: Bool = true // MODIFIED: Added parameter with default value
 
     var body: some View {
         HStack {
@@ -79,27 +101,28 @@ struct AccountDetailRow: View {
                     .foregroundColor(primaryTextColorGlobal)
                 Text(details)
                     .font(.system(size: 14))
-                    .foregroundColor(secondaryTextColorGlobal)  // Dimmer subtitle
+                    .foregroundColor(secondaryTextColorGlobal) // Dimmer subtitle
                     .lineLimit(1)
             }
             Spacer()
-            Image(systemName: "chevron.right")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(Color(white: 0.55))
+            if showChevron { // MODIFIED: Conditionally show chevron
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color(white: 0.55))
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 16)
-        .background(pageBackgroundColorGlobal)
+        .background(pageBackgroundColorGlobal) // Ensure background is consistent
     }
 }
 
 // MARK: - Trading Privileges View and its components
-
 // Reusable Account Header
 struct AccountHeaderView: View {
     let accountNumber: String
     let textColor: Color
-    let iconName: String  // e.g., "line.horizontal.3"
+    let iconName: String // e.g., "line.horizontal.3"
 
     var body: some View {
         HStack(spacing: 8) {
@@ -129,43 +152,32 @@ struct CustomDividerView: View {
 
 struct TradingPrivilegesView: View {
     let accountNumber: String
-
     // Colors specific to or customized for TradingPrivilegesView
-    private let checkmarkColor = Color(red: 64 / 255, green: 192 / 255, blue: 160 / 255)  // Tealish green
+    private let checkmarkColor = Color(red: 64 / 255, green: 192 / 255, blue: 160 / 255) // Tealish green
     private let enrolledBadgeBackgroundColor = Color(
-        red: 70 / 255, green: 115 / 255, blue: 95 / 255)  // Muted dark green
+        red: 70 / 255, green: 115 / 255, blue: 95 / 255) // Muted dark green
     private let enrolledBadgeTextColor = Color.white
 
     var body: some View {
         ZStack {
             pageBackgroundColorGlobal.ignoresSafeArea()
-
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {  // Overall container for content
-                    // THIS SECTION HAS BEEN REMOVED:
-                    // // Account Number Header
-                    // AccountHeaderView(
-                    //     accountNumber: accountNumber,
-                    //     textColor: secondaryTextColorGlobal, // Dimmer text for header
-                    //     iconName: "line.horizontal.3"
-                    // )
-                    // .padding(.top, 5)
-                    // .padding(.bottom, 20)
-
+                VStack(alignment: .leading, spacing: 0) { // Overall container for content
                     // Margin Trading Section
                     TradingSectionView(
                         title: "Margin Trading",
                         description: "This account is not yet approved for margin.",
                         buttonText: "Upgrade",
                         buttonAction: {
-//                            print("Margin Upgrade Tapped for account: \(accountNumber)")  // accountNumber might still be useful for actions
+                            // print("Margin Upgrade Tapped for account: \(accountNumber)")
+                            // accountNumber might still be useful for actions
                             // Add navigation or action logic here
                         },
                         items: [],
                         statusBadgeText: nil,
                         colors: sectionColors
                     )
-                    CustomDividerView(color: separatorColorGlobal, leadingPadding: 0)  // Full width divider
+                    CustomDividerView(color: separatorColorGlobal, leadingPadding: 0) // Full width divider
 
                     // Options Trading Section
                     TradingSectionView(
@@ -184,26 +196,25 @@ struct TradingPrivilegesView: View {
                         statusBadgeText: nil,
                         colors: sectionColors
                     )
-                    CustomDividerView(color: separatorColorGlobal, leadingPadding: 0)  // Full width divider
+                    CustomDividerView(color: separatorColorGlobal, leadingPadding: 0) // Full width divider
 
                     // Extended Hour Trading Section
                     TradingSectionView(
                         title: "Extended Hour Trading",
                         description: "This account is approved for Extended Hour Trading",
-                        buttonText: nil,  // No button
+                        buttonText: nil, // No button
                         buttonAction: {},
                         items: [],
                         statusBadgeText: "Enrolled",
                         colors: sectionColors
                     )
                     // No divider after the last section
-
-                    Spacer()  // Ensures content pushes up if ScrollView is not full
+                    Spacer() // Ensures content pushes up if ScrollView is not full
                 }
-                .padding(.horizontal, 16)  // Horizontal padding for all content inside ScrollView
+                .padding(.horizontal, 16) // Horizontal padding for all content inside ScrollView
             }
         }
-        .navigationTitle("Account Profile")  // Title remains "Account Profile" as per screenshot
+        .navigationTitle("Account Profile") // Title remains "Account Profile" as per screenshot
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -218,10 +229,10 @@ struct TradingPrivilegesView: View {
     private var sectionColors: TradingSectionView.Colors {
         TradingSectionView.Colors(
             primaryText: primaryTextColorGlobal,
-            descriptionText: descriptiveTextColorGlobal,  // Specific color for descriptions
-            sectionTitle: primaryTextColorGlobal,  // Section titles are primary white
+            descriptionText: descriptiveTextColorGlobal, // Specific color for descriptions
+            sectionTitle: primaryTextColorGlobal, // Section titles are primary white
             buttonBackground: accentBlueColorGlobal,
-            buttonText: primaryTextColorGlobal,  // White text on blue button
+            buttonText: primaryTextColorGlobal, // White text on blue button
             checkmark: checkmarkColor,
             badgeBackground: enrolledBadgeBackgroundColor,
             badgeText: enrolledBadgeTextColor
@@ -261,7 +272,7 @@ struct TradingSectionView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(colors.badgeText)
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 5)  // Adjusted padding for badge
+                        .padding(.vertical, 5) // Adjusted padding for badge
                         .background(colors.badgeBackground)
                         .clipShape(Capsule())
                 }
@@ -270,11 +281,11 @@ struct TradingSectionView: View {
 
             Text(description)
                 .font(.system(size: 15))
-                .foregroundColor(colors.descriptionText)  // Use specific description color
+                .foregroundColor(colors.descriptionText) // Use specific description color
                 .lineSpacing(4)
 
             if !items.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {  // Increased spacing for checklist items
+                VStack(alignment: .leading, spacing: 10) { // Increased spacing for checklist items
                     ForEach(items, id: \.self) { item in
                         HStack(spacing: 10) {
                             Image(systemName: "checkmark")
@@ -282,11 +293,11 @@ struct TradingSectionView: View {
                                 .font(.system(size: 14, weight: .semibold))
                             Text(item)
                                 .font(.system(size: 15))
-                                .foregroundColor(colors.descriptionText)  // Checklist items also use description color
+                                .foregroundColor(colors.descriptionText) // Checklist items also use description color
                         }
                     }
                 }
-                .padding(.top, 8)  // Space before checklist
+                .padding(.top, 8) // Space before checklist
             }
 
             if let btnText = buttonText {
@@ -302,15 +313,13 @@ struct TradingSectionView: View {
                 .padding(.top, 16)
             }
         }
-        .padding(.bottom, 20)  // Space after section content before a potential divider
+        .padding(.bottom, 20) // Space after section content before a potential divider
     }
 }
 
 // MARK: - Required Documents View (NEW)
-
 struct RequiredDocumentsView: View {
     let accountNumber: String
-
     // Sample data for the view
     let lastFiledDate: String = "08/16/2024"
     let renewedByDate: String = "12/31/2027"
@@ -319,7 +328,6 @@ struct RequiredDocumentsView: View {
     var body: some View {
         ZStack {
             pageBackgroundColorGlobal.ignoresSafeArea()
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) { // Consistent spacing for content blocks
                     AccountHeaderView(
@@ -341,7 +349,7 @@ struct RequiredDocumentsView: View {
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(certifiedBadgeTextColor)
                                 .padding(.horizontal, 12) // Slightly more horizontal padding for balance
-                                .padding(.vertical, 6)   // Slightly more vertical padding
+                                .padding(.vertical, 6) // Slightly more vertical padding
                                 .background(certifiedBadgeBackgroundColor)
                                 .clipShape(Capsule())
                         }
@@ -349,7 +357,6 @@ struct RequiredDocumentsView: View {
                         Text("Last filed: \(lastFiledDate)")
                             .font(.system(size: 15))
                             .foregroundColor(descriptiveTextColorGlobal)
-
                         Text("Renewed by: \(renewedByDate)")
                             .font(.system(size: 15))
                             .foregroundColor(descriptiveTextColorGlobal)
@@ -382,7 +389,7 @@ struct RequiredDocumentsView: View {
                     Spacer() // Pushes content up if ScrollView is not full
                 }
                 .padding(.horizontal, 16) // Horizontal padding for all content inside ScrollView
-                .padding(.top, 5)        // Top padding for the content area inside ScrollView
+                .padding(.top, 5) // Top padding for the content area inside ScrollView
             }
         }
         .navigationTitle("Account Profile") // Title remains "Account Profile"
