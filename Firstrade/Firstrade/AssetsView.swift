@@ -427,11 +427,11 @@ struct AssetsView: View {
                     }
                 }
             }
-            .navigationTitle("Analysis of Asset")
+            .navigationTitle("Asset Analysis")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("Analysis of Asset  (ZhangYan)").font(.headline).foregroundColor(textColor)
+                    Text("Asset Analysis  (ZhangYan)").font(.headline).foregroundColor(textColor)
                 }
                 // 右上のアイコンは指示になかったため省略
             }
