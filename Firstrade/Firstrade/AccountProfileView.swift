@@ -15,7 +15,7 @@ fileprivate let infoBoxBackgroundColor = Color(red: 40/255, green: 48/255, blue:
 struct AccountProfileView: View {
     let accountNumber: String = "90185542" // Sample data
     let phoneNumber: String = "139****705" // Sample data
-    let email: String = "sskey***@hotmail.com" // Sample data
+    let email: String = "sskey***@gmail.com" // Sample data
 
     var body: some View {
         ZStack {

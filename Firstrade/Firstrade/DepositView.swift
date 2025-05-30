@@ -189,7 +189,7 @@ struct DepositWithdrawView: View {
     let accentColor = Color(hex: "3B82F6")  // Blue for button and highlights
 
     // Account details from the image (hardcoded as per image)
-    let userEmail = "ZhangYan  sskeysys@hotmail.com"  // From image
+    let userEmail = "ZhangYan  sskeysskey@gmail.com"  // From image
     // --- MODIFICATION START ---
     // Original: let accountType = "ACH SAVINGS Powered by Standard chartered"    // From image
     let accountType = "ACH SAVINGS\nPowered by Standard Chartered"  // From image
