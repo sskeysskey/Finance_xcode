@@ -396,8 +396,10 @@ struct SectorDetailView: View {
 struct SymbolItemView: View {
     let symbol: IndicesSymbol
     let sectorName: String
+    // 注入 DataService
+    @EnvironmentObject private var dataService: DataService
     
-    private var tableName: String {
+    private var fallbackGroupName: String {
         switch sectorName {
         case "ETFs_US":
             return "ETFs"
@@ -408,8 +410,14 @@ struct SymbolItemView: View {
         }
     }
     
+    // 最终要传给 ChartView 的 groupName
+    private var groupName: String {
+        dataService.getCategory(for: symbol.symbol)
+            ?? fallbackGroupName
+    }
+    
     var body: some View {
-        NavigationLink(destination: ChartView(symbol: symbol.symbol, groupName: tableName)) {
+        NavigationLink(destination: ChartView(symbol: symbol.symbol, groupName: groupName)) {
             VStack(alignment: .leading, spacing: 8) {
                 // 只显示 symbol
                 HStack {
