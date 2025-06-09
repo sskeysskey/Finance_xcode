@@ -49,17 +49,31 @@ struct HighLowListView: View {
         }
     }
 
-    /// 列表中的单行视图，展示 symbol 和其关联的 tags
+    /// 列表中的单行视图，展示 symbol、百分比值和其关联的 tags (已修改)
     private func rowView(for item: HighLowItem) -> some View {
         // 获取 symbol 所属的分类，用于导航到 ChartView
         let groupName = dataService.getCategory(for: item.symbol) ?? "Stocks"
         
         return NavigationLink(destination: ChartView(symbol: item.symbol, groupName: groupName)) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.symbol)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundColor(.blue) // 使用蓝色以示可点击
+                // 上半部分：Symbol 和 百分比值
+                HStack {
+                    Text(item.symbol)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundColor(.blue) // 使用蓝色以示可点击
+                    
+                    Spacer() // 将百分比推到右边
+                    
+                    // 从 dataService.compareData 查找并显示百分比
+                    // 使用 .uppercased() 来确保匹配的健壮性
+                    if let compareValue = dataService.compareData[item.symbol.uppercased()] {
+                        Text(compareValue)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
                 
+                // 下半部分：Tags (保持不变)
                 if let tags = getTags(for: item.symbol), !tags.isEmpty {
                     Text(tags.joined(separator: ", "))
                         .font(.footnote)
