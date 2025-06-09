@@ -39,7 +39,6 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		A34F3AE52DF6F4A600F2C00D /* highlow.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = highlow.txt; path = ../../News/highlow.txt; sourceTree = "<group>"; };
 		A36A5D452CFF47F800FE9AB4 /* Sectors_All.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = Sectors_All.json; path = ../../Financial_System/Modules/Sectors_All.json; sourceTree = "<group>"; };
 		A36A5DA52CFF62FA00FE9AB4 /* CompareStock.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = CompareStock.txt; path = ../../News/CompareStock.txt; sourceTree = "<group>"; };
 		A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = CompareETFs.txt; path = ../../News/CompareETFs.txt; sourceTree = "<group>"; };
@@ -104,7 +103,6 @@
 			isa = PBXGroup;
 			children = (
 				A381E7482DF703A800FB86BE /* HighLow.txt */,
-				A34F3AE52DF6F4A600F2C00D /* highlow.txt */,
 				A3B8865B2D7F1235000C707B /* Earnings_Release_new.txt */,
 				A3DE55B62D1D459A0073BEB2 /* tags_weight.json */,
 				A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */,

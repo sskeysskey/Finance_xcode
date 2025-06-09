@@ -157,6 +157,9 @@ struct ChartView: View {
     // 预计算渲染点，减少Canvas内重复计算
     @State private var renderedPoints: [RenderedPoint] = []
     
+    // 新增：用于控制搜索页面显示的状态变量
+    @State private var showSearchView = false
+    
     // 单指滑动状态
     @State private var dragLocation: CGPoint?
     @State private var draggedPointIndex: Int?
@@ -696,6 +699,25 @@ struct ChartView: View {
         .navigationBarTitleDisplayMode(.inline) // 保持导航栏标题显示为居中
         .onAppear {
             loadChartData()
+        }
+        // 新增：在导航栏添加工具栏
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    // 点击按钮时，触发导航
+                    showSearchView = true
+                }) {
+                    Image(systemName: "magnifyingglass")
+                        .imageScale(.small)            // 缩小图标
+                        .font(.system(size: 14))       // 或者直接用更小的系统字体
+                        .padding(0)                    // 适当留白
+                }
+            }
+        }
+        // 新增：定义导航的目标视图
+        .navigationDestination(isPresented: $showSearchView) {
+            // 传入 dataService 并设置 isSearchActive 为 true，让搜索框自动激活
+            SearchView(isSearchActive: true, dataService: dataService)
         }
     }
     
