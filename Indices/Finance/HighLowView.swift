@@ -7,6 +7,9 @@ struct HighLowListView: View {
     
     @EnvironmentObject var dataService: DataService
     @State private var expandedSections: [String: Bool] = [:]
+    
+    // 新增：用于控制搜索页面显示的状态变量
+    @State private var showSearchView = false
 
     var body: some View {
         List {
@@ -27,6 +30,22 @@ struct HighLowListView: View {
         .listStyle(InsetGroupedListStyle())
         .navigationTitle(title)
         .onAppear(perform: initializeExpandedStates)
+        // 新增：在导航栏添加工具栏
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    // 点击按钮时，触发导航
+                    showSearchView = true
+                }) {
+                    Image(systemName: "magnifyingglass")
+                }
+            }
+        }
+        // 新增：定义导航的目标视图
+        .navigationDestination(isPresented: $showSearchView) {
+            // 传入 dataService 并设置 isSearchActive 为 true，让搜索框自动激活
+            SearchView(isSearchActive: true, dataService: dataService)
+        }
     }
 
     /// 分组的头部视图，包含标题和折叠/展开按钮
@@ -49,7 +68,7 @@ struct HighLowListView: View {
         }
     }
 
-    /// 列表中的单行视图，展示 symbol、百分比值和其关联的 tags (已修改)
+    /// 列表中的单行视图，展示 symbol、百分比值和其关联的 tags
     private func rowView(for item: HighLowItem) -> some View {
         // 获取 symbol 所属的分类，用于导航到 ChartView
         let groupName = dataService.getCategory(for: item.symbol) ?? "Stocks"
@@ -73,7 +92,7 @@ struct HighLowListView: View {
                     }
                 }
                 
-                // 下半部分：Tags (保持不变)
+                // 下半部分：Tags
                 if let tags = getTags(for: item.symbol), !tags.isEmpty {
                     Text(tags.joined(separator: ", "))
                         .font(.footnote)
