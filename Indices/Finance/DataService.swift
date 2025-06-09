@@ -127,11 +127,11 @@ class DataService: ObservableObject {
     
     // MARK: - Private methods
     
-    /// 新增：加载和解析 highlow.txt 文件
+    /// 新增：加载和解析 HighLow.txt 文件
     private func loadHighLowData() {
-        guard let url = Bundle.main.url(forResource: "highlow", withExtension: "txt") else {
+        guard let url = Bundle.main.url(forResource: "HighLow", withExtension: "txt") else {
             DispatchQueue.main.async {
-                self.errorMessage = "highlow.txt 文件未找到"
+                self.errorMessage = "HighLow.txt 文件未找到"
             }
             return
         }
@@ -199,7 +199,7 @@ class DataService: ObservableObject {
 
         } catch {
             DispatchQueue.main.async {
-                self.errorMessage = "加载 highlow.txt 失败: \(error.localizedDescription)"
+                self.errorMessage = "加载 HighLow.txt 失败: \(error.localizedDescription)"
             }
         }
     }

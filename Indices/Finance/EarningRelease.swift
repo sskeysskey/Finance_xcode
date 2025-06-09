@@ -9,6 +9,8 @@ struct EarningReleaseView: View {
   }
 
   @State private var expandedSections: [String: Bool] = [:]
+    // 新增：用于控制搜索页面显示的状态变量
+    @State private var showSearchView = false
 
   private var groupedReleases: [DateGroup] {
     let dict = Dictionary(grouping: dataService.earningReleases, by: { $0.date })
@@ -41,6 +43,23 @@ struct EarningReleaseView: View {
     .onReceive(dataService.$earningReleases) { _ in
       initializeExpandedStates()
     }
+      
+      // 新增：在导航栏添加工具栏
+      .toolbar {
+          ToolbarItem(placement: .navigationBarTrailing) {
+              Button(action: {
+                  // 点击按钮时，触发导航
+                  showSearchView = true
+              }) {
+                  Image(systemName: "magnifyingglass")
+              }
+          }
+      }
+      // 新增：定义导航的目标视图
+      .navigationDestination(isPresented: $showSearchView) {
+          // 传入 dataService 并设置 isSearchActive 为 true，让搜索框自动激活
+          SearchView(isSearchActive: true, dataService: dataService)
+      }
   }
 
     // MARK: - Section Header

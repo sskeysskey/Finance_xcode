@@ -300,6 +300,8 @@ struct SectorDetailView: View {
     @State private var symbols: [IndicesSymbol] = []
     @State private var showError: Bool = false
     @State private var errorMessage: String = ""
+    // 新增：用于控制搜索页面显示的状态变量
+    @State private var showSearchView = false
     
     var body: some View {
         ScrollView {
@@ -346,6 +348,22 @@ struct SectorDetailView: View {
             if sector.subSectors == nil || sector.subSectors!.isEmpty {
                 loadSymbols()
             }
+        }
+        // 新增：在导航栏添加工具栏
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    // 点击按钮时，触发导航
+                    showSearchView = true
+                }) {
+                    Image(systemName: "magnifyingglass")
+                }
+            }
+        }
+        // 新增：定义导航的目标视图
+        .navigationDestination(isPresented: $showSearchView) {
+            // 传入 dataService 并设置 isSearchActive 为 true，让搜索框自动激活
+            SearchView(isSearchActive: true, dataService: dataService)
         }
     }
     

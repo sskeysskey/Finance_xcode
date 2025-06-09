@@ -7,10 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A34F3AE62DF6F4A600F2C00D /* highlow.txt in Resources */ = {isa = PBXBuildFile; fileRef = A34F3AE52DF6F4A600F2C00D /* highlow.txt */; };
 		A36A5D462CFF47F800FE9AB4 /* Sectors_All.json in Resources */ = {isa = PBXBuildFile; fileRef = A36A5D452CFF47F800FE9AB4 /* Sectors_All.json */; };
 		A36A5DA62CFF62FA00FE9AB4 /* CompareStock.txt in Resources */ = {isa = PBXBuildFile; fileRef = A36A5DA52CFF62FA00FE9AB4 /* CompareStock.txt */; };
 		A36A5DA82CFF630900FE9AB4 /* CompareETFs.txt in Resources */ = {isa = PBXBuildFile; fileRef = A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */; };
+		A381E7492DF703A800FB86BE /* HighLow.txt in Resources */ = {isa = PBXBuildFile; fileRef = A381E7482DF703A800FB86BE /* HighLow.txt */; };
 		A3B0B6F42D964C1A00C2E7BA /* DGCharts in Frameworks */ = {isa = PBXBuildFile; productRef = A3B0B6F32D964C1A00C2E7BA /* DGCharts */; };
 		A3B8865C2D7F1235000C707B /* Earnings_Release_new.txt in Resources */ = {isa = PBXBuildFile; fileRef = A3B8865B2D7F1235000C707B /* Earnings_Release_new.txt */; };
 		A3BF5AB52CFCA9F100F7578C /* Finance.db in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5AB42CFCA9F100F7578C /* Finance.db */; };
@@ -43,6 +43,7 @@
 		A36A5D452CFF47F800FE9AB4 /* Sectors_All.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = Sectors_All.json; path = ../../Financial_System/Modules/Sectors_All.json; sourceTree = "<group>"; };
 		A36A5DA52CFF62FA00FE9AB4 /* CompareStock.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = CompareStock.txt; path = ../../News/CompareStock.txt; sourceTree = "<group>"; };
 		A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = CompareETFs.txt; path = ../../News/CompareETFs.txt; sourceTree = "<group>"; };
+		A381E7482DF703A800FB86BE /* HighLow.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = HighLow.txt; path = ../../News/HighLow.txt; sourceTree = "<group>"; };
 		A3B8865B2D7F1235000C707B /* Earnings_Release_new.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = Earnings_Release_new.txt; path = ../../News/Earnings_Release_new.txt; sourceTree = "<group>"; };
 		A3BF5A7B2CFCA71000F7578C /* Finance.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Finance.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A3BF5A8B2CFCA71100F7578C /* FinanceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FinanceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -102,6 +103,7 @@
 		A3BF5A722CFCA71000F7578C = {
 			isa = PBXGroup;
 			children = (
+				A381E7482DF703A800FB86BE /* HighLow.txt */,
 				A34F3AE52DF6F4A600F2C00D /* highlow.txt */,
 				A3B8865B2D7F1235000C707B /* Earnings_Release_new.txt */,
 				A3DE55B62D1D459A0073BEB2 /* tags_weight.json */,
@@ -262,7 +264,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A34F3AE62DF6F4A600F2C00D /* highlow.txt in Resources */,
+				A381E7492DF703A800FB86BE /* HighLow.txt in Resources */,
 				A3B8865C2D7F1235000C707B /* Earnings_Release_new.txt in Resources */,
 				A3DE55B72D1D459A0073BEB2 /* tags_weight.json in Resources */,
 				A36A5DA82CFF630900FE9AB4 /* CompareETFs.txt in Resources */,
