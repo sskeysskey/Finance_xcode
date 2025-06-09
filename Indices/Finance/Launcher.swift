@@ -11,7 +11,8 @@ struct Finance: App {
 }
 
 struct MainContentView: View {
-    @StateObject private var dataService = DataService()
+    // 使用单例模式的共享实例，而不是创建新实例
+    @StateObject private var dataService = DataService.shared
     
     var body: some View {
         NavigationStack {
@@ -38,6 +39,7 @@ struct MainContentView: View {
         }
         .environmentObject(dataService) // 移到这里，确保 NavigationStack 内的所有视图都能访问
         .onAppear {
+            // 这里调用 loadData() 来加载所有数据，包括 high/low
             dataService.loadData()
         }
     }

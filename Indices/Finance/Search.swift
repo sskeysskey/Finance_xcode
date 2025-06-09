@@ -596,7 +596,8 @@ class SearchViewModel: ObservableObject {
     var dataService: DataService
     private var cancellables = Set<AnyCancellable>()
     
-    init(dataService: DataService = DataService()) {
+    // 使用 DataService.shared 作为默认值
+    init(dataService: DataService = DataService.shared) {
         self.dataService = dataService
         dataService.$errorMessage
             .receive(on: DispatchQueue.main)

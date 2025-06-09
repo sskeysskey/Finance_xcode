@@ -81,49 +81,63 @@ typealias ETFListView = MarketListView<ETF>
 // MARK: - 主容器视图
 struct TopContentView: View {
     var body: some View {
+        // 注意：这里的 NavigationView 可能会导致双重导航栏。
+        // 如果在 MainContentView 中已经有一个 NavigationStack，这里可能不需要 NavigationView。
+        // 但为了保持原结构，暂时保留。
         NavigationView {
             VStack {
                 Spacer()
                 CustomTabBar()
             }
+            // .navigationBarHidden(true) // 可以考虑隐藏内层的导航栏避免冲突
         }
     }
 }
 
-// MARK: - 自定义底部标签栏
+// MARK: - 自定义底部标签栏 (已修改)
 struct CustomTabBar: View {
     @StateObject private var dataService = DataService.shared // 使用单例
     
     var body: some View {
         HStack(spacing: 0) {
+            // 1. 涨幅榜
             NavigationLink(
                 destination: LazyView(StockListView(title: "Top Gainers", items: dataService.topGainers))
             ) {
                 TabItemView(title: "涨幅榜", imageName: "arrow.up")
             }
             
+            // 2. 跌幅榜
             NavigationLink(
                 destination: LazyView(StockListView(title: "Top Losers", items: dataService.topLosers))
             ) {
                 TabItemView(title: "跌幅榜", imageName: "arrow.down")
             }
             
+            // 3. 新增：High 列表
             NavigationLink(
-                destination: LazyView(ETFListView(title: "ETF Gainers", items: dataService.etfGainers))
+                destination: LazyView(HighLowListView(title: "Highs", groups: dataService.highGroups))
             ) {
-                TabItemView(title: "ETF涨幅", imageName: "chart.line.uptrend.xyaxis")
+                // 使用火焰图标代表 High
+                TabItemView(title: "High", imageName: "flame")
             }
             
+            // 4. 新增：Low 列表
             NavigationLink(
-                destination: LazyView(ETFListView(title: "ETF Losers", items: dataService.etfLosers))
+                destination: LazyView(HighLowListView(title: "Lows", groups: dataService.lowGroups))
             ) {
-                TabItemView(title: "ETF跌幅", imageName: "chart.line.downtrend.xyaxis")
+                // 使用雪花图标代表 Low
+                TabItemView(title: "Low", imageName: "snowflake")
             }
         }
         .frame(height: 50)
         .background(Color(.systemBackground))
         .onAppear {
-            dataService.loadDataIfNeeded()
+            // loadDataIfNeeded 仅加载一次，如果需要每次都刷新，应调用 loadData()
+            // 这里我们假设数据在应用启动时已通过 MainContentView 的 onAppear 加载
+             dataService.loadDataIfNeeded()
+             // 确保 high/low 数据也被加载
+             dataService.loadData()
         }
     }
 }

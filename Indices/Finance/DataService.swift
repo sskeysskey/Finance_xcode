@@ -1,10 +1,22 @@
 import Foundation
 import Combine
-import SwiftUI  // 添加这行
+import SwiftUI
+
+// MARK: - 新增：High/Low 数据模型
+struct HighLowItem: Identifiable, Codable {
+    var id = UUID()
+    let symbol: String
+}
+
+struct HighLowGroup: Identifiable {
+    let id: String // 使用 timeInterval 作为 id
+    let timeInterval: String
+    var items: [HighLowItem]
+}
 
 // 定义模型结构
 struct DescriptionData: Codable {
-    let global: [String: String]?  // 添加全局时间点标记
+    let global: [String: String]?
     let stocks: [SearchStock]
     let etfs: [SearchETF]
 }
@@ -38,9 +50,9 @@ struct SearchETF: Identifiable, Codable, SearchDescribableItem {
 }
 
 struct MarketCapDataItem {
-    let marketCap: String   // 格式化后的市值字符串（例如 "219B"）
+    let marketCap: String
     let peRatio: Double?
-    let pb: Double?         // 新增 pb 属性
+    let pb: Double?
 
     init(marketCap: Double, peRatio: Double?, pb: Double?) {
         self.marketCap = Self.formatMarketCap(marketCap)
@@ -48,7 +60,6 @@ struct MarketCapDataItem {
         self.pb = pb
     }
     
-    // 将市值格式化为以B为单位的字符串
     private static func formatMarketCap(_ cap: Double) -> String {
         String(format: "%.0fB", cap / 1_000_000_000)
     }
@@ -64,7 +75,7 @@ struct EarningRelease: Identifiable {
 class DataService: ObservableObject {
     // MARK: - Singleton
     static let shared = DataService()
-    init() {}
+    private init() {}
     
     // MARK: - Published properties
     @Published var topGainers: [Stock] = []
@@ -72,7 +83,6 @@ class DataService: ObservableObject {
     @Published var etfGainers: [ETF] = []
     @Published var etfLosers: [ETF] = []
     
-    // 新增的 Published 属性
     @Published var descriptionData: DescriptionData?
     @Published var marketCapData: [String: MarketCapDataItem] = [:]
     @Published var sectorsData: [String: [String]] = [:]
@@ -80,13 +90,14 @@ class DataService: ObservableObject {
     @Published var sectorsPanel: SectorsPanel?
     @Published var symbolEarningData: [String: [Date: Double]] = [:]
     
-    // 添加新的属性
     @Published var earningReleases: [EarningRelease] = []
     
-    // 新增的 errorMessage 属性
+    // 新增：用于存储 High/Low 数据的属性
+    @Published var highGroups: [HighLowGroup] = []
+    @Published var lowGroups: [HighLowGroup] = []
+    
     @Published var errorMessage: String? = nil
     
-    // 在 DataService 类中添加新的属性来存储时间点标记
     @Published var globalTimeMarkers: [Date: String] = [:]
     @Published var symbolTimeMarkers: [String: [Date: String]] = [:]
     
@@ -110,10 +121,89 @@ class DataService: ObservableObject {
         loadSectorsData()
         loadCompareData()
         loadSectorsPanel()
-        loadEarningRelease() // 添加这行
+        loadEarningRelease()
+        loadHighLowData() // 新增：调用加载 High/Low 数据的方法
     }
     
     // MARK: - Private methods
+    
+    /// 新增：加载和解析 highlow.txt 文件
+    private func loadHighLowData() {
+        guard let url = Bundle.main.url(forResource: "highlow", withExtension: "txt") else {
+            DispatchQueue.main.async {
+                self.errorMessage = "highlow.txt 文件未找到"
+            }
+            return
+        }
+
+        do {
+            let content = try String(contentsOf: url, encoding: .utf8)
+            let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
+
+            var highGroupsDict: [String: HighLowGroup] = [:]
+            var lowGroupsDict: [String: HighLowGroup] = [:]
+
+            var currentTimeInterval: String? = nil
+            var currentSection: String? = nil // "High" or "Low"
+
+            for line in lines {
+                let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+
+                if trimmedLine.hasPrefix("[") && trimmedLine.hasSuffix("]") {
+                    currentTimeInterval = String(trimmedLine.dropFirst().dropLast())
+                    currentSection = nil // 重置 section
+                    continue
+                }
+
+                if trimmedLine.lowercased() == "high:" {
+                    currentSection = "High"
+                    continue
+                }
+
+                if trimmedLine.lowercased() == "low:" {
+                    currentSection = "Low"
+                    continue
+                }
+                
+                if trimmedLine.isEmpty { continue }
+
+                // 处理 symbol 列表
+                if let interval = currentTimeInterval, let section = currentSection {
+                    let symbols = trimmedLine.split(separator: ",").map {
+                        HighLowItem(symbol: String($0).trimmingCharacters(in: .whitespaces))
+                    }
+                    
+                    if symbols.isEmpty { continue }
+
+                    if section == "High" {
+                        if highGroupsDict[interval] == nil {
+                            highGroupsDict[interval] = HighLowGroup(id: interval, timeInterval: interval, items: [])
+                        }
+                        highGroupsDict[interval]?.items.append(contentsOf: symbols)
+                    } else if section == "Low" {
+                        if lowGroupsDict[interval] == nil {
+                            lowGroupsDict[interval] = HighLowGroup(id: interval, timeInterval: interval, items: [])
+                        }
+                        lowGroupsDict[interval]?.items.append(contentsOf: symbols)
+                    }
+                }
+            }
+            
+            // 定义显示顺序，确保UI列表顺序一致
+            let timeIntervalOrder = ["5Y", "2Y", "1Y", "6 months", "3 months", "1 months"]
+            
+            DispatchQueue.main.async {
+                self.highGroups = timeIntervalOrder.compactMap { highGroupsDict[$0] }
+                self.lowGroups = timeIntervalOrder.compactMap { lowGroupsDict[$0] }
+            }
+
+        } catch {
+            DispatchQueue.main.async {
+                self.errorMessage = "加载 highlow.txt 失败: \(error.localizedDescription)"
+            }
+        }
+    }
+    
     private func loadDataAsync() async {
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await self.loadCompareStockAsync() }
@@ -133,7 +223,6 @@ class DataService: ObservableObject {
         cache.setObject(value as AnyObject, forKey: key as NSString)
     }
     
-    // 添加新的加载方法
     private func loadEarningRelease() {
         guard let url = Bundle.main.url(forResource: "Earnings_Release_new", withExtension: "txt") else { return }
         do {
@@ -144,16 +233,14 @@ class DataService: ObservableObject {
                 let parts = line.split(separator: ":")
                 let firstPart = String(parts[0]).trimmingCharacters(in: .whitespaces)
                 
-                // 提取基础symbol和颜色标识
                 let symbol = firstPart.trimmingCharacters(in: .whitespaces)
-                var color: Color = .gray // 默认颜色
+                var color: Color = .gray
                 
                 if parts.count > 1 {
                     let colorIdentifier = String(parts[1].prefix(1))
                     color = self.getColor(for: colorIdentifier)
                 }
                 
-                // 提取日期
                 let dateParts = line.split(separator: ":").last?
                     .trimmingCharacters(in: .whitespaces)
                     .split(separator: "-")
@@ -172,20 +259,13 @@ class DataService: ObservableObject {
     
     private func getColor(for identifier: String) -> Color {
         switch identifier {
-        case "Y":
-            return .yellow
-        case "C":
-            return .cyan
-        case "B":
-            return .green
-        case "W":
-            return .white
-        case "O":
-            return .orange
-        case "b":
-            return .blue
-        default:
-            return .gray
+        case "Y": return .yellow
+        case "C": return .cyan
+        case "B": return .green
+        case "W": return .white
+        case "O": return .orange
+        case "b": return .blue
+        default: return .gray
         }
     }
     
@@ -262,22 +342,15 @@ class DataService: ObservableObject {
     
     private func loadSectorsPanel() {
         guard let url = Bundle.main.url(forResource: "Sectors_panel", withExtension: "json") else {
-            DispatchQueue.main.async {
-                self.errorMessage = "Sectors_panel.json 文件未找到"
-            }
+            DispatchQueue.main.async { self.errorMessage = "Sectors_panel.json 文件未找到" }
             return
         }
         do {
             let data = try Data(contentsOf: url)
-            let decoder = JSONDecoder()
-            let decodedData = try decoder.decode(SectorsPanel.self, from: data)
-            DispatchQueue.main.async {
-                self.sectorsPanel = decodedData
-            }
+            let decodedData = try JSONDecoder().decode(SectorsPanel.self, from: data)
+            DispatchQueue.main.async { self.sectorsPanel = decodedData }
         } catch {
-            DispatchQueue.main.async {
-                self.errorMessage = "加载 Sectors_panel.json 失败: \(error.localizedDescription)"
-            }
+            DispatchQueue.main.async { self.errorMessage = "加载 Sectors_panel.json 失败: \(error.localizedDescription)" }
         }
     }
     
@@ -291,11 +364,10 @@ class DataService: ObservableObject {
             let decoder = JSONDecoder()
             descriptionData = try decoder.decode(DescriptionData.self, from: data)
             
-            // 解析全局时间点标记
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd"
+            
             if let global = descriptionData?.global {
-                let dateFormatter = DateFormatter()
-                dateFormatter.dateFormat = "yyyy-MM-dd"
-                
                 for (dateString, text) in global {
                     if let date = dateFormatter.date(from: dateString) {
                         globalTimeMarkers[date] = text
@@ -303,15 +375,10 @@ class DataService: ObservableObject {
                 }
             }
             
-            // 解析特定股票的时间点标记
-            if let stocks = descriptionData?.stocks {
-                let dateFormatter = DateFormatter()
-                dateFormatter.dateFormat = "yyyy-MM-dd"
-                
-                for stock in stocks {
-                    if let description3 = stock.description3 {
+            let processItems: ([SearchDescribableItem]) -> Void = { items in
+                for item in items {
+                    if let description3 = (item as? SearchStock)?.description3 ?? (item as? SearchETF)?.description3 {
                         var markers: [Date: String] = [:]
-                        
                         for markerDict in description3 {
                             for (dateString, text) in markerDict {
                                 if let date = dateFormatter.date(from: dateString) {
@@ -319,37 +386,16 @@ class DataService: ObservableObject {
                                 }
                             }
                         }
-                        
                         if !markers.isEmpty {
-                            symbolTimeMarkers[stock.symbol.uppercased()] = markers
+                            self.symbolTimeMarkers[item.symbol.uppercased()] = markers
                         }
                     }
                 }
             }
-            
-            // 解析特定ETF的时间点标记
-            if let etfs = descriptionData?.etfs {
-                let dateFormatter = DateFormatter()
-                dateFormatter.dateFormat = "yyyy-MM-dd"
-                
-                for etf in etfs {
-                    if let description3 = etf.description3 {
-                        var markers: [Date: String] = [:]
-                        
-                        for markerDict in description3 {
-                            for (dateString, text) in markerDict {
-                                if let date = dateFormatter.date(from: dateString) {
-                                    markers[date] = text
-                                }
-                            }
-                        }
-                        
-                        if !markers.isEmpty {
-                            symbolTimeMarkers[etf.symbol.uppercased()] = markers
-                        }
-                    }
-                }
-            }
+
+            if let stocks = descriptionData?.stocks { processItems(stocks) }
+            if let etfs = descriptionData?.etfs { processItems(etfs) }
+
         } catch {
             self.errorMessage = "加载 description.json 失败: \(error.localizedDescription)"
         }
@@ -392,22 +438,16 @@ class DataService: ObservableObject {
                     let symbol = parts[0].trimmingCharacters(in: .whitespaces).uppercased()
                     let values = parts[1].split(separator: ",")
                     
-                    if values.count >= 2 {
-                        // 解析市值
-                        if let marketCap = Double(values[0].trimmingCharacters(in: .whitespaces)) {
-                            // 解析 peRatio
-                            let peRatioString = values[1].trimmingCharacters(in: .whitespaces)
-                            let peRatio = peRatioString == "--" ? nil : Double(peRatioString)
-                            
-                            // 解析 pb（如果存在）
-                            var pb: Double? = nil
-                            if values.count >= 3 {
-                                let pbString = values[2].trimmingCharacters(in: .whitespaces)
-                                pb = Double(pbString)
-                            }
-                            
-                            marketCapData[symbol] = MarketCapDataItem(marketCap: marketCap, peRatio: peRatio, pb: pb)
+                    if values.count >= 2, let marketCap = Double(values[0].trimmingCharacters(in: .whitespaces)) {
+                        let peRatioString = values[1].trimmingCharacters(in: .whitespaces)
+                        let peRatio = peRatioString == "--" ? nil : Double(peRatioString)
+                        
+                        var pb: Double? = nil
+                        if values.count >= 3 {
+                            pb = Double(values[2].trimmingCharacters(in: .whitespaces))
                         }
+                        
+                        marketCapData[symbol] = MarketCapDataItem(marketCap: marketCap, peRatio: peRatio, pb: pb)
                     }
                 }
             }
@@ -425,38 +465,30 @@ class DataService: ObservableObject {
             let text = try String(contentsOf: url, encoding: .utf8)
             let lines = text.split(separator: "\n")
             
-            // 创建两个字典：一个保存原始大小写，一个保存大写用于查找
             var originalCaseData: [String: String] = [:]
             var upperCaseMap: [String: String] = [:]
             
             for line in lines {
                 let parts = line.split(separator: ":")
                 if parts.count >= 2 {
-                    let symbol = parts[0].trimmingCharacters(in: .whitespaces)
-                    let value = parts[1].trimmingCharacters(in: .whitespaces)
-                    
-                    // 保存原始大小写的版本
+                    let symbol = String(parts[0].trimmingCharacters(in: .whitespaces))
+                    let value = String(parts[1].trimmingCharacters(in: .whitespaces))
                     originalCaseData[symbol] = value
-                    // 保存大写版本用于查找
                     upperCaseMap[symbol.uppercased()] = value
                 }
             }
-            
-            // 合并两个字典，优先使用原始大小写的值
             compareData = upperCaseMap.merging(originalCaseData) { (_, new) in new }
         } catch {
             self.errorMessage = "加载 Compare_All.txt 失败: \(error.localizedDescription)"
         }
     }
     
-    // 首先添加一个私有的帮助函数
     private func cleanSymbol(_ symbol: String) -> String {
-        // 使用正则表达式匹配最后一个字母之前的所有内容（包括该字母）
         let pattern = "^([A-Za-z-]+)"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
               let match = regex.firstMatch(in: symbol, options: [], range: NSRange(location: 0, length: symbol.count)),
               let range = Range(match.range(at: 1), in: symbol) else {
-            return symbol // 如果无法匹配，返回原始字符串
+            return symbol
         }
         return String(symbol[range])
     }
@@ -473,7 +505,7 @@ class DataService: ObservableObject {
         
         let groupName = String(line[groupNameRange])
         let rawSymbol = String(line[symbolRange])
-        let cleanedSymbol = cleanSymbol(rawSymbol) // 使用清理函数
+        let cleanedSymbol = cleanSymbol(rawSymbol)
         let value = String(line[valueRange])
         let desc = String(line[descRange])
         
@@ -485,7 +517,7 @@ class DataService: ObservableObject {
         guard parts.count >= 2 else { return nil }
         
         let rawSymbol = String(parts[0].trimmingCharacters(in: .whitespaces))
-        let cleanedSymbol = cleanSymbol(rawSymbol) // 使用清理函数
+        let cleanedSymbol = cleanSymbol(rawSymbol)
         let rest = parts[1].trimmingCharacters(in: .whitespaces)
         
         let pattern = "^([+-]?[\\d\\.]+%)\\s+\\d+\\s+[+-]?[\\d\\.]+%\\s+(.*)$"
