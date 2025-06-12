@@ -133,20 +133,20 @@ struct CustomTabBar: View {
                 TabItemView(title: "跌幅榜", imageName: "arrow.down")
             }
             
-            // 3. 新增：High 列表
-            NavigationLink(
-                destination: LazyView(HighLowListView(title: "Highs", groups: dataService.highGroups))
-            ) {
-                // 使用火焰图标代表 High
-                TabItemView(title: "High", imageName: "flame")
-            }
-            
-            // 4. 新增：Low 列表
+            // 3. 新增：Low 列表
             NavigationLink(
                 destination: LazyView(HighLowListView(title: "Lows", groups: dataService.lowGroups))
             ) {
                 // 使用雪花图标代表 Low
                 TabItemView(title: "Low", imageName: "snowflake")
+            }
+            
+            // 4. 新增：High 列表
+            NavigationLink(
+                destination: LazyView(HighLowListView(title: "Highs", groups: dataService.highGroups))
+            ) {
+                // 使用火焰图标代表 High
+                TabItemView(title: "High", imageName: "flame")
             }
         }
         .frame(height: 50)
