@@ -54,61 +54,87 @@ struct LoginView: View {
 
 // ObservableObject 使得 SwiftUI 视图可以订阅它的变化
 class NewsViewModel: ObservableObject {
-    
-    // @Published 属性包装器会在数据改变时自动通知所有订阅的视图
+
+    // 发布到 UI
     @Published var sources: [NewsSource] = []
-    
-    // 计算所有来源中未读文章的总数
-    var totalUnreadCount: Int {
-        // flatMap 将所有来源的文章合并成一个数组，然后过滤出未读的并计数
-        sources.flatMap { $0.articles }.filter { !$0.isRead }.count
-    }
-    
+
+    // 存已读文章的 key（我们用 topic 作为唯一标识）
+    private let readKey = "readTopics"
+
+    // 内存缓存
+    private var readTopics: Set<String> = []
+
     init() {
+        // 先把上次保存的读过的 topic 读出来
+        loadReadTopics()
+        // 然后加载 JSON 并标记已读
         loadNews()
     }
-    
-    // 从项目包中加载并解析JSON文件
-    func loadNews() {
-        guard let url = Bundle.main.url(forResource: "onews", withExtension: "json") else {
-            fatalError("无法在项目包中找到 news_250622.json 文件。")
-        }
-        
-        guard let data = try? Data(contentsOf: url) else {
-            fatalError("无法加载 news_250622.json 文件。")
-        }
-        
-        let decoder = JSONDecoder()
-        
-        // 将JSON解码为一个字典，键是来源名称，值是文章数组
-        guard let decodedData = try? decoder.decode([String: [Article]].self, from: data) else {
-            fatalError("解析 news_250622.json 文件失败。")
-        }
-        
-        // 将解码后的字典转换为我们在UI中使用的 NewsSource 数组
-        // .sorted 按名称排序，确保每次加载顺序一致
-        self.sources = decodedData.map { (sourceName, articles) in
-            NewsSource(name: sourceName, articles: articles)
-        }.sorted { $0.name < $1.name }
+
+    private func loadReadTopics() {
+        let array = UserDefaults.standard.stringArray(forKey: readKey) ?? []
+        readTopics = Set(array)
     }
-    
-    // 根据文章ID将特定文章标记为已读
-    func markAsRead(articleID: UUID) {
-        // 在主线程上更新，因为这会触发UI变化
+
+    private func saveReadTopics() {
+        UserDefaults.standard.set(Array(readTopics), forKey: readKey)
+    }
+
+    func loadNews() {
+        // 1. 从 bundle 里读 JSON（和你原来的一样）
+        guard let url = Bundle.main.url(forResource: "onews", withExtension: "json") else {
+            fatalError("无法在项目包中找到 onews.json")
+        }
+        guard let data = try? Data(contentsOf: url) else {
+            fatalError("无法加载 onews.json")
+        }
+        let decoder = JSONDecoder()
+        guard let decoded = try? decoder.decode([String: [Article]].self, from: data) else {
+            fatalError("解析 onews.json 失败")
+        }
+
+        // 2. 转成数组、排序
+        var tmp = decoded.map { NewsSource(name: $0.key, articles: $0.value) }
+                            .sorted { $0.name < $1.name }
+
+        // 3. **根据 readTopics 标记 isRead**
+        for i in tmp.indices {
+            for j in tmp[i].articles.indices {
+                let art = tmp[i].articles[j]
+                if readTopics.contains(art.topic) {
+                    tmp[i].articles[j].isRead = true
+                }
+            }
+        }
+
+        // 4. 发布出去
         DispatchQueue.main.async {
-            // 遍历所有来源
-            for i in 0..<self.sources.count {
-                // 查找包含该文章的来源
+            self.sources = tmp
+        }
+    }
+
+    /// 用户阅读完文章后调用
+    func markAsRead(articleID: UUID) {
+        DispatchQueue.main.async {
+            for i in self.sources.indices {
                 if let j = self.sources[i].articles.firstIndex(where: { $0.id == articleID }) {
-                    // 如果文章当前是未读状态，则将其标记为已读
                     if !self.sources[i].articles[j].isRead {
+                        // 1. 内存里标记
                         self.sources[i].articles[j].isRead = true
+                        // 2. 把 topic 存到 Set 并写入 UserDefaults
+                        let topic = self.sources[i].articles[j].topic
+                        self.readTopics.insert(topic)
+                        self.saveReadTopics()
                     }
-                    // 找到后即可退出循环
                     return
                 }
             }
         }
+    }
+
+    /// 计算总未读数
+    var totalUnreadCount: Int {
+        sources.flatMap { $0.articles }.filter { !$0.isRead }.count
     }
 }
 
