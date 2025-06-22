@@ -8,33 +8,36 @@ struct SourceListView: View {
     var body: some View {
         // NavigationView 是实现导航功能的基础
         NavigationView {
-            // 主要改动点 1: 移除了 ZStack 和背景色定义
-            // 列表将占据整个屏幕，并使用 InsetGroupedListStyle 的默认深色背景
             List {
-                // 主要改动点 2: 将 "Unread" 部分放入 NavigationLink，使其可点击
-                // 点击后会导航到我们新创建的 AllArticlesListView
-                NavigationLink(destination: AllArticlesListView(viewModel: viewModel)) {
+                // 主要改动点: 将 "Unread" 行也修改为 ZStack 结构来隐藏尖括号
+                ZStack {
+                    // 1. 这是用户看到的 "Unread" 行内容
                     HStack {
                         Text("Unread")
                             .font(.system(size: 28, weight: .bold))
-                            // 让 "Unread" 文本颜色与普通导航链接文本颜色一致
                             .foregroundColor(.primary)
                         
-                        Spacer() // 添加一个 Spacer 将计数推到右边
+                        Spacer()
                         
                         Text("\(viewModel.totalUnreadCount)")
                             .font(.system(size: 28, weight: .bold))
                             .foregroundColor(.gray)
                     }
                     .padding()
-                    // 背景色现在由 listRowBackground 控制，与下方列表项统一
+
+                    // 2. 覆盖其上的透明 NavigationLink，用于处理点击跳转
+                    NavigationLink(destination: AllArticlesListView(viewModel: viewModel)) {
+                        EmptyView()
+                    }
+                    .opacity(0)
                 }
                 .listRowBackground(Color(UIColor.secondarySystemBackground))
-                .listRowSeparator(.hidden) // 隐藏这一行的分隔线
+                .listRowSeparator(.hidden)
                 
-                // 新闻来源列表
+                // 新闻来源列表（保持 ZStack 结构）
                 ForEach(viewModel.sources) { source in
-                    NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel)) {
+                    ZStack {
+                        // 可见的行内容
                         HStack {
                             Text(source.name)
                                 .fontWeight(.semibold)
@@ -43,12 +46,18 @@ struct SourceListView: View {
                                 .foregroundColor(.gray)
                         }
                         .padding(.vertical, 8)
+                        
+                        // 不可见的导航触发器
+                        NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel)) {
+                            EmptyView()
+                        }
+                        .opacity(0)
                     }
                     .listRowSeparator(.hidden)
                 }
                 .listRowBackground(Color(UIColor.secondarySystemBackground))
             }
-            .listStyle(InsetGroupedListStyle()) // 使用分组样式
+            .listStyle(InsetGroupedListStyle())
             .navigationTitle("Inoreader")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
