@@ -4,6 +4,7 @@ struct ArticleDetailView: View {
     let article: Article
     let sourceName: String
     @ObservedObject var viewModel: NewsViewModel
+    @State private var hasMarkedAsRead = false
 
     var body: some View {
         ScrollView {
@@ -15,38 +16,37 @@ struct ArticleDetailView: View {
                 
                 // 主题
                 Text(article.topic)
-                // CHANGE: 字体稍微变大，更具冲击力
-                    .font(.system(.title, design: .serif)) // 使用系统衬线字体
+                    .font(.system(.title, design: .serif))
                     .fontWeight(.bold)
                 
                 // 来源
-                Text(sourceName.replacingOccurrences(of: "_", with: " ")) // 将下划线替换为空格
+                Text(sourceName.replacingOccurrences(of: "_", with: " "))
                     .font(.subheadline)
                     .foregroundColor(.gray)
                 
                 // 文章正文
                 Text(article.article)
-                // CHANGE: 显著增大正文字体，并使用New York衬线字体，提升阅读舒适度
                     .font(.custom("NewYork-Regular", size: 20))
-                    // CHANGE: 增加行间距
                     .lineSpacing(15)
             }
-            .padding(.horizontal, 20) // 增加左右内边距
+            .padding(.horizontal, 20)
             .padding(.vertical)
         }
         .navigationTitle(sourceName)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            // 当视图出现时，立即调用 ViewModel 将文章标记为已读
-            viewModel.markAsRead(articleID: article.id)
+        .onDisappear {
+            // 当用户离开文章详情页时标记为已读
+            if !hasMarkedAsRead {
+                viewModel.markAsRead(articleID: article.id)
+                hasMarkedAsRead = true
+            }
         }
     }
     
-    // 格式化时间戳的辅助函数
     private func formattedTimestamp() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEE, MMMM d, yyyy 'AT' HH:mm"
-        formatter.locale = Locale(identifier: "en_US_POSIX") // 使用POSIX确保格式一致
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         return formatter.string(from: Date()).uppercased()
     }
 }
