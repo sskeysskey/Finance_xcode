@@ -25,7 +25,7 @@ struct MainContentView: View {
                 
                 // 2. 中部：搜索框
                 SearchContentView()
-                    .frame(height: 100)
+                    .frame(height: 60)
                     .padding(.vertical, 10)
                 
                 Divider()
