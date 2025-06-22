@@ -12,6 +12,8 @@ struct ArticleListView: View {
                 .font(.caption)
                 .foregroundColor(.gray)
                 .padding(.top)
+                // CHANGE: 隐藏这个特定行的分隔符
+                .listRowSeparator(.hidden)
 
             // 遍历该来源下的所有文章
             ForEach(source.articles) { article in
@@ -27,6 +29,8 @@ struct ArticleListView: View {
                     }
                     .padding(.vertical, 8)
                 }
+                // CHANGE: 隐藏所有新闻条目的分隔符
+                .listRowSeparator(.hidden)
             }
         }
         .listStyle(PlainListStyle()) // 使用朴素列表样式

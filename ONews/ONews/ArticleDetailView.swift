@@ -7,7 +7,7 @@ struct ArticleDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 24) {
                 // 顶部日期和时间
                 Text(formattedTimestamp())
                     .font(.caption)
@@ -15,7 +15,8 @@ struct ArticleDetailView: View {
                 
                 // 主题
                 Text(article.topic)
-                    .font(.title)
+                // CHANGE: 字体稍微变大，更具冲击力
+                    .font(.system(.title, design: .serif)) // 使用系统衬线字体
                     .fontWeight(.bold)
                 
                 // 来源
@@ -23,15 +24,15 @@ struct ArticleDetailView: View {
                     .font(.subheadline)
                     .foregroundColor(.gray)
                 
-                // 分割线
-                Divider()
-                
                 // 文章正文
                 Text(article.article)
-                    .font(.body)
-                    .lineSpacing(8) // 增加行间距，提高可读性
+                // CHANGE: 显著增大正文字体，并使用New York衬线字体，提升阅读舒适度
+                    .font(.custom("NewYork-Regular", size: 20))
+                    // CHANGE: 增加行间距
+                    .lineSpacing(15)
             }
-            .padding()
+            .padding(.horizontal, 20) // 增加左右内边距
+            .padding(.vertical)
         }
         .navigationTitle(sourceName)
         .navigationBarTitleDisplayMode(.inline)

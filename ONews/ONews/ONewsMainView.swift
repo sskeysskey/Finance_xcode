@@ -1,5 +1,14 @@
 import SwiftUI
 
+@main
+struct NewsReaderAppApp: App {
+    var body: some Scene {
+        WindowGroup {
+            MainAppView()
+        }
+    }
+}
+
 struct MainAppView: View {
     // 使用 @State 来管理是否已认证的状态
     @State private var isAuthenticated = false

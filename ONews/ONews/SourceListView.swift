@@ -21,7 +21,6 @@ struct SourceListView: View {
                         Text("\(viewModel.totalUnreadCount)")
                             .font(.system(size: 28, weight: .bold))
                             .foregroundColor(.gray)
-                        Spacer()
                     }
                     .padding()
                     .background(Color(UIColor.secondarySystemBackground))
@@ -34,9 +33,6 @@ struct SourceListView: View {
                             // NavigationLink 会在点击时自动导航到 destination 指定的视图
                             NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel)) {
                                 HStack {
-                                    // 这里可以放一个图标，暂时用SF Symbols代替
-                                    Image(systemName: "newspaper")
-                                        .foregroundColor(.accentColor)
                                     Text(source.name)
                                         .fontWeight(.semibold)
                                     Spacer()
@@ -45,6 +41,8 @@ struct SourceListView: View {
                                 }
                                 .padding(.vertical, 8)
                             }
+                            // 更改点 5: 隐藏所有来源列表项的分隔线
+                            .listRowSeparator(.hidden)
                         }
                         .listRowBackground(Color(UIColor.secondarySystemBackground))
                     }
