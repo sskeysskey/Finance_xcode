@@ -9,7 +9,7 @@ struct SourceListView: View {
         // NavigationView 是实现导航功能的基础
         NavigationView {
             List {
-                // 主要改动点: 将 "Unread" 行也修改为 ZStack 结构来隐藏尖括号
+                // "Unread" 行
                 ZStack {
                     // 1. 这是用户看到的 "Unread" 行内容
                     HStack {
@@ -31,10 +31,10 @@ struct SourceListView: View {
                     }
                     .opacity(0)
                 }
-                .listRowBackground(Color(UIColor.secondarySystemBackground))
+                // 主要修改点 2: 移除了 .listRowBackground(...)，让行背景透明
                 .listRowSeparator(.hidden)
                 
-                // 新闻来源列表（保持 ZStack 结构）
+                // 新闻来源列表
                 ForEach(viewModel.sources) { source in
                     ZStack {
                         // 可见的行内容
@@ -55,9 +55,10 @@ struct SourceListView: View {
                     }
                     .listRowSeparator(.hidden)
                 }
-                .listRowBackground(Color(UIColor.secondarySystemBackground))
+                // 主要修改点 2: 移除了 .listRowBackground(...)
             }
-            .listStyle(InsetGroupedListStyle())
+            // 主要修改点 1: 将列表样式从 InsetGroupedListStyle 更改为 .plain
+            .listStyle(.plain)
             .navigationTitle("Inoreader")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
