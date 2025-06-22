@@ -6,53 +6,52 @@ struct SourceListView: View {
     @Binding var isAuthenticated: Bool
 
     var body: some View {
-        // NavigationView 是实现导航功能的基础，包括标题、返回按钮和侧滑返回
+        // NavigationView 是实现导航功能的基础
         NavigationView {
-            // 使用 ZStack 将背景色和列表内容叠放
-            ZStack {
-                // 设置深色背景，适配设计图
-                Color(UIColor.systemGray6).edgesIgnoringSafeArea(.all)
-                
-                VStack {
-                    // 未读总数显示区域
+            // 主要改动点 1: 移除了 ZStack 和背景色定义
+            // 列表将占据整个屏幕，并使用 InsetGroupedListStyle 的默认深色背景
+            List {
+                // 主要改动点 2: 将 "Unread" 部分放入 NavigationLink，使其可点击
+                // 点击后会导航到我们新创建的 AllArticlesListView
+                NavigationLink(destination: AllArticlesListView(viewModel: viewModel)) {
                     HStack {
                         Text("Unread")
                             .font(.system(size: 28, weight: .bold))
+                            // 让 "Unread" 文本颜色与普通导航链接文本颜色一致
+                            .foregroundColor(.primary)
+                        
+                        Spacer() // 添加一个 Spacer 将计数推到右边
+                        
                         Text("\(viewModel.totalUnreadCount)")
                             .font(.system(size: 28, weight: .bold))
                             .foregroundColor(.gray)
                     }
                     .padding()
-                    .background(Color(UIColor.secondarySystemBackground))
-                    .cornerRadius(12)
-                    .padding(.horizontal)
-                    
-                    // 新闻来源列表
-                    List {
-                        ForEach(viewModel.sources) { source in
-                            // NavigationLink 会在点击时自动导航到 destination 指定的视图
-                            NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel)) {
-                                HStack {
-                                    Text(source.name)
-                                        .fontWeight(.semibold)
-                                    Spacer()
-                                    Text("\(source.articles.count)")
-                                        .foregroundColor(.gray)
-                                }
-                                .padding(.vertical, 8)
-                            }
-                            // 更改点 5: 隐藏所有来源列表项的分隔线
-                            .listRowSeparator(.hidden)
-                        }
-                        .listRowBackground(Color(UIColor.secondarySystemBackground))
-                    }
-                    .listStyle(InsetGroupedListStyle()) // 使用分组样式
+                    // 背景色现在由 listRowBackground 控制，与下方列表项统一
                 }
+                .listRowBackground(Color(UIColor.secondarySystemBackground))
+                .listRowSeparator(.hidden) // 隐藏这一行的分隔线
+                
+                // 新闻来源列表
+                ForEach(viewModel.sources) { source in
+                    NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel)) {
+                        HStack {
+                            Text(source.name)
+                                .fontWeight(.semibold)
+                            Spacer()
+                            Text("\(source.articles.count)")
+                                .foregroundColor(.gray)
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    .listRowSeparator(.hidden)
+                }
+                .listRowBackground(Color(UIColor.secondarySystemBackground))
             }
+            .listStyle(InsetGroupedListStyle()) // 使用分组样式
             .navigationTitle("Inoreader")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // 添加左上角的返回/登出按钮
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button(action: {
                         isAuthenticated = false
@@ -63,7 +62,7 @@ struct SourceListView: View {
                 }
             }
         }
-        .accentColor(.red) // 设置导航链接箭头等元素的颜色
-        .preferredColorScheme(.dark) // 强制使用深色模式以匹配设计
+        .accentColor(.red)
+        .preferredColorScheme(.dark)
     }
 }
