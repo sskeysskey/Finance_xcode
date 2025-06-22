@@ -31,7 +31,6 @@ struct SourceListView: View {
                     }
                     .opacity(0)
                 }
-                // 主要修改点 2: 移除了 .listRowBackground(...)，让行背景透明
                 .listRowSeparator(.hidden)
                 
                 // 新闻来源列表
@@ -42,8 +41,12 @@ struct SourceListView: View {
                             Text(source.name)
                                 .fontWeight(.semibold)
                             Spacer()
-                            Text("\(source.articles.count)")
+                            // ==================== 主要修改点 ====================
+                            // 将 .articles.count 替换为 .unreadCount
+                            // 现在这里显示的是每个来源的未读文章数量
+                            Text("\(source.unreadCount)")
                                 .foregroundColor(.gray)
+                            // =================================================
                         }
                         .padding(.vertical, 8)
                         
@@ -55,9 +58,7 @@ struct SourceListView: View {
                     }
                     .listRowSeparator(.hidden)
                 }
-                // 主要修改点 2: 移除了 .listRowBackground(...)
             }
-            // 主要修改点 1: 将列表样式从 InsetGroupedListStyle 更改为 .plain
             .listStyle(.plain)
             .navigationTitle("Inoreader")
             .navigationBarTitleDisplayMode(.inline)

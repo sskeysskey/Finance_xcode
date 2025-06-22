@@ -118,6 +118,14 @@ struct NewsSource: Identifiable {
     let id = UUID() // 唯一标识符
     let name: String
     var articles: [Article]
+    
+    // ==================== 主要修改点 ====================
+    // 添加一个计算属性，用于动态计算未读文章的数量
+    // 它会过滤出 articles 数组中 isRead 为 false 的文章，并返回其数量
+    var unreadCount: Int {
+        articles.filter { !$0.isRead }.count
+    }
+    // =================================================
 }
 
 // 文章的结构体
