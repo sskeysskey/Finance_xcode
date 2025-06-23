@@ -80,6 +80,41 @@ class NewsViewModel: ObservableObject {
         UserDefaults.standard.set(Array(readTopics), forKey: readKey)
     }
 
+    func findNextArticle(after currentArticleID: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
+            // 如果指定了来源名称，则只在该来源内查找
+            if let sourceName = sourceName, let source = sources.first(where: { $0.name == sourceName }) {
+                // 找到当前文章在来源文章列表中的索引
+                if let currentIndex = source.articles.firstIndex(where: { $0.id == currentArticleID }) {
+                    // 计算下一个索引
+                    let nextIndex = currentIndex + 1
+                    // 检查下一个索引是否有效
+                    if nextIndex < source.articles.count {
+                        // 返回下一篇文章和它的来源名称
+                        return (article: source.articles[nextIndex], sourceName: source.name)
+                    }
+                }
+            } else { // 否则，在所有文章中查找
+                // 将所有文章平铺成一个列表，同时保留来源信息
+                let allArticlesWithSource = sources.flatMap { source in
+                    source.articles.map { article in (article: article, sourceName: source.name) }
+                }
+                
+                // 找到当前文章在总列表中的索引
+                if let currentIndex = allArticlesWithSource.firstIndex(where: { $0.article.id == currentArticleID }) {
+                    // 计算下一个索引
+                    let nextIndex = currentIndex + 1
+                    // 检查下一个索引是否有效
+                    if nextIndex < allArticlesWithSource.count {
+                        // 返回下一篇文章和它的来源名称
+                        return allArticlesWithSource[nextIndex]
+                    }
+                }
+            }
+            
+            // 如果没有找到下一篇文章，返回 nil
+            return nil
+        }
+    
     func loadNews() {
         // 1. 从 bundle 里读 JSON（和你原来的一样）
         guard let url = Bundle.main.url(forResource: "onews", withExtension: "json") else {

@@ -17,7 +17,16 @@ struct ArticleListView: View {
 
             // 遍历该来源下的所有文章
             ForEach(source.articles) { article in
-                NavigationLink(destination: ArticleDetailView(article: article, sourceName: source.name, viewModel: viewModel)) {
+                // ==================== 修改点 ====================
+                // 导航链接的目的地改为 ArticleContainerView
+                NavigationLink(destination: ArticleContainerView(
+                    article: article,
+                    sourceName: source.name,
+                    // 传入上下文，告知容器我们来自特定来源列表
+                    context: .fromSource(source.name),
+                    viewModel: viewModel
+                )) {
+                // =================================================
                     VStack(alignment: .leading, spacing: 8) {
                         Text(source.name)
                             .font(.caption)
@@ -67,7 +76,16 @@ struct AllArticlesListView: View {
                 // 然后遍历该来源下的所有文章
                 ForEach(source.articles) { article in
                     // 为每篇文章创建一个导航链接，指向文章详情页
-                    NavigationLink(destination: ArticleDetailView(article: article, sourceName: source.name, viewModel: viewModel)) {
+                    // ==================== 修改点 ====================
+                    // 导航链接的目的地改为 ArticleContainerView
+                    NavigationLink(destination: ArticleContainerView(
+                        article: article,
+                        sourceName: source.name,
+                        // 传入上下文，告知容器我们来自“所有文章”列表
+                        context: .fromAllArticles,
+                        viewModel: viewModel
+                    )) {
+                    // =================================================
                         VStack(alignment: .leading, spacing: 8) {
                             // 显示文章所属的来源名称
                             Text(source.name)

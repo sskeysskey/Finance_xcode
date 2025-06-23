@@ -5,7 +5,16 @@ struct ArticleDetailView: View {
     let article: Article
     let sourceName: String
     @ObservedObject var viewModel: NewsViewModel
+    // ==================== 新增属性 ====================
+    // 用于请求下一篇文章的回调闭包
+    var requestNextArticle: () -> Void
+    // ================================================
     @State private var hasMarkedAsRead = false
+    
+    // ==================== 新增状态 ====================
+    // 标记是否已滚动到底部
+    @State private var isAtBottom = false
+    // ================================================
 
     var body: some View {
         let paragraphs = article.article
@@ -54,11 +63,44 @@ struct ArticleDetailView: View {
                         }
                     }
                 }
+                // ==================== 新增：用于检测是否滚动到底部的视图 ====================
+                // 在 ScrollView 内容的末尾放一个透明的视图
+                // 当它出现时，意味着用户滚动到了底部
+                Color.clear
+                    .frame(height: 1)
+                    .onAppear {
+                        self.isAtBottom = true
+                        print("滚动到底部")
+                    }
+                    .onDisappear {
+                        self.isAtBottom = false
+                        print("离开底部")
+                    }
+                //
             }
             .padding(.vertical)
         }
-        .navigationTitle(sourceName)
-        .navigationBarTitleDisplayMode(.inline)
+        // ==================== 唯一的修改点 ====================
+                // 将 .highPriorityGesture 替换为 .simultaneousGesture
+                .simultaneousGesture(
+                    DragGesture().onEnded { value in
+                        // 检查是否满足所有条件：
+                        // 1. 已经滚动到底部 (isAtBottom == true)
+                        // 2. 是向上滑动 (value.translation.height < 0)
+                        // 3. 滑动距离足够长 (我们用 100 作为一个阈值)
+                        if self.isAtBottom && value.translation.height < -350 {
+                            print("检测到符合条件的上滑手势，请求下一篇")
+                            // 调用回调函数
+                            self.requestNextArticle()
+                        }
+                    }
+                )
+                // =======================================================
+                .onAppear {
+                    // 当视图出现时，重置 hasMarkedAsRead 状态
+                    // 这对于在容器内切换文章很重要
+                    hasMarkedAsRead = false
+                }
         .onDisappear {
             if !hasMarkedAsRead {
                 viewModel.markAsRead(articleID: article.id)
