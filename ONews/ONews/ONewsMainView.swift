@@ -20,7 +20,8 @@ struct MainAppView: View {
             SourceListView(isAuthenticated: $isAuthenticated)
         } else {
             // 否则，显示一个简单的登录界面
-            LoginView(isAuthenticated: $isAuthenticated)
+//            LoginView(isAuthenticated: $isAuthenticated)
+            SourceListView(isAuthenticated: $isAuthenticated)
         }
     }
 }
