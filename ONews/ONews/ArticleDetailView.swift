@@ -30,19 +30,27 @@ struct ArticleDetailView: View {
         ScrollView {
             // VStack 现在只包含纯粹的视图组件
             VStack(alignment: .leading, spacing: 16) {
-                Text(formattedTimestamp())
-                    .font(.caption)
-                    .foregroundColor(.gray)
                 
-                Text(article.topic)
-                    .font(.system(.title, design: .serif))
-                    .fontWeight(.bold)
-                
-                Text(sourceName.replacingOccurrences(of: "_", with: " "))
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                
-                // 显示第一张图片（如果存在）
+                // ==================== 改动点 1: 将顶部文本打包并添加内边距 ====================
+                // 将时间、标题、来源包裹在一个 VStack 中，并对这个 VStack 应用内边距。
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(formattedTimestamp())
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    
+                    Text(article.topic)
+                        .font(.system(.title, design: .serif))
+                        .fontWeight(.bold)
+                    
+                    Text(sourceName.replacingOccurrences(of: "_", with: " "))
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                }
+                .padding(.horizontal, 20) // 只对这个文本块应用水平内边距
+                // =======================================================================
+
+                // ==================== 改动点 2: 图片没有水平内边距 =======================
+                // 第一张图片现在会自然地延伸到屏幕边缘
                 if let firstImage = article.images.first {
                     ArticleImageView(imageName: firstImage)
                 }
@@ -53,12 +61,10 @@ struct ArticleDetailView: View {
                     Text(paragraphs[pIndex])
                         .font(.custom("NewYork-Regular", size: 20))
                         .lineSpacing(10)
+                        .padding(.horizontal, 20) // 每个段落也应用水平内边距
+                    // =======================================================================
                     
-                    // ==================== 修正点 2: 改进图片插入逻辑 ====================
-                    // 我们不再使用可变的 imageIndex 计数器。
-                    // 而是根据当前段落的索引来决定是否以及插入哪一张图片。
-                    
-                    // 只有在间隔大于0，且当前段落是插入点时，才尝试插入图片
+                    // 插入的图片同样没有水平内边距
                     if insertionInterval > 0 && (pIndex + 1) % insertionInterval == 0 {
                         // 计算应该插入第几张图片
                         let imageIndexToInsert = ((pIndex + 1) / insertionInterval) - 1
@@ -71,7 +77,7 @@ struct ArticleDetailView: View {
                     // =================================================================
                 }
             }
-            .padding(.horizontal, 0)
+            // 只保留垂直方向的内边距，给顶部和底部留出空间
             .padding(.vertical)
         }
         .navigationTitle(sourceName)
@@ -99,22 +105,15 @@ struct ArticleImageView: View {
 
     var body: some View {
         let fullPath = "news_images/\(imageName)"
-        let nameWithoutExtension = (fullPath as NSString).deletingPathExtension
         
-        if let uiImage = UIImage(named: nameWithoutExtension) {
+        if let uiImage = UIImage(named: fullPath) {
             Image(uiImage: uiImage)
                 .resizable()
-                .aspectRatio(contentMode: .fit)
-                .cornerRadius(12)
-                .shadow(radius: 5)
-                .padding(.vertical, 10)
-        } else if let uiImage = UIImage(named: fullPath) {
-            Image(uiImage: uiImage)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .cornerRadius(12)
-                .shadow(radius: 5)
-                .padding(.vertical, 10)
+                // 改为 .fill 并限制高度，可以获得更好的视觉效果，防止图片过高
+                .aspectRatio(contentMode: .fill)
+                .frame(height: 250, alignment: .center) // 给一个固定的高度或最大高度
+                .clipped() // 裁剪掉超出部分
+                // .cornerRadius(0) // 边缘到边缘的图片通常没有圆角
         } else {
             HStack {
                 Spacer()
