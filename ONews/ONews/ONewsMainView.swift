@@ -115,6 +115,48 @@ class NewsViewModel: ObservableObject {
             return nil
         }
     
+    // ==================== 新增方法 ====================
+    /// 查找上一篇文章
+    /// - Parameters:
+    ///   - currentArticleID: 当前文章的 UUID
+    ///   - sourceName: 当前文章所属的来源名称。如果为 nil，则在所有文章中查找。
+    /// - Returns: 一个元组，包含上一篇文章及其来源名称，如果不存在则返回 nil。
+    func findPreviousArticle(before currentArticleID: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
+        // 如果指定了来源名称，则只在该来源内查找
+        if let sourceName = sourceName, let source = sources.first(where: { $0.name == sourceName }) {
+            // 找到当前文章在来源文章列表中的索引
+            if let currentIndex = source.articles.firstIndex(where: { $0.id == currentArticleID }) {
+                // 计算上一个索引
+                let prevIndex = currentIndex - 1
+                // 检查上一个索引是否有效 (必须大于等于0)
+                if prevIndex >= 0 {
+                    // 返回上一篇文章和它的来源名称
+                    return (article: source.articles[prevIndex], sourceName: source.name)
+                }
+            }
+        } else { // 否则，在所有文章中查找
+            // 将所有文章平铺成一个列表，同时保留来源信息
+            let allArticlesWithSource = sources.flatMap { source in
+                source.articles.map { article in (article: article, sourceName: source.name) }
+            }
+            
+            // 找到当前文章在总列表中的索引
+            if let currentIndex = allArticlesWithSource.firstIndex(where: { $0.article.id == currentArticleID }) {
+                // 计算上一个索引
+                let prevIndex = currentIndex - 1
+                // 检查上一个索引是否有效
+                if prevIndex >= 0 {
+                    // 返回上一篇文章和它的来源名称
+                    return allArticlesWithSource[prevIndex]
+                }
+            }
+        }
+        
+        // 如果没有找到上一篇文章，返回 nil
+        return nil
+    }
+    // =================================================
+    
     func loadNews() {
         // 1. 从 bundle 里读 JSON（和你原来的一样）
         guard let url = Bundle.main.url(forResource: "onews", withExtension: "json") else {

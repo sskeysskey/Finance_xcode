@@ -1,99 +1,147 @@
 import SwiftUI
 
-/// 一个容器视图，管理当前文章的显示和切换逻辑
 struct ArticleContainerView: View {
-    // 从列表页传入的初始文章和上下文信息
     let initialArticle: Article
-    let navigationContext: NavigationContext // 标记是从哪里来的
+    let navigationContext: NavigationContext
     
     @ObservedObject var viewModel: NewsViewModel
     
-    // 使用 @State 来管理当前正在显示的文章
     @State private var currentArticle: Article
     @State private var currentSourceName: String
     
-    // 控制提示信息的显示状态
-    @State private var showToast = false
+    // ==================== 核心修改 1：添加会话内已读ID集合 ====================
+    // 这个集合用于暂存本次“翻页阅读”会话中所有被阅读过的文章ID。
+    // 它只在内部使用，不会触发ViewModel的更新。
+    @State private var readArticleIDsInThisSession: Set<UUID> = []
+    // =======================================================================
+    
+    @State private var showNoNextToast = false
+    @State private var showNoPreviousToast = false
 
-    // 定义导航上下文，以区分不同的文章列表
     enum NavigationContext {
-        case fromSource(String) // 来自特定来源，值为来源名称
-        case fromAllArticles      // 来自“所有文章”列表
+        case fromSource(String)
+        case fromAllArticles
     }
 
-    // 自定义初始化方法
     init(article: Article, sourceName: String, context: NavigationContext, viewModel: NewsViewModel) {
         self.initialArticle = article
         self.navigationContext = context
         self.viewModel = viewModel
         
-        // 使用 State 的初始值包装器来设置初始状态
         self._currentArticle = State(initialValue: article)
         self._currentSourceName = State(initialValue: sourceName)
     }
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            // 核心内容：文章详情页
             ArticleDetailView(
                 article: currentArticle,
                 sourceName: currentSourceName,
                 viewModel: viewModel,
-                // 传递一个闭包作为请求下一篇的回调
                 requestNextArticle: {
                     self.switchToNextArticle()
+                },
+                requestPreviousArticle: {
+                    self.switchToPreviousArticle()
                 }
             )
-            .id(currentArticle.id) // 使用 .id() 来确保当 currentArticle 改变时，整个 DetailView 被重新创建，触发动画
+            .id(currentArticle.id)
             .transition(.asymmetric(
                 insertion: .move(edge: .bottom).combined(with: .opacity),
                 removal: .move(edge: .top).combined(with: .opacity))
             )
-
-            // 如果需要显示提示，则在底部显示
-            if showToast {
-                Text("该分组内已无未阅读的文章存在了")
-                    .font(.subheadline)
-                    .padding()
-                    .background(Color.black.opacity(0.7))
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
-                    .padding(.bottom, 50)
-                    .transition(.opacity.animation(.easeInOut))
+            
+            if showNoNextToast {
+                ToastView(message: "该分组内已无更多文章")
+            }
+            
+            if showNoPreviousToast {
+                ToastView(message: "这已经是第一篇文章了")
             }
         }
         .navigationTitle(currentSourceName)
         .navigationBarTitleDisplayMode(.inline)
+        // ==================== 核心修改 2：修改 onDisappear 逻辑 ====================
+        // 当整个容器视图消失时（用户点击返回），这是唯一安全的时机去更新ViewModel。
+        .onDisappear {
+            // 首先，将用户看到的最后一篇文章也加入待办列表
+            readArticleIDsInThisSession.insert(currentArticle.id)
+            
+            // 然后，批量、一次性地通知ViewModel更新所有已读文章
+            for articleID in readArticleIDsInThisSession {
+                viewModel.markAsRead(articleID: articleID)
+            }
+        }
+        // ========================================================================
+        // ==================== 核心修改 3：修改 onChange 逻辑 ====================
+        // 当文章切换时，我们不再直接调用ViewModel...
+        .onChange(of: currentArticle.id) { oldValue, newValue in
+            // ...而是仅仅将刚刚离开的文章ID（oldValue）记录到我们自己的“待办”集合中。
+            // 这个操作不会触发任何UI刷新，因此是完全安全的。
+            readArticleIDsInThisSession.insert(oldValue)
+        }
+        // ========================================================================
     }
 
     /// 切换到下一篇文章的逻辑
     private func switchToNextArticle() {
         let sourceNameToSearch: String?
         switch navigationContext {
-        case .fromSource(let name):
-            sourceNameToSearch = name
-        case .fromAllArticles:
-            sourceNameToSearch = nil
+        case .fromSource(let name): sourceNameToSearch = name
+        case .fromAllArticles: sourceNameToSearch = nil
         }
 
-        // 调用 ViewModel 查找下一篇文章
         if let next = viewModel.findNextArticle(after: currentArticle.id, inSource: sourceNameToSearch) {
-            // 如果找到了，用动画更新当前文章状态
-            withAnimation(.easeInOut(duration: 0.5)) {
+            withAnimation(.easeInOut(duration: 0.4)) {
                 self.currentArticle = next.article
                 self.currentSourceName = next.sourceName
             }
         } else {
-            // 如果没找到，显示提示信息
-            withAnimation {
-                showToast = true
+            showToast { shouldShow in self.showNoNextToast = shouldShow }
+        }
+    }
+    
+    /// 切换到上一篇文章的逻辑
+    private func switchToPreviousArticle() {
+        let sourceNameToSearch: String?
+        switch navigationContext {
+        case .fromSource(let name): sourceNameToSearch = name
+        case .fromAllArticles: sourceNameToSearch = nil
+        }
+
+        if let prev = viewModel.findPreviousArticle(before: currentArticle.id, inSource: sourceNameToSearch) {
+            withAnimation(.interactiveSpring(response: 0.4, dampingFraction: 0.8)) {
+                self.currentArticle = prev.article
+                self.currentSourceName = prev.sourceName
             }
-            // 2秒后自动隐藏提示
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                withAnimation {
-                    showToast = false
-                }
+        } else {
+            showToast { shouldShow in self.showNoPreviousToast = shouldShow }
+        }
+    }
+    
+    /// 辅助函数，接收一个“设置器”闭包来显示和隐藏提示
+    private func showToast(setter: @escaping (Bool) -> Void) {
+        setter(true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation {
+                setter(false)
             }
         }
+    }
+}
+
+/// 一个可重用的提示视图
+struct ToastView: View {
+    let message: String
+    
+    var body: some View {
+        Text(message)
+            .font(.subheadline)
+            .padding()
+            .background(Color.black.opacity(0.75))
+            .foregroundColor(.white)
+            .cornerRadius(10)
+            .padding(.bottom, 50)
+            .transition(.opacity.animation(.easeInOut))
     }
 }

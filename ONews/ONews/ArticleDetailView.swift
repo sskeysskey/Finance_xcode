@@ -5,16 +5,11 @@ struct ArticleDetailView: View {
     let article: Article
     let sourceName: String
     @ObservedObject var viewModel: NewsViewModel
-    // ==================== 新增属性 ====================
-    // 用于请求下一篇文章的回调闭包
     var requestNextArticle: () -> Void
-    // ================================================
-    @State private var hasMarkedAsRead = false
+    var requestPreviousArticle: () -> Void
     
-    // ==================== 新增状态 ====================
-    // 标记是否已滚动到底部
+    @State private var isAtTop = false
     @State private var isAtBottom = false
-    // ================================================
 
     var body: some View {
         let paragraphs = article.article
@@ -28,6 +23,17 @@ struct ArticleDetailView: View {
             : (paragraphs.count + 1)
 
         ScrollView {
+            Color.clear
+                .frame(height: 1)
+                .onAppear {
+                    self.isAtTop = true
+                    print("滚动到顶部")
+                }
+                .onDisappear {
+                    self.isAtTop = false
+                    print("离开顶部")
+                }
+            
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(formattedTimestamp())
@@ -53,7 +59,7 @@ struct ArticleDetailView: View {
                         .font(.custom("NewYork-Regular", size: 22))
                         .lineSpacing(12)
                         .padding(.horizontal, 20)
-                        .textSelection(.enabled) // <-- 修改点：允许正文被选择
+                        .textSelection(.enabled)
                     
                     if insertionInterval > 0 && (pIndex + 1) % insertionInterval == 0 {
                         let imageIndexToInsert = ((pIndex + 1) / insertionInterval) - 1
@@ -63,9 +69,7 @@ struct ArticleDetailView: View {
                         }
                     }
                 }
-                // ==================== 新增：用于检测是否滚动到底部的视图 ====================
-                // 在 ScrollView 内容的末尾放一个透明的视图
-                // 当它出现时，意味着用户滚动到了底部
+                
                 Color.clear
                     .frame(height: 1)
                     .onAppear {
@@ -76,37 +80,25 @@ struct ArticleDetailView: View {
                         self.isAtBottom = false
                         print("离开底部")
                     }
-                //
             }
             .padding(.vertical)
         }
         // ==================== 唯一的修改点 ====================
-                // 将 .highPriorityGesture 替换为 .simultaneousGesture
-                .simultaneousGesture(
-                    DragGesture().onEnded { value in
-                        // 检查是否满足所有条件：
-                        // 1. 已经滚动到底部 (isAtBottom == true)
-                        // 2. 是向上滑动 (value.translation.height < 0)
-                        // 3. 滑动距离足够长 (我们用 100 作为一个阈值)
-                        if self.isAtBottom && value.translation.height < -350 {
-                            print("检测到符合条件的上滑手势，请求下一篇")
-                            // 调用回调函数
-                            self.requestNextArticle()
-                        }
-                    }
-                )
-                // =======================================================
-                .onAppear {
-                    // 当视图出现时，重置 hasMarkedAsRead 状态
-                    // 这对于在容器内切换文章很重要
-                    hasMarkedAsRead = false
+        // 将两个手势合并成一个
+        .simultaneousGesture(
+            DragGesture().onEnded { value in
+                // 条件1: 在底部时，向上猛滑 -> 请求下一篇
+                if self.isAtBottom && value.translation.height < -300 {
+                    print("检测到符合条件的上滑手势，请求下一篇")
+                    self.requestNextArticle()
                 }
-        .onDisappear {
-            if !hasMarkedAsRead {
-                viewModel.markAsRead(articleID: article.id)
-                hasMarkedAsRead = true
+                // 条件2: 在顶部时，向下猛滑 -> 请求上一篇
+                else if self.isAtTop && value.translation.height > 300 {
+                    print("检测到符合条件的下滑手势，请求上一篇")
+                    self.requestPreviousArticle()
+                }
             }
-        }
+        )
     }
     
     private func formattedTimestamp() -> String {
