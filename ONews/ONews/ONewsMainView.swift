@@ -115,12 +115,6 @@ class NewsViewModel: ObservableObject {
             return nil
         }
     
-    // ==================== 新增方法 ====================
-    /// 查找上一篇文章
-    /// - Parameters:
-    ///   - currentArticleID: 当前文章的 UUID
-    ///   - sourceName: 当前文章所属的来源名称。如果为 nil，则在所有文章中查找。
-    /// - Returns: 一个元组，包含上一篇文章及其来源名称，如果不存在则返回 nil。
     func findPreviousArticle(before currentArticleID: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
         // 如果指定了来源名称，则只在该来源内查找
         if let sourceName = sourceName, let source = sources.first(where: { $0.name == sourceName }) {
@@ -155,7 +149,6 @@ class NewsViewModel: ObservableObject {
         // 如果没有找到上一篇文章，返回 nil
         return nil
     }
-    // =================================================
     
     func loadNews() {
         // 1. 从 bundle 里读 JSON（和你原来的一样）
@@ -209,6 +202,34 @@ class NewsViewModel: ObservableObject {
         }
     }
 
+    // ==================== 新增方法 ====================
+    /// 将指定文章标记为未读
+    func markAsUnread(articleID: UUID) {
+        // 确保在主线程上执行，因为这会改变 @Published 属性，从而更新UI
+        DispatchQueue.main.async {
+            // 遍历所有来源，找到对应的文章
+            for i in self.sources.indices {
+                if let j = self.sources[i].articles.firstIndex(where: { $0.id == articleID }) {
+                    // 只有当文章当前是已读状态时才需要处理
+                    if self.sources[i].articles[j].isRead {
+                        // 1. 在内存中将文章的 isRead 状态设置为 false
+                        self.sources[i].articles[j].isRead = false
+                        
+                        // 2. 从已读主题集合中移除该文章的 topic
+                        let topic = self.sources[i].articles[j].topic
+                        self.readTopics.remove(topic)
+                        
+                        // 3. 保存更新后的已读主题集合到 UserDefaults
+                        self.saveReadTopics()
+                    }
+                    // 找到并处理后即可退出循环
+                    return
+                }
+            }
+        }
+    }
+    // =================================================
+
     /// 计算总未读数
     var totalUnreadCount: Int {
         sources.flatMap { $0.articles }.filter { !$0.isRead }.count
@@ -222,13 +243,11 @@ struct NewsSource: Identifiable {
     let name: String
     var articles: [Article]
     
-    // ==================== 主要修改点 ====================
     // 添加一个计算属性，用于动态计算未读文章的数量
     // 它会过滤出 articles 数组中 isRead 为 false 的文章，并返回其数量
     var unreadCount: Int {
         articles.filter { !$0.isRead }.count
     }
-    // =================================================
 }
 
 // 文章的结构体

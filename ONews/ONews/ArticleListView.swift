@@ -12,21 +12,16 @@ struct ArticleListView: View {
                 .font(.caption)
                 .foregroundColor(.gray)
                 .padding(.top)
-                // CHANGE: 隐藏这个特定行的分隔符
                 .listRowSeparator(.hidden)
 
             // 遍历该来源下的所有文章
             ForEach(source.articles) { article in
-                // ==================== 修改点 ====================
-                // 导航链接的目的地改为 ArticleContainerView
                 NavigationLink(destination: ArticleContainerView(
                     article: article,
                     sourceName: source.name,
-                    // 传入上下文，告知容器我们来自特定来源列表
                     context: .fromSource(source.name),
                     viewModel: viewModel
                 )) {
-                // =================================================
                     VStack(alignment: .leading, spacing: 8) {
                         Text(source.name)
                             .font(.caption)
@@ -37,12 +32,33 @@ struct ArticleListView: View {
                             .foregroundColor(article.isRead ? .gray : .primary)
                     }
                     .padding(.vertical, 8)
+                    // ==================== 主要修改点 1 ====================
+                    // 为每个文章行添加上下文菜单
+                    .contextMenu {
+                        // “标记为已读”按钮
+                        Button {
+                            viewModel.markAsRead(articleID: article.id)
+                        } label: {
+                            Label("标记为已读", systemImage: "checkmark.circle")
+                        }
+                        // 如果文章本身已读，则禁用此按钮
+                        .disabled(article.isRead)
+                        
+                        // “标记为未读”按钮
+                        Button {
+                            viewModel.markAsUnread(articleID: article.id)
+                        } label: {
+                            Label("标记为未读", systemImage: "circle")
+                        }
+                        // 如果文章本身未读，则禁用此按钮
+                        .disabled(!article.isRead)
+                    }
+                    // =================================================
                 }
-                // CHANGE: 隐藏所有新闻条目的分隔符
                 .listRowSeparator(.hidden)
             }
         }
-        .listStyle(PlainListStyle()) // 使用朴素列表样式
+        .listStyle(PlainListStyle())
         .navigationTitle("Unread")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -50,7 +66,7 @@ struct ArticleListView: View {
     // 格式化日期的辅助函数
     private func formattedDate() -> String {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN") // 可根据需要调整地区
+        formatter.locale = Locale(identifier: "zh_CN")
         
         if Calendar.current.isDateInToday(Date()) {
             formatter.dateFormat = "EEEE, MMMM d, yyyy"
@@ -75,37 +91,50 @@ struct AllArticlesListView: View {
             ForEach(viewModel.sources) { source in
                 // 然后遍历该来源下的所有文章
                 ForEach(source.articles) { article in
-                    // 为每篇文章创建一个导航链接，指向文章详情页
-                    // ==================== 修改点 ====================
-                    // 导航链接的目的地改为 ArticleContainerView
                     NavigationLink(destination: ArticleContainerView(
                         article: article,
                         sourceName: source.name,
-                        // 传入上下文，告知容器我们来自“所有文章”列表
                         context: .fromAllArticles,
                         viewModel: viewModel
                     )) {
-                    // =================================================
                         VStack(alignment: .leading, spacing: 8) {
-                            // 显示文章所属的来源名称
                             Text(source.name)
                                 .font(.caption)
                                 .foregroundColor(.gray)
-                            // 显示文章标题
                             Text(article.topic)
                                 .fontWeight(.semibold)
-                                // 根据 isRead 状态决定文字颜色
                                 .foregroundColor(article.isRead ? .gray : .primary)
                         }
                         .padding(.vertical, 8)
+                        // ==================== 主要修改点 2 ====================
+                        // 为每个文章行添加上下文菜单 (与上面完全相同)
+                        .contextMenu {
+                            // “标记为已读”按钮
+                            Button {
+                                viewModel.markAsRead(articleID: article.id)
+                            } label: {
+                                Label("标记为已读", systemImage: "checkmark.circle")
+                            }
+                            // 如果文章本身已读，则禁用此按钮
+                            .disabled(article.isRead)
+                            
+                            // “标记为未读”按钮
+                            Button {
+                                viewModel.markAsUnread(articleID: article.id)
+                            } label: {
+                                Label("标记为未读", systemImage: "circle")
+                            }
+                            // 如果文章本身未读，则禁用此按钮
+                            .disabled(!article.isRead)
+                        }
+                        // =================================================
                     }
-                    // 隐藏分隔线，保持UI统一
                     .listRowSeparator(.hidden)
                 }
             }
         }
-        .listStyle(PlainListStyle()) // 使用朴素列表样式，适合连续的列表
-        .navigationTitle("All Articles") // 设置导航栏标题
+        .listStyle(PlainListStyle())
+        .navigationTitle("All Articles")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
