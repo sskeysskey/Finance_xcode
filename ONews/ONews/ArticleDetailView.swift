@@ -75,8 +75,6 @@ struct ArticleDetailView: View {
     }
 }
 
-
-// ==================== 主要修改区域在此 ====================
 // 辅助视图：用于从 Bundle 加载图片并处理占位符
 struct ArticleImageView: View {
     let imageName: String
