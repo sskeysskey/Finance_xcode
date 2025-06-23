@@ -79,30 +79,30 @@ struct ArticleDetailView: View {
 // 辅助视图：用于从 Bundle 加载图片并处理占位符
 struct ArticleImageView: View {
     let imageName: String
+    // 和正文一致的水平内边距
+    private let horizontalPadding: CGFloat = 20
 
     var body: some View {
         let fullPath = "news_images/\(imageName)"
-        
-        if let uiImage = UIImage(named: fullPath) {
-            // 使用 VStack 将图片和描述文本组合在一起
-            VStack(spacing: 8) { // `spacing` 控制图片和文字的间距
+
+        VStack(spacing: 8) {
+            if let uiImage = UIImage(named: fullPath) {
+                // 图片铺满全宽，保持比例
                 Image(uiImage: uiImage)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(height: 250, alignment: .center)
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
                     .clipped()
 
-                // 图片描述文本
-                Text((imageName as NSString).deletingPathExtension) // 移除了.jpg后缀，让描述更干净
-                    .font(.caption) // 使用小号字体
-                    .foregroundColor(.secondary) // 使用次要颜色，不那么显眼
-                    .multilineTextAlignment(.center) // 居中对齐
-                    .padding(.horizontal, 20) // 左右缩进，与正文对齐
+                // 只有文字缩边
+                Text((imageName as NSString).deletingPathExtension)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, horizontalPadding)
             }
-        } else {
-            // 失败时的占位符视图保持不变
-            HStack {
-                Spacer()
+            else {
+                // 占位符也铺满全宽
                 VStack(spacing: 8) {
                     Image(systemName: "photo.fill")
                         .font(.largeTitle)
@@ -115,13 +115,16 @@ struct ArticleImageView: View {
                         .foregroundColor(.red)
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
+                        .padding(.horizontal, 4)
                 }
-                Spacer()
+                .frame(maxWidth: .infinity, minHeight: 150)
+                .background(Color(UIColor.secondarySystemBackground))
+                .cornerRadius(12)
+                // 占位符文字也可以缩边，如果不想缩，可以删掉下面这行
+                .padding(.horizontal, horizontalPadding)
             }
-            .frame(minHeight: 150)
-            .background(Color(UIColor.secondarySystemBackground))
-            .cornerRadius(12)
-            .padding(.vertical, 10)
         }
+        // 只要垂直方向上和上下段落保持间距
+        .padding(.vertical, 10)
     }
 }
