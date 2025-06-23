@@ -41,9 +41,10 @@ struct ArticleDetailView: View {
                 
                 ForEach(paragraphs.indices, id: \.self) { pIndex in
                     Text(paragraphs[pIndex])
-                        .font(.custom("NewYork-Regular", size: 23))
+                        .font(.custom("NewYork-Regular", size: 22))
                         .lineSpacing(12)
                         .padding(.horizontal, 20)
+                        .textSelection(.enabled) // <-- 修改点：允许正文被选择
                     
                     if insertionInterval > 0 && (pIndex + 1) % insertionInterval == 0 {
                         let imageIndexToInsert = ((pIndex + 1) / insertionInterval) - 1
@@ -86,24 +87,29 @@ struct ArticleImageView: View {
     var body: some View {
         let fullPath = "news_images/\(imageName)"
 
-        // 将整个视图包装在一个按钮中
-        Button(action: {
-            // 点击时，将 isShowingZoomView 设为 true
-            self.isShowingZoomView = true
-        }) {
-            VStack(spacing: 8) {
-                if let uiImage = UIImage(named: fullPath) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity)
-                        .clipped()
+        VStack(spacing: 8) {
+                    if let uiImage = UIImage(named: fullPath) {
+                        // ==================== 修改点 1: 分离按钮和文字 ====================
+                        // 按钮现在只包裹图片
+                        Button(action: {
+                            self.isShowingZoomView = true
+                        }) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: .infinity)
+                                .clipped()
+                        }
+                        .buttonStyle(PlainButtonStyle()) // 移除按钮默认样式
 
-                    Text((imageName as NSString).deletingPathExtension)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, horizontalPadding)
+                        // 描述文字独立出来，不再是按钮的一部分
+                        Text((imageName as NSString).deletingPathExtension)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, horizontalPadding)
+                            .textSelection(.enabled) // <-- 修改点 2: 允许描述被选择
+                        // ==============================================================
                 } else {
                     // 保持原来的占位符样式
                     VStack(spacing: 8) {
@@ -113,28 +119,19 @@ struct ArticleImageView: View {
                         Text("图片加载失败")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        Text(imageName)
-                            .font(.caption2)
-                            .foregroundColor(.red)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 4)
                     }
                     .frame(maxWidth: .infinity, minHeight: 150)
                     .background(Color(UIColor.secondarySystemBackground))
                     .cornerRadius(12)
                     .padding(.horizontal, horizontalPadding)
-                }
             }
         }
-        // 使用 PlainButtonStyle 来移除按钮的默认蓝色 tint 效果
-        .buttonStyle(PlainButtonStyle())
         // 使用 .fullScreenCover 来呈现全屏视图
         .fullScreenCover(isPresented: $isShowingZoomView) {
             ZoomableImageView(imageName: imageName, isPresented: $isShowingZoomView)
         }
         .padding(.vertical, 10)
-    }
+        }
 }
 
 // ==================== 新增的视图：用于全屏缩放和拖动图片 ====================
@@ -162,7 +159,7 @@ struct ZoomableImageView: View {
                 lastScale = 1.0
                 // 限制最小缩放为1倍
                 if scale < 1.0 {
-                    withAnimation {
+                    withAnimation(.spring()) {
                         scale = 1.0
                         offset = .zero
                         lastOffset = .zero
@@ -183,7 +180,7 @@ struct ZoomableImageView: View {
         // 双击重置手势
         let doubleTapGesture = TapGesture(count: 2)
             .onEnded {
-                withAnimation {
+                withAnimation(.spring()) {
                     scale = 1.0
                     offset = .zero
                     lastScale = 1.0
@@ -208,13 +205,14 @@ struct ZoomableImageView: View {
                     .scaleEffect(scale)
                     .offset(offset)
                     // 只有当图片被放大时才允许拖动
-                    .gesture(scale > 1 ? dragGesture : nil)
+//                    .gesture(scale > 1 ? dragGesture : nil)
                     // 必须将缩放手势和双击手势组合起来
                     // `simultaneously(with:)` 允许两个手势同时识别
                     .gesture(SimultaneousGesture(magnificationGesture, doubleTapGesture))
+                    .gesture(scale > 1.001 ? dragGesture : nil)
             } else {
                 // 如果图片加载失败，显示错误信息并允许关闭
-                VStack {
+                VStack(spacing: 20) {
                     Text("图片无法加载")
                         .foregroundColor(.white)
                     Button("关闭") {
@@ -233,7 +231,8 @@ struct ZoomableImageView: View {
                     }) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.largeTitle)
-                            .foregroundColor(.white.opacity(0.8))
+                            .foregroundColor(.white.opacity(0.7))
+                            .background(Color.black.opacity(0.5).clipShape(Circle()))
                     }
                     .padding()
                 }
