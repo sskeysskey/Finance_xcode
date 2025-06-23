@@ -33,25 +33,23 @@ struct ArticleListView: View {
                     }
                     .padding(.vertical, 8)
                     // ==================== 主要修改点 1 ====================
-                    // 为每个文章行添加上下文菜单
+                    // 使用 if-else 结构来只显示一个相关的菜单项
                     .contextMenu {
-                        // “标记为已读”按钮
-                        Button {
-                            viewModel.markAsRead(articleID: article.id)
-                        } label: {
-                            Label("标记为已读", systemImage: "checkmark.circle")
+                        if article.isRead {
+                            // 如果文章已读，只显示“标记为未读”
+                            Button {
+                                viewModel.markAsUnread(articleID: article.id)
+                            } label: {
+                                Label("标记为未读", systemImage: "circle")
+                            }
+                        } else {
+                            // 如果文章未读，只显示“标记为已读”
+                            Button {
+                                viewModel.markAsRead(articleID: article.id)
+                            } label: {
+                                Label("标记为已读", systemImage: "checkmark.circle")
+                            }
                         }
-                        // 如果文章本身已读，则禁用此按钮
-                        .disabled(article.isRead)
-                        
-                        // “标记为未读”按钮
-                        Button {
-                            viewModel.markAsUnread(articleID: article.id)
-                        } label: {
-                            Label("标记为未读", systemImage: "circle")
-                        }
-                        // 如果文章本身未读，则禁用此按钮
-                        .disabled(!article.isRead)
                     }
                     // =================================================
                 }
@@ -107,25 +105,23 @@ struct AllArticlesListView: View {
                         }
                         .padding(.vertical, 8)
                         // ==================== 主要修改点 2 ====================
-                        // 为每个文章行添加上下文菜单 (与上面完全相同)
+                        // 对“所有文章”列表也应用同样的逻辑
                         .contextMenu {
-                            // “标记为已读”按钮
-                            Button {
-                                viewModel.markAsRead(articleID: article.id)
-                            } label: {
-                                Label("标记为已读", systemImage: "checkmark.circle")
+                            if article.isRead {
+                                // 如果文章已读，只显示“标记为未读”
+                                Button {
+                                    viewModel.markAsUnread(articleID: article.id)
+                                } label: {
+                                    Label("标记为未读", systemImage: "circle")
+                                }
+                            } else {
+                                // 如果文章未读，只显示“标记为已读”
+                                Button {
+                                    viewModel.markAsRead(articleID: article.id)
+                                } label: {
+                                    Label("标记为已读", systemImage: "checkmark.circle")
+                                }
                             }
-                            // 如果文章本身已读，则禁用此按钮
-                            .disabled(article.isRead)
-                            
-                            // “标记为未读”按钮
-                            Button {
-                                viewModel.markAsUnread(articleID: article.id)
-                            } label: {
-                                Label("标记为未读", systemImage: "circle")
-                            }
-                            // 如果文章本身未读，则禁用此按钮
-                            .disabled(!article.isRead)
                         }
                         // =================================================
                     }
