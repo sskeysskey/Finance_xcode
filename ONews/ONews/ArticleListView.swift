@@ -130,7 +130,7 @@ struct AllArticlesListView: View {
             }
         }
         .listStyle(PlainListStyle())
-        .navigationTitle("All Articles")
+        .navigationTitle("All Unread")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
