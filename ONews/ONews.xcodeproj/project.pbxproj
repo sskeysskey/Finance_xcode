@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A32ACCAC2E081F8B004C09AA /* onews.json in Resources */ = {isa = PBXBuildFile; fileRef = A32ACCAB2E081F8B004C09AA /* onews.json */; };
-		A33CEEFB2E092807006C5FDC /* news_images in Resources */ = {isa = PBXBuildFile; fileRef = A33CEEFA2E092807006C5FDC /* news_images */; };
+		A3B7116B2E0A8E65001179F1 /* news_images in Resources */ = {isa = PBXBuildFile; fileRef = A3B7116A2E0A8E65001179F1 /* news_images */; };
+		A3B7116D2E0A8E7E001179F1 /* onews.json in Resources */ = {isa = PBXBuildFile; fileRef = A3B7116C2E0A8E7E001179F1 /* onews.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32,8 +32,8 @@
 		A32ACC5C2E08007C004C09AA /* ONews.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ONews.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A32ACC692E08007D004C09AA /* ONewsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ONewsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A32ACC732E08007D004C09AA /* ONewsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ONewsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A32ACCAB2E081F8B004C09AA /* onews.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = onews.json; path = ../../News/onews.json; sourceTree = "<group>"; };
-		A33CEEFA2E092807006C5FDC /* news_images */ = {isa = PBXFileReference; lastKnownFileType = folder; name = news_images; path = ../../../Downloads/news_images; sourceTree = "<group>"; };
+		A3B7116A2E0A8E65001179F1 /* news_images */ = {isa = PBXFileReference; lastKnownFileType = folder; name = news_images; path = ../../../Downloads/backup/news_images; sourceTree = "<group>"; };
+		A3B7116C2E0A8E7E001179F1 /* onews.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = onews.json; path = ../../News/backup/onews.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -82,8 +82,8 @@
 		A32ACC532E08007C004C09AA = {
 			isa = PBXGroup;
 			children = (
-				A33CEEFA2E092807006C5FDC /* news_images */,
-				A32ACCAB2E081F8B004C09AA /* onews.json */,
+				A3B7116C2E0A8E7E001179F1 /* onews.json */,
+				A3B7116A2E0A8E65001179F1 /* news_images */,
 				A32ACC5E2E08007C004C09AA /* ONews */,
 				A32ACC6C2E08007D004C09AA /* ONewsTests */,
 				A32ACC762E08007D004C09AA /* ONewsUITests */,
@@ -221,8 +221,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A33CEEFB2E092807006C5FDC /* news_images in Resources */,
-				A32ACCAC2E081F8B004C09AA /* onews.json in Resources */,
+				A3B7116D2E0A8E7E001179F1 /* onews.json in Resources */,
+				A3B7116B2E0A8E65001179F1 /* news_images in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

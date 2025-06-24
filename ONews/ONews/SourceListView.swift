@@ -73,7 +73,7 @@ struct SourceListView: View {
                 }
             }
         }
-        .accentColor(.red)
+        .accentColor(.gray)
         .preferredColorScheme(.dark)
     }
 }
