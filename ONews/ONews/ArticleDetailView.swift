@@ -11,6 +11,8 @@ struct ActivityView: UIViewControllerRepresentable {
             activityItems: activityItems,
             applicationActivities: applicationActivities
         )
+        // （可选）再给它一个 modalPresentationStyle
+        vc.modalPresentationStyle = .automatic
         return vc
     }
 
@@ -123,6 +125,9 @@ struct ArticleDetailView: View {
             let shareText = title + "\n\n" + bodyText
 
             ActivityView(activityItems: [shareText])
+                // ↓—————— 关键 ↓——————
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .simultaneousGesture(
             DragGesture().onEnded { value in
