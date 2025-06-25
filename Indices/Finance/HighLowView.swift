@@ -55,7 +55,19 @@ struct HighLowListView: View {
             Text(group.timeInterval)
                 .font(.headline)
                 .foregroundColor(.primary)
+            
+            // ==================== 代码修改开始 ====================
+            // 如果分组是折叠状态，则显示分组内的项目总数
+            if !expandedSections[group.id, default: true] {
+                Text("(\(group.items.count))")
+                    .font(.headline) // 使用与标题相同的字体，使其大小一致
+                    .foregroundColor(.secondary) // 使用次要颜色，以作区分
+                    .padding(.leading, 4) // 与标题保持一点间距
+            }
+            // ==================== 代码修改结束 ====================
+            
             Spacer()
+            
             Image(systemName: (expandedSections[group.id, default: true]) ? "chevron.down" : "chevron.right")
                 .foregroundColor(.secondary)
         }
