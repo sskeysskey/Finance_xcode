@@ -1,6 +1,24 @@
 import SwiftUI
 import UIKit // 导入 UIKit 以使用 UIScrollView
 
+// 1. 定义一个 SwiftUI 可以用的分享面板封装
+struct ActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    let applicationActivities: [UIActivity]? = nil
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let vc = UIActivityViewController(
+            activityItems: activityItems,
+            applicationActivities: applicationActivities
+        )
+        return vc
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
+        // no-op
+    }
+}
+
 // ArticleDetailView 结构体保持不变，无需修改
 struct ArticleDetailView: View {
     let article: Article
@@ -8,6 +26,9 @@ struct ArticleDetailView: View {
     @ObservedObject var viewModel: NewsViewModel
     var requestNextArticle: () -> Void
     var requestPreviousArticle: () -> Void
+    
+    // —— 新增的状态 ——
+    @State private var isSharePresented = false
     
     @State private var isAtTop = false
     @State private var isAtBottom = false
@@ -83,6 +104,25 @@ struct ArticleDetailView: View {
                     }
             }
             .padding(.vertical)
+        }
+        // 3. 导航栏右侧加一个分享按钮
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    isSharePresented = true
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+            }
+        }
+        // 4. 当 isSharePresented = true 时，弹出系统分享面板
+        .sheet(isPresented: $isSharePresented) {
+            // 构造要分享的纯文本
+            let title = article.topic
+            let bodyText = paragraphs.joined(separator: "\n\n")
+            let shareText = title + "\n\n" + bodyText
+
+            ActivityView(activityItems: [shareText])
         }
         .simultaneousGesture(
             DragGesture().onEnded { value in
