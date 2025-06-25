@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit // 导入 UIKit 以使用 UIScrollView
+import Photos  // 新增
 
 // ActivityView 结构体保持不变...
 struct ActivityView: UIViewControllerRepresentable {
@@ -233,22 +234,24 @@ struct ZoomableImageView: View {
     let imageName: String
     @Binding var isPresented: Bool
 
+    // 新增：保存结果状态
+    @State private var showSaveAlert = false
+    @State private var saveAlertMessage = ""
+
     var body: some View {
         ZStack {
             // 黑色背景
             Color.black
                 .edgesIgnoringSafeArea(.all)
 
-            // 使用我们新的、基于 UIScrollView 的视图来显示和操作图片
+            // 图片滚动 & 缩放
             ZoomableScrollView(imageName: imageName)
 
-            // 右上角的关闭按钮
+            // 关闭按钮（右上角）
             VStack {
                 HStack {
                     Spacer()
-                    Button(action: {
-                        isPresented = false
-                    }) {
+                    Button(action: { isPresented = false }) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.largeTitle)
                             .foregroundColor(.white.opacity(0.7))
@@ -258,12 +261,91 @@ struct ZoomableImageView: View {
                 }
                 Spacer()
             }
+
+            // 下载按钮（右下角）
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button(action: saveImageToPhotoLibrary) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.largeTitle)
+                            .foregroundColor(.white.opacity(0.7))
+                            .background(Color.black.opacity(0.5).clipShape(Circle()))
+                    }
+                    .padding()
+                }
+            }
         }
-        // 当单击背景时也关闭视图 (这是通过 ZoomableScrollView 内部的 tap gesture 实现的)
-        .onTapGesture {
-            isPresented = false
+        // 点击背景也关闭
+        .onTapGesture { isPresented = false }
+        // 保存结果弹窗
+        .alert(isPresented: $showSaveAlert) {
+            Alert(title: Text(saveAlertMessage))
         }
     }
+
+    // MARK: - 保存图片到相册
+    private func saveImageToPhotoLibrary() {
+        let fullPath = "news_images/\(imageName)"
+        guard let uiImage = UIImage(named: fullPath) else {
+          saveAlertMessage = "图片加载失败，无法保存"
+          showSaveAlert = true
+          return
+        }
+
+        // ———————— 关键：把 UIImage 转成 JPEG（或者 PNG）Data ————————
+        guard let imageData = uiImage.jpegData(compressionQuality: 1.0) else {
+          saveAlertMessage = "图片转换失败"
+          showSaveAlert = true
+          return
+        }
+
+        // 请求“仅写入”权限（iOS 14+）或读写（iOS13及以下）
+        let requestAuth: (@escaping (PHAuthorizationStatus) -> Void) -> Void = { callback in
+          if #available(iOS 14, *) {
+            PHPhotoLibrary.requestAuthorization(for: .addOnly, handler: callback)
+          } else {
+            PHPhotoLibrary.requestAuthorization(callback)
+          }
+        }
+
+        requestAuth { status in
+          DispatchQueue.main.async {
+            switch status {
+            case .authorized, .limited:
+              // 用更底层的 CreationRequest + addResource 写入 Data
+              PHPhotoLibrary.shared().performChanges {
+                let creationRequest = PHAssetCreationRequest.forAsset()
+                let options = PHAssetResourceCreationOptions()
+                creationRequest.addResource(
+                  with: .photo,
+                  data: imageData,
+                  options: options
+                )
+              } completionHandler: { success, error in
+                DispatchQueue.main.async {
+                  if success {
+                    saveAlertMessage = "已保存到相册"
+                  } else {
+                    saveAlertMessage = "保存失败：\(error?.localizedDescription ?? "未知错误")"
+                  }
+                  showSaveAlert = true
+                }
+              }
+            case .denied, .restricted:
+              saveAlertMessage = "没有相册权限，保存失败"
+              showSaveAlert = true
+            case .notDetermined:
+              saveAlertMessage = "相册权限未确定"
+              showSaveAlert = true
+            @unknown default:
+              saveAlertMessage = "未知的相册权限状态"
+              showSaveAlert = true
+            }
+          }
+        }
+      }
 }
 // =======================================================================
 
