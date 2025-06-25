@@ -1,3 +1,5 @@
+// /Users/yanzhang/Documents/Xcode/ONews/ONews/ArticleContainerView.swift
+
 import SwiftUI
 
 struct ArticleContainerView: View {
@@ -9,11 +11,7 @@ struct ArticleContainerView: View {
     @State private var currentArticle: Article
     @State private var currentSourceName: String
     
-    // ==================== 核心修改 1：添加会话内已读ID集合 ====================
-    // 这个集合用于暂存本次“翻页阅读”会话中所有被阅读过的文章ID。
-    // 它只在内部使用，不会触发ViewModel的更新。
     @State private var readArticleIDsInThisSession: Set<UUID> = []
-    // =======================================================================
     
     @State private var showNoNextToast = false
     @State private var showNoPreviousToast = false
@@ -22,6 +20,23 @@ struct ArticleContainerView: View {
         case fromSource(String)
         case fromAllArticles
     }
+
+    // ==================== 新增计算属性 ====================
+    /// 根据当前的导航上下文，计算对应的未读文章数量
+    private var currentUnreadCount: Int {
+        switch navigationContext {
+        // 如果是从“所有文章”进入，则返回总未读数
+        case .fromAllArticles:
+            return viewModel.totalUnreadCount
+        
+        // 如果是从特定来源进入，则查找该来源并返回其未读数
+        case .fromSource(let sourceName):
+            // 在 viewModel 的 sources 数组中找到匹配的来源
+            // 如果找到了，返回它的 unreadCount，否则返回 0
+            return viewModel.sources.first { $0.name == sourceName }?.unreadCount ?? 0
+        }
+    }
+    // =====================================================
 
     init(article: Article, sourceName: String, context: NavigationContext, viewModel: NewsViewModel) {
         self.initialArticle = article
@@ -34,9 +49,12 @@ struct ArticleContainerView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
+            // ==================== 修改点 1: 传递未读数 ====================
+            // 将我们新计算的 `currentUnreadCount` 传递给 ArticleDetailView
             ArticleDetailView(
                 article: currentArticle,
                 sourceName: currentSourceName,
+                unreadCount: currentUnreadCount, // <- 新增传递的参数
                 viewModel: viewModel,
                 requestNextArticle: {
                     self.switchToNextArticle()
@@ -45,6 +63,7 @@ struct ArticleContainerView: View {
                     self.switchToPreviousArticle()
                 }
             )
+            // =============================================================
             .id(currentArticle.id)
             .transition(.asymmetric(
                 insertion: .move(edge: .bottom).combined(with: .opacity),
@@ -59,28 +78,20 @@ struct ArticleContainerView: View {
                 ToastView(message: "这已经是第一篇文章了")
             }
         }
-        .navigationTitle(currentSourceName)
-        .navigationBarTitleDisplayMode(.inline)
-        // ==================== 核心修改 2：修改 onDisappear 逻辑 ====================
-        // 当整个容器视图消失时（用户点击返回），这是唯一安全的时机去更新ViewModel。
+        // ==================== 修改点 2: 移除旧的导航栏标题 ====================
+        // .navigationTitle(currentSourceName) // <- 移除这一行
+        // .navigationBarTitleDisplayMode(.inline) // <- 移除这一行
+        // ===================================================================
         .onDisappear {
-            // 首先，将用户看到的最后一篇文章也加入待办列表
             readArticleIDsInThisSession.insert(currentArticle.id)
             
-            // 然后，批量、一次性地通知ViewModel更新所有已读文章
             for articleID in readArticleIDsInThisSession {
                 viewModel.markAsRead(articleID: articleID)
             }
         }
-        // ========================================================================
-        // ==================== 核心修改 3：修改 onChange 逻辑 ====================
-        // 当文章切换时，我们不再直接调用ViewModel...
         .onChange(of: currentArticle.id) { oldValue, newValue in
-            // ...而是仅仅将刚刚离开的文章ID（oldValue）记录到我们自己的“待办”集合中。
-            // 这个操作不会触发任何UI刷新，因此是完全安全的。
             readArticleIDsInThisSession.insert(oldValue)
         }
-        // ========================================================================
     }
 
     /// 切换到下一篇文章的逻辑

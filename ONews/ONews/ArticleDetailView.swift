@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit // 导入 UIKit 以使用 UIScrollView
 
-// 1. 定义一个 SwiftUI 可以用的分享面板封装
+// ActivityView 结构体保持不变...
 struct ActivityView: UIViewControllerRepresentable {
     let activityItems: [Any]
     let applicationActivities: [UIActivity]? = nil
@@ -11,7 +11,6 @@ struct ActivityView: UIViewControllerRepresentable {
             activityItems: activityItems,
             applicationActivities: applicationActivities
         )
-        // （可选）再给它一个 modalPresentationStyle
         vc.modalPresentationStyle = .automatic
         return vc
     }
@@ -21,15 +20,18 @@ struct ActivityView: UIViewControllerRepresentable {
     }
 }
 
-// ArticleDetailView 结构体保持不变，无需修改
+
 struct ArticleDetailView: View {
     let article: Article
     let sourceName: String
+    // ==================== 新增属性 ====================
+    /// 接收从父视图传递过来的未读文章数量
+    let unreadCount: Int
+    // ===============================================
     @ObservedObject var viewModel: NewsViewModel
     var requestNextArticle: () -> Void
     var requestPreviousArticle: () -> Void
     
-    // —— 新增的状态 ——
     @State private var isSharePresented = false
     
     @State private var isAtTop = false
@@ -47,6 +49,7 @@ struct ArticleDetailView: View {
             : (paragraphs.count + 1)
 
         ScrollView {
+            // ... ScrollView 的内容保持不变 ...
             Color.clear
                 .frame(height: 1)
                 .onAppear {
@@ -107,8 +110,27 @@ struct ArticleDetailView: View {
             }
             .padding(.vertical)
         }
-        // 3. 导航栏右侧加一个分享按钮
+        // ==================== 核心修改 ====================
+        // 使用 .toolbar 修改器来定义导航栏项目
         .toolbar {
+            // 返回按钮和分享按钮已经由系统和其他视图定义，我们只添加中间部分
+            
+            // 使用 .principal 位置来放置自定义的中央标题视图
+            ToolbarItem(placement: .principal) {
+                VStack {
+                    // 第一行：显示来源名称
+                    Text(sourceName.replacingOccurrences(of: "_", with: " "))
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    
+                    // 第二行：显示剩余未读数量
+                    Text("\(unreadCount) unread")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            // 分享按钮（这个可以保留，因为它在 .navigationBarTrailing 位置）
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
                     isSharePresented = true
@@ -117,15 +139,14 @@ struct ArticleDetailView: View {
                 }
             }
         }
-        // 4. 当 isSharePresented = true 时，弹出系统分享面板
+        .navigationBarTitleDisplayMode(.inline) // 确保导航栏是紧凑样式
+        // =====================================================
         .sheet(isPresented: $isSharePresented) {
-            // 构造要分享的纯文本
             let title = article.topic
             let bodyText = paragraphs.joined(separator: "\n\n")
             let shareText = title + "\n\n" + bodyText
 
             ActivityView(activityItems: [shareText])
-                // ↓—————— 关键 ↓——————
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
