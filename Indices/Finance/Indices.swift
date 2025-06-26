@@ -208,7 +208,6 @@ struct SectorsPanel: Decodable {
 }
 
 // MARK: - Views
-// MARK: - Views
 
 struct IndicesContentView: View {
     @EnvironmentObject var dataService: DataService
@@ -231,7 +230,7 @@ struct IndicesContentView: View {
                     
                     // 2. 根据定义的规则，过滤和排序数据 (这部分逻辑保持不变)
                     
-                    // 顶部数据
+                    // 原顶部数据
                     let topSectors = sectors
                         .filter { topRowOrder.contains($0.name) }
                         .sorted { sector1, sector2 in
@@ -248,24 +247,10 @@ struct IndicesContentView: View {
                     // 中间数据
                     let middleSectors = sectors.filter { !excludedNames.contains($0.name) }
                     
-                    // 3. 渲染UI：使用 VStack 垂直排列三个部分
+                    // 3. 渲染UI：使用 VStack 垂直排列三个部分 (****** 这里是修改的核心 ******)
                     VStack(spacing: 20) {
                         
-                        // MARK: - 顶部特定行 (Bonds, Currencies, Commodities)
-                        if !topSectors.isEmpty {
-                            HStack(spacing: 12) {
-                                ForEach(topSectors) { sector in
-                                    NavigationLink {
-                                        SectorDetailView(sector: sector)
-                                            .navigationBarTitleDisplayMode(.inline)
-                                    } label: {
-                                        SectorButtonView(sectorName: sector.name)
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // MARK: - 中间网格部分 (其他)
+                        // MARK: - 首先渲染中间网格部分
                         if !middleSectors.isEmpty {
                             LazyVGrid(columns: gridLayout, spacing: 12) {
                                 ForEach(middleSectors) { sector in
@@ -279,10 +264,23 @@ struct IndicesContentView: View {
                             }
                         }
                         
-                        // MARK: - 底部特定行 (Qualified_Symbol, Earning_Filter)
-                        // --- 修改点：将底部的 ForEach 包裹在 HStack 中 ---
+                        // MARK: - 其次渲染原来的顶部特定行 (Bonds, Currencies, Commodities)
+                        if !topSectors.isEmpty {
+                            HStack(spacing: 12) {
+                                ForEach(topSectors) { sector in
+                                    NavigationLink {
+                                        SectorDetailView(sector: sector)
+                                            .navigationBarTitleDisplayMode(.inline)
+                                    } label: {
+                                        SectorButtonView(sectorName: sector.name)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // MARK: - 最后渲染底部特定行 (Qualified_Symbol, Earning_Filter)
                         if !bottomSectors.isEmpty {
-                            HStack(spacing: 12) { // <--- 添加 HStack
+                            HStack(spacing: 12) {
                                 ForEach(bottomSectors) { sector in
                                     NavigationLink {
                                         SectorDetailView(sector: sector)
@@ -291,7 +289,7 @@ struct IndicesContentView: View {
                                         SectorButtonView(sectorName: sector.name)
                                     }
                                 }
-                            } // <--- 结束 HStack
+                            }
                         }
                     }
                     .padding()
