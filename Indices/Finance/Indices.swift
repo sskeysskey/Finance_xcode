@@ -208,13 +208,12 @@ struct SectorsPanel: Decodable {
 }
 
 // MARK: - Views
+// MARK: - Views
 
 struct IndicesContentView: View {
     @EnvironmentObject var dataService: DataService
-    @State private var showError: Bool = false
-    @State private var errorMessage: String = ""
     
-    // 自定义网格布局
+    // 自定义网格布局，用于中间部分
     private let gridLayout = [
         GridItem(.adaptive(minimum: 100, maximum: .infinity), spacing: 12)
     ]
@@ -222,19 +221,83 @@ struct IndicesContentView: View {
     var body: some View {
         NavigationView {
             ScrollView {
-                if let sectorsPanel = dataService.sectorsPanel {
-                    LazyVGrid(columns: gridLayout, spacing: 12) {
-                        ForEach(sectorsPanel.sectors, id: \.name) { sector in
-                            NavigationLink {
-                                SectorDetailView(sector: sector)
-                                    .navigationBarTitleDisplayMode(.inline)
-                            } label: {
-                                SectorButtonView(sectorName: sector.name)
+                // 检查 sectorsPanel 是否有数据
+                if let sectors = dataService.sectorsPanel?.sectors {
+                    
+                    // 1. 定义分组和顺序 (这部分逻辑保持不变)
+                    let topRowOrder = ["Bonds", "Currencies", "Commodities"]
+                    let bottomRowNames = ["Qualified_Symbol", "Earning_Filter"]
+                    let excludedNames = topRowOrder + bottomRowNames
+                    
+                    // 2. 根据定义的规则，过滤和排序数据 (这部分逻辑保持不变)
+                    
+                    // 顶部数据
+                    let topSectors = sectors
+                        .filter { topRowOrder.contains($0.name) }
+                        .sorted { sector1, sector2 in
+                            guard let firstIndex = topRowOrder.firstIndex(of: sector1.name),
+                                  let secondIndex = topRowOrder.firstIndex(of: sector2.name) else {
+                                return false
                             }
+                            return firstIndex < secondIndex
+                        }
+                    
+                    // 底部数据
+                    let bottomSectors = sectors.filter { bottomRowNames.contains($0.name) }
+                    
+                    // 中间数据
+                    let middleSectors = sectors.filter { !excludedNames.contains($0.name) }
+                    
+                    // 3. 渲染UI：使用 VStack 垂直排列三个部分
+                    VStack(spacing: 20) {
+                        
+                        // MARK: - 顶部特定行 (Bonds, Currencies, Commodities)
+                        if !topSectors.isEmpty {
+                            HStack(spacing: 12) {
+                                ForEach(topSectors) { sector in
+                                    NavigationLink {
+                                        SectorDetailView(sector: sector)
+                                            .navigationBarTitleDisplayMode(.inline)
+                                    } label: {
+                                        SectorButtonView(sectorName: sector.name)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // MARK: - 中间网格部分 (其他)
+                        if !middleSectors.isEmpty {
+                            LazyVGrid(columns: gridLayout, spacing: 12) {
+                                ForEach(middleSectors) { sector in
+                                    NavigationLink {
+                                        SectorDetailView(sector: sector)
+                                            .navigationBarTitleDisplayMode(.inline)
+                                    } label: {
+                                        SectorButtonView(sectorName: sector.name)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // MARK: - 底部特定行 (Qualified_Symbol, Earning_Filter)
+                        // --- 修改点：将底部的 ForEach 包裹在 HStack 中 ---
+                        if !bottomSectors.isEmpty {
+                            HStack(spacing: 12) { // <--- 添加 HStack
+                                ForEach(bottomSectors) { sector in
+                                    NavigationLink {
+                                        SectorDetailView(sector: sector)
+                                            .navigationBarTitleDisplayMode(.inline)
+                                    } label: {
+                                        SectorButtonView(sectorName: sector.name)
+                                    }
+                                }
+                            } // <--- 结束 HStack
                         }
                     }
                     .padding()
+                    
                 } else {
+                    // 处理加载中或错误状态
                     if let error = dataService.errorMessage {
                         Text(error)
                             .foregroundColor(.red)
@@ -244,7 +307,7 @@ struct IndicesContentView: View {
                     }
                 }
             }
-//            .navigationTitle("Sectors")
+//            .navigationTitle("Sectors") // 保持你的设计
             .alert(isPresented: Binding<Bool>(
                 get: { dataService.errorMessage != nil },
                 set: { _ in dataService.errorMessage = nil }
