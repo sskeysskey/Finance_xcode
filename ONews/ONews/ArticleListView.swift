@@ -1,50 +1,47 @@
 import SwiftUI
 
-// ===== 新增 (1/4): 定义筛选模式 =====
-// 为了代码清晰和可维护性，我们使用枚举来定义两种筛选模式
 enum ArticleFilterMode: String, CaseIterable {
     case unread = "Unread"
     case read = "Read"
 }
-// ====================================
 
 struct ArticleListView: View {
     let source: NewsSource
     @ObservedObject var viewModel: NewsViewModel
     
-    // ===== 新增 (2/4): 添加状态变量 =====
-    // @State 变量用于追踪当前视图的筛选模式，默认为 .unread
     @State private var filterMode: ArticleFilterMode = .unread
-    // ====================================
     
-    // ===== 新增 (3/4): 创建计算属性 =====
-    // 这个计算属性会根据 filterMode 的值，返回筛选后的文章数组
     private var filteredArticles: [Article] {
         switch filterMode {
         case .unread:
-            // 返回所有 isRead 为 false 的文章
             return source.articles.filter { !$0.isRead }
         case .read:
-            // 返回所有 isRead 为 true 的文章
             return source.articles.filter { $0.isRead }
         }
     }
-    // ====================================
+    
+    // ===== 新增 (1/2): 计算未读和已读文章数量 =====
+    // 计算该来源下未读文章的数量
+    private var unreadCount: Int {
+        source.articles.filter { !$0.isRead }.count
+    }
+    
+    // 计算该来源下已读文章的数量
+    private var readCount: Int {
+        source.articles.filter { $0.isRead }.count
+    }
+    // ===========================================
 
     var body: some View {
-        // ===== 修改 (4/4): 调整视图结构 =====
-        // 使用 VStack 将列表和底部的筛选器包裹起来
         VStack {
             ScrollViewReader { proxy in
                 List {
-                    // 日期显示
                     Text(formattedDate())
                         .font(.caption)
                         .foregroundColor(.gray)
                         .padding(.top)
                         .listRowSeparator(.hidden)
                     
-                    // 将 ForEach 的数据源从 source.articles 改为 filteredArticles
                     ForEach(filteredArticles) { article in
                         NavigationLink(destination: ArticleContainerView(
                             article: article,
@@ -86,7 +83,6 @@ struct ArticleListView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .onAppear {
                     if let lastID = viewModel.lastViewedArticleID {
-                        // 只有当上次查看的文章存在于当前筛选列表时，滚动才有意义
                         if filteredArticles.contains(where: { $0.id == lastID }) {
                             withAnimation {
                                 proxy.scrollTo(lastID, anchor: .center)
@@ -96,18 +92,21 @@ struct ArticleListView: View {
                 }
             }
             
-            // ===== 新增: 底部筛选器 =====
+            // ===== 修改 (2/2): 在 Picker 中显示文章数量 =====
             Picker("Filter", selection: $filterMode) {
                 ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                    Text(mode.rawValue).tag(mode)
+                    // 根据当前的 mode，决定显示哪个数量
+                    let count = (mode == .unread) ? unreadCount : readCount
+                    // 使用字符串插值来构建带数量的文本
+                    Text("\(mode.rawValue) (\(count))")
+                        .tag(mode)
                 }
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)
             .padding(.bottom, 8)
-            // ============================
+            // ===============================================
         }
-        // ====================================
     }
     
     private func formattedDate() -> String {
@@ -129,17 +128,25 @@ struct ArticleListView: View {
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     
-    // ===== 新增 (与 ArticleListView 相同的逻辑) =====
     @State private var filterMode: ArticleFilterMode = .unread
-    // ===============================================
+    
+    // ===== 新增 (与 ArticleListView 类似的逻辑) =====
+    // 计算所有来源下未读文章的总数
+    private var totalUnreadCount: Int {
+        viewModel.sources.flatMap { $0.articles }.filter { !$0.isRead }.count
+    }
+    
+    // 计算所有来源下已读文章的总数
+    private var totalReadCount: Int {
+        viewModel.sources.flatMap { $0.articles }.filter { $0.isRead }.count
+    }
+    // ==============================================
     
     var body: some View {
-        // ===== 修改: 调整视图结构 =====
         VStack {
             ScrollViewReader { proxy in
                 List {
                     ForEach(viewModel.sources) { source in
-                        // 在遍历文章前，先根据筛选模式过滤
                         let articlesToDisplay = source.articles.filter { article in
                             switch filterMode {
                             case .unread:
@@ -149,7 +156,6 @@ struct AllArticlesListView: View {
                             }
                         }
                         
-                        // 只有当筛选后仍有文章时，才显示该来源下的内容
                         if !articlesToDisplay.isEmpty {
                             ForEach(articlesToDisplay) { article in
                                 NavigationLink(destination: ArticleContainerView(
@@ -193,7 +199,6 @@ struct AllArticlesListView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .onAppear {
                     if let lastID = viewModel.lastViewedArticleID {
-                        // 同样，检查 lastID 是否存在于当前筛选结果中
                         let allFilteredArticles = viewModel.sources.flatMap { $0.articles }.filter {
                             filterMode == .unread ? !$0.isRead : $0.isRead
                         }
@@ -206,17 +211,18 @@ struct AllArticlesListView: View {
                 }
             }
             
-            // ===== 新增: 底部筛选器 (与 ArticleListView 相同) =====
+            // ===== 修改 (与 ArticleListView 相同的逻辑) =====
             Picker("Filter", selection: $filterMode) {
                 ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                    Text(mode.rawValue).tag(mode)
+                    let count = (mode == .unread) ? totalUnreadCount : totalReadCount
+                    Text("\(mode.rawValue) (\(count))")
+                        .tag(mode)
                 }
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)
             .padding(.bottom, 8)
-            // ===================================================
+            // =============================================
         }
-        // ====================================
     }
 }
