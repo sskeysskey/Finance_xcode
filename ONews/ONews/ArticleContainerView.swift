@@ -89,6 +89,11 @@ struct ArticleContainerView: View {
                 ToastView(message: "这已经是第一篇文章了")
             }
         }
+        // --- 新增: onAppear ---
+        // 当视图首次出现时，立即将当前文章ID设置为“最后查看”
+        .onAppear {
+            viewModel.lastViewedArticleID = currentArticle.id
+        }
         // --- 修改: 恢复并优化 .onDisappear ---
         .onDisappear {
             // 当视图最终消失时，将当前正在看的文章也加入待处理集合
@@ -104,6 +109,10 @@ struct ArticleContainerView: View {
         }
         // --- 修改: 恢复并优化 .onChange ---
         .onChange(of: currentArticle.id) { oldValue, newValue in
+            // --- 修改: 在 onChange 中也更新 lastViewedArticleID ---
+            // 每次切换文章时，都更新 ViewModel 中的记录
+            viewModel.lastViewedArticleID = newValue
+            
             // 当文章切换时，我们处理刚刚离开的文章 (oldValue)
             
             // 检查这篇文章是否本身是未读的，并且我们还没有处理过它
