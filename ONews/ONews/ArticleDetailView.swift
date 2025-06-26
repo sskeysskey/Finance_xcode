@@ -218,17 +218,14 @@ struct ArticleImageView: View {
             }
         }
         .fullScreenCover(isPresented: $isShowingZoomView) {
-            // ==================== 修改点 1: 传入图片名称 ====================
-            // ZoomableImageView 现在是我们的容器视图
             ZoomableImageView(imageName: imageName, isPresented: $isShowingZoomView)
-            // =============================================================
         }
         .padding(.vertical, 10)
     }
 }
 
 
-// ==================== 修改点 2: 重构 ZoomableImageView ====================
+// ==================== 主要修改点: ZoomableImageView ====================
 // 这个视图现在是一个容器，负责管理背景、关闭按钮和新的 ZoomableScrollView
 struct ZoomableImageView: View {
     let imageName: String
@@ -245,6 +242,7 @@ struct ZoomableImageView: View {
                 .edgesIgnoringSafeArea(.all)
 
             // 图片滚动 & 缩放
+            // ZoomableScrollView 内部已经处理了双击手势，所以我们不需要在这里添加
             ZoomableScrollView(imageName: imageName)
 
             // 关闭按钮（右上角）
@@ -277,15 +275,25 @@ struct ZoomableImageView: View {
                 }
             }
         }
-        // 点击背景也关闭
-        .onTapGesture { isPresented = false }
+        // ==================== 修改点 1: 移除单击手势，添加拖拽手势 ====================
+        // .onTapGesture { isPresented = false } // <- 移除这一行
+        .gesture(
+            DragGesture().onEnded { value in
+                // 检查垂直方向的拖动距离
+                // 如果向下滑动超过 100 个点，则关闭视图
+                if value.translation.height > 100 {
+                    isPresented = false
+                }
+            }
+        )
+        // =======================================================================
         // 保存结果弹窗
         .alert(isPresented: $showSaveAlert) {
             Alert(title: Text(saveAlertMessage))
         }
     }
 
-    // MARK: - 保存图片到相册
+    // MARK: - 保存图片到相册 (这部分逻辑保持不变)
     private func saveImageToPhotoLibrary() {
         let fullPath = "news_images/\(imageName)"
         guard let uiImage = UIImage(named: fullPath) else {
@@ -294,14 +302,12 @@ struct ZoomableImageView: View {
           return
         }
 
-        // ———————— 关键：把 UIImage 转成 JPEG（或者 PNG）Data ————————
         guard let imageData = uiImage.jpegData(compressionQuality: 1.0) else {
           saveAlertMessage = "图片转换失败"
           showSaveAlert = true
           return
         }
 
-        // 请求“仅写入”权限（iOS 14+）或读写（iOS13及以下）
         let requestAuth: (@escaping (PHAuthorizationStatus) -> Void) -> Void = { callback in
           if #available(iOS 14, *) {
             PHPhotoLibrary.requestAuthorization(for: .addOnly, handler: callback)
@@ -314,7 +320,6 @@ struct ZoomableImageView: View {
           DispatchQueue.main.async {
             switch status {
             case .authorized, .limited:
-              // 用更底层的 CreationRequest + addResource 写入 Data
               PHPhotoLibrary.shared().performChanges {
                 let creationRequest = PHAssetCreationRequest.forAsset()
                 let options = PHAssetResourceCreationOptions()
@@ -350,8 +355,8 @@ struct ZoomableImageView: View {
 // =======================================================================
 
 
-// ==================== 新增: 核心解决方案 ZoomableScrollView ====================
-// 使用 UIViewRepresentable 封装一个功能齐全的 UIScrollView
+// ==================== ZoomableScrollView 保持不变 ====================
+// 这部分代码已经实现了双击缩放功能，无需修改
 struct ZoomableScrollView: UIViewRepresentable {
     let imageName: String
 
@@ -402,7 +407,6 @@ struct ZoomableScrollView: UIViewRepresentable {
     // 2. 当 SwiftUI 状态变化时更新 UIView
     func updateUIView(_ uiView: UIScrollView, context: Context) {
         // 在这个简单场景下，我们不需要在视图更新时做什么
-        // 如果图片名称是 @State 变量，则需要在这里更新图片
     }
 
     // 3. 创建 Coordinator
@@ -434,6 +438,7 @@ struct ZoomableScrollView: UIViewRepresentable {
             } else {
                 // 如果当前是原始大小，则在双击位置放大
                 let point = gesture.location(in: imageView)
+                // 放大到最大倍数的一半，这是一个固定的倍率
                 let zoomRect = zoomRect(for: scrollView, with: point, scale: scrollView.maximumZoomScale / 2)
                 scrollView.zoom(to: zoomRect, animated: true)
             }
