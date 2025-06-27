@@ -1,5 +1,3 @@
-// /Users/yanzhang/Documents/Xcode/ONews/ONews/ArticleContainerView.swift
-
 import SwiftUI
 
 struct ArticleContainerView: View {
