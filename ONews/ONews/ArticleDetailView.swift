@@ -84,9 +84,9 @@ struct ArticleDetailView: View {
                 
                 ForEach(paragraphs.indices, id: \.self) { pIndex in
                     Text(paragraphs[pIndex])
-                        .font(.custom("NewYork-Regular", size: 22))
-                        .lineSpacing(13)
-                        .padding(.horizontal, 20)
+                        .font(.custom("NewYork-Regular", size: 21))
+                        .lineSpacing(14)
+                        .padding(.horizontal, 18)
                         .textSelection(.enabled)
                     
                     if insertionInterval > 0 && (pIndex + 1) % insertionInterval == 0 {

@@ -61,7 +61,7 @@ class NewsViewModel: ObservableObject {
     
     // ==================== 新增属性 ====================
     /// 追踪用户在详情页最后看到的那篇文章的ID
-    @Published var lastViewedArticleID: UUID? = nil
+//    @Published var lastViewedArticleID: UUID? = nil
     // ===============================================
 
     // 存已读文章的 key（我们用 topic 作为唯一标识）

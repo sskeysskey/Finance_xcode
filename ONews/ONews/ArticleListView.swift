@@ -81,15 +81,15 @@ struct ArticleListView: View {
                 .listStyle(PlainListStyle())
                 .navigationTitle("Unread")
                 .navigationBarTitleDisplayMode(.inline)
-                .onAppear {
-                    if let lastID = viewModel.lastViewedArticleID {
-                        if filteredArticles.contains(where: { $0.id == lastID }) {
-                            withAnimation {
-                                proxy.scrollTo(lastID, anchor: .center)
-                            }
-                        }
-                    }
-                }
+//                .onAppear {
+//                    if let lastID = viewModel.lastViewedArticleID {
+//                        if filteredArticles.contains(where: { $0.id == lastID }) {
+//                            withAnimation {
+//                                proxy.scrollTo(lastID, anchor: .center)
+//                            }
+//                        }
+//                    }
+//                }
             }
             
             // ===== 修改 (2/2): 在 Picker 中显示文章数量 =====
@@ -197,18 +197,20 @@ struct AllArticlesListView: View {
                 }
                 .listStyle(PlainListStyle())
                 .navigationBarTitleDisplayMode(.inline)
-                .onAppear {
-                    if let lastID = viewModel.lastViewedArticleID {
-                        let allFilteredArticles = viewModel.sources.flatMap { $0.articles }.filter {
-                            filterMode == .unread ? !$0.isRead : $0.isRead
-                        }
-                        if allFilteredArticles.contains(where: { $0.id == lastID }) {
-                            withAnimation {
-                                proxy.scrollTo(lastID, anchor: .center)
-                            }
-                        }
-                    }
-                }
+                // --- 已移除: .onAppear ---
+                // .onAppear 修饰符已完全删除，不再执行滚动操作
+//                .onAppear {
+//                    if let lastID = viewModel.lastViewedArticleID {
+//                        let allFilteredArticles = viewModel.sources.flatMap { $0.articles }.filter {
+//                            filterMode == .unread ? !$0.isRead : $0.isRead
+//                        }
+//                        if allFilteredArticles.contains(where: { $0.id == lastID }) {
+//                            withAnimation {
+//                                proxy.scrollTo(lastID, anchor: .center)
+//                            }
+//                        }
+//                    }
+//                }
             }
             
             // ===== 修改 (与 ArticleListView 相同的逻辑) =====

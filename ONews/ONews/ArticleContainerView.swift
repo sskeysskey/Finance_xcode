@@ -9,11 +9,9 @@ struct ArticleContainerView: View {
     @State private var currentArticle: Article
     @State private var currentSourceName: String
     
-    // --- 新增 ---
     // 1. 用于在当前页面生命周期内，实时更新未读计数的局部状态变量
     @State private var liveUnreadCount: Int
     
-    // --- 恢复并修改 ---
     // 2. 用于累积在本次查看会话中所有被读过的文章ID
     @State private var readArticleIDsInThisSession: Set<UUID> = []
     
@@ -35,7 +33,6 @@ struct ArticleContainerView: View {
         }
     }
 
-    // --- 修改: 自定义 init ---
     // 我们需要自定义 init 来正确初始化新的 @State 变量 liveUnreadCount
     init(article: Article, sourceName: String, context: NavigationContext, viewModel: NewsViewModel) {
         self.initialArticle = article
@@ -59,7 +56,6 @@ struct ArticleContainerView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            // --- 修改: 传递 liveUnreadCount ---
             // 将我们实时的、局部的未读数传递给详情页
             ArticleDetailView(
                 article: currentArticle,
@@ -87,12 +83,10 @@ struct ArticleContainerView: View {
                 ToastView(message: "这已经是第一篇文章了")
             }
         }
-        // --- 新增: onAppear ---
-        // 当视图首次出现时，立即将当前文章ID设置为“最后查看”
-        .onAppear {
-            viewModel.lastViewedArticleID = currentArticle.id
-        }
-        // --- 修改: 恢复并优化 .onDisappear ---
+        // --- 已移除: .onAppear ---
+        // .onAppear 修饰符已完全删除，不再更新 lastViewedArticleID
+        
+        // --- .onDisappear 逻辑保持不变 ---
         .onDisappear {
             // 当视图最终消失时，将当前正在看的文章也加入待处理集合
             // 我们需要检查这篇文章是否本身就是未读的
@@ -105,11 +99,11 @@ struct ArticleContainerView: View {
                 viewModel.markAsRead(articleID: articleID)
             }
         }
-        // --- 修改: 恢复并优化 .onChange ---
+        // --- 修改: .onChange ---
         .onChange(of: currentArticle.id) { oldValue, newValue in
-            // --- 修改: 在 onChange 中也更新 lastViewedArticleID ---
-            // 每次切换文章时，都更新 ViewModel 中的记录
-            viewModel.lastViewedArticleID = newValue
+            // --- 已移除 ---
+            // 更新 lastViewedArticleID 的代码行已被删除
+            // viewModel.lastViewedArticleID = newValue
             
             // 当文章切换时，我们处理刚刚离开的文章 (oldValue)
             
