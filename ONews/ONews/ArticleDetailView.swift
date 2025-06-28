@@ -1,6 +1,6 @@
 import SwiftUI
-import UIKit
-import Photos
+import UIKit // 导入 UIKit 以使用 UIScrollView
+import Photos  // 新增
 
 // ActivityView 结构体保持不变...
 struct ActivityView: UIViewControllerRepresentable {
@@ -30,13 +30,12 @@ struct ArticleDetailView: View {
     var requestNextArticle: () -> Void
     var requestPreviousArticle: () -> Void
     
+    // ===== 新增 (1/2): 获取视图的 presentationMode 用于手动返回 =====
     @Environment(\.presentationMode) var presentationMode
-    
-    // ===== 新增 (1/3): 状态变量，用于存储手势拖动的位移 =====
-    @State private var dragOffset: CGSize = .zero
-    // =======================================================
+    // ==========================================================
     
     @State private var isSharePresented = false
+    
     @State private var isAtTop = false
     @State private var isAtBottom = false
 
@@ -51,7 +50,6 @@ struct ArticleDetailView: View {
             ? (paragraphs.count / (remainingImages.count + 1))
             : (paragraphs.count + 1)
 
-        // ===== 修改 (2/3): 将 .offset 和 .simultaneousGesture 应用于 ScrollView =====
         ScrollView {
             Color.clear
                 .frame(height: 1)
@@ -113,53 +111,6 @@ struct ArticleDetailView: View {
             }
             .padding(.vertical)
         }
-        .offset(dragOffset) // <-- 将拖动位移应用到视图上
-        .simultaneousGesture(
-            // ===== 修改 (3/3): 完整的拖动手势逻辑 =====
-            DragGesture()
-                .onChanged { value in
-                    // 只在向右拖动时更新位移，使视图跟随手指
-                    if value.translation.width > 0 {
-                        self.dragOffset = value.translation
-                    }
-                }
-                .onEnded { value in
-                    let horizontalAmount = value.translation.width
-                    let verticalAmount = value.translation.height
-                    
-                    // 判断是水平手势还是垂直手势
-                    if abs(horizontalAmount) > abs(verticalAmount) {
-                        // 水平手势为主
-                        if horizontalAmount > 100 {
-                            // 如果向右拖动超过100点，则执行返回
-                            print("检测到符合条件的右滑手势，返回上一级")
-                            self.presentationMode.wrappedValue.dismiss()
-                        } else {
-                            // 否则，让视图弹回原位
-                            withAnimation(.spring()) {
-                                self.dragOffset = .zero
-                            }
-                        }
-                    } else {
-                        // 垂直手势为主
-                        // 即使是垂直手势，也要把可能存在的微小水平位移弹回
-                        withAnimation(.spring()) {
-                            self.dragOffset = .zero
-                        }
-                        
-                        // 执行原有的切换文章逻辑
-                        if self.isAtBottom && verticalAmount < -300 {
-                            print("检测到符合条件的上滑手势，请求下一篇")
-                            self.requestNextArticle()
-                        }
-                        else if self.isAtTop && verticalAmount > 300 {
-                            print("检测到符合条件的下滑手势，请求上一篇")
-                            self.requestPreviousArticle()
-                        }
-                    }
-                }
-            // ============================================
-        )
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack {
@@ -191,6 +142,33 @@ struct ArticleDetailView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        // ===== 修改 (2/2): 更新手势处理逻辑 =====
+        .simultaneousGesture(
+            DragGesture().onEnded { value in
+                let horizontalAmount = value.translation.width
+                let verticalAmount = value.translation.height
+                
+                // 检查水平滑动是否是主导方向
+                if abs(horizontalAmount) > abs(verticalAmount) {
+                    // 如果是向右滑动（正值）且超过了100点的阈值，则执行返回操作
+                    if horizontalAmount > 100 {
+                        print("检测到符合条件的右滑手势，返回上一级")
+                        self.presentationMode.wrappedValue.dismiss()
+                    }
+                } else {
+                    // 否则，保持原有的垂直滑动逻辑来切换文章
+                    if self.isAtBottom && verticalAmount < -300 {
+                        print("检测到符合条件的上滑手势，请求下一篇")
+                        self.requestNextArticle()
+                    }
+                    else if self.isAtTop && verticalAmount > 300 {
+                        print("检测到符合条件的下滑手势，请求上一篇")
+                        self.requestPreviousArticle()
+                    }
+                }
+            }
+        )
+        // =========================================
     }
     
     private func formattedTimestamp() -> String {
@@ -201,8 +179,6 @@ struct ArticleDetailView: View {
     }
 }
 
-// ArticleImageView, ZoomableImageView, 和 ZoomableScrollView 的代码保持不变
-// ... (下面的代码与您之前的文件完全相同，这里省略以保持简洁) ...
 // 辅助视图：用于从 Bundle 加载图片并处理占位符
 struct ArticleImageView: View {
     let imageName: String
