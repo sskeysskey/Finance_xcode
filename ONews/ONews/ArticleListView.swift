@@ -14,23 +14,21 @@ struct ArticleListView: View {
     private var filteredArticles: [Article] {
         switch filterMode {
         case .unread:
-            return source.articles.filter { !$0.isRead }
+            // 为了保证每次都是最新的未读列表，并且顺序正确，我们最好在这里也排序
+            // 假设文章没有明确的时间戳，我们可以按主题排序作为示例
+            return source.articles.filter { !$0.isRead }.sorted { $0.topic < $1.topic }
         case .read:
-            return source.articles.filter { $0.isRead }
+            return source.articles.filter { $0.isRead }.sorted { $0.topic < $1.topic }
         }
     }
     
-    // ===== 新增 (1/2): 计算未读和已读文章数量 =====
-    // 计算该来源下未读文章的数量
     private var unreadCount: Int {
         source.articles.filter { !$0.isRead }.count
     }
     
-    // 计算该来源下已读文章的数量
     private var readCount: Int {
         source.articles.filter { $0.isRead }.count
     }
-    // ===========================================
 
     var body: some View {
         VStack {
@@ -81,23 +79,26 @@ struct ArticleListView: View {
                 .listStyle(PlainListStyle())
                 .navigationTitle("Unread")
                 .navigationBarTitleDisplayMode(.inline)
-//                .onAppear {
-//                    if let lastID = viewModel.lastViewedArticleID {
-//                        if filteredArticles.contains(where: { $0.id == lastID }) {
-//                            withAnimation {
-//                                proxy.scrollTo(lastID, anchor: .center)
-//                            }
-//                        }
-//                    }
-//                }
+                // ===== 新增修改 (1/1) =====
+                // 监听 filterMode 的变化
+                .onChange(of: filterMode) {
+                    // 当切换到 "Unread" 模式时
+                    if filterMode == .unread {
+                        // 找到当前已过滤（即未读）文章列表中的第一篇
+                        if let firstArticleID = filteredArticles.first?.id {
+                            // 使用 proxy 将列表滚动到该文章的位置，并添加动画
+                            withAnimation {
+                                proxy.scrollTo(firstArticleID, anchor: .top)
+                            }
+                        }
+                    }
+                }
+                // ===========================
             }
             
-            // ===== 修改 (2/2): 在 Picker 中显示文章数量 =====
             Picker("Filter", selection: $filterMode) {
                 ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                    // 根据当前的 mode，决定显示哪个数量
                     let count = (mode == .unread) ? unreadCount : readCount
-                    // 使用字符串插值来构建带数量的文本
                     Text("\(mode.rawValue) (\(count))")
                         .tag(mode)
                 }
@@ -105,7 +106,6 @@ struct ArticleListView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal)
             .padding(.bottom, 8)
-            // ===============================================
         }
     }
     
@@ -125,20 +125,33 @@ struct ArticleListView: View {
     }
 }
 
+// AllArticlesListView 保持不变，但为了完整性，我们也将对其进行同样的修改
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     
     @State private var filterMode: ArticleFilterMode = .unread
     
     // ===== 新增 (与 ArticleListView 类似的逻辑) =====
-    // 计算所有来源下未读文章的总数
     private var totalUnreadCount: Int {
         viewModel.sources.flatMap { $0.articles }.filter { !$0.isRead }.count
     }
     
-    // 计算所有来源下已读文章的总数
     private var totalReadCount: Int {
         viewModel.sources.flatMap { $0.articles }.filter { $0.isRead }.count
+    }
+    
+    // ===== 新增 (2/2): 计算过滤后的文章列表 =====
+    private var filteredArticles: [(source: NewsSource, article: Article)] {
+        let allArticles = viewModel.sources.flatMap { source in
+            source.articles.map { (source: source, article: $0) }
+        }
+        
+        switch filterMode {
+        case .unread:
+            return allArticles.filter { !$0.article.isRead }.sorted { $0.article.topic < $1.article.topic }
+        case .read:
+            return allArticles.filter { $0.article.isRead }.sorted { $0.article.topic < $1.article.topic }
+        }
     }
     // ==============================================
     
@@ -146,74 +159,59 @@ struct AllArticlesListView: View {
         VStack {
             ScrollViewReader { proxy in
                 List {
-                    ForEach(viewModel.sources) { source in
-                        let articlesToDisplay = source.articles.filter { article in
-                            switch filterMode {
-                            case .unread:
-                                return !article.isRead
-                            case .read:
-                                return article.isRead
+                    // 使用我们新计算的 filteredArticles 属性
+                    ForEach(filteredArticles, id: \.article.id) { item in
+                        NavigationLink(destination: ArticleContainerView(
+                            article: item.article,
+                            sourceName: item.source.name,
+                            context: .fromAllArticles,
+                            viewModel: viewModel
+                        )) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(item.source.name)
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                                Text(item.article.topic)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(item.article.isRead ? .gray : .primary)
                             }
-                        }
-                        
-                        if !articlesToDisplay.isEmpty {
-                            ForEach(articlesToDisplay) { article in
-                                NavigationLink(destination: ArticleContainerView(
-                                    article: article,
-                                    sourceName: source.name,
-                                    context: .fromAllArticles,
-                                    viewModel: viewModel
-                                )) {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Text(source.name)
-                                            .font(.caption)
-                                            .foregroundColor(.gray)
-                                        Text(article.topic)
-                                            .fontWeight(.semibold)
-                                            .foregroundColor(article.isRead ? .gray : .primary)
+                            .padding(.vertical, 8)
+                            .contextMenu {
+                                if item.article.isRead {
+                                    Button {
+                                        viewModel.markAsUnread(articleID: item.article.id)
+                                    } label: {
+                                        Label("标记为未读", systemImage: "circle")
                                     }
-                                    .padding(.vertical, 8)
-                                    .contextMenu {
-                                        if article.isRead {
-                                            Button {
-                                                viewModel.markAsUnread(articleID: article.id)
-                                            } label: {
-                                                Label("标记为未读", systemImage: "circle")
-                                            }
-                                        } else {
-                                            Button {
-                                                viewModel.markAsRead(articleID: article.id)
-                                            } label: {
-                                                Label("标记为已读", systemImage: "checkmark.circle")
-                                            }
-                                        }
+                                } else {
+                                    Button {
+                                        viewModel.markAsRead(articleID: item.article.id)
+                                    } label: {
+                                        Label("标记为已读", systemImage: "checkmark.circle")
                                     }
                                 }
-                                .listRowSeparator(.hidden)
-                                .id(article.id)
                             }
                         }
+                        .listRowSeparator(.hidden)
+                        .id(item.article.id)
                     }
                 }
                 .listStyle(PlainListStyle())
                 .navigationBarTitleDisplayMode(.inline)
-                // --- 已移除: .onAppear ---
-                // .onAppear 修饰符已完全删除，不再执行滚动操作
-//                .onAppear {
-//                    if let lastID = viewModel.lastViewedArticleID {
-//                        let allFilteredArticles = viewModel.sources.flatMap { $0.articles }.filter {
-//                            filterMode == .unread ? !$0.isRead : $0.isRead
-//                        }
-//                        if allFilteredArticles.contains(where: { $0.id == lastID }) {
-//                            withAnimation {
-//                                proxy.scrollTo(lastID, anchor: .center)
-//                            }
-//                        }
-//                    }
-//                }
+                // ===== 新增修改 (与 ArticleListView 相同) =====
+                .onChange(of: filterMode) {
+                    if filterMode == .unread {
+                        // 从所有文章的过滤结果中找到第一篇
+                        if let firstItemID = filteredArticles.first?.article.id {
+                            withAnimation {
+                                proxy.scrollTo(firstItemID, anchor: .top)
+                            }
+                        }
+                    }
+                }
+                // =============================================
             }
             
-            // ===== 修改 (与 ArticleListView 相同的逻辑) =====
             Picker("Filter", selection: $filterMode) {
                 ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
                     let count = (mode == .unread) ? totalUnreadCount : totalReadCount
@@ -224,7 +222,6 @@ struct AllArticlesListView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal)
             .padding(.bottom, 8)
-            // =============================================
         }
     }
 }
