@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A348FD072E10090700BD3A3D /* onews.json in Resources */ = {isa = PBXBuildFile; fileRef = A348FD062E10090700BD3A3D /* onews.json */; };
 		A3B7116B2E0A8E65001179F1 /* news_images in Resources */ = {isa = PBXBuildFile; fileRef = A3B7116A2E0A8E65001179F1 /* news_images */; };
-		A3B7116D2E0A8E7E001179F1 /* onews.json in Resources */ = {isa = PBXBuildFile; fileRef = A3B7116C2E0A8E7E001179F1 /* onews.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32,8 +32,8 @@
 		A32ACC5C2E08007C004C09AA /* ONews.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ONews.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A32ACC692E08007D004C09AA /* ONewsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ONewsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A32ACC732E08007D004C09AA /* ONewsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ONewsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A348FD062E10090700BD3A3D /* onews.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = onews.json; path = ../../News/done/onews.json; sourceTree = "<group>"; };
 		A3B7116A2E0A8E65001179F1 /* news_images */ = {isa = PBXFileReference; lastKnownFileType = folder; name = news_images; path = ../../../Downloads/backup/news_images; sourceTree = "<group>"; };
-		A3B7116C2E0A8E7E001179F1 /* onews.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = onews.json; path = ../../News/backup/onews.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -82,7 +82,7 @@
 		A32ACC532E08007C004C09AA = {
 			isa = PBXGroup;
 			children = (
-				A3B7116C2E0A8E7E001179F1 /* onews.json */,
+				A348FD062E10090700BD3A3D /* onews.json */,
 				A3B7116A2E0A8E65001179F1 /* news_images */,
 				A32ACC5E2E08007C004C09AA /* ONews */,
 				A32ACC6C2E08007D004C09AA /* ONewsTests */,
@@ -221,7 +221,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A3B7116D2E0A8E7E001179F1 /* onews.json in Resources */,
+				A348FD072E10090700BD3A3D /* onews.json in Resources */,
 				A3B7116B2E0A8E65001179F1 /* news_images in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
