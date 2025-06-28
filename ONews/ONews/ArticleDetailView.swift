@@ -352,10 +352,7 @@ struct ZoomableImageView: View {
         }
       }
 }
-// =======================================================================
 
-
-// ==================== ZoomableScrollView 保持不变 ====================
 // 这部分代码已经实现了双击缩放功能，无需修改
 struct ZoomableScrollView: UIViewRepresentable {
     let imageName: String
@@ -458,4 +455,3 @@ struct ZoomableScrollView: UIViewRepresentable {
         }
     }
 }
-// =======================================================================
