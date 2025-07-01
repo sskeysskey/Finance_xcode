@@ -129,7 +129,8 @@ struct ArticleContainerView: View {
         case .fromAllArticles: sourceNameToSearch = nil
         }
 
-        if let next = viewModel.findNextArticle(after: currentArticle.id, inSource: sourceNameToSearch) {
+        if let next = viewModel.findNextUnread(after: currentArticle.id,
+                                               inSource: sourceNameToSearch) {
             withAnimation(.easeInOut(duration: 0.4)) {
                 self.currentArticle = next.article
                 self.currentSourceName = next.sourceName
@@ -147,7 +148,7 @@ struct ArticleContainerView: View {
         case .fromAllArticles: sourceNameToSearch = nil
         }
 
-        if let prev = viewModel.findPreviousArticle(before: currentArticle.id, inSource: sourceNameToSearch) {
+        if let prev = viewModel.findPreviousUnread(before: currentArticle.id, inSource: sourceNameToSearch) {
             withAnimation(.interactiveSpring(response: 0.4, dampingFraction: 0.8)) {
                 self.currentArticle = prev.article
                 self.currentSourceName = prev.sourceName

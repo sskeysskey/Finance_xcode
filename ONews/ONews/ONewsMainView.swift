@@ -242,6 +242,48 @@ class NewsViewModel: ObservableObject {
     }
 }
 
+extension NewsViewModel {
+  func findNextUnread(after id: UUID,
+                      inSource sourceName: String?)
+       -> (article: Article, sourceName: String)?
+  {
+    let list: [(Article, String)] = {
+        _ = sources.flatMap {
+        $0.articles.map { ($0, $0.isRead ? nil : $0) /*占位*/ }
+      }
+      // 或者更直接：
+      let arr = sources.flatMap { src in
+        src.articles
+          .filter { !$0.isRead }
+          .map { ($0, src.name) }
+      }
+      return arr
+    }()
+
+    if let idx = list.firstIndex(where: { $0.0.id == id }),
+       idx + 1 < list.count {
+      return list[idx+1]
+    }
+    return nil
+  }
+
+  func findPreviousUnread(before id: UUID,
+                          inSource sourceName: String?)
+       -> (article: Article, sourceName: String)?
+  {
+    let list = sources.flatMap { src in
+      src.articles
+        .filter { !$0.isRead }
+        .map { ($0, src.name) }
+    }
+    if let idx = list.firstIndex(where: { $0.0.id == id }),
+       idx > 0 {
+      return list[idx-1]
+    }
+    return nil
+  }
+}
+
 // 用于UI展示的新闻来源结构体
 // Identifiable 协议让它可以在 SwiftUI 的 List 中直接使用
 struct NewsSource: Identifiable {
