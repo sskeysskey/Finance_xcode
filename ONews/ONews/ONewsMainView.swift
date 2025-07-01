@@ -242,46 +242,73 @@ class NewsViewModel: ObservableObject {
     }
 }
 
+// 在 NewsViewModel 扩展中
 extension NewsViewModel {
-  func findNextUnread(after id: UUID,
-                      inSource sourceName: String?)
-       -> (article: Article, sourceName: String)?
-  {
-    let list: [(Article, String)] = {
-        _ = sources.flatMap {
-        $0.articles.map { ($0, $0.isRead ? nil : $0) /*占位*/ }
-      }
-      // 或者更直接：
-      let arr = sources.flatMap { src in
-        src.articles
-          .filter { !$0.isRead }
-          .map { ($0, src.name) }
-      }
-      return arr
-    }()
 
-    if let idx = list.firstIndex(where: { $0.0.id == id }),
-       idx + 1 < list.count {
-      return list[idx+1]
-    }
-    return nil
-  }
+    // ==================== 修改后的函数 ====================
+    func findNextUnread(after id: UUID,
+                        inSource sourceName: String?)
+        -> (article: Article, sourceName: String)?
+    {
+        // 步骤 1: 根据 sourceName 确定要搜索的范围
+        let relevantSources: [NewsSource]
+        if let name = sourceName {
+            // 如果指定了来源，则只在该来源中查找
+            relevantSources = self.sources.filter { $0.name == name }
+        } else {
+            // 如果未指定来源，则在所有来源中查找
+            relevantSources = self.sources
+        }
 
-  func findPreviousUnread(before id: UUID,
-                          inSource sourceName: String?)
-       -> (article: Article, sourceName: String)?
-  {
-    let list = sources.flatMap { src in
-      src.articles
-        .filter { !$0.isRead }
-        .map { ($0, src.name) }
+        // 步骤 2: 从相关范围中构建一个平铺的、只包含未读文章的列表
+        let unreadArticles = relevantSources.flatMap { source -> [(article: Article, sourceName: String)] in
+            source.articles
+                .filter { !$0.isRead }
+                .map { article in (article: article, sourceName: source.name) }
+        }
+
+        // 步骤 3: 处理边界情况和查找当前索引
+        // 如果没有未读文章，或者只有一篇（循环无意义但逻辑依然成立），则提前处理
+        guard !unreadArticles.isEmpty else {
+            return nil
+        }
+        
+        // 找到当前文章在 *未读列表* 中的索引
+        guard let currentIndex = unreadArticles.firstIndex(where: { $0.article.id == id }) else {
+            // 如果当前文章不在未读列表中（可能刚刚被标记为已读），
+            // 作为备用方案，我们可以返回第一篇未读文章。
+            return unreadArticles.first
+        }
+
+        // 步骤 4: 使用模运算 (%) 实现循环逻辑
+        // (currentIndex + 1) 会得到下一个索引。
+        // % unreadArticles.count 确保当索引越界时，能回到列表的开头 (例如: 5 % 5 = 0)。
+        let nextIndex = (currentIndex + 1) % unreadArticles.count
+        
+        return unreadArticles[nextIndex]
     }
-    if let idx = list.firstIndex(where: { $0.0.id == id }),
-       idx > 0 {
-      return list[idx-1]
+    // =====================================================
+
+    // findPreviousUnread 函数保持不变，除非您也想让它循环
+    func findPreviousUnread(before id: UUID,
+                            inSource sourceName: String?)
+        -> (article: Article, sourceName: String)?
+    {
+        // (此函数代码保持不变)
+        let list: [(Article, String)]
+        if let sourceName = sourceName, let source = sources.first(where: { $0.name == sourceName }) {
+            list = source.articles.filter { !$0.isRead }.map { ($0, source.name) }
+        } else {
+            list = sources.flatMap { src in
+                src.articles.filter { !$0.isRead }.map { ($0, src.name) }
+            }
+        }
+
+        if let idx = list.firstIndex(where: { $0.0.id == id }), idx > 0 {
+            return list[idx-1]
+        }
+        return nil
     }
-    return nil
-  }
 }
 
 // 用于UI展示的新闻来源结构体
