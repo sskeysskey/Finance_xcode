@@ -68,22 +68,24 @@ class NewsViewModel: ObservableObject {
     private let readKey = "readTopics"
 
     // 内存缓存
-    private var readTopics: Set<String> = []
-
+//    private var readTopics: Set<String> = []
+    private var readRecords: [String: Date] = [:] // <- 新代码
+    
     init() {
         // 先把上次保存的读过的 topic 读出来
-        loadReadTopics()
+        loadReadRecords() // <- 方法名已更新
         // 然后加载 JSON 并标记已读
         loadNews()
     }
 
-    private func loadReadTopics() {
-        let array = UserDefaults.standard.stringArray(forKey: readKey) ?? []
-        readTopics = Set(array)
+    private func loadReadRecords() {
+        // 直接从 UserDefaults 读取字典
+        self.readRecords = UserDefaults.standard.dictionary(forKey: readKey) as? [String: Date] ?? [:]
     }
 
-    private func saveReadTopics() {
-        UserDefaults.standard.set(Array(readTopics), forKey: readKey)
+    private func saveReadRecords() {
+        // 直接将字典保存到 UserDefaults
+        UserDefaults.standard.set(self.readRecords, forKey: readKey)
     }
 
     func findNextArticle(after currentArticleID: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
@@ -177,9 +179,9 @@ class NewsViewModel: ObservableObject {
         for i in tmp.indices {
             for j in tmp[i].articles.indices {
                 let art = tmp[i].articles[j]
-                if readTopics.contains(art.topic) {
-                    tmp[i].articles[j].isRead = true
-                }
+                if readRecords.keys.contains(art.topic) {
+                   tmp[i].articles[j].isRead = true
+               }
             }
         }
 
@@ -199,8 +201,8 @@ class NewsViewModel: ObservableObject {
                         self.sources[i].articles[j].isRead = true
                         // 2. 把 topic 存到 Set 并写入 UserDefaults
                         let topic = self.sources[i].articles[j].topic
-                        self.readTopics.insert(topic)
-                        self.saveReadTopics()
+                        self.readRecords[topic] = Date() // 存入当前时间
+                        self.saveReadRecords() // 保存更新后的字典
                     }
                     return
                 }
@@ -223,10 +225,8 @@ class NewsViewModel: ObservableObject {
                         
                         // 2. 从已读主题集合中移除该文章的 topic
                         let topic = self.sources[i].articles[j].topic
-                        self.readTopics.remove(topic)
-                        
-                        // 3. 保存更新后的已读主题集合到 UserDefaults
-                        self.saveReadTopics()
+                        self.readRecords.removeValue(forKey: topic)
+                        self.saveReadRecords()
                     }
                     // 找到并处理后即可退出循环
                     return
