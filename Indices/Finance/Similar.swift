@@ -1,4 +1,3 @@
-// SimilarView.swift
 import SwiftUI
 import Foundation
 import Combine

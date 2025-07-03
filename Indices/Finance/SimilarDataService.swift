@@ -1,4 +1,3 @@
-// DataService1.swift
 import Foundation
 
 protocol SymbolItem {
