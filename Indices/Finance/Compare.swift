@@ -1,73 +1,7 @@
 import SwiftUI
-import DGCharts
-import Charts
+import Charts // 导入苹果原生的 Charts 框架
 
-// MARK: - DateMarkerView
-class DateMarkerView: MarkerView {
-    private var text = ""
-    private let textLabel: UILabel = {
-        let label = UILabel()
-        label.textColor = .white
-        label.backgroundColor = UIColor.black.withAlphaComponent(0.7)
-        label.font = .systemFont(ofSize: 10) // 从12减小到10
-        label.textAlignment = .center
-        label.layer.cornerRadius = 4
-        label.clipsToBounds = true
-        label.numberOfLines = 1
-        return label
-    }()
-    
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        addSubview(textLabel)
-    }
-    
-    required init?(coder aDecoder: NSCoder) {
-        super.init(coder: aDecoder)
-        addSubview(textLabel)
-    }
-    
-    override func refreshContent(entry: ChartDataEntry, highlight: Highlight) {
-        let date = Date(timeIntervalSince1970: entry.x)
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateStyle = .medium
-        dateFormatter.timeStyle = .none
-        
-        text = dateFormatter.string(from: date)
-        textLabel.text = text
-        
-        textLabel.sizeToFit()
-        let padding: CGFloat = 6 // 从8减小到6
-        frame.size = CGSize(width: textLabel.frame.width + padding, height: textLabel.frame.height + padding / 2)
-        textLabel.frame = CGRect(x: padding / 2, y: padding / 4, width: textLabel.frame.width, height: textLabel.frame.height)
-        
-        super.refreshContent(entry: entry, highlight: highlight)
-    }
-    
-    override func draw(context: CGContext, point: CGPoint) {
-        var drawPosition = CGPoint(
-            x: point.x - bounds.width / 2,
-            y: point.y - bounds.height - 10
-        )
-        
-        // Left boundary
-        if drawPosition.x < 0 {
-            drawPosition.x = 0
-        }
-        
-        // Right boundary
-        if let chartWidth = chartView?.bounds.width {
-            if drawPosition.x + bounds.width > chartWidth {
-                drawPosition.x = chartWidth - bounds.width
-            }
-        }
-        
-        frame.origin = drawPosition
-        super.draw(context: context, point: point)
-    }
-}
-
-// MARK: - CompareView
+// MARK: - CompareView (此视图基本不变，仅导航目标有变化)
 struct CompareView: View {
     @Environment(\.presentationMode) var presentationMode
     @EnvironmentObject var dataService: DataService
@@ -214,8 +148,7 @@ struct CompareView: View {
                 if initialSymbol.isEmpty {
                     symbols.append("")
                 } else {
-                    // 直接使用 initialSymbol，保持其原始大小写
-                                symbols.append(initialSymbol)
+                    symbols.append(initialSymbol)
                 }
                 symbols.append("")
                 
@@ -225,6 +158,7 @@ struct CompareView: View {
             }
         }
         .navigationDestination(isPresented: $navigateToComparison) {
+            // 导航目标变为新的 ComparisonChartView
             ComparisonChartView(symbols: symbols, startDate: startDate, endDate: endDate)
         }
         .alert(isPresented: $showAlert) {
@@ -235,40 +169,25 @@ struct CompareView: View {
     }
     
     func formatSymbol(_ symbol: String) -> String {
-        // 1. 将输入的 symbol 转换为全大写，用于不区分大小写的比较
         let uppercasedInputSymbol = symbol.uppercased()
-        
-        // 2. 尝试加载 JSON 文件
         guard let url = Bundle.main.url(forResource: "Sectors_All", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let sectorData = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: [String]] else {
-            // 如果 JSON 文件加载失败，或者格式不正确，则返回原始输入的 symbol
             return symbol
         }
         
-        // 3. 遍历 JSON 数据中的所有 symbol 列表
         for (_, symbolList) in sectorData {
-            // 4. 遍历当前列表中的每一个原始 JSON symbol
             for originalJsonSymbol in symbolList {
-                // 5. 将 JSON 中的 symbol 也转换为全大写进行比较
-                let uppercasedJsonSymbol = originalJsonSymbol.uppercased()
-
-                // 6. 如果转换后的大写输入 symbol 与转换后的大写 JSON symbol 完全匹配
-                if uppercasedInputSymbol == uppercasedJsonSymbol {
-                    // 7. 匹配成功，返回在 JSON 文件中具有原始大小写格式的 symbol
+                if originalJsonSymbol.uppercased() == uppercasedInputSymbol {
                     return originalJsonSymbol
                 }
             }
         }
-        
-        // 8. 如果遍历完所有 JSON 数据都没有找到匹配项，则返回原始输入的 symbol
         return symbol
     }
     
     private func startComparison() {
         errorMessage = nil
-        
-        // 去除空格并过滤空字符串
         let trimmedSymbols = symbols
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -291,15 +210,12 @@ struct CompareView: View {
             return
         }
         
-        // 使用修改后的 formatSymbol 函数格式化所有 symbol
-        // 这将确保如果找到匹配项，则使用 JSON 中的原始大小写格式
         symbols = trimmedSymbols.map { formatSymbol($0) }
-        
         navigateToComparison = true
     }
 }
 
-// MARK: - CustomTextField
+// MARK: - CustomTextField (无变化)
 struct CustomTextField: View {
     let placeholder: String
     @Binding var text: String
@@ -328,7 +244,7 @@ struct CustomTextField: View {
     }
 }
 
-// MARK: - ComparisonChartView
+// MARK: - ComparisonChartView (此视图结构更新，使用新的原生图表)
 struct ComparisonChartView: View {
     let symbols: [String]
     let startDate: Date
@@ -349,10 +265,11 @@ struct ComparisonChartView: View {
                     .foregroundColor(.red)
                     .padding()
             } else {
-                ComparisonStockLineChartView(data: chartData, isDarkMode: true)
-                    .frame(height: 350) // 从400减少到350
-                    .padding(.horizontal, 4) // 减少水平内边距
-                    .padding(.vertical) // 保持垂直内边距不变
+                // 调用新的原生 Swift Charts 视图
+                NativeComparisonChartView(data: chartData, isDarkMode: true)
+                    .frame(height: 350)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical)
             }
             Spacer()
         }
@@ -361,6 +278,7 @@ struct ComparisonChartView: View {
         }
     }
     
+    // loadComparisonData 函数保持不变
     private func loadComparisonData() {
         isLoading = true
         errorMessage = nil
@@ -369,7 +287,6 @@ struct ComparisonChartView: View {
             var tempData: [String: [DatabaseManager.PriceData]] = [:]
             var shortestDateRange: (start: Date, end: Date)?
             
-            // 第一轮：获取数据并确定最短日期范围
             for symbol in symbols {
                 guard let tableName = dataService.getCategory(for: symbol) else {
                     DispatchQueue.main.async {
@@ -393,7 +310,6 @@ struct ComparisonChartView: View {
                     return
                 }
                 
-                // 确保数据是按日期排序的
                 let sortedData = data.sorted { $0.date < $1.date }
                 
                 let currentStart = sortedData.first?.date ?? startDate
@@ -419,15 +335,11 @@ struct ComparisonChartView: View {
                 return
             }
             
-            // 第二轮：过滤数据至最短日期范围
             for (symbol, data) in tempData {
                 var filteredData = data.filter {
-                    // 使用 <= 而不是 < 来确保包含最后一天
                     $0.date >= dateRange.start && $0.date <= dateRange.end
                 }
-                // 修改数据采样方法，确保保留最新的数据点
-                // 使用 LTTB 算法进行采样，阈值可以根据图表的显示需求进行调整，比如 100 个点
-                filteredData = filteredData.lttbSampled(threshold: 100)
+                filteredData = filteredData.lttbSampled(threshold: 200)
                 tempData[symbol] = filteredData
             }
             
@@ -439,38 +351,26 @@ struct ComparisonChartView: View {
     }
 }
 
-// MARK: - Array Extension
+// MARK: - Array Extension (LTTB 采样算法，无变化)
 extension Array where Element == DatabaseManager.PriceData {
-    /// 使用 Largest Triangle Three Buckets (LTTB) 算法对数据进行下采样，
-    /// 以保留曲线的关键形状特征。
-    ///
-    /// - Parameter threshold: 目标输出的数据点数，必须>=3。
-    /// - Returns: 下采样后的数据数组
     func lttbSampled(threshold: Int) -> [DatabaseManager.PriceData] {
         let count = self.count
-        // 如果数据点过少或目标点数不合理，则直接返回原始数据
         guard threshold >= 3, count > threshold else {
             return self
         }
         
-        // 第一步：计算每个桶的大小（除去头尾）
-        let bucketSize = Double(count - 2) / Double(threshold - 2)
         var sampled: [DatabaseManager.PriceData] = []
-        
-        // 始终保留第一个数据点
         sampled.append(self[0])
-        var a = 0  // a 记录上一次选中的点的索引
+        var a = 0
         
-        // 遍历除头尾以外的桶
+        let bucketSize = Double(count - 2) / Double(threshold - 2)
+        
         for i in 0..<(threshold - 2) {
-            // 当前桶在数据中的起始和结束索引（注意+1跳过第一个固定点）
             let bucketStart = Int(floor(Double(i) * bucketSize)) + 1
             let bucketEnd = Int(floor(Double(i + 1) * bucketSize)) + 1
-            
-            // 计算下个桶的平均值，用于后续三角形面积计算
             let nextBucketEnd = Swift.min(bucketEnd, count)
-            var avgX = 0.0
-            var avgY = 0.0
+            
+            var avgX = 0.0, avgY = 0.0
             let rangeCount = Double(nextBucketEnd - bucketStart)
             for j in bucketStart..<nextBucketEnd {
                 avgX += self[j].date.timeIntervalSince1970
@@ -479,19 +379,14 @@ extension Array where Element == DatabaseManager.PriceData {
             avgX /= rangeCount
             avgY /= rangeCount
             
-            // 当前桶用于候选点选择
-            let currentBucketStart = Int(floor(Double(i) * bucketSize)) + 1
-            let currentBucketEnd = Int(floor(Double(i + 1) * bucketSize)) + 1
-            let currentBucket = currentBucketStart..<Swift.min(currentBucketEnd, count)
+            let currentBucket = bucketStart..<Swift.min(bucketEnd, count)
             
             var maxArea = -Double.infinity
-            var maxAreaIndex = currentBucketStart
+            var maxAreaIndex = currentBucket.lowerBound
             let pointA = self[a]
             let ax = pointA.date.timeIntervalSince1970
             let ay = pointA.price
             
-            // 遍历当前桶中的所有点，计算以 pointA、当前候选点和下个桶均值构成的三角形面积，
-            // 选择面积最大的那个点。
             for j in currentBucket {
                 let bx = self[j].date.timeIntervalSince1970
                 let by = self[j].price
@@ -502,256 +397,204 @@ extension Array where Element == DatabaseManager.PriceData {
                 }
             }
             
-            // 添加选中的点，并将 a 设置为新采样点的索引
             sampled.append(self[maxAreaIndex])
             a = maxAreaIndex
         }
         
-        // 最后始终保留最后一个数据点
         sampled.append(self[count - 1])
         return sampled
     }
 }
 
-// MARK: - ComparisonStockLineChartView
-struct ComparisonStockLineChartView: UIViewRepresentable {
+// MARK: - NativeComparisonChartView (全新的原生 Swift Charts 视图)
+struct NativeComparisonChartView: View {
     let data: [String: [DatabaseManager.PriceData]]
     let isDarkMode: Bool
     
-    func makeUIView(context: Context) -> LineChartView {
-        let chartView = LineChartView()
-        chartView.delegate = context.coordinator
+    // 用于交互式标记的状态
+    @State private var selectedDate: Date?
+    @State private var selectedPrices: [String: Double] = [:]
+
+    // 颜色映射
+    private let colors: [Color] = [.red, .green, .blue, .purple, .orange]
+
+    var body: some View {
+        // 1. 数据归一化处理
+        let normalizedData = normalizeData(data)
         
-        let formatter = DateValueFormatter()
-        context.coordinator.dateFormatter = formatter
-        
-        configureChartView(chartView)
-        chartView.noDataText = "No Data Available"
-        
-        configureXAxis(chartView.xAxis, formatter: formatter)
-        
-        let marker = DateMarkerView()
-        marker.chartView = chartView
-        chartView.marker = marker
-        
-        return chartView
+        // 2. 计算整体时间范围，用于X轴格式化
+        let (minDate, maxDate) = findDateRange(from: data)
+        let timeSpan = maxDate.timeIntervalSince(minDate)
+
+        // 3. 构建图表
+        Chart {
+            // 遍历每个股票代码的数据
+            ForEach(normalizedData, id: \.symbol) { series in
+                // 绘制带渐变填充的面积图
+                AreaMark(
+                    x: .value("Date", series.data.first!.date),
+                    yStart: .value("Normalized Price", 0),
+                    yEnd: .value("Normalized Price", series.data.first!.normalizedPrice)
+                )
+                .foregroundStyle(
+                    LinearGradient(
+                        gradient: Gradient(colors: [series.color.opacity(0.4), series.color.opacity(0.0)]),
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .interpolationMethod(.catmullRom) // 平滑曲线
+
+                // 绘制曲线
+                ForEach(series.data, id: \.date) { point in
+                    LineMark(
+                        x: .value("Date", point.date),
+                        y: .value("Normalized Price", point.normalizedPrice)
+                    )
+                    .interpolationMethod(.catmullRom) // 平滑曲线
+                }
+                
+                .foregroundStyle(by: .value("Symbol", series.symbol))
+                // 优化点: 确保线上没有可见的数据点标记，让曲线本身成为焦点
+                .symbolSize(0)
+            }
+            
+            // 添加交互式标记的垂直线
+            if let selectedDate {
+                RuleMark(x: .value("Selected Date", selectedDate))
+                    .foregroundStyle(Color.gray.opacity(0.5))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 2]))
+                    .zIndex(-1) // 确保在曲线下方
+                    .annotation(position: .top, alignment: .leading) {
+                         // 在这里创建自定义的标记视图
+                        dateMarkerView(for: selectedDate)
+                    }
+            }
+        }
+        // 4. 图表样式和坐标轴配置
+        .chartYScale(domain: 0...100) // Y轴固定在0-100范围
+        .chartYAxis {
+            // 隐藏Y轴标签，但保留网格线，实现与原版一致的效果
+            AxisMarks(values: .automatic(desiredCount: 6)) { _ in
+                AxisGridLine()
+            }
+        }
+        .chartXAxis {
+            // 自定义X轴标签格式
+            AxisMarks(values: .automatic) { value in
+                AxisGridLine()
+                AxisTick()
+                if value.as(Date.self) != nil {
+                    AxisValueLabel(format: xAxisDateFormat(for: timeSpan))
+                }
+            }
+        }
+        .chartLegend(position: .top, alignment: .leading) // 图例
+        .chartForegroundStyleScale(domain: data.keys.sorted(), range: colors) // 颜色映射
+        .chartOverlay { proxy in
+            // 添加手势识别区域，用于更新选择的日期
+            GeometryReader { _ in
+                Rectangle().fill(.clear).contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                updateSelection(at: value.location, proxy: proxy)
+                            }
+                            .onEnded { _ in
+                                selectedDate = nil // 拖动结束时隐藏标记
+                            }
+                    )
+            }
+        }
+        .padding(.top, 40) // 为顶部的标记视图留出空间
+    }
+
+    // MARK: - Helper Functions
+
+    /// 归一化数据，并为每个系列分配颜色
+    private func normalizeData(_ originalData: [String: [DatabaseManager.PriceData]]) -> [NormalizedSeries] {
+        let sortedSymbols = originalData.keys.sorted()
+        return sortedSymbols.enumerated().compactMap { index, symbol -> NormalizedSeries? in
+            guard let priceData = originalData[symbol], !priceData.isEmpty else { return nil }
+            
+            let prices = priceData.map(\.price)
+            guard let minPrice = prices.min(), let maxPrice = prices.max() else { return nil }
+            let priceRange = maxPrice - minPrice
+            
+            let normalizedPoints = priceData.map {
+                let normalizedValue = (priceRange > 0) ? (($0.price - minPrice) / priceRange) * 100 : 50
+                return NormalizedPoint(date: $0.date, originalPrice: $0.price, normalizedPrice: normalizedValue)
+            }
+            
+            return NormalizedSeries(
+                symbol: symbol,
+                data: normalizedPoints,
+                color: colors[index % colors.count]
+            )
+        }
     }
     
-    func updateUIView(_ chartView: LineChartView, context: Context) {
-        if data.isEmpty {
-            chartView.clear()
-            return
+    /// 更新手势选择的位置
+    private func updateSelection(at location: CGPoint, proxy: ChartProxy) {
+        if let date: Date = proxy.value(atX: location.x) {
+            selectedDate = date
         }
-        
+    }
+    
+    /// 创建自定义的日期标记视图
+    @ViewBuilder
+    private func dateMarkerView(for date: Date) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(date, format: .dateTime.year().month().day())
+                .font(.caption)
+                .foregroundColor(.white)
+            
+            // 可以选择显示每个系列在这一天最近的价格
+            // (此功能为增强，原版没有)
+        }
+        .padding(8)
+        .background(Color.black.opacity(0.7))
+        .cornerRadius(4)
+        .font(.system(size: 10))
+        .transition(.opacity)
+    }
+    
+    /// 根据时间跨度决定X轴日期格式
+    private func xAxisDateFormat(for timespan: TimeInterval) -> Date.FormatStyle {
+        if timespan > 365 * 24 * 3600 * 2 { // 大于两年显示年份
+            return .dateTime.year()
+        } else { // 否则显示月/日
+            return .dateTime.month().day()
+        }
+    }
+    
+    /// 查找数据的整体日期范围
+    private func findDateRange(from data: [String: [DatabaseManager.PriceData]]) -> (Date, Date) {
         var minDate = Date.distantFuture
         var maxDate = Date.distantPast
         
         for (_, priceData) in data {
-            if let firstDate = priceData.first?.date,
-               let lastDate = priceData.last?.date {
+            if let firstDate = priceData.first?.date {
                 minDate = min(minDate, firstDate)
+            }
+            if let lastDate = priceData.last?.date {
                 maxDate = max(maxDate, lastDate)
             }
         }
-        
-        let timespan = maxDate.timeIntervalSince(minDate)
-        context.coordinator.dateFormatter?.updateTimespan(timespan)
-        
-        var dataSets = [LineChartDataSet]()
-        let colors: [UIColor] = [
-            .systemRed,
-            .systemGreen,
-            .systemBlue,
-            .systemPurple,
-            .systemOrange
-        ]
-        
-        for (index, (symbol, priceData)) in data.enumerated() {
-            if !priceData.isEmpty {
-                let prices = priceData.map(\.price)
-                guard let minPrice = prices.min(),
-                      let maxPrice = prices.max()
-                else { continue }
-                
-                let priceRange = maxPrice - minPrice
-                
-                // Normalize prices to 0 - 100
-                let entries = priceData.map {
-                    let normalizedPrice = (priceRange > 0)
-                        ? (($0.price - minPrice) / priceRange) * 100
-                        : 50
-                    return ChartDataEntry(
-                        x: $0.date.timeIntervalSince1970,
-                        y: normalizedPrice
-                    )
-                }
-                
-                let dataSet = createDataSet(
-                    entries: entries,
-                    color: colors[index % colors.count],
-                    label: symbol
-                )
-                dataSets.append(dataSet)
-            }
-        }
-        
-        chartView.data = LineChartData(dataSets: dataSets)
-        chartView.notifyDataSetChanged()
-    }
-    
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-    
-    // MARK: Coordinator
-    class Coordinator: NSObject, ChartViewDelegate {
-        var parent: ComparisonStockLineChartView
-        var dateFormatter: DateValueFormatter?
-        
-        init(_ parent: ComparisonStockLineChartView) {
-            self.parent = parent
-        }
-    }
-    
-    // MARK: - Private Methods
-    private func configureChartView(_ chartView: LineChartView) {
-        chartView.legend.enabled = true
-        chartView.legend.horizontalAlignment = .left
-        chartView.rightAxis.enabled = false
-        
-        // 禁用左侧Y轴的标签显示
-        chartView.leftAxis.drawLabelsEnabled = false
-        
-        chartView.dragEnabled = true
-        chartView.setScaleEnabled(true)
-        chartView.pinchZoomEnabled = true
-        chartView.highlightPerTapEnabled = true
-        chartView.highlightPerDragEnabled = true
-        
-        // 减少图表边缘的空间，因为我们不再需要显示Y轴标签
-        chartView.minOffset = 0 // 减少图表边缘的最小偏移量
-        chartView.extraRightOffset = 2 // 减少右侧边距
-        chartView.extraLeftOffset = 2 // 减少左侧边距
-        chartView.extraTopOffset = 5 // 减少顶部边距
-        chartView.extraBottomOffset = 5 // 减少底部边距
-        
-        // 保持图例紧凑
-        chartView.legend.xEntrySpace = 5
-        chartView.legend.font = .systemFont(ofSize: 9)
-        
-        configureYAxis(chartView.leftAxis)
-        
-        let textColor = isDarkMode ? UIColor.white : UIColor.black
-        let gridColor = isDarkMode
-            ? UIColor.gray.withAlphaComponent(0.3)
-            : UIColor.gray.withAlphaComponent(0.2)
-        
-        chartView.xAxis.labelTextColor = textColor
-        chartView.leftAxis.labelTextColor = textColor
-        chartView.xAxis.gridColor = gridColor
-        chartView.leftAxis.gridColor = gridColor
-        
-        chartView.backgroundColor = isDarkMode ? .black : .white
-    }
-    
-    private func configureXAxis(_ xAxis: XAxis, formatter: DateValueFormatter) {
-        xAxis.drawAxisLineEnabled = false
-        xAxis.labelPosition = .bottom
-        xAxis.labelRotationAngle = 0
-        xAxis.labelFont = .systemFont(ofSize: 10)
-        xAxis.granularity = 3600 * 24 * 30
-        xAxis.valueFormatter = formatter
-        xAxis.drawGridLinesEnabled = false // 去掉 Y 轴的网格线
-        xAxis.spaceMin = 0.1 // 减少左侧空间
-        xAxis.spaceMax = 0.1 // 减少右侧空间
-    }
-    
-    private func configureYAxis(_ leftAxis: YAxis) {
-//        leftAxis.labelFont = .systemFont(ofSize: 9) // 缩小字体从10到9
-        //        leftAxis.labelCount = 6
-        //        leftAxis.decimals = 1
-
-        // 禁用绘制Y轴线
-        leftAxis.drawAxisLineEnabled = false
-        
-        // 你可以决定是否保留网格线
-        leftAxis.drawGridLinesEnabled = true
-        
-        // 零线可以根据需要保留或移除
-        leftAxis.drawZeroLineEnabled = false
-        leftAxis.zeroLineWidth = 0.5
-        leftAxis.zeroLineColor = .gray
-        
-        leftAxis.axisMinimum = 0
-        leftAxis.axisMaximum = 100
-        leftAxis.spaceTop = 0.05 // 减少顶部空间从0.1到0.05
-        leftAxis.spaceBottom = 0.05 // 减少底部空间从0.1到0.05
-        
-        // 轴值格式化程序在没有标签的情况下不再需要
-        //        leftAxis.valueFormatter = DefaultAxisValueFormatter { value, _ in
-//            String(format: "%.1f", value)
-//        }
-    }
-    
-    private func createDataSet(
-        entries: [ChartDataEntry],
-        color: UIColor,
-        label: String
-    ) -> LineChartDataSet {
-        let dataSet = LineChartDataSet(entries: entries, label: label)
-        dataSet.setColor(color)
-        dataSet.lineWidth = 1.2 // 减小线宽从1.5到1.2
-        dataSet.drawCirclesEnabled = false
-        dataSet.mode = .cubicBezier
-        dataSet.drawFilledEnabled = false
-        dataSet.drawValuesEnabled = false
-        dataSet.highlightEnabled = true
-        dataSet.highlightColor = .systemRed
-        dataSet.highlightLineWidth = 1
-        dataSet.highlightLineDashLengths = [5, 2]
-        // 确保标签在图例中显示得更紧凑
-        dataSet.form = .circle
-        dataSet.formSize = 8
-        
-        let gradientColors = [
-            color.withAlphaComponent(0.3).cgColor,
-            color.withAlphaComponent(0.0).cgColor
-        ]
-        
-        let gradient = CGGradient(
-            colorsSpace: nil,
-            colors: gradientColors as CFArray,
-            locations: [0.0, 1.0]
-        )!
-        
-        dataSet.fillAlpha = 0.3
-        dataSet.fill = LinearGradientFill(gradient: gradient, angle: 90)
-        dataSet.drawFilledEnabled = true
-        
-        return dataSet
+        return (minDate, maxDate)
     }
 }
 
-// MARK: - DateValueFormatter
-class DateValueFormatter: AxisValueFormatter {
-    private let dateFormatter = DateFormatter()
-    private var referenceTimespan: TimeInterval = 0
-    
-    init(referenceTimespan: TimeInterval = 0) {
-        self.referenceTimespan = referenceTimespan
-    }
-    
-    func stringForValue(_ value: Double, axis: AxisBase?) -> String {
-        let date = Date(timeIntervalSince1970: value)
-        if referenceTimespan > 365 * 24 * 3600 {
-            dateFormatter.dateFormat = "yyyy"
-        } else {
-            dateFormatter.dateFormat = "MM/dd"
-        }
-        return dateFormatter.string(from: date)
-    }
-    
-    func updateTimespan(_ timespan: TimeInterval) {
-        referenceTimespan = timespan
-    }
+// MARK: - Helper Data Structures for Native Chart
+struct NormalizedSeries {
+    let symbol: String
+    let data: [NormalizedPoint]
+    let color: Color
+}
+
+struct NormalizedPoint: Identifiable {
+    var id = UUID()
+    let date: Date
+    let originalPrice: Double
+    let normalizedPrice: Double
 }

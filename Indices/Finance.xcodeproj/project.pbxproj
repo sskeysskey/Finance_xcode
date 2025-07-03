@@ -11,7 +11,6 @@
 		A36A5DA62CFF62FA00FE9AB4 /* CompareStock.txt in Resources */ = {isa = PBXBuildFile; fileRef = A36A5DA52CFF62FA00FE9AB4 /* CompareStock.txt */; };
 		A36A5DA82CFF630900FE9AB4 /* CompareETFs.txt in Resources */ = {isa = PBXBuildFile; fileRef = A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */; };
 		A381E7492DF703A800FB86BE /* HighLow.txt in Resources */ = {isa = PBXBuildFile; fileRef = A381E7482DF703A800FB86BE /* HighLow.txt */; };
-		A3B0B6F42D964C1A00C2E7BA /* DGCharts in Frameworks */ = {isa = PBXBuildFile; productRef = A3B0B6F32D964C1A00C2E7BA /* DGCharts */; };
 		A3B8865C2D7F1235000C707B /* Earnings_Release_new.txt in Resources */ = {isa = PBXBuildFile; fileRef = A3B8865B2D7F1235000C707B /* Earnings_Release_new.txt */; };
 		A3BF5AB52CFCA9F100F7578C /* Finance.db in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5AB42CFCA9F100F7578C /* Finance.db */; };
 		A3BF5AB72CFCAA0C00F7578C /* description.json in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5AB62CFCAA0C00F7578C /* description.json */; };
@@ -78,7 +77,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A3B0B6F42D964C1A00C2E7BA /* DGCharts in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -158,7 +156,6 @@
 			);
 			name = Finance;
 			packageProductDependencies = (
-				A3B0B6F32D964C1A00C2E7BA /* DGCharts */,
 			);
 			productName = Indices;
 			productReference = A3BF5A7B2CFCA71000F7578C /* Finance.app */;
@@ -243,7 +240,6 @@
 			mainGroup = A3BF5A722CFCA71000F7578C;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A3B0B6F22D964AE200C2E7BA /* XCRemoteSwiftPackageReference "Charts" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A3BF5A7C2CFCA71000F7578C /* Products */;
@@ -617,25 +613,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		A3B0B6F22D964AE200C2E7BA /* XCRemoteSwiftPackageReference "Charts" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/danielgindi/Charts.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 5.1.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		A3B0B6F32D964C1A00C2E7BA /* DGCharts */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A3B0B6F22D964AE200C2E7BA /* XCRemoteSwiftPackageReference "Charts" */;
-			productName = DGCharts;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A3BF5A732CFCA71000F7578C /* Project object */;
 }
