@@ -339,7 +339,7 @@ struct ComparisonChartView: View {
                 var filteredData = data.filter {
                     $0.date >= dateRange.start && $0.date <= dateRange.end
                 }
-                filteredData = filteredData.lttbSampled(threshold: 200)
+                filteredData = filteredData.lttbSampled(threshold: 150)
                 tempData[symbol] = filteredData
             }
             
