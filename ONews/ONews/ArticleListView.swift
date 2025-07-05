@@ -59,14 +59,32 @@ struct ArticleListView: View {
                                 }
                                 .padding(.vertical, 8)
                                 .contextMenu {
-                                    // ContextMenu 逻辑不变
+                                    // ==================== 修改点: 增强 ContextMenu ====================
                                     if article.isRead {
                                         Button { viewModel.markAsUnread(articleID: article.id) }
                                         label: { Label("标记为未读", systemImage: "circle") }
                                     } else {
                                         Button { viewModel.markAsRead(articleID: article.id) }
                                         label: { Label("标记为已读", systemImage: "checkmark.circle") }
+                                        
+                                        // 只有未读文章才显示批量操作
+                                        if filterMode == .unread {
+                                            Divider()
+                                            
+                                            Button {
+                                                viewModel.markAllAboveAsRead(articleID: article.id, inSource: source.name)
+                                            } label: {
+                                                Label("以上全部已读", systemImage: "arrow.up.to.line.compact")
+                                            }
+                                            
+                                            Button {
+                                                viewModel.markAllBelowAsRead(articleID: article.id, inSource: source.name)
+                                            } label: {
+                                                Label("以下全部已读", systemImage: "arrow.down.to.line.compact")
+                                            }
+                                        }
                                     }
+                                    // ===============================================================
                                 }
                             }
                             .listRowSeparator(.hidden)
@@ -156,13 +174,34 @@ struct AllArticlesListView: View {
                                 }
                                 .padding(.vertical, 8)
                                 .contextMenu {
+                                    // ==================== 修改点: 增强 ContextMenu ====================
                                     if item.article.isRead {
                                         Button { viewModel.markAsUnread(articleID: item.article.id) }
                                         label: { Label("标记为未读", systemImage: "circle") }
                                     } else {
                                         Button { viewModel.markAsRead(articleID: item.article.id) }
                                         label: { Label("标记为已读", systemImage: "checkmark.circle") }
+                                        
+                                        // 只有未读文章才显示批量操作
+                                        if filterMode == .unread {
+                                            Divider()
+                                            
+                                            Button {
+                                                // 对于所有文章列表，sourceName 传 nil
+                                                viewModel.markAllAboveAsRead(articleID: item.article.id, inSource: nil)
+                                            } label: {
+                                                Label("以上全部已读", systemImage: "arrow.up.to.line.compact")
+                                            }
+                                            
+                                            Button {
+                                                // 对于所有文章列表，sourceName 传 nil
+                                                viewModel.markAllBelowAsRead(articleID: item.article.id, inSource: nil)
+                                            } label: {
+                                                Label("以下全部已读", systemImage: "arrow.down.to.line.compact")
+                                            }
+                                        }
                                     }
+                                    // ===============================================================
                                 }
                             }
                             .listRowSeparator(.hidden)

@@ -103,7 +103,13 @@ class NewsViewModel: ObservableObject {
             
             // 5. 创建 NewsSource 数组，并排序
             var tempSources = allArticlesBySource.map { sourceName, articles -> NewsSource in
-                let sortedArticles = articles.sorted { $0.timestamp > $1.timestamp }
+                // 修改排序规则：首先按时间戳倒序，然后按主题排序，确保每次加载顺序一致
+                let sortedArticles = articles.sorted {
+                    if $0.timestamp != $1.timestamp {
+                        return $0.timestamp > $1.timestamp
+                    }
+                    return $0.topic < $1.topic
+                }
                 return NewsSource(name: sourceName, articles: sortedArticles)
             }
             .sorted { $0.name < $1.name }
@@ -159,6 +165,64 @@ class NewsViewModel: ObservableObject {
             }
         }
     }
+    
+    // ==================== 新增功能: 批量标记为已读 ====================
+    
+    /// 将指定文章（包含）以上的全部未读文章标记为已读
+    /// - Parameters:
+    ///   - articleID: 起始文章的 ID
+    ///   - sourceName: 如果为 nil，则在所有来源中查找；否则在指定来源中查找
+    func markAllAboveAsRead(articleID: UUID, inSource sourceName: String?) {
+        DispatchQueue.main.async {
+            let articlesToProcess = self.getArticleList(for: sourceName)
+            
+            guard let pivotIndex = articlesToProcess.firstIndex(where: { $0.id == articleID }) else { return }
+            
+            let articlesAbove = articlesToProcess[0...pivotIndex]
+            
+            for article in articlesAbove where !article.isRead {
+                self.markAsRead(articleID: article.id)
+            }
+        }
+    }
+    
+    /// 将指定文章（包含）以下的全部未读文章标记为已读
+    /// - Parameters:
+    ///   - articleID: 起始文章的 ID
+    ///   - sourceName: 如果为 nil，则在所有来源中查找；否则在指定来源中查找
+    func markAllBelowAsRead(articleID: UUID, inSource sourceName: String?) {
+        DispatchQueue.main.async {
+            let articlesToProcess = self.getArticleList(for: sourceName)
+            
+            guard let pivotIndex = articlesToProcess.firstIndex(where: { $0.id == articleID }) else { return }
+            
+            let articlesBelow = articlesToProcess[pivotIndex...]
+            
+            for article in articlesBelow where !article.isRead {
+                self.markAsRead(articleID: article.id)
+            }
+        }
+    }
+    
+    /// 辅助函数：根据 sourceName 获取排序好的文章列表
+    private func getArticleList(for sourceName: String?) -> [Article] {
+        let list: [Article]
+        if let name = sourceName, let source = self.sources.first(where: { $0.name == name }) {
+            // 单个来源，直接用它的文章列表
+            list = source.articles
+        } else {
+            // 所有来源，合并并重新排序
+            list = self.sources.flatMap { $0.articles }.sorted {
+                if $0.timestamp != $1.timestamp {
+                    return $0.timestamp > $1.timestamp
+                }
+                return $0.topic < $1.topic
+            }
+        }
+        return list
+    }
+    
+    // ====================================================================
 
     /// 计算总未读数
     var totalUnreadCount: Int {
