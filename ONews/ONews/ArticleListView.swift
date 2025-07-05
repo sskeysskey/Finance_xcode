@@ -5,226 +5,194 @@ enum ArticleFilterMode: String, CaseIterable {
     case read = "Read"
 }
 
+// ==================== 核心修改: 列表视图增加日期分组 ====================
 struct ArticleListView: View {
     let source: NewsSource
     @ObservedObject var viewModel: NewsViewModel
     
     @State private var filterMode: ArticleFilterMode = .unread
     
+    // 1. 先过滤出已读/未读文章
     private var filteredArticles: [Article] {
-        switch filterMode {
-        case .unread:
-            return source.articles.filter { !$0.isRead }
-        case .read:
-            return source.articles.filter { $0.isRead }
+        source.articles.filter {
+            filterMode == .unread ? !$0.isRead : $0.isRead
         }
     }
     
-    // ===== 新增 (1/2): 计算未读和已读文章数量 =====
-    // 计算该来源下未读文章的数量
-    private var unreadCount: Int {
-        source.articles.filter { !$0.isRead }.count
+    // 2. 将过滤后的文章按时间戳分组
+    private var groupedArticles: [String: [Article]] {
+        Dictionary(grouping: filteredArticles, by: { $0.timestamp })
     }
     
-    // 计算该来源下已读文章的数量
-    private var readCount: Int {
-        source.articles.filter { $0.isRead }.count
+    // 3. 获取所有时间戳并倒序排序，作为 Section 的 key
+    private var sortedTimestamps: [String] {
+        groupedArticles.keys.sorted().reversed()
     }
-    // ===========================================
+    
+    private var unreadCount: Int { source.articles.filter { !$0.isRead }.count }
+    private var readCount: Int { source.articles.filter { $0.isRead }.count }
 
     var body: some View {
         VStack {
-            ScrollViewReader { proxy in
-                List {
-                    Text(formattedDate())
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                        .padding(.top)
-                        .listRowSeparator(.hidden)
-                    
-                    ForEach(filteredArticles) { article in
-                        NavigationLink(destination: ArticleContainerView(
-                            article: article,
-                            sourceName: source.name,
-                            context: .fromSource(source.name),
-                            viewModel: viewModel
-                        )) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(source.name)
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
-                                Text(article.topic)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(article.isRead ? .gray : .primary)
-                            }
-                            .padding(.vertical, 8)
-                            .contextMenu {
-                                if article.isRead {
-                                    Button {
-                                        viewModel.markAsUnread(articleID: article.id)
-                                    } label: {
-                                        Label("标记为未读", systemImage: "circle")
-                                    }
-                                } else {
-                                    Button {
-                                        viewModel.markAsRead(articleID: article.id)
-                                    } label: {
-                                        Label("标记为已读", systemImage: "checkmark.circle")
+            // 4. 使用新的分组数据结构来构建 List
+            List {
+                ForEach(sortedTimestamps, id: \.self) { timestamp in
+                    // 每个时间戳是一个 Section
+                    Section(header: Text(formatTimestamp(timestamp))
+                                .font(.headline)
+                                .padding(.vertical, 4)
+                    ) {
+                        // Section 内部是该日期的文章列表
+                        ForEach(groupedArticles[timestamp] ?? []) { article in
+                            NavigationLink(destination: ArticleContainerView(
+                                article: article,
+                                sourceName: source.name,
+                                context: .fromSource(source.name),
+                                viewModel: viewModel
+                            )) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    // 来源名称可以省略，因为已经在标题里了
+                                    // Text(source.name).font(.caption).foregroundColor(.gray)
+                                    Text(article.topic)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(article.isRead ? .gray : .primary)
+                                }
+                                .padding(.vertical, 8)
+                                .contextMenu {
+                                    // ContextMenu 逻辑不变
+                                    if article.isRead {
+                                        Button { viewModel.markAsUnread(articleID: article.id) }
+                                        label: { Label("标记为未读", systemImage: "circle") }
+                                    } else {
+                                        Button { viewModel.markAsRead(articleID: article.id) }
+                                        label: { Label("标记为已读", systemImage: "checkmark.circle") }
                                     }
                                 }
                             }
+                            .listRowSeparator(.hidden)
                         }
-                        .listRowSeparator(.hidden)
-                        .id(article.id)
                     }
                 }
-                .listStyle(PlainListStyle())
-                .navigationTitle("Unread")
-                .navigationBarTitleDisplayMode(.inline)
-//                .onAppear {
-//                    if let lastID = viewModel.lastViewedArticleID {
-//                        if filteredArticles.contains(where: { $0.id == lastID }) {
-//                            withAnimation {
-//                                proxy.scrollTo(lastID, anchor: .center)
-//                            }
-//                        }
-//                    }
-//                }
             }
+            .listStyle(PlainListStyle())
+            .navigationTitle(source.name.replacingOccurrences(of: "_", with: " "))
+            .navigationBarTitleDisplayMode(.inline)
             
-            // ===== 修改 (2/2): 在 Picker 中显示文章数量 =====
+            // Picker 逻辑不变
             Picker("Filter", selection: $filterMode) {
                 ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                    // 根据当前的 mode，决定显示哪个数量
                     let count = (mode == .unread) ? unreadCount : readCount
-                    // 使用字符串插值来构建带数量的文本
-                    Text("\(mode.rawValue) (\(count))")
-                        .tag(mode)
+                    Text("\(mode.rawValue) (\(count))").tag(mode)
                 }
             }
             .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .padding(.bottom, 8)
-            // ===============================================
+            .padding([.horizontal, .bottom])
         }
     }
     
-    private func formattedDate() -> String {
+    // 辅助函数：将 "250704" 格式化为 "2025年7月4日"
+    private func formatTimestamp(_ timestamp: String) -> String {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        
-        if Calendar.current.isDateInToday(Date()) {
-            formatter.dateFormat = "EEEE, MMMM d, yyyy"
-            return "TODAY, \(formatter.string(from: Date()).uppercased())"
-        } else if Calendar.current.isDateInYesterday(Date()) {
-            return "YESTERDAY"
-        } else {
-            formatter.dateFormat = "EEEE, MMMM d, yyyy"
-            return formatter.string(from: Date()).uppercased()
+        formatter.dateFormat = "yyMMdd"
+        guard let date = formatter.date(from: timestamp) else {
+            return timestamp // 如果格式不符，直接返回原始字符串
         }
+        
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日, EEEE"
+        return formatter.string(from: date)
     }
 }
 
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
-    
     @State private var filterMode: ArticleFilterMode = .unread
     
-    // ===== 新增 (与 ArticleListView 类似的逻辑) =====
-    // 计算所有来源下未读文章的总数
-    private var totalUnreadCount: Int {
-        viewModel.sources.flatMap { $0.articles }.filter { !$0.isRead }.count
+    // 1. 过滤所有来源的文章
+    private var filteredArticles: [(article: Article, sourceName: String)] {
+        viewModel.sources.flatMap { source in
+            source.articles
+                .filter { filterMode == .unread ? !$0.isRead : $0.isRead }
+                .map { (article: $0, sourceName: source.name) }
+        }
     }
     
-    // 计算所有来源下已读文章的总数
-    private var totalReadCount: Int {
-        viewModel.sources.flatMap { $0.articles }.filter { $0.isRead }.count
+    // 2. 按时间戳分组
+    private var groupedArticles: [String: [(article: Article, sourceName: String)]] {
+        Dictionary(grouping: filteredArticles, by: { $0.article.timestamp })
     }
-    // ==============================================
+    
+    // 3. 获取并排序时间戳
+    private var sortedTimestamps: [String] {
+        groupedArticles.keys.sorted().reversed()
+    }
+    
+    private var totalUnreadCount: Int { viewModel.totalUnreadCount }
+    private var totalReadCount: Int { viewModel.sources.flatMap { $0.articles }.filter { $0.isRead }.count }
     
     var body: some View {
         VStack {
-            ScrollViewReader { proxy in
-                List {
-                    ForEach(viewModel.sources) { source in
-                        let articlesToDisplay = source.articles.filter { article in
-                            switch filterMode {
-                            case .unread:
-                                return !article.isRead
-                            case .read:
-                                return article.isRead
-                            }
-                        }
-                        
-                        if !articlesToDisplay.isEmpty {
-                            ForEach(articlesToDisplay) { article in
-                                NavigationLink(destination: ArticleContainerView(
-                                    article: article,
-                                    sourceName: source.name,
-                                    context: .fromAllArticles,
-                                    viewModel: viewModel
-                                )) {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Text(source.name)
-                                            .font(.caption)
-                                            .foregroundColor(.gray)
-                                        Text(article.topic)
-                                            .fontWeight(.semibold)
-                                            .foregroundColor(article.isRead ? .gray : .primary)
-                                    }
-                                    .padding(.vertical, 8)
-                                    .contextMenu {
-                                        if article.isRead {
-                                            Button {
-                                                viewModel.markAsUnread(articleID: article.id)
-                                            } label: {
-                                                Label("标记为未读", systemImage: "circle")
-                                            }
-                                        } else {
-                                            Button {
-                                                viewModel.markAsRead(articleID: article.id)
-                                            } label: {
-                                                Label("标记为已读", systemImage: "checkmark.circle")
-                                            }
-                                        }
+            // 4. 使用分组数据构建 List
+            List {
+                ForEach(sortedTimestamps, id: \.self) { timestamp in
+                    Section(header: Text(formatTimestamp(timestamp))
+                                .font(.headline)
+                                .padding(.vertical, 4)
+                    ) {
+                        ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
+                            NavigationLink(destination: ArticleContainerView(
+                                article: item.article,
+                                sourceName: item.sourceName,
+                                context: .fromAllArticles,
+                                viewModel: viewModel
+                            )) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(item.sourceName.replacingOccurrences(of: "_", with: " "))
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                    Text(item.article.topic)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(item.article.isRead ? .gray : .primary)
+                                }
+                                .padding(.vertical, 8)
+                                .contextMenu {
+                                    if item.article.isRead {
+                                        Button { viewModel.markAsUnread(articleID: item.article.id) }
+                                        label: { Label("标记为未读", systemImage: "circle") }
+                                    } else {
+                                        Button { viewModel.markAsRead(articleID: item.article.id) }
+                                        label: { Label("标记为已读", systemImage: "checkmark.circle") }
                                     }
                                 }
-                                .listRowSeparator(.hidden)
-                                .id(article.id)
                             }
+                            .listRowSeparator(.hidden)
                         }
                     }
                 }
-                .listStyle(PlainListStyle())
-                .navigationBarTitleDisplayMode(.inline)
-                // --- 已移除: .onAppear ---
-                // .onAppear 修饰符已完全删除，不再执行滚动操作
-//                .onAppear {
-//                    if let lastID = viewModel.lastViewedArticleID {
-//                        let allFilteredArticles = viewModel.sources.flatMap { $0.articles }.filter {
-//                            filterMode == .unread ? !$0.isRead : $0.isRead
-//                        }
-//                        if allFilteredArticles.contains(where: { $0.id == lastID }) {
-//                            withAnimation {
-//                                proxy.scrollTo(lastID, anchor: .center)
-//                            }
-//                        }
-//                    }
-//                }
             }
+            .listStyle(PlainListStyle())
+            .navigationTitle(filterMode.rawValue)
+            .navigationBarTitleDisplayMode(.inline)
             
-            // ===== 修改 (与 ArticleListView 相同的逻辑) =====
             Picker("Filter", selection: $filterMode) {
                 ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
                     let count = (mode == .unread) ? totalUnreadCount : totalReadCount
-                    Text("\(mode.rawValue) (\(count))")
-                        .tag(mode)
+                    Text("\(mode.rawValue) (\(count))").tag(mode)
                 }
             }
             .pickerStyle(.segmented)
-            .padding(.horizontal)
-            .padding(.bottom, 8)
-            // =============================================
+            .padding([.horizontal, .bottom])
         }
     }
+    
+    // 辅助函数：格式化时间戳
+    private func formatTimestamp(_ timestamp: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyMMdd"
+        guard let date = formatter.date(from: timestamp) else { return timestamp }
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日, EEEE"
+        return formatter.string(from: date)
+    }
 }
+// =========================================================================

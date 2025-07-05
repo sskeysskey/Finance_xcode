@@ -7,8 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A348FD072E10090700BD3A3D /* onews.json in Resources */ = {isa = PBXBuildFile; fileRef = A348FD062E10090700BD3A3D /* onews.json */; };
-		A3B7116B2E0A8E65001179F1 /* news_images in Resources */ = {isa = PBXBuildFile; fileRef = A3B7116A2E0A8E65001179F1 /* news_images */; };
+		A32E9F552E196200000B07A8 /* onews_250705.json in Resources */ = {isa = PBXBuildFile; fileRef = A32E9F532E196200000B07A8 /* onews_250705.json */; };
+		A32E9F562E196200000B07A8 /* onews_250704.json in Resources */ = {isa = PBXBuildFile; fileRef = A32E9F542E196200000B07A8 /* onews_250704.json */; };
+		A32E9F592E196211000B07A8 /* news_images_250704 in Resources */ = {isa = PBXBuildFile; fileRef = A32E9F572E196211000B07A8 /* news_images_250704 */; };
+		A32E9F5A2E196211000B07A8 /* news_images_250705 in Resources */ = {isa = PBXBuildFile; fileRef = A32E9F582E196211000B07A8 /* news_images_250705 */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32,8 +34,10 @@
 		A32ACC5C2E08007C004C09AA /* ONews.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ONews.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A32ACC692E08007D004C09AA /* ONewsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ONewsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A32ACC732E08007D004C09AA /* ONewsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ONewsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A348FD062E10090700BD3A3D /* onews.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = onews.json; path = ../../News/done/onews.json; sourceTree = "<group>"; };
-		A3B7116A2E0A8E65001179F1 /* news_images */ = {isa = PBXFileReference; lastKnownFileType = folder; name = news_images; path = ../../../Downloads/backup/news_images; sourceTree = "<group>"; };
+		A32E9F532E196200000B07A8 /* onews_250705.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = onews_250705.json; path = ../../News/done/onews_250705.json; sourceTree = "<group>"; };
+		A32E9F542E196200000B07A8 /* onews_250704.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = onews_250704.json; path = ../../News/done/onews_250704.json; sourceTree = "<group>"; };
+		A32E9F572E196211000B07A8 /* news_images_250704 */ = {isa = PBXFileReference; lastKnownFileType = folder; name = news_images_250704; path = ../../../Downloads/backup/news_images_250704; sourceTree = "<group>"; };
+		A32E9F582E196211000B07A8 /* news_images_250705 */ = {isa = PBXFileReference; lastKnownFileType = folder; name = news_images_250705; path = ../../../Downloads/backup/news_images_250705; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -82,8 +86,10 @@
 		A32ACC532E08007C004C09AA = {
 			isa = PBXGroup;
 			children = (
-				A348FD062E10090700BD3A3D /* onews.json */,
-				A3B7116A2E0A8E65001179F1 /* news_images */,
+				A32E9F572E196211000B07A8 /* news_images_250704 */,
+				A32E9F582E196211000B07A8 /* news_images_250705 */,
+				A32E9F542E196200000B07A8 /* onews_250704.json */,
+				A32E9F532E196200000B07A8 /* onews_250705.json */,
 				A32ACC5E2E08007C004C09AA /* ONews */,
 				A32ACC6C2E08007D004C09AA /* ONewsTests */,
 				A32ACC762E08007D004C09AA /* ONewsUITests */,
@@ -221,8 +227,10 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A348FD072E10090700BD3A3D /* onews.json in Resources */,
-				A3B7116B2E0A8E65001179F1 /* news_images in Resources */,
+				A32E9F592E196211000B07A8 /* news_images_250704 in Resources */,
+				A32E9F5A2E196211000B07A8 /* news_images_250705 in Resources */,
+				A32E9F552E196200000B07A8 /* onews_250705.json in Resources */,
+				A32E9F562E196200000B07A8 /* onews_250704.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
