@@ -85,7 +85,7 @@ struct ArticleDetailView: View {
                 ForEach(paragraphs.indices, id: \.self) { pIndex in
                     Text(paragraphs[pIndex])
                         .font(.custom("NewYork-Regular", size: 21))
-                        .lineSpacing(14)
+                        .lineSpacing(15)
                         .padding(.horizontal, 18)
                         .textSelection(.enabled)
                     
