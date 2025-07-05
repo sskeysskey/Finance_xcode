@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import Photos
 
+// ActivityView 结构体保持不变...
 struct ActivityView: UIViewControllerRepresentable {
     let activityItems: [Any]
     let applicationActivities: [UIActivity]? = nil
@@ -45,8 +46,12 @@ struct ArticleDetailView: View {
             
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(formattedTimestamp())
+                    // ==================== 修改点 1 of 2 ====================
+                    // 调用新的格式化函数，并传入文章自己的时间戳
+                    Text(formatDate(from: article.timestamp))
                         .font(.caption).foregroundColor(.gray)
+                    // =====================================================
+                    
                     Text(article.topic)
                         .font(.system(.title, design: .serif)).fontWeight(.bold)
                     Text(sourceName.replacingOccurrences(of: "_", with: " "))
@@ -55,7 +60,6 @@ struct ArticleDetailView: View {
                 .padding(.horizontal, 20)
 
                 if let firstImage = article.images.first {
-                    // ===== 修改: 传递 timestamp =====
                     ArticleImageView(imageName: firstImage, timestamp: article.timestamp)
                 }
                 
@@ -67,7 +71,6 @@ struct ArticleDetailView: View {
                     if insertionInterval > 0 && (pIndex + 1) % insertionInterval == 0 {
                         let imageIndexToInsert = ((pIndex + 1) / insertionInterval) - 1
                         if imageIndexToInsert < remainingImages.count {
-                            // ===== 修改: 传递 timestamp =====
                             ArticleImageView(imageName: remainingImages[imageIndexToInsert], timestamp: article.timestamp)
                         }
                     }
@@ -103,24 +106,40 @@ struct ArticleDetailView: View {
         )
     }
     
-    private func formattedTimestamp() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE, MMMM d, yyyy 'AT' HH:mm"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        return formatter.string(from: Date()).uppercased()
+    // ==================== 修改点 2 of 2 ====================
+    // 重写此函数，使其接收时间戳字符串并进行格式化
+    private func formatDate(from timestamp: String) -> String {
+        // 用于解析 "250704" 格式的 formatter
+        let inputFormatter = DateFormatter()
+        inputFormatter.dateFormat = "yyMMdd"
+
+        // 尝试将时间戳字符串转换为 Date 对象
+        guard let date = inputFormatter.date(from: timestamp) else {
+            // 如果解析失败，直接返回原始时间戳作为备用
+            return timestamp.uppercased()
+        }
+
+        // 用于输出 "FRIDAY, JULY 4, 2025" 格式的 formatter
+        let outputFormatter = DateFormatter()
+        outputFormatter.dateFormat = "EEEE, MMMM d, yyyy" // <- 移除了 'AT' HH:mm
+        outputFormatter.locale = Locale(identifier: "en_US_POSIX") // 保证在任何设备上格式一致
+
+        // 返回格式化后的、大写的日期字符串
+        return outputFormatter.string(from: date).uppercased()
     }
+    // =====================================================
 }
 
-// ===== 修改: ArticleImageView 接收 timestamp =====
+// ArticleImageView, ZoomableImageView, ZoomableScrollView 的代码保持不变
+// ... (rest of the file remains the same) ...
 struct ArticleImageView: View {
     let imageName: String
-    let timestamp: String // 新增
+    let timestamp: String
     @State private var isShowingZoomView = false
 
     private let horizontalPadding: CGFloat = 20
 
     var body: some View {
-        // 动态构建图片路径
         let fullPath = "news_images_\(timestamp)/\(imageName)"
 
         VStack(spacing: 8) {
@@ -147,18 +166,15 @@ struct ArticleImageView: View {
             }
         }
         .fullScreenCover(isPresented: $isShowingZoomView) {
-            // 传递 timestamp 到下一层
             ZoomableImageView(imageName: imageName, timestamp: timestamp, isPresented: $isShowingZoomView)
         }
         .padding(.vertical, 10)
     }
 }
 
-
-// ===== 修改: ZoomableImageView 接收 timestamp =====
 struct ZoomableImageView: View {
     let imageName: String
-    let timestamp: String // 新增
+    let timestamp: String
     @Binding var isPresented: Bool
 
     @State private var showSaveAlert = false
@@ -167,11 +183,7 @@ struct ZoomableImageView: View {
     var body: some View {
         ZStack {
             Color.black.edgesIgnoringSafeArea(.all)
-
-            // 传递 timestamp
             ZoomableScrollView(imageName: imageName, timestamp: timestamp)
-
-            // 关闭和下载按钮 (UI不变)
             VStack {
                 HStack {
                     Spacer()
@@ -200,14 +212,12 @@ struct ZoomableImageView: View {
     }
 
     private func saveImageToPhotoLibrary() {
-        // 动态构建图片路径
         let fullPath = "news_images_\(timestamp)/\(imageName)"
         guard let uiImage = UIImage(named: fullPath) else {
           saveAlertMessage = "图片加载失败，无法保存"
           showSaveAlert = true
           return
         }
-        // ... 剩余保存逻辑不变 ...
         guard let imageData = uiImage.jpegData(compressionQuality: 1.0) else {
           saveAlertMessage = "图片转换失败"; showSaveAlert = true; return
         }
@@ -236,13 +246,11 @@ struct ZoomableImageView: View {
     }
 }
 
-// ===== 修改: ZoomableScrollView 接收 timestamp =====
 struct ZoomableScrollView: UIViewRepresentable {
     let imageName: String
-    let timestamp: String // 新增
+    let timestamp: String
 
     func makeUIView(context: Context) -> UIScrollView {
-        // 动态构建图片路径
         let fullPath = "news_images_\(timestamp)/\(imageName)"
         guard let image = UIImage(named: fullPath) else { return UIScrollView() }
 
