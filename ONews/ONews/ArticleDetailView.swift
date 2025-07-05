@@ -131,46 +131,61 @@ struct ArticleDetailView: View {
 }
 
 // ArticleImageView, ZoomableImageView, ZoomableScrollView 的代码保持不变
-// ... (rest of the file remains the same) ...
 struct ArticleImageView: View {
     let imageName: String
     let timestamp: String
     @State private var isShowingZoomView = false
 
     private let horizontalPadding: CGFloat = 20
+    
+    // 新增：计算图片在 Documents 目录中的完整路径
+    private var imagePath: String {
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
+    }
+    
+    // 新增：从路径加载 UIImage
+    private func loadImage() -> UIImage? {
+        // UIImage(named:) 只能从 App Bundle 加载
+        // 我们需要从一个绝对路径加载
+        return UIImage(contentsOfFile: imagePath)
+    }
 
     var body: some View {
-        let fullPath = "news_images_\(timestamp)/\(imageName)"
+            // let fullPath = "news_images_\(timestamp)/\(imageName)" // <- 旧代码，删除
 
-        VStack(spacing: 8) {
-            if let uiImage = UIImage(named: fullPath) {
-                Button(action: { self.isShowingZoomView = true }) {
-                    Image(uiImage: uiImage)
-                        .resizable().scaledToFit()
-                        .frame(maxWidth: .infinity).clipped()
-                }
-                .buttonStyle(PlainButtonStyle())
+            VStack(spacing: 8) {
+                // 使用新的加载方式
+                if let uiImage = loadImage() {
+                    Button(action: { self.isShowingZoomView = true }) {
+                        Image(uiImage: uiImage)
+                            .resizable().scaledToFit()
+                            .frame(maxWidth: .infinity).clipped()
+                    }
+                    .buttonStyle(PlainButtonStyle())
 
-                Text((imageName as NSString).deletingPathExtension)
-                    .font(.caption).foregroundColor(.secondary)
-                    .multilineTextAlignment(.center).padding(.horizontal, horizontalPadding)
-                    .textSelection(.enabled)
-            } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "photo.fill").font(.largeTitle).foregroundColor(.gray)
-                    Text("图片加载失败: \(fullPath)").font(.caption).foregroundColor(.secondary)
+                    Text((imageName as NSString).deletingPathExtension)
+                        .font(.caption).foregroundColor(.secondary)
+                        .multilineTextAlignment(.center).padding(.horizontal, horizontalPadding)
+                        .textSelection(.enabled)
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "photo.fill").font(.largeTitle).foregroundColor(.gray)
+                        // 显示我们尝试加载的路径，方便调试
+                        Text("图片加载失败: \(imagePath)").font(.caption).foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 150)
+                    .background(Color(UIColor.secondarySystemBackground)).cornerRadius(12)
+                    .padding(.horizontal, horizontalPadding)
                 }
-                .frame(maxWidth: .infinity, minHeight: 150)
-                .background(Color(UIColor.secondarySystemBackground)).cornerRadius(12)
-                .padding(.horizontal, horizontalPadding)
             }
+            .fullScreenCover(isPresented: $isShowingZoomView) {
+                // ZoomableImageView 也需要修改
+                ZoomableImageView(imageName: imageName, timestamp: timestamp, isPresented: $isShowingZoomView)
+            }
+            .padding(.vertical, 10)
         }
-        .fullScreenCover(isPresented: $isShowingZoomView) {
-            ZoomableImageView(imageName: imageName, timestamp: timestamp, isPresented: $isShowingZoomView)
-        }
-        .padding(.vertical, 10)
     }
-}
 
 struct ZoomableImageView: View {
     let imageName: String
@@ -180,10 +195,24 @@ struct ZoomableImageView: View {
     @State private var showSaveAlert = false
     @State private var saveAlertMessage = ""
 
+    // 新增：计算图片在 Documents 目录中的完整路径
+    private var imagePath: String {
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
+    }
+    
+    // 新增：从路径加载 UIImage 的辅助函数
+    private func loadImage() -> UIImage? {
+        return UIImage(contentsOfFile: imagePath)
+    }
+
     var body: some View {
         ZStack {
             Color.black.edgesIgnoringSafeArea(.all)
+            
+            // ZoomableScrollView 已经修改，所以这里不需要改动
             ZoomableScrollView(imageName: imageName, timestamp: timestamp)
+            
             VStack {
                 HStack {
                     Spacer()
@@ -212,36 +241,41 @@ struct ZoomableImageView: View {
     }
 
     private func saveImageToPhotoLibrary() {
-        let fullPath = "news_images_\(timestamp)/\(imageName)"
-        guard let uiImage = UIImage(named: fullPath) else {
-          saveAlertMessage = "图片加载失败，无法保存"
-          showSaveAlert = true
-          return
+        // ==================== 核心修改点 ====================
+        // 不再从 Bundle 加载，而是从 Documents 目录的绝对路径加载
+        guard let uiImage = loadImage() else {
+            saveAlertMessage = "图片加载失败，无法保存"
+            showSaveAlert = true
+            return
         }
+        // =====================================================
+        
         guard let imageData = uiImage.jpegData(compressionQuality: 1.0) else {
-          saveAlertMessage = "图片转换失败"; showSaveAlert = true; return
+            saveAlertMessage = "图片转换失败"; showSaveAlert = true; return
         }
+        
+        // 权限请求和保存逻辑保持不变
         let requestAuth: (@escaping (PHAuthorizationStatus) -> Void) -> Void = { callback in
-          if #available(iOS 14, *) { PHPhotoLibrary.requestAuthorization(for: .addOnly, handler: callback) }
-          else { PHPhotoLibrary.requestAuthorization(callback) }
+            if #available(iOS 14, *) { PHPhotoLibrary.requestAuthorization(for: .addOnly, handler: callback) }
+            else { PHPhotoLibrary.requestAuthorization(callback) }
         }
         requestAuth { status in
-          DispatchQueue.main.async {
-            switch status {
-            case .authorized, .limited:
-              PHPhotoLibrary.shared().performChanges {
-                let req = PHAssetCreationRequest.forAsset()
-                req.addResource(with: .photo, data: imageData, options: nil)
-              } completionHandler: { success, error in
-                DispatchQueue.main.async {
-                  saveAlertMessage = success ? "已保存到相册" : "保存失败：\(error?.localizedDescription ?? "未知错误")"
-                  showSaveAlert = true
+            DispatchQueue.main.async {
+                switch status {
+                case .authorized, .limited:
+                    PHPhotoLibrary.shared().performChanges {
+                        let req = PHAssetCreationRequest.forAsset()
+                        req.addResource(with: .photo, data: imageData, options: nil)
+                    } completionHandler: { success, error in
+                        DispatchQueue.main.async {
+                            saveAlertMessage = success ? "已保存到相册" : "保存失败：\(error?.localizedDescription ?? "未知错误")"
+                            showSaveAlert = true
+                        }
+                    }
+                default:
+                    saveAlertMessage = "没有相册权限，保存失败"; showSaveAlert = true
                 }
-              }
-            default:
-              saveAlertMessage = "没有相册权限，保存失败"; showSaveAlert = true
             }
-          }
         }
     }
 }
@@ -251,8 +285,20 @@ struct ZoomableScrollView: UIViewRepresentable {
     let timestamp: String
 
     func makeUIView(context: Context) -> UIScrollView {
-        let fullPath = "news_images_\(timestamp)/\(imageName)"
-        guard let image = UIImage(named: fullPath) else { return UIScrollView() }
+        // ==================== 核心修改点 ====================
+        // 1. 获取 Documents 目录
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        
+        // 2. 构建图片的完整文件路径
+        let imagePath = documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
+        
+        // 3. 从文件路径加载图片，而不是从 Bundle
+        guard let image = UIImage(contentsOfFile: imagePath) else {
+            // 如果图片加载失败，返回一个空的滚动视图，防止崩溃
+            print("ZoomableScrollView 无法加载图片于: \(imagePath)")
+            return UIScrollView()
+        }
+        // =====================================================
 
         let scrollView = UIScrollView()
         let imageView = UIImageView(image: image)
@@ -287,6 +333,7 @@ struct ZoomableScrollView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+    // Coordinator 类本身不需要任何修改
     class Coordinator: NSObject, UIScrollViewDelegate {
         var parent: ZoomableScrollView
         var imageView: UIImageView?

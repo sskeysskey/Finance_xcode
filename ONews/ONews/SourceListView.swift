@@ -1,79 +1,116 @@
 import SwiftUI
 
 struct SourceListView: View {
-    // @StateObject 确保 ViewModel 的生命周期与视图绑定，只创建一次
     @StateObject private var viewModel = NewsViewModel()
+    
+    // 1. 引入 ResourceManager
+    @StateObject private var resourceManager = ResourceManager()
+    
     @Binding var isAuthenticated: Bool
 
     var body: some View {
-        // NavigationView 是实现导航功能的基础
-        NavigationView {
-            List {
-                // "Unread" 行
-                ZStack {
-                    // 1. 这是用户看到的 "Unread" 行内容
-                    HStack {
-                        Text("Unread")
-                            .font(.system(size: 28, weight: .bold))
-                            .foregroundColor(.primary)
-                        
-                        Spacer()
-                        
-                        Text("\(viewModel.totalUnreadCount)")
-                            .font(.system(size: 28, weight: .bold))
-                            .foregroundColor(.gray)
-                    }
-                    .padding()
-
-                    // 2. 覆盖其上的透明 NavigationLink，用于处理点击跳转
-                    NavigationLink(destination: AllArticlesListView(viewModel: viewModel)) {
-                        EmptyView()
-                    }
-                    .opacity(0)
-                }
-                .listRowSeparator(.hidden)
-                
-                // 新闻来源列表
-                ForEach(viewModel.sources) { source in
+        // 2. 使用 ZStack 来覆盖一个加载视图
+        ZStack {
+            NavigationView {
+                List {
+                    // "Unread" 行
                     ZStack {
-                        // 可见的行内容
                         HStack {
-                            Text(source.name)
-                                .fontWeight(.semibold)
+                            Text("Unread")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundColor(.primary)
                             Spacer()
-                            // ==================== 主要修改点 ====================
-                            // 将 .articles.count 替换为 .unreadCount
-                            // 现在这里显示的是每个来源的未读文章数量
-                            Text("\(source.unreadCount)")
+                            Text("\(viewModel.totalUnreadCount)")
+                                .font(.system(size: 28, weight: .bold))
                                 .foregroundColor(.gray)
-                            // =================================================
                         }
-                        .padding(.vertical, 8)
-                        
-                        // 不可见的导航触发器
-                        NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel)) {
+                        .padding()
+                        NavigationLink(destination: AllArticlesListView(viewModel: viewModel)) {
                             EmptyView()
-                        }
-                        .opacity(0)
+                        }.opacity(0)
                     }
                     .listRowSeparator(.hidden)
+                    
+                    // 新闻来源列表
+                    ForEach(viewModel.sources) { source in
+                        ZStack {
+                            HStack {
+                                Text(source.name)
+                                    .fontWeight(.semibold)
+                                Spacer()
+                                Text("\(source.unreadCount)")
+                                    .foregroundColor(.gray)
+                            }
+                            .padding(.vertical, 8)
+                            
+                            NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel)) {
+                                EmptyView()
+                            }.opacity(0)
+                        }
+                        .listRowSeparator(.hidden)
+                    }
                 }
-            }
-            .listStyle(.plain)
-            .navigationTitle("Inoreader")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: {
-                        isAuthenticated = false
-                    }) {
-                        Image(systemName: "chevron.backward")
-                        Text("登出")
+                .listStyle(.plain)
+                .navigationTitle("Inoreader")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button(action: {
+                            isAuthenticated = false
+                        }) {
+                            Image(systemName: "chevron.backward")
+                            Text("登出")
+                        }
+                    }
+                    // 添加一个手动刷新按钮
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: {
+                            Task {
+                                await syncResources()
+                            }
+                        }) {
+                            Image(systemName: "arrow.clockwise")
+                        }
                     }
                 }
             }
+            .accentColor(.gray)
+            .preferredColorScheme(.dark)
+            
+            // 3. 如果正在同步，显示加载视图
+            if resourceManager.isSyncing {
+                VStack {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                        .scaleEffect(1.5)
+                    Text(resourceManager.syncMessage)
+                        .padding(.top, 10)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black.opacity(0.4))
+                .edgesIgnoringSafeArea(.all)
+            }
         }
-        .accentColor(.gray)
-        .preferredColorScheme(.dark)
+        // 4. 当视图出现时，启动同步任务
+        .onAppear {
+            Task {
+                await syncResources()
+            }
+        }
+    }
+    
+    // 5. 封装同步和加载逻辑
+    private func syncResources() async {
+        do {
+            try await resourceManager.checkAndDownloadUpdates()
+            // 同步完成后，命令 viewModel 重新加载新闻
+            viewModel.loadNews()
+        } catch {
+            // 处理错误，例如显示一个 Alert
+            print("同步失败: \(error)")
+            resourceManager.syncMessage = "同步失败: \(error.localizedDescription)"
+            // 在这里可以添加一个显示错误弹窗的逻辑
+        }
     }
 }

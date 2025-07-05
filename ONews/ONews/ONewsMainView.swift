@@ -30,97 +30,101 @@ class NewsViewModel: ObservableObject {
     private let readKey = "readTopics"
     private var readRecords: [String: Date] = [:]
     
+    // 获取 Documents 目录的便捷属性
+    private var documentsDirectory: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+    
     init() {
         loadReadRecords()
-        loadNews()
+//        loadNews()
     }
 
     private func loadReadRecords() {
-        self.readRecords = UserDefaults.standard.dictionary(forKey: readKey) as? [String: Date] ?? [:]
-    }
+            self.readRecords = UserDefaults.standard.dictionary(forKey: readKey) as? [String: Date] ?? [:]
+        }
 
-    private func saveReadRecords() {
-        UserDefaults.standard.set(self.readRecords, forKey: readKey)
-    }
-    
-    // ==================== 核心修改: 重写 loadNews 方法 ====================
-    func loadNews() {
-        // 1. 扫描 Bundle 中的所有资源 URL
-        guard let resourceURLs = Bundle.main.urls(forResourcesWithExtension: "json", subdirectory: nil) else {
-            print("无法在 Bundle 中找到任何 JSON 文件。")
-            return
+        private func saveReadRecords() {
+            UserDefaults.standard.set(self.readRecords, forKey: readKey)
         }
         
-        // 2. 筛选出符合 "onews_*.json" 格式的文件
-        let newsJSONURLs = resourceURLs.filter {
-            $0.lastPathComponent.starts(with: "onews_")
-        }
-        
-        guard !newsJSONURLs.isEmpty else {
-            fatalError("错误：在项目包中没有找到任何 'onews_YYMMDD.json' 格式的文件。请确保文件已添加并设置为 'Copy Bundle Resources'。")
-        }
+        // ==================== 核心修改: 重写 loadNews 方法 ====================
+        func loadNews() {
+            // 1. 扫描 Documents 目录中的所有内容
+            guard let allFileURLs = try? FileManager.default.contentsOfDirectory(at: documentsDirectory, includingPropertiesForKeys: nil) else {
+                print("无法读取 Documents 目录。")
+                return
+            }
+            
+            // 2. 筛选出符合 "onews_*.json" 格式的文件
+            let newsJSONURLs = allFileURLs.filter {
+                $0.lastPathComponent.starts(with: "onews_") && $0.pathExtension == "json"
+            }
+            
+            guard !newsJSONURLs.isEmpty else {
+                print("错误：在 Documents 目录中没有找到任何 'onews_*.json' 文件。请先同步资源。")
+                // 在实际应用中，这里可能需要提示用户
+                return
+            }
 
-        var allArticlesBySource = [String: [Article]]()
-        let decoder = JSONDecoder()
+            var allArticlesBySource = [String: [Article]]()
+            let decoder = JSONDecoder()
 
-        // 3. 遍历所有找到的 JSON 文件
-        for url in newsJSONURLs {
-            // 从文件名中提取时间戳 (e.g., "250704")
-            let fileName = url.deletingPathExtension().lastPathComponent
-            guard let timestamp = fileName.components(separatedBy: "_").last, !timestamp.isEmpty else {
-                print("警告：跳过文件 \(url.lastPathComponent)，因为它不符合 'onews_TIMESTAMP.json' 格式。")
-                continue
-            }
-            
-            // 加载和解析 JSON 数据
-            guard let data = try? Data(contentsOf: url) else {
-                print("警告：无法加载文件 \(url.lastPathComponent)。")
-                continue
-            }
-            
-            guard let decoded = try? decoder.decode([String: [Article]].self, from: data) else {
-                print("警告：解析文件 \(url.lastPathComponent) 失败。")
-                continue
-            }
-            
-            // 4. 为每篇文章设置时间戳，并按来源聚合
-            for (sourceName, articles) in decoded {
-                let articlesWithTimestamp = articles.map { article -> Article in
-                    var mutableArticle = article
-                    mutableArticle.timestamp = timestamp // 关键步骤：注入时间戳
-                    return mutableArticle
+            // 3. 遍历所有找到的 JSON 文件
+            for url in newsJSONURLs {
+                // 从文件名中提取时间戳 (e.g., "250704")
+                let fileName = url.deletingPathExtension().lastPathComponent
+                guard let timestamp = fileName.components(separatedBy: "_").last, !timestamp.isEmpty else {
+                    print("警告：跳过文件 \(url.lastPathComponent)，因为它不符合 'onews_TIMESTAMP.json' 格式。")
+                    continue
                 }
                 
-                // 将带有时间戳的文章添加到聚合字典中
-                allArticlesBySource[sourceName, default: []].append(contentsOf: articlesWithTimestamp)
+                // 加载和解析 JSON 数据
+                guard let data = try? Data(contentsOf: url) else {
+                    print("警告：无法加载文件 \(url.lastPathComponent)。")
+                    continue
+                }
+                
+                guard let decoded = try? decoder.decode([String: [Article]].self, from: data) else {
+                    print("警告：解析文件 \(url.lastPathComponent) 失败。")
+                    continue
+                }
+                
+                // 4. 为每篇文章设置时间戳，并按来源聚合
+                for (sourceName, articles) in decoded {
+                    let articlesWithTimestamp = articles.map { article -> Article in
+                        var mutableArticle = article
+                        mutableArticle.timestamp = timestamp
+                        return mutableArticle
+                    }
+                    allArticlesBySource[sourceName, default: []].append(contentsOf: articlesWithTimestamp)
+                }
+            }
+            
+            // 5. 创建 NewsSource 数组，并排序
+            var tempSources = allArticlesBySource.map { sourceName, articles -> NewsSource in
+                let sortedArticles = articles.sorted { $0.timestamp > $1.timestamp }
+                return NewsSource(name: sourceName, articles: sortedArticles)
+            }
+            .sorted { $0.name < $1.name }
+
+            // 6. 标记已读状态
+            for i in tempSources.indices {
+                for j in tempSources[i].articles.indices {
+                    let article = tempSources[i].articles[j]
+                    if readRecords.keys.contains(article.topic) {
+                       tempSources[i].articles[j].isRead = true
+                   }
+                }
+            }
+
+            // 7. 在主线程上发布最终结果
+            DispatchQueue.main.async {
+                self.sources = tempSources
+                print("新闻数据加载/刷新完成！共 \(self.sources.count) 个来源。")
             }
         }
-        
-        // 5. 创建 NewsSource 数组，并对每个来源的文章按时间倒序排序
-        var tempSources = allArticlesBySource.map { sourceName, articles -> NewsSource in
-            // 按时间戳字符串倒序排序 (e.g., "250705" > "250704")
-            let sortedArticles = articles.sorted { $0.timestamp > $1.timestamp }
-            return NewsSource(name: sourceName, articles: sortedArticles)
-        }
-        // 对来源本身按名称排序
-        .sorted { $0.name < $1.name }
-
-        // 6. 根据已读记录，标记文章的 isRead 状态
-        for i in tempSources.indices {
-            for j in tempSources[i].articles.indices {
-                let article = tempSources[i].articles[j]
-                if readRecords.keys.contains(article.topic) {
-                   tempSources[i].articles[j].isRead = true
-               }
-            }
-        }
-
-        // 7. 在主线程上发布最终结果
-        DispatchQueue.main.async {
-            self.sources = tempSources
-        }
-    }
-    // ====================================================================
+        // ====================================================================
 
     /// 用户阅读完文章后调用
     func markAsRead(articleID: UUID) {
