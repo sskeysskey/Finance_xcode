@@ -9,13 +9,11 @@
 /* Begin PBXBuildFile section */
 		A36A5D462CFF47F800FE9AB4 /* Sectors_All.json in Resources */ = {isa = PBXBuildFile; fileRef = A36A5D452CFF47F800FE9AB4 /* Sectors_All.json */; };
 		A36A5DA62CFF62FA00FE9AB4 /* CompareStock.txt in Resources */ = {isa = PBXBuildFile; fileRef = A36A5DA52CFF62FA00FE9AB4 /* CompareStock.txt */; };
-		A36A5DA82CFF630900FE9AB4 /* CompareETFs.txt in Resources */ = {isa = PBXBuildFile; fileRef = A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */; };
 		A381E7492DF703A800FB86BE /* HighLow.txt in Resources */ = {isa = PBXBuildFile; fileRef = A381E7482DF703A800FB86BE /* HighLow.txt */; };
 		A3B8865C2D7F1235000C707B /* Earnings_Release_new.txt in Resources */ = {isa = PBXBuildFile; fileRef = A3B8865B2D7F1235000C707B /* Earnings_Release_new.txt */; };
 		A3BF5AB52CFCA9F100F7578C /* Finance.db in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5AB42CFCA9F100F7578C /* Finance.db */; };
 		A3BF5AB72CFCAA0C00F7578C /* description.json in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5AB62CFCAA0C00F7578C /* description.json */; };
 		A3BF5AB92CFCAA2500F7578C /* Compare_All.txt in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5AB82CFCAA2500F7578C /* Compare_All.txt */; };
-		A3BF5ABB2CFCAA5300F7578C /* marketcap_pe.txt in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5ABA2CFCAA5300F7578C /* marketcap_pe.txt */; };
 		A3BF5ABD2CFCAA9500F7578C /* Sectors_panel.json in Resources */ = {isa = PBXBuildFile; fileRef = A3BF5ABC2CFCAA9500F7578C /* Sectors_panel.json */; };
 		A3DE55B72D1D459A0073BEB2 /* tags_weight.json in Resources */ = {isa = PBXBuildFile; fileRef = A3DE55B62D1D459A0073BEB2 /* tags_weight.json */; };
 /* End PBXBuildFile section */
@@ -40,7 +38,6 @@
 /* Begin PBXFileReference section */
 		A36A5D452CFF47F800FE9AB4 /* Sectors_All.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = Sectors_All.json; path = ../../Financial_System/Modules/Sectors_All.json; sourceTree = "<group>"; };
 		A36A5DA52CFF62FA00FE9AB4 /* CompareStock.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = CompareStock.txt; path = ../../News/CompareStock.txt; sourceTree = "<group>"; };
-		A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = CompareETFs.txt; path = ../../News/CompareETFs.txt; sourceTree = "<group>"; };
 		A381E7482DF703A800FB86BE /* HighLow.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = HighLow.txt; path = ../../News/HighLow.txt; sourceTree = "<group>"; };
 		A3B8865B2D7F1235000C707B /* Earnings_Release_new.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = Earnings_Release_new.txt; path = ../../News/Earnings_Release_new.txt; sourceTree = "<group>"; };
 		A3BF5A7B2CFCA71000F7578C /* Finance.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Finance.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -49,7 +46,6 @@
 		A3BF5AB42CFCA9F100F7578C /* Finance.db */ = {isa = PBXFileReference; lastKnownFileType = file; name = Finance.db; path = ../../Database/Finance.db; sourceTree = "<group>"; };
 		A3BF5AB62CFCAA0C00F7578C /* description.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = description.json; path = ../../Financial_System/Modules/description.json; sourceTree = "<group>"; };
 		A3BF5AB82CFCAA2500F7578C /* Compare_All.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = Compare_All.txt; path = ../../News/backup/Compare_All.txt; sourceTree = "<group>"; };
-		A3BF5ABA2CFCAA5300F7578C /* marketcap_pe.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = marketcap_pe.txt; path = ../../News/backup/marketcap_pe.txt; sourceTree = "<group>"; };
 		A3BF5ABC2CFCAA9500F7578C /* Sectors_panel.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = Sectors_panel.json; path = ../../Financial_System/Modules/Sectors_panel.json; sourceTree = "<group>"; };
 		A3DE55B62D1D459A0073BEB2 /* tags_weight.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = tags_weight.json; path = ../../Financial_System/Modules/tags_weight.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -103,11 +99,9 @@
 				A381E7482DF703A800FB86BE /* HighLow.txt */,
 				A3B8865B2D7F1235000C707B /* Earnings_Release_new.txt */,
 				A3DE55B62D1D459A0073BEB2 /* tags_weight.json */,
-				A36A5DA72CFF630900FE9AB4 /* CompareETFs.txt */,
 				A36A5DA52CFF62FA00FE9AB4 /* CompareStock.txt */,
 				A36A5D452CFF47F800FE9AB4 /* Sectors_All.json */,
 				A3BF5ABC2CFCAA9500F7578C /* Sectors_panel.json */,
-				A3BF5ABA2CFCAA5300F7578C /* marketcap_pe.txt */,
 				A3BF5AB82CFCAA2500F7578C /* Compare_All.txt */,
 				A3BF5AB62CFCAA0C00F7578C /* description.json */,
 				A3BF5AB42CFCA9F100F7578C /* Finance.db */,
@@ -261,11 +255,9 @@
 				A381E7492DF703A800FB86BE /* HighLow.txt in Resources */,
 				A3B8865C2D7F1235000C707B /* Earnings_Release_new.txt in Resources */,
 				A3DE55B72D1D459A0073BEB2 /* tags_weight.json in Resources */,
-				A36A5DA82CFF630900FE9AB4 /* CompareETFs.txt in Resources */,
 				A36A5DA62CFF62FA00FE9AB4 /* CompareStock.txt in Resources */,
 				A36A5D462CFF47F800FE9AB4 /* Sectors_All.json in Resources */,
 				A3BF5ABD2CFCAA9500F7578C /* Sectors_panel.json in Resources */,
-				A3BF5ABB2CFCAA5300F7578C /* marketcap_pe.txt in Resources */,
 				A3BF5AB92CFCAA2500F7578C /* Compare_All.txt in Resources */,
 				A3BF5AB72CFCAA0C00F7578C /* description.json in Resources */,
 				A3BF5AB52CFCA9F100F7578C /* Finance.db in Resources */,

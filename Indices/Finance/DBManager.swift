@@ -5,6 +5,14 @@ class DatabaseManager {
     static let shared = DatabaseManager()
     private var db: OpaquePointer?
     
+    // 新增：用于承载从 MNSPP 表查询出的数据的结构体
+    struct MarketCapInfo {
+        let symbol: String
+        let marketCap: Double
+        let peRatio: Double?
+        let pb: Double?
+    }
+    
     private init() {
         print("=== DatabaseManager Debug ===")
         // 首先尝试获取 bundle 中的数据库路径
@@ -28,6 +36,43 @@ class DatabaseManager {
         let date: Date
         let price: Double
         let volume: Int64?  // 修改为可选类型
+    }
+    
+    // 新增方法：从指定表（如 MNSPP）中获取所有市值相关数据
+    func fetchAllMarketCapData(from tableName: String) -> [MarketCapInfo] {
+        var results: [MarketCapInfo] = []
+        // 注意：您的表名是 "MNSPP "，末尾有一个空格，这里需要精确匹配。如果实际表名没有空格，请移除它。
+        let query = "SELECT symbol, marketcap, pe_ratio, pb FROM \"\(tableName)\""
+        var statement: OpaquePointer?
+        
+        if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
+            while sqlite3_step(statement) == SQLITE_ROW {
+                let symbol = String(cString: sqlite3_column_text(statement, 0))
+                let marketCap = sqlite3_column_double(statement, 1)
+                
+                // pe_ratio 和 pb 可能为 NULL，需要检查
+                let peRatio: Double?
+                if sqlite3_column_type(statement, 2) != SQLITE_NULL {
+                    peRatio = sqlite3_column_double(statement, 2)
+                } else {
+                    peRatio = nil
+                }
+                
+                let pb: Double?
+                if sqlite3_column_type(statement, 3) != SQLITE_NULL {
+                    pb = sqlite3_column_double(statement, 3)
+                } else {
+                    pb = nil
+                }
+                
+                results.append(MarketCapInfo(symbol: symbol, marketCap: marketCap, peRatio: peRatio, pb: pb))
+            }
+        } else {
+            print("Failed to prepare statement for market cap data: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        
+        sqlite3_finalize(statement)
+        return results
     }
     
     // 新增的方法：获取特定 ETF 的最新 volume

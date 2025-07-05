@@ -116,7 +116,7 @@ class DataService: ObservableObject {
     }
     
     func loadData() {
-        loadMarketCapData()
+        loadMarketCapData() // <--- 修改此方法
         loadDescriptionData()
         loadSectorsData()
         loadCompareData()
@@ -207,7 +207,6 @@ class DataService: ObservableObject {
     private func loadDataAsync() async {
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await self.loadCompareStockAsync() }
-            group.addTask { await self.loadCompareETFsAsync() }
         }
         
         await MainActor.run {
@@ -301,44 +300,6 @@ class DataService: ObservableObject {
                 }
             }
         }
-        
-        private func loadCompareETFsAsync() async {
-            if let cached: ([ETF], [ETF]) = loadFromCache("compareETFs") {
-                await MainActor.run {
-                    self.etfGainers = cached.0
-                    self.etfLosers = cached.1
-                }
-                return
-            }
-            
-            guard let url = Bundle.main.url(forResource: "CompareETFs", withExtension: "txt") else { return }
-            
-            do {
-                let content = try String(contentsOf: url, encoding: .utf8)
-                let lines = content.split(separator: "\n")
-                
-                let parsedETFs = lines.compactMap { parseETFLine(String($0)) }
-                let etfGainersList = parsedETFs.filter { $0.numericValue > 0 }
-                    .sorted { $0.numericValue > $1.numericValue }
-                    .prefix(20)
-                let etfLosersList = parsedETFs.filter { $0.numericValue < 0 }
-                    .sorted { $0.numericValue < $1.numericValue }
-                    .prefix(20)
-                
-                let newETFGainers = Array(etfGainersList)
-                let newETFLosers = Array(etfLosersList)
-                
-                saveToCache((newETFGainers, newETFLosers), forKey: "compareETFs")
-                await MainActor.run {
-                    self.etfGainers = newETFGainers
-                    self.etfLosers = newETFLosers
-                }
-            } catch {
-                await MainActor.run {
-                    self.errorMessage = "加载 CompareETFs.txt 失败: \(error.localizedDescription)"
-                }
-            }
-        }
     
     private func loadSectorsPanel() {
         guard let url = Bundle.main.url(forResource: "Sectors_panel", withExtension: "json") else {
@@ -423,36 +384,36 @@ class DataService: ObservableObject {
         return nil
     }
     
+    // MARK: - 修改此方法
     private func loadMarketCapData() {
-        guard let url = Bundle.main.url(forResource: "marketcap_pe", withExtension: "txt") else {
-            self.errorMessage = "marketcap_pe.txt 文件未找到"
+        // 从数据库加载数据，而不是从 marketcap_pe.txt 文件
+        // 注意：根据您的描述，表名为 "MNSPP " (末尾有空格)，如果实际没有，请移除
+        let allMarketCapInfo = DatabaseManager.shared.fetchAllMarketCapData(from: "MNSPP")
+        
+        // 检查是否有数据返回
+        if allMarketCapInfo.isEmpty {
+            self.errorMessage = "未能从数据库 MNSPP 表加载到市值数据。"
             return
         }
-        do {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            let lines = text.split(separator: "\n")
-            
-            for line in lines {
-                let parts = line.split(separator: ":")
-                if parts.count >= 2 {
-                    let symbol = parts[0].trimmingCharacters(in: .whitespaces).uppercased()
-                    let values = parts[1].split(separator: ",")
-                    
-                    if values.count >= 2, let marketCap = Double(values[0].trimmingCharacters(in: .whitespaces)) {
-                        let peRatioString = values[1].trimmingCharacters(in: .whitespaces)
-                        let peRatio = peRatioString == "--" ? nil : Double(peRatioString)
-                        
-                        var pb: Double? = nil
-                        if values.count >= 3 {
-                            pb = Double(values[2].trimmingCharacters(in: .whitespaces))
-                        }
-                        
-                        marketCapData[symbol] = MarketCapDataItem(marketCap: marketCap, peRatio: peRatio, pb: pb)
-                    }
-                }
-            }
-        } catch {
-            self.errorMessage = "加载 marketcap_pe.txt 失败: \(error.localizedDescription)"
+        
+        // 清空旧数据
+        var newData: [String: MarketCapDataItem] = [:]
+        
+        // 遍历从数据库获取的结果
+        for info in allMarketCapInfo {
+            // 将数据库查询结果转换为 MarketCapDataItem
+            let item = MarketCapDataItem(
+                marketCap: info.marketCap,
+                peRatio: info.peRatio,
+                pb: info.pb
+            )
+            // 将数据存入字典，键为大写的 symbol
+            newData[info.symbol.uppercased()] = item
+        }
+        
+        // 在主线程更新 @Published 属性
+        DispatchQueue.main.async {
+            self.marketCapData = newData
         }
     }
     
