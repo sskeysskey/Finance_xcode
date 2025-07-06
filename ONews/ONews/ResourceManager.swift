@@ -30,12 +30,11 @@ class ResourceManager: ObservableObject {
     }
     
     // MARK: - Main Sync Logic
-    
     func checkAndDownloadUpdates() async throws {
         // 1. 初始化状态
         self.isSyncing = true
         self.isDownloading = false // 开始时不是下载状态，而是检查状态
-        self.syncMessage = "正在连接服务器检查更新..."
+        self.syncMessage = "正在检查更新..."
         self.progressText = ""
         self.downloadProgress = 0.0
         
@@ -135,7 +134,7 @@ class ResourceManager: ObservableObject {
         
         for (fileIndex, remoteFilename) in fileList.enumerated() {
             // 更新更详细的消息
-            self.syncMessage = "\(directoryName) (\(fileIndex + 1)/\(fileList.count)): \(remoteFilename)"
+            self.syncMessage = "正在下载新闻图片... (\(fileIndex + 1)/\(fileList.count))"
             
             let downloadPath = "\(directoryName)/\(remoteFilename)"
             
