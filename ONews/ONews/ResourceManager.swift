@@ -15,13 +15,11 @@ struct ServerVersion: Codable {
 class ResourceManager: ObservableObject {
     
     // --- 状态管理 ---
-    @Published var isSyncing = false          // 控制整个同步覆盖层的显示与隐藏
-    @Published var syncMessage = "启动中..." // 显示当前操作的文本信息
-    
-    // --- 新增的状态，用于精确控制进度条 ---
-    @Published var isDownloading = false      // 区分是“检查中”还是“下载中”
-    @Published var downloadProgress: Double = 0.0 // 进度条的进度 (0.0 to 1.0)
-    @Published var progressText = ""          // 进度文本，如 "1/6"
+    @Published var isSyncing = false
+    @Published var syncMessage = "启动中..."
+    @Published var isDownloading = false
+    @Published var downloadProgress: Double = 0.0
+    @Published var progressText = ""
     
     private let serverBaseURL = "http://192.168.50.147:5000/api/ONews"
     private let fileManager = FileManager.default
@@ -33,7 +31,7 @@ class ResourceManager: ObservableObject {
     func checkAndDownloadUpdates() async throws {
         // 1. 初始化状态
         self.isSyncing = true
-        self.isDownloading = false // 开始时不是下载状态，而是检查状态
+        self.isDownloading = false
         self.syncMessage = "正在检查更新..."
         self.progressText = ""
         self.downloadProgress = 0.0
@@ -42,27 +40,59 @@ class ResourceManager: ObservableObject {
             let serverVersion = try await getServerVersion()
             let localFiles = try getLocalFiles()
             
+            // ==================== 核心修改区域开始 ====================
+            // 2. 清理过时的本地文件和目录
+            // 在比较需要下载的文件之前，先进行清理操作。
+            self.syncMessage = "正在清理旧资源..."
+            
+            // 从服务器获取所有有效的文件/目录名集合
+            let validServerFiles = Set(serverVersion.files.map { $0.name })
+            
+            // 找出本地存在，但服务器清单中已不存在的文件/目录
+            let filesToDelete = localFiles.subtracting(validServerFiles)
+            
+            // 为了安全起见，我们只删除符合特定命名规则的旧文件，防止误删其他文件
+            let oldNewsItemsToDelete = filesToDelete.filter {
+                $0.starts(with: "onews_") || $0.starts(with: "news_images_")
+            }
+
+            if !oldNewsItemsToDelete.isEmpty {
+                print("发现需要清理的过时资源: \(oldNewsItemsToDelete)")
+                for itemName in oldNewsItemsToDelete {
+                    let itemURL = documentsDirectory.appendingPathComponent(itemName)
+                    do {
+                        try fileManager.removeItem(at: itemURL)
+                        print("🗑️ 已成功删除: \(itemName)")
+                    } catch {
+                        // 如果删除失败，仅打印错误，不中断整个同步流程
+                        print("⚠️ 删除资源 \(itemName) 失败: \(error.localizedDescription)")
+                    }
+                }
+            } else {
+                print("本地资源无需清理。")
+            }
+            // ==================== 核心修改区域结束 ====================
+
+            // 3. 检查需要下载的文件
+            // 这里的逻辑保持不变，它会对比服务器列表和（清理前的）本地文件列表
             let filesToDownload = serverVersion.files.filter { fileInfo in
                 !localFiles.contains(fileInfo.name)
             }
             
-            // 2. 检查是否需要下载
             if filesToDownload.isEmpty {
                 syncMessage = "当前资源已经是最新的了。"
-                // 等待短暂时间让用户看到消息，然后结束
-                try await Task.sleep(nanoseconds: 1_500_000_000) // 1.5秒
+                try await Task.sleep(nanoseconds: 1_500_000_000)
                 self.isSyncing = false
                 return
             }
             
             print("需要下载的文件或目录: \(filesToDownload.map { $0.name })")
             
-            // 3. 进入下载阶段
-            self.isDownloading = true // 切换到下载模式，UI会显示进度条
+            // 4. 进入下载阶段
+            self.isDownloading = true
             let totalFiles = filesToDownload.count
             
             for (index, fileInfo) in filesToDownload.enumerated() {
-                // 更新进度
                 self.progressText = "\(index + 1)/\(totalFiles)"
                 self.downloadProgress = Double(index + 1) / Double(totalFiles)
                 
@@ -75,19 +105,18 @@ class ResourceManager: ObservableObject {
                 }
             }
             
-            // 4. 同步完成
+            // 5. 同步完成
             self.isDownloading = false
             self.syncMessage = "更新完成！"
             self.progressText = ""
-            try await Task.sleep(nanoseconds: 1_000_000_000) // 1秒
+            try await Task.sleep(nanoseconds: 1_000_000_000)
             self.isSyncing = false
             
         } catch {
-            // 5. 错误处理：直接向上抛出异常
-            // 让调用方 (View) 来决定如何处理UI
+            // 6. 错误处理
             self.isSyncing = false
             self.isDownloading = false
-            throw error // 将错误传递给 SourceListView 中的 catch 块
+            throw error
         }
     }
     
@@ -118,9 +147,6 @@ class ResourceManager: ObservableObject {
         return try JSONDecoder().decode([String].self, from: data)
     }
     
-    // downloadDirectory 和 downloadSingleFile 保持不变，因为它们只负责下载逻辑
-    // 进度更新的责任已经移交给了主函数 checkAndDownloadUpdates
-    
     private func downloadDirectory(named directoryName: String, totalFiles: Int, currentIndex: Int) async throws {
         let fileList = try await getFileList(for: directoryName)
         if fileList.isEmpty {
@@ -133,7 +159,6 @@ class ResourceManager: ObservableObject {
         try fileManager.createDirectory(at: localDirectoryURL, withIntermediateDirectories: true, attributes: nil)
         
         for (fileIndex, remoteFilename) in fileList.enumerated() {
-            // 更新更详细的消息
             self.syncMessage = "正在下载新闻图片... (\(fileIndex + 1)/\(fileList.count))"
             
             let downloadPath = "\(directoryName)/\(remoteFilename)"

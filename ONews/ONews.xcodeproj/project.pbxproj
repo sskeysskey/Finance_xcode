@@ -6,10 +6,6 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXBuildFile section */
-		A32E9F652E196F04000B07A8 /* Zip in Frameworks */ = {isa = PBXBuildFile; productRef = A32E9F642E196F04000B07A8 /* Zip */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXContainerItemProxy section */
 		A32ACC6A2E08007D004C09AA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -69,7 +65,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A32E9F652E196F04000B07A8 /* Zip in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -132,14 +127,12 @@
 			buildRules = (
 			);
 			dependencies = (
-				A32E9F602E196AB4000B07A8 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A32ACC5E2E08007C004C09AA /* ONews */,
 			);
 			name = ONews;
 			packageProductDependencies = (
-				A32E9F642E196F04000B07A8 /* Zip */,
 			);
 			productName = ONews;
 			productReference = A32ACC5C2E08007C004C09AA /* ONews.app */;
@@ -224,7 +217,6 @@
 			mainGroup = A32ACC532E08007C004C09AA;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A32E9F5B2E196A78000B07A8 /* XCRemoteSwiftPackageReference "Zip" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A32ACC5D2E08007C004C09AA /* Products */;
@@ -296,10 +288,6 @@
 			isa = PBXTargetDependency;
 			target = A32ACC5B2E08007C004C09AA /* ONews */;
 			targetProxy = A32ACC742E08007D004C09AA /* PBXContainerItemProxy */;
-		};
-		A32E9F602E196AB4000B07A8 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			productRef = A32E9F5F2E196AB4000B07A8 /* Zip */;
 		};
 /* End PBXTargetDependency section */
 
@@ -599,30 +587,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		A32E9F5B2E196A78000B07A8 /* XCRemoteSwiftPackageReference "Zip" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/marmelroy/Zip.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.1.2;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		A32E9F5F2E196AB4000B07A8 /* Zip */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A32E9F5B2E196A78000B07A8 /* XCRemoteSwiftPackageReference "Zip" */;
-			productName = Zip;
-		};
-		A32E9F642E196F04000B07A8 /* Zip */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A32E9F5B2E196A78000B07A8 /* XCRemoteSwiftPackageReference "Zip" */;
-			productName = Zip;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A32ACC542E08007C004C09AA /* Project object */;
 }
