@@ -2,18 +2,19 @@ import SwiftUI
 
 struct SourceListView: View {
     @StateObject private var viewModel = NewsViewModel()
-    
-    // 1. 引入 ResourceManager
     @StateObject private var resourceManager = ResourceManager()
     
     @Binding var isAuthenticated: Bool
+    
+    // --- 新增状态用于Alert弹窗 ---
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
 
     var body: some View {
-        // 2. 使用 ZStack 来覆盖一个加载视图
         ZStack {
             NavigationView {
                 List {
-                    // "Unread" 行
+                    // ... (你的列表代码保持不变)
                     ZStack {
                         HStack {
                             Text("Unread")
@@ -31,7 +32,6 @@ struct SourceListView: View {
                     }
                     .listRowSeparator(.hidden)
                     
-                    // 新闻来源列表
                     ForEach(viewModel.sources) { source in
                         ZStack {
                             HStack {
@@ -62,7 +62,6 @@ struct SourceListView: View {
                             Text("登出")
                         }
                     }
-                    // 添加一个手动刷新按钮
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(action: {
                             Task {
@@ -71,46 +70,77 @@ struct SourceListView: View {
                         }) {
                             Image(systemName: "arrow.clockwise")
                         }
+                        // 在同步时禁用按钮，防止重复点击
+                        .disabled(resourceManager.isSyncing)
                     }
                 }
             }
             .accentColor(.gray)
             .preferredColorScheme(.dark)
+            // 当本地数据加载后，即使同步失败，用户依然可以操作此NavigationView
+            .onAppear {
+                // 视图出现时先加载本地数据，然后再检查更新
+                viewModel.loadNews()
+                Task {
+                    await syncResources()
+                }
+            }
             
-            // 3. 如果正在同步，显示加载视图
+            // --- 改进后的加载/进度覆盖层 ---
             if resourceManager.isSyncing {
-                VStack {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle())
-                        .scaleEffect(1.5)
-                    Text(resourceManager.syncMessage)
-                        .padding(.top, 10)
-                        .foregroundColor(.secondary)
+                VStack(spacing: 15) {
+                    // 根据是否处于下载阶段，显示不同UI
+                    if resourceManager.isDownloading {
+                        // 下载阶段：显示进度条
+                        Text(resourceManager.syncMessage)
+                            .font(.headline)
+                            .foregroundColor(.white)
+                        
+                        ProgressView(value: resourceManager.downloadProgress)
+                            .progressViewStyle(LinearProgressViewStyle(tint: .white))
+                            .padding(.horizontal, 50)
+                        
+                        Text(resourceManager.progressText)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                    } else {
+                        // 检查阶段：显示转圈
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(1.5)
+                        
+                        Text(resourceManager.syncMessage)
+                            .padding(.top, 10)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black.opacity(0.4))
+                .background(Color.black.opacity(0.6))
                 .edgesIgnoringSafeArea(.all)
+                // 点击背景不会穿透
+                .contentShape(Rectangle())
             }
         }
-        // 4. 当视图出现时，启动同步任务
-        .onAppear {
-            Task {
-                await syncResources()
-            }
-        }
+        // --- 非阻塞的错误提示 ---
+        .alert("同步出错", isPresented: $showErrorAlert, actions: {
+            Button("好的", role: .cancel) { }
+        }, message: {
+            Text(errorMessage)
+        })
     }
     
-    // 5. 封装同步和加载逻辑
     private func syncResources() async {
         do {
             try await resourceManager.checkAndDownloadUpdates()
-            // 同步完成后，命令 viewModel 重新加载新闻
+            // 同步成功后，重新加载新闻数据以反映更新
             viewModel.loadNews()
         } catch {
-            // 处理错误，例如显示一个 Alert
+            // 关键改动：捕获错误，设置Alert所需的状态
             print("同步失败: \(error)")
-            resourceManager.syncMessage = "同步失败: \(error.localizedDescription)"
-            // 在这里可以添加一个显示错误弹窗的逻辑
+            self.errorMessage = "无法连接服务器或下载资源失败。\n\(error.localizedDescription)"
+            self.showErrorAlert = true
+            // resourceManager内部已经将 isSyncing 置为 false，所以覆盖层会自动消失
         }
     }
 }

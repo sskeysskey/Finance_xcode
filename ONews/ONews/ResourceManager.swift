@@ -14,8 +14,14 @@ struct ServerVersion: Codable {
 @MainActor
 class ResourceManager: ObservableObject {
     
-    @Published var isSyncing = false
-    @Published var syncMessage = "正在初始化..."
+    // --- 状态管理 ---
+    @Published var isSyncing = false          // 控制整个同步覆盖层的显示与隐藏
+    @Published var syncMessage = "正在初始化..." // 显示当前操作的文本信息
+    
+    // --- 新增的状态，用于精确控制进度条 ---
+    @Published var isDownloading = false      // 区分是“检查中”还是“下载中”
+    @Published var downloadProgress: Double = 0.0 // 进度条的进度 (0.0 to 1.0)
+    @Published var progressText = ""          // 进度文本，如 "1/6"
     
     private let serverBaseURL = "http://192.168.50.147:5000/api/ONews"
     private let fileManager = FileManager.default
@@ -26,39 +32,64 @@ class ResourceManager: ObservableObject {
     // MARK: - Main Sync Logic
     
     func checkAndDownloadUpdates() async throws {
+        // 1. 初始化状态
         self.isSyncing = true
+        self.isDownloading = false // 开始时不是下载状态，而是检查状态
+        self.syncMessage = "正在连接服务器检查更新..."
+        self.progressText = ""
+        self.downloadProgress = 0.0
         
-        syncMessage = "正在连接服务器检查更新..."
-        let serverVersion = try await getServerVersion()
-        
-        let localFiles = try getLocalFiles()
-        
-        let filesToDownload = serverVersion.files.filter { fileInfo in
-            !localFiles.contains(fileInfo.name)
-        }
-        
-        if filesToDownload.isEmpty {
-            syncMessage = "所有资源都是最新的。"
-            self.isSyncing = false
-            return
-        }
-        
-        print("需要下载的文件或目录: \(filesToDownload.map { $0.name })")
-        
-        for (index, fileInfo) in filesToDownload.enumerated() {
-            let progressPrefix = "(\(index + 1)/\(filesToDownload.count))"
+        do {
+            let serverVersion = try await getServerVersion()
+            let localFiles = try getLocalFiles()
             
-            if fileInfo.type == "images" {
-                syncMessage = "\(progressPrefix) 正在处理目录: \(fileInfo.name)..."
-                try await downloadDirectory(named: fileInfo.name, progressPrefix: progressPrefix)
-            } else {
-                syncMessage = "\(progressPrefix) 正在下载文件: \(fileInfo.name)..."
-                try await downloadSingleFile(named: fileInfo.name)
+            let filesToDownload = serverVersion.files.filter { fileInfo in
+                !localFiles.contains(fileInfo.name)
             }
+            
+            // 2. 检查是否需要下载
+            if filesToDownload.isEmpty {
+                syncMessage = "所有资源都是最新的。"
+                // 等待短暂时间让用户看到消息，然后结束
+                try await Task.sleep(nanoseconds: 1_500_000_000) // 1.5秒
+                self.isSyncing = false
+                return
+            }
+            
+            print("需要下载的文件或目录: \(filesToDownload.map { $0.name })")
+            
+            // 3. 进入下载阶段
+            self.isDownloading = true // 切换到下载模式，UI会显示进度条
+            let totalFiles = filesToDownload.count
+            
+            for (index, fileInfo) in filesToDownload.enumerated() {
+                // 更新进度
+                self.progressText = "\(index + 1)/\(totalFiles)"
+                self.downloadProgress = Double(index + 1) / Double(totalFiles)
+                
+                if fileInfo.type == "images" {
+                    self.syncMessage = "正在处理目录: \(fileInfo.name)..."
+                    try await downloadDirectory(named: fileInfo.name, totalFiles: totalFiles, currentIndex: index)
+                } else {
+                    self.syncMessage = "正在下载文件: \(fileInfo.name)..."
+                    try await downloadSingleFile(named: fileInfo.name)
+                }
+            }
+            
+            // 4. 同步完成
+            self.isDownloading = false
+            self.syncMessage = "同步完成！"
+            self.progressText = ""
+            try await Task.sleep(nanoseconds: 1_000_000_000) // 1秒
+            self.isSyncing = false
+            
+        } catch {
+            // 5. 错误处理：直接向上抛出异常
+            // 让调用方 (View) 来决定如何处理UI
+            self.isSyncing = false
+            self.isDownloading = false
+            throw error // 将错误传递给 SourceListView 中的 catch 块
         }
-        
-        syncMessage = "同步完成！"
-        self.isSyncing = false
     }
     
     // MARK: - Helper Functions
@@ -75,7 +106,6 @@ class ResourceManager: ObservableObject {
     }
     
     private func getFileList(for directoryName: String) async throws -> [String] {
-        // ==================== 核心修改点 1: 使用 URLComponents ====================
         guard var components = URLComponents(string: "\(serverBaseURL)/list_files") else {
             throw URLError(.badURL)
         }
@@ -83,14 +113,16 @@ class ResourceManager: ObservableObject {
         guard let url = components.url else {
             throw URLError(.badURL)
         }
-        // ======================================================================
         
         print("准备获取目录清单: \(url.absoluteString)")
         let (data, _) = try await URLSession.shared.data(from: url)
         return try JSONDecoder().decode([String].self, from: data)
     }
     
-    private func downloadDirectory(named directoryName: String, progressPrefix: String) async throws {
+    // downloadDirectory 和 downloadSingleFile 保持不变，因为它们只负责下载逻辑
+    // 进度更新的责任已经移交给了主函数 checkAndDownloadUpdates
+    
+    private func downloadDirectory(named directoryName: String, totalFiles: Int, currentIndex: Int) async throws {
         let fileList = try await getFileList(for: directoryName)
         if fileList.isEmpty {
             print("目录 \(directoryName) 在服务器上为空，跳过。")
@@ -102,11 +134,11 @@ class ResourceManager: ObservableObject {
         try fileManager.createDirectory(at: localDirectoryURL, withIntermediateDirectories: true, attributes: nil)
         
         for (fileIndex, remoteFilename) in fileList.enumerated() {
-            self.syncMessage = "\(progressPrefix) \(directoryName) (\(fileIndex + 1)/\(fileList.count)): \(remoteFilename)"
+            // 更新更详细的消息
+            self.syncMessage = "\(directoryName) (\(fileIndex + 1)/\(fileList.count)): \(remoteFilename)"
             
             let downloadPath = "\(directoryName)/\(remoteFilename)"
             
-            // ==================== 核心修改点 2: 使用 URLComponents ====================
             guard var components = URLComponents(string: "\(serverBaseURL)/download") else {
                 print("❌ Invalid base URL for components")
                 continue
@@ -116,7 +148,6 @@ class ResourceManager: ObservableObject {
                 print("❌ Could not create final URL from components for path: \(downloadPath)")
                 continue
             }
-            // ======================================================================
             
             let (tempURL, response) = try await URLSession.shared.download(from: url)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
@@ -134,7 +165,6 @@ class ResourceManager: ObservableObject {
     }
     
     private func downloadSingleFile(named filename: String) async throws {
-        // ==================== 核心修改点 3: 使用 URLComponents ====================
         guard var components = URLComponents(string: "\(serverBaseURL)/download") else {
             throw URLError(.badURL)
         }
@@ -142,7 +172,6 @@ class ResourceManager: ObservableObject {
         guard let url = components.url else {
             throw URLError(.badURL)
         }
-        // ======================================================================
         
         print("✅ [1/3] 开始下载单个文件: \(url.absoluteString)")
         let (tempURL, response) = try await URLSession.shared.download(from: url)
