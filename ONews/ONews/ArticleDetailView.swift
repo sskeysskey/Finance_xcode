@@ -35,10 +35,6 @@ struct ArticleDetailView: View {
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         
         let remainingImages = Array(article.images.dropFirst())
-        
-        let insertionInterval = (!remainingImages.isEmpty && paragraphs.count > remainingImages.count)
-            ? (paragraphs.count / (remainingImages.count + 1))
-            : (paragraphs.count + 1)
 
         ScrollView {
             Color.clear.frame(height: 1).onAppear { self.isAtTop = true }
@@ -46,11 +42,8 @@ struct ArticleDetailView: View {
             
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
-                    // ==================== 修改点 1 of 2 ====================
-                    // 调用新的格式化函数，并传入文章自己的时间戳
                     Text(formatDate(from: article.timestamp))
                         .font(.caption).foregroundColor(.gray)
-                    // =====================================================
                     
                     Text(article.topic)
                         .font(.system(.title, design: .serif)).fontWeight(.bold)
@@ -63,18 +56,33 @@ struct ArticleDetailView: View {
                     ArticleImageView(imageName: firstImage, timestamp: article.timestamp)
                 }
                 
-                ForEach(paragraphs.indices, id: \.self) { pIndex in
-                    Text(paragraphs[pIndex])
-                        .font(.custom("NewYork-Regular", size: 21)).lineSpacing(15)
-                        .padding(.horizontal, 18).textSelection(.enabled)
+                // ==================== 核心修复区域开始 ====================
+                // 我们不再使用复杂的 insertionInterval 计算。
+                // 新的逻辑是：
+                // 1. 遍历所有段落。
+                // 2. 在每个段落后面，如果还有对应的图片，就显示一张。
+                // 3. 如果图片比段落多，在所有段落显示完毕后，把剩下的图片全部显示出来。
+
+                let totalParagraphs = paragraphs.count
+                let totalRemainingImages = remainingImages.count
+                
+                // 我们需要遍历的次数是段落和图片中数量较多的那个
+                let loopCount = max(totalParagraphs, totalRemainingImages)
+
+                ForEach(0..<loopCount, id: \.self) { index in
+                    // 如果当前索引小于段落总数，说明还有一个段落需要显示
+                    if index < totalParagraphs {
+                        Text(paragraphs[index])
+                            .font(.custom("NewYork-Regular", size: 21)).lineSpacing(15)
+                            .padding(.horizontal, 18).textSelection(.enabled)
+                    }
                     
-                    if insertionInterval > 0 && (pIndex + 1) % insertionInterval == 0 {
-                        let imageIndexToInsert = ((pIndex + 1) / insertionInterval) - 1
-                        if imageIndexToInsert < remainingImages.count {
-                            ArticleImageView(imageName: remainingImages[imageIndexToInsert], timestamp: article.timestamp)
-                        }
+                    // 如果当前索引小于剩余图片总数，说明还有一张图片需要显示
+                    if index < totalRemainingImages {
+                        ArticleImageView(imageName: remainingImages[index], timestamp: article.timestamp)
                     }
                 }
+                // ==================== 核心修复区域结束 ====================
                 
                 Color.clear.frame(height: 1).onAppear { self.isAtBottom = true }
                     .onDisappear { self.isAtBottom = false }
@@ -106,28 +114,20 @@ struct ArticleDetailView: View {
         )
     }
     
-    // ==================== 修改点 2 of 2 ====================
-    // 重写此函数，使其接收时间戳字符串并进行格式化
     private func formatDate(from timestamp: String) -> String {
-        // 用于解析 "250704" 格式的 formatter
         let inputFormatter = DateFormatter()
         inputFormatter.dateFormat = "yyMMdd"
 
-        // 尝试将时间戳字符串转换为 Date 对象
         guard let date = inputFormatter.date(from: timestamp) else {
-            // 如果解析失败，直接返回原始时间戳作为备用
             return timestamp.uppercased()
         }
 
-        // 用于输出 "FRIDAY, JULY 4, 2025" 格式的 formatter
         let outputFormatter = DateFormatter()
-        outputFormatter.dateFormat = "EEEE, MMMM d, yyyy" // <- 移除了 'AT' HH:mm
-        outputFormatter.locale = Locale(identifier: "en_US_POSIX") // 保证在任何设备上格式一致
+        outputFormatter.dateFormat = "EEEE, MMMM d, yyyy"
+        outputFormatter.locale = Locale(identifier: "en_US_POSIX")
 
-        // 返回格式化后的、大写的日期字符串
         return outputFormatter.string(from: date).uppercased()
     }
-    // =====================================================
 }
 
 // ArticleImageView, ZoomableImageView, ZoomableScrollView 的代码保持不变
@@ -138,24 +138,17 @@ struct ArticleImageView: View {
 
     private let horizontalPadding: CGFloat = 20
     
-    // 新增：计算图片在 Documents 目录中的完整路径
     private var imagePath: String {
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
     }
     
-    // 新增：从路径加载 UIImage
     private func loadImage() -> UIImage? {
-        // UIImage(named:) 只能从 App Bundle 加载
-        // 我们需要从一个绝对路径加载
         return UIImage(contentsOfFile: imagePath)
     }
 
     var body: some View {
-            // let fullPath = "news_images_\(timestamp)/\(imageName)" // <- 旧代码，删除
-
             VStack(spacing: 8) {
-                // 使用新的加载方式
                 if let uiImage = loadImage() {
                     Button(action: { self.isShowingZoomView = true }) {
                         Image(uiImage: uiImage)
@@ -171,7 +164,6 @@ struct ArticleImageView: View {
                 } else {
                     VStack(spacing: 8) {
                         Image(systemName: "photo.fill").font(.largeTitle).foregroundColor(.gray)
-                        // 显示我们尝试加载的路径，方便调试
                         Text("图片加载失败: \(imagePath)").font(.caption).foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, minHeight: 150)
@@ -180,7 +172,6 @@ struct ArticleImageView: View {
                 }
             }
             .fullScreenCover(isPresented: $isShowingZoomView) {
-                // ZoomableImageView 也需要修改
                 ZoomableImageView(imageName: imageName, timestamp: timestamp, isPresented: $isShowingZoomView)
             }
             .padding(.vertical, 10)
@@ -195,13 +186,11 @@ struct ZoomableImageView: View {
     @State private var showSaveAlert = false
     @State private var saveAlertMessage = ""
 
-    // 新增：计算图片在 Documents 目录中的完整路径
     private var imagePath: String {
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
     }
     
-    // 新增：从路径加载 UIImage 的辅助函数
     private func loadImage() -> UIImage? {
         return UIImage(contentsOfFile: imagePath)
     }
@@ -210,7 +199,6 @@ struct ZoomableImageView: View {
         ZStack {
             Color.black.edgesIgnoringSafeArea(.all)
             
-            // ZoomableScrollView 已经修改，所以这里不需要改动
             ZoomableScrollView(imageName: imageName, timestamp: timestamp)
             
             VStack {
@@ -241,20 +229,16 @@ struct ZoomableImageView: View {
     }
 
     private func saveImageToPhotoLibrary() {
-        // ==================== 核心修改点 ====================
-        // 不再从 Bundle 加载，而是从 Documents 目录的绝对路径加载
         guard let uiImage = loadImage() else {
             saveAlertMessage = "图片加载失败，无法保存"
             showSaveAlert = true
             return
         }
-        // =====================================================
         
         guard let imageData = uiImage.jpegData(compressionQuality: 1.0) else {
             saveAlertMessage = "图片转换失败"; showSaveAlert = true; return
         }
         
-        // 权限请求和保存逻辑保持不变
         let requestAuth: (@escaping (PHAuthorizationStatus) -> Void) -> Void = { callback in
             if #available(iOS 14, *) { PHPhotoLibrary.requestAuthorization(for: .addOnly, handler: callback) }
             else { PHPhotoLibrary.requestAuthorization(callback) }
@@ -285,20 +269,13 @@ struct ZoomableScrollView: UIViewRepresentable {
     let timestamp: String
 
     func makeUIView(context: Context) -> UIScrollView {
-        // ==================== 核心修改点 ====================
-        // 1. 获取 Documents 目录
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        
-        // 2. 构建图片的完整文件路径
         let imagePath = documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
         
-        // 3. 从文件路径加载图片，而不是从 Bundle
         guard let image = UIImage(contentsOfFile: imagePath) else {
-            // 如果图片加载失败，返回一个空的滚动视图，防止崩溃
             print("ZoomableScrollView 无法加载图片于: \(imagePath)")
             return UIScrollView()
         }
-        // =====================================================
 
         let scrollView = UIScrollView()
         let imageView = UIImageView(image: image)
@@ -333,7 +310,6 @@ struct ZoomableScrollView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    // Coordinator 类本身不需要任何修改
     class Coordinator: NSObject, UIScrollViewDelegate {
         var parent: ZoomableScrollView
         var imageView: UIImageView?
