@@ -16,7 +16,7 @@ class ResourceManager: ObservableObject {
     
     // --- 状态管理 ---
     @Published var isSyncing = false          // 控制整个同步覆盖层的显示与隐藏
-    @Published var syncMessage = "正在初始化..." // 显示当前操作的文本信息
+    @Published var syncMessage = "启动中..." // 显示当前操作的文本信息
     
     // --- 新增的状态，用于精确控制进度条 ---
     @Published var isDownloading = false      // 区分是“检查中”还是“下载中”
@@ -48,7 +48,7 @@ class ResourceManager: ObservableObject {
             
             // 2. 检查是否需要下载
             if filesToDownload.isEmpty {
-                syncMessage = "所有资源都是最新的。"
+                syncMessage = "当前资源已经是最新的了。"
                 // 等待短暂时间让用户看到消息，然后结束
                 try await Task.sleep(nanoseconds: 1_500_000_000) // 1.5秒
                 self.isSyncing = false
@@ -67,17 +67,17 @@ class ResourceManager: ObservableObject {
                 self.downloadProgress = Double(index + 1) / Double(totalFiles)
                 
                 if fileInfo.type == "images" {
-                    self.syncMessage = "正在处理目录: \(fileInfo.name)..."
+                    self.syncMessage = "正在处理目录..."
                     try await downloadDirectory(named: fileInfo.name, totalFiles: totalFiles, currentIndex: index)
                 } else {
-                    self.syncMessage = "正在下载文件: \(fileInfo.name)..."
+                    self.syncMessage = "正在下载文件..."
                     try await downloadSingleFile(named: fileInfo.name)
                 }
             }
             
             // 4. 同步完成
             self.isDownloading = false
-            self.syncMessage = "同步完成！"
+            self.syncMessage = "更新完成！"
             self.progressText = ""
             try await Task.sleep(nanoseconds: 1_000_000_000) // 1秒
             self.isSyncing = false

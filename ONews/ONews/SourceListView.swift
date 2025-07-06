@@ -14,7 +14,7 @@ struct SourceListView: View {
         ZStack {
             NavigationView {
                 List {
-                    // ... (你的列表代码保持不变)
+                    // "Unread" 行
                     ZStack {
                         HStack {
                             Text("Unread")
@@ -32,6 +32,7 @@ struct SourceListView: View {
                     }
                     .listRowSeparator(.hidden)
                     
+                    // 新闻来源列表
                     ForEach(viewModel.sources) { source in
                         ZStack {
                             HStack {
@@ -123,24 +124,43 @@ struct SourceListView: View {
             }
         }
         // --- 非阻塞的错误提示 ---
-        .alert("同步出错", isPresented: $showErrorAlert, actions: {
+        .alert("", isPresented: $showErrorAlert, actions: {
             Button("好的", role: .cancel) { }
         }, message: {
             Text(errorMessage)
         })
     }
     
+    // ==================== 核心修改点在这里 ====================
     private func syncResources() async {
         do {
             try await resourceManager.checkAndDownloadUpdates()
             // 同步成功后，重新加载新闻数据以反映更新
             viewModel.loadNews()
         } catch {
-            // 关键改动：捕获错误，设置Alert所需的状态
-            print("同步失败: \(error)")
-            self.errorMessage = "无法连接服务器或下载资源失败。\n\(error.localizedDescription)"
-            self.showErrorAlert = true
-            // resourceManager内部已经将 isSyncing 置为 false，所以覆盖层会自动消失
+            // 根据错误类型，决定是否打扰用户
+            switch error {
+                
+            // --- 情况1: 服务器端问题，静默处理 ---
+            case is DecodingError:
+                // 服务器返回了非JSON数据（很可能是HTML错误页），这是服务器问题。
+                print("同步失败 (服务器返回数据格式错误，已静默处理): \(error)")
+                // 不做任何事，不弹窗。UI会自动解锁，用户可以继续使用本地数据。
+                
+            case let urlError as URLError where urlError.code == .cannotConnectToHost:
+                // 明确是“无法连接到主机”，通常意味着服务器进程未启动。
+                print("同步失败 (无法连接到主机，已静默处理): \(error.localizedDescription)")
+                // 同样不弹窗。
+
+            // --- 情况2: 客户端问题或其他未知错误，弹窗提示 ---
+            default:
+                // 对于其他所有错误（如手机没网、超时等），我们认为用户需要被告知。
+                print("同步失败 (客户端或其他问题): \(error)")
+                // 更新一下提示语，引导用户检查网络
+                self.errorMessage = "网络异常\n\n请点击右上角刷新↻按钮重试"
+                self.showErrorAlert = true
+            }
         }
     }
+    // ==========================================================
 }
