@@ -29,6 +29,13 @@ struct ArticleDetailView: View {
     @State private var isAtTop = false
     @State private var isAtBottom = false
 
+    // ==================== 修改点 1 of 3：新增状态变量 ====================
+    // 用于控制“已复制”提示条的显示
+    @State private var showCopyToast = false
+    // 提示条要显示的文字
+    @State private var toastMessage = ""
+    // =================================================================
+
     var body: some View {
         let paragraphs = article.article
             .components(separatedBy: .newlines)
@@ -36,74 +43,110 @@ struct ArticleDetailView: View {
         
         let remainingImages = Array(article.images.dropFirst())
         
-        // ---------- 新逻辑开始 ----------
-                // 是否走“均匀分布”分支
-                let distributeEvenly = !remainingImages.isEmpty && remainingImages.count < paragraphs.count
+        let distributeEvenly = !remainingImages.isEmpty && remainingImages.count < paragraphs.count
+        let insertionInterval = distributeEvenly
+            ? paragraphs.count / (remainingImages.count + 1)
+            : 1
 
-                // 均匀分布时，间隔为 paragraphs.count / (remainingImages.count + 1)
-                // 否则，插入间隔设为 1（即每个段落后都插一张）
-                let insertionInterval = distributeEvenly
-                    ? paragraphs.count / (remainingImages.count + 1)
-                    : 1
-                // ---------- 新逻辑结束 ----------
+        // ==================== 修改点 2 of 3：使用 ZStack 包裹视图 ====================
+        // ZStack 允许我们将提示条（Toast）浮动在滚动视图之上
+        ZStack {
+            ScrollView {
+                Color.clear.frame(height: 1)
+                    .onAppear { self.isAtTop = true }
+                    .onDisappear { self.isAtTop = false }
 
-                ScrollView {
-                    Color.clear.frame(height: 1) // 用于检测是否滚动到顶部
-                        .onAppear { self.isAtTop = true }
-                        .onDisappear { self.isAtTop = false }
-
-                    VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    // ==================== 修改点 1 of 2 ====================
-                    // 调用新的格式化函数，并传入文章自己的时间戳
-                    Text(formatDate(from: article.timestamp))
-                        .font(.caption).foregroundColor(.gray)
-                    // =====================================================
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(formatDate(from: article.timestamp))
+                            .font(.caption).foregroundColor(.gray)
+                        
+                        Text(article.topic)
+                            .font(.system(.title, design: .serif)).fontWeight(.bold)
+                        Text(sourceName.replacingOccurrences(of: "_", with: " "))
+                            .font(.subheadline).foregroundColor(.gray)
+                    }
+                    .padding(.horizontal, 20)
                     
-                    Text(article.topic)
-                        .font(.system(.title, design: .serif)).fontWeight(.bold)
-                    Text(sourceName.replacingOccurrences(of: "_", with: " "))
-                        .font(.subheadline).foregroundColor(.gray)
-                }
-                .padding(.horizontal, 20)
-                // 第一张图片保持不变
-                if let firstImage = article.images.first {
-                    ArticleImageView(imageName: firstImage, timestamp: article.timestamp)
-                }
+                    if let firstImage = article.images.first {
+                        ArticleImageView(imageName: firstImage, timestamp: article.timestamp)
+                    }
 
-                // 正文段落 + 插图
-                ForEach(paragraphs.indices, id: \.self) { pIndex in
-                    Text(paragraphs[pIndex])
-                        .font(.custom("NewYork-Regular", size: 21))
-                        .lineSpacing(15)
-                        .padding(.horizontal, 18)
-
-                    // 计算应该插入哪一张图
-                    if (pIndex + 1) % insertionInterval == 0 {
-                        let imageIndexToInsert = (pIndex + 1) / insertionInterval - 1
-                        if imageIndexToInsert < remainingImages.count {
-                            ArticleImageView(
-                                imageName: remainingImages[imageIndexToInsert],
-                                timestamp: article.timestamp
+                    ForEach(paragraphs.indices, id: \.self) { pIndex in
+                        Text(paragraphs[pIndex])
+                            .font(.custom("NewYork-Regular", size: 21))
+                            .lineSpacing(15)
+                            .padding(.horizontal, 18)
+                            // ==================== 修改点 3 of 3：修改长按手势的逻辑 ====================
+                            .gesture(
+                                LongPressGesture()
+                                    .onEnded { _ in
+                                        // 1. 复制文本到剪贴板
+                                        UIPasteboard.general.string = paragraphs[pIndex]
+                                        
+                                        // 2. 设置提示文字并显示提示条（带动画）
+                                        self.toastMessage = "段落已复制"
+                                        withAnimation(.spring()) {
+                                            self.showCopyToast = true
+                                        }
+                                        
+                                        // 3. 2秒后自动隐藏提示条（带动画）
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                            withAnimation(.spring()) {
+                                                self.showCopyToast = false
+                                            }
+                                        }
+                                    }
                             )
+                            // ==========================================================================
+
+                        if (pIndex + 1) % insertionInterval == 0 {
+                            let imageIndexToInsert = (pIndex + 1) / insertionInterval - 1
+                            if imageIndexToInsert < remainingImages.count {
+                                ArticleImageView(
+                                    imageName: remainingImages[imageIndexToInsert],
+                                    timestamp: article.timestamp
+                                )
+                            }
                         }
                     }
-                }
 
-                // ---------- 新增：当图片多于段落时，把多余的图片追加到末尾 ----------
-                if !distributeEvenly && remainingImages.count > paragraphs.count {
-                    let extraImages = remainingImages.dropFirst(paragraphs.count)
-                    ForEach(Array(extraImages), id: \.self) { imageName in
-                        ArticleImageView(imageName: imageName, timestamp: article.timestamp)
+                    if !distributeEvenly && remainingImages.count > paragraphs.count {
+                        let extraImages = remainingImages.dropFirst(paragraphs.count)
+                        ForEach(Array(extraImages), id: \.self) { imageName in
+                            ArticleImageView(imageName: imageName, timestamp: article.timestamp)
+                        }
                     }
-                }
-                // ------------------------------------------------------------------
 
-                Color.clear.frame(height: 1) // 用于检测是否滚动到底部
-                    .onAppear { self.isAtBottom = true }
-                    .onDisappear { self.isAtBottom = false }
+                    Color.clear.frame(height: 1)
+                        .onAppear { self.isAtBottom = true }
+                        .onDisappear { self.isAtBottom = false }
+                }
+                .padding(.vertical)
             }
-            .padding(.vertical)
+            
+            // --- 这是新增的提示条视图 ---
+            if showCopyToast {
+                VStack {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.white)
+                        Text(toastMessage)
+                            .foregroundColor(.white)
+                            .fontWeight(.semibold)
+                    }
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 20)
+                    .background(Color.black.opacity(0.75))
+                    .clipShape(Capsule()) // 使用胶囊形状
+                    .shadow(radius: 10)
+                    
+                    Spacer() // 将提示条推到顶部
+                }
+                .padding(.top, 5) // 距离顶部安全区一点距离
+                .transition(.move(edge: .top).combined(with: .opacity)) // 定义出现和消失的动画
+                .zIndex(1) // 确保它在最上层
+            }
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -130,28 +173,20 @@ struct ArticleDetailView: View {
         )
     }
     
-    // ==================== 修改点 2 of 2 ====================
-    // 重写此函数，使其接收时间戳字符串并进行格式化
     private func formatDate(from timestamp: String) -> String {
-        // 用于解析 "250704" 格式的 formatter
         let inputFormatter = DateFormatter()
         inputFormatter.dateFormat = "yyMMdd"
 
-        // 尝试将时间戳字符串转换为 Date 对象
         guard let date = inputFormatter.date(from: timestamp) else {
-            // 如果解析失败，直接返回原始时间戳作为备用
             return timestamp.uppercased()
         }
 
-        // 用于输出 "FRIDAY, JULY 4, 2025" 格式的 formatter
         let outputFormatter = DateFormatter()
-        outputFormatter.dateFormat = "EEEE, MMMM d, yyyy" // <- 移除了 'AT' HH:mm
-        outputFormatter.locale = Locale(identifier: "en_US_POSIX") // 保证在任何设备上格式一致
+        outputFormatter.dateFormat = "EEEE, MMMM d, yyyy"
+        outputFormatter.locale = Locale(identifier: "en_US_POSIX")
 
-        // 返回格式化后的、大写的日期字符串
         return outputFormatter.string(from: date).uppercased()
     }
-    // =====================================================
 }
 
 // ArticleImageView, ZoomableImageView, ZoomableScrollView 的代码保持不变
@@ -176,8 +211,6 @@ struct ArticleImageView: View {
     }
 
     var body: some View {
-            // let fullPath = "news_images_\(timestamp)/\(imageName)" // <- 旧代码，删除
-
             VStack(spacing: 8) {
                 // 使用新的加载方式
                 if let uiImage = loadImage() {
@@ -265,14 +298,12 @@ struct ZoomableImageView: View {
     }
 
     private func saveImageToPhotoLibrary() {
-        // ==================== 核心修改点 ====================
         // 不再从 Bundle 加载，而是从 Documents 目录的绝对路径加载
         guard let uiImage = loadImage() else {
             saveAlertMessage = "图片加载失败，无法保存"
             showSaveAlert = true
             return
         }
-        // =====================================================
         
         guard let imageData = uiImage.jpegData(compressionQuality: 1.0) else {
             saveAlertMessage = "图片转换失败"; showSaveAlert = true; return
@@ -309,7 +340,6 @@ struct ZoomableScrollView: UIViewRepresentable {
     let timestamp: String
 
     func makeUIView(context: Context) -> UIScrollView {
-        // ==================== 核心修改点 ====================
         // 1. 获取 Documents 目录
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         
@@ -322,7 +352,6 @@ struct ZoomableScrollView: UIViewRepresentable {
             print("ZoomableScrollView 无法加载图片于: \(imagePath)")
             return UIScrollView()
         }
-        // =====================================================
 
         let scrollView = UIScrollView()
         let imageView = UIImageView(image: image)
