@@ -9,7 +9,7 @@ struct SourceListView: View {
     // --- 新增状态用于Alert弹窗 ---
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
-
+    
     var body: some View {
         ZStack {
             NavigationView {
@@ -140,22 +140,22 @@ struct SourceListView: View {
             // 根据错误类型，决定是否打扰用户
             switch error {
                 
-            // --- 情况1: 服务器端或连接性问题，静默处理 ---
+                // --- 情况1: 服务器端或连接性问题，静默处理 ---
             case is DecodingError:
                 // 服务器返回了非JSON数据（很可能是HTML错误页），这是服务器问题。
                 print("同步失败 (服务器返回数据格式错误，已静默处理): \(error)")
                 
-            // ==================== 核心修改区域 2: 扩展静默处理的错误类型 ====================
+                // ==================== 核心修改区域 2: 扩展静默处理的错误类型 ====================
             case let urlError as URLError where
-                 urlError.code == .cannotConnectToHost || // 连接被拒（IP对，服务没开）
-                 urlError.code == .timedOut ||             // 请求超时（IP错，或网络差）
-                 urlError.code == .notConnectedToInternet: // 设备没联网
+                urlError.code == .cannotConnectToHost || // 连接被拒（IP对，服务没开）
+                urlError.code == .timedOut ||             // 请求超时（IP错，或网络差）
+                urlError.code == .notConnectedToInternet: // 设备没联网
                 
                 print("同步失败 (无法连接或超时，已静默处理): \(error.localizedDescription)")
                 // 同样不弹窗。UI会自动解锁，用户可以继续使用本地数据。
-            // ==========================================================================
-
-            // --- 情况2: 其他未知错误，弹窗提示 ---
+                // ==========================================================================
+                
+                // --- 情况2: 其他未知错误，弹窗提示 ---
             default:
                 // 对于其他所有错误，我们认为用户需要被告知。
                 print("同步失败 (客户端或其他问题): \(error)")
@@ -165,6 +165,7 @@ struct SourceListView: View {
             }
         }
     }
+}
     
 //    // ==================== 移植到外网服务器上替换用的函数 ====================
 //        private func syncResources() async {
@@ -197,4 +198,4 @@ struct SourceListView: View {
 //                self.showErrorAlert = true
 //            }
 //        }
-}
+//}
