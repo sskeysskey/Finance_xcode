@@ -165,4 +165,36 @@ struct SourceListView: View {
             }
         }
     }
+    
+//    // ==================== 移植到外网服务器上替换用的函数 ====================
+//        private func syncResources() async {
+//            do {
+//                try await resourceManager.checkAndDownloadUpdates()
+//                viewModel.loadNews()
+//            } catch let syncError as SyncError {
+//                // We now switch on our clean, high-level error type.
+//                switch syncError {
+//                    
+//                // --- 情况1: 无需打扰用户的静默失败 ---
+//                // 这些是暂时性、环境性的问题，用户无法立即解决。
+//                // 应用应该静默失败，允许用户使用旧数据。
+//                case .serverUnreachable, .serverError, .decodingError:
+//                    print("同步静默失败: \(syncError.localizedDescription)")
+//                    // 不做任何事，不弹窗。UI会自动解锁。
+//                    // For production, you would log these errors to a remote service.
+//                    
+//                // --- 情况2: 需要告知用户的严重问题 ---
+//                // 安全问题或完全未知的错误，最好提示用户。
+//                case .securityError, .unknown:
+//                    print("同步失败，需要提示用户: \(syncError.localizedDescription)")
+//                    self.errorMessage = syncError.localizedDescription
+//                    self.showErrorAlert = true
+//                }
+//            } catch {
+//                // Catch any other error that isn't a SyncError (should be rare).
+//                print("捕获到未知的非同步错误: \(error)")
+//                self.errorMessage = "发生了一个意外错误，请重试。"
+//                self.showErrorAlert = true
+//            }
+//        }
 }
