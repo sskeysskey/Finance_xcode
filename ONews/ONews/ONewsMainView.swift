@@ -1,5 +1,12 @@
 import SwiftUI
 
+// ==================== 核心修改 1: 定义全局背景色 ====================
+extension Color {
+    // 主视图的背景色 (深灰色)
+    static let viewBackground = Color(red: 28/255, green: 28/255, blue: 30/255) // 对应 Hex: #1C1C1E
+}
+// ====================================================================
+
 @main
 struct NewsReaderAppApp: App {
     var body: some Scene {

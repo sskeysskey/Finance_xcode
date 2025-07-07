@@ -119,6 +119,9 @@ struct ArticleContainerView: View {
                 readArticleIDsInThisSession.insert(oldValue)
             }
         }
+        // ==================== 核心修改 5: 应用全局背景色 ====================
+        .background(Color.viewBackground.ignoresSafeArea())
+        // ====================================================================
     }
 
     /// 切换到下一篇文章的逻辑
