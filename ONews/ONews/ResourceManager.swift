@@ -32,7 +32,7 @@ class ResourceManager: ObservableObject {
         let configuration = URLSessionConfiguration.default
         // 设置一个较短的请求超时时间，例如10秒。
         // 如果10秒内服务器没有响应，请求就会失败，而不是等待默认的60秒。
-        configuration.timeoutIntervalForRequest = 10
+        configuration.timeoutIntervalForRequest = 5
         
         // 当网络路径不可用时（例如没有Wi-Fi/蜂窝网络），让请求立即失败，而不是等待网络恢复。
         configuration.waitsForConnectivity = false
