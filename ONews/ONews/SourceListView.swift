@@ -148,8 +148,8 @@ struct SourceListView: View {
                 // ==================== 核心修改区域 2: 扩展静默处理的错误类型 ====================
             case let urlError as URLError where
                 urlError.code == .cannotConnectToHost || // 连接被拒（IP对，服务没开）
-                urlError.code == .timedOut ||             // 请求超时（IP错，或网络差）
-                urlError.code == .notConnectedToInternet: // 设备没联网
+                urlError.code == .timedOut:             // 请求超时（IP错，或网络差）
+//                urlError.code == .notConnectedToInternet: // 设备没联网
                 
                 print("同步失败 (无法连接或超时，已静默处理): \(error.localizedDescription)")
                 // 同样不弹窗。UI会自动解锁，用户可以继续使用本地数据。
