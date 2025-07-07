@@ -21,7 +21,7 @@ class ResourceManager: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var progressText = ""
     
-    private let serverBaseURL = "http://192.168.50.147:5000/api/ONews"
+    private let serverBaseURL = "http://192.168.50.148:5000/api/ONews"
     private let fileManager = FileManager.default
     private var documentsDirectory: URL {
         fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -161,31 +161,47 @@ class ResourceManager: ObservableObject {
         for (fileIndex, remoteFilename) in fileList.enumerated() {
             self.syncMessage = "正在下载新闻图片... (\(fileIndex + 1)/\(fileList.count))"
             
-            let downloadPath = "\(directoryName)/\(remoteFilename)"
-            
-            guard var components = URLComponents(string: "\(serverBaseURL)/download") else {
-                print("❌ Invalid base URL for components")
-                continue
+            // --- 修改开始 ---
+            // 为单个文件的下载操作添加独立的 do-catch 块，以防止单个文件失败导致整个流程中断
+            do {
+                let downloadPath = "\(directoryName)/\(remoteFilename)"
+                
+                guard var components = URLComponents(string: "\(serverBaseURL)/download") else {
+                    print("❌ Invalid base URL for components")
+                    // 使用 continue 跳过当前循环的本次迭代
+                    continue
+                }
+                components.queryItems = [URLQueryItem(name: "filename", value: downloadPath)]
+                guard let url = components.url else {
+                    print("❌ Could not create final URL from components for path: \(downloadPath)")
+                    continue
+                }
+                
+                let (tempURL, response) = try await URLSession.shared.download(from: url)
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    // 如果服务器响应非200，我们同样抛出一个错误，由下面的 catch 块处理
+                    print("❌ 服务器响应错误 for \(url.absoluteString)")
+                    throw URLError(.badServerResponse)
+                }
+                
+                let destinationURL = localDirectoryURL.appendingPathComponent(remoteFilename)
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try fileManager.removeItem(at: destinationURL)
+                }
+                try fileManager.moveItem(at: tempURL, to: destinationURL)
+                
+                // 如果成功，可以打印一个成功的日志
+                // print("✅ 成功下载并保存: \(remoteFilename)")
+
+            } catch {
+                // 如果 do 块中的任何 try 操作失败，都会进入这里
+                // 打印错误信息，然后循环会自然地进入下一次迭代，而不会中断整个方法
+                print("⚠️ 下载文件 \(remoteFilename) 失败: \(error.localizedDescription)。将继续下一个文件。")
             }
-            components.queryItems = [URLQueryItem(name: "filename", value: downloadPath)]
-            guard let url = components.url else {
-                print("❌ Could not create final URL from components for path: \(downloadPath)")
-                continue
-            }
-            
-            let (tempURL, response) = try await URLSession.shared.download(from: url)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                print("❌ 服务器响应错误 for \(url.absoluteString)")
-                throw URLError(.badServerResponse)
-            }
-            
-            let destinationURL = localDirectoryURL.appendingPathComponent(remoteFilename)
-            if fileManager.fileExists(atPath: destinationURL.path) {
-                try fileManager.removeItem(at: destinationURL)
-            }
-            try fileManager.moveItem(at: tempURL, to: destinationURL)
+            // --- 修改结束 ---
         }
-        print("✅ 目录 \(directoryName) 内所有文件下载完成。")
+        
+        print("✅ 目录 \(directoryName) 内所有文件下载完成（可能存在部分失败）。")
     }
     
     private func downloadSingleFile(named filename: String) async throws {
