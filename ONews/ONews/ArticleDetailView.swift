@@ -85,7 +85,7 @@ struct ArticleDetailView: View {
                                         UIPasteboard.general.string = paragraphs[pIndex]
                                         
                                         // 2. 设置提示文字并显示提示条（带动画）
-                                        self.toastMessage = "段落已复制"
+                                        self.toastMessage = "选中段落已复制"
                                         withAnimation(.spring()) {
                                             self.showCopyToast = true
                                         }
