@@ -36,15 +36,23 @@ struct ArticleDetailView: View {
         
         let remainingImages = Array(article.images.dropFirst())
         
-        let insertionInterval = (!remainingImages.isEmpty && paragraphs.count > remainingImages.count)
-            ? (paragraphs.count / (remainingImages.count + 1))
-            : (paragraphs.count + 1)
+        // ---------- 新逻辑开始 ----------
+                // 是否走“均匀分布”分支
+                let distributeEvenly = !remainingImages.isEmpty && remainingImages.count < paragraphs.count
 
-        ScrollView {
-            Color.clear.frame(height: 1).onAppear { self.isAtTop = true }
-                .onDisappear { self.isAtTop = false }
-            
-            VStack(alignment: .leading, spacing: 16) {
+                // 均匀分布时，间隔为 paragraphs.count / (remainingImages.count + 1)
+                // 否则，插入间隔设为 1（即每个段落后都插一张）
+                let insertionInterval = distributeEvenly
+                    ? paragraphs.count / (remainingImages.count + 1)
+                    : 1
+                // ---------- 新逻辑结束 ----------
+
+                ScrollView {
+                    Color.clear.frame(height: 1) // 用于检测是否滚动到顶部
+                        .onAppear { self.isAtTop = true }
+                        .onDisappear { self.isAtTop = false }
+
+                    VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
                     // ==================== 修改点 1 of 2 ====================
                     // 调用新的格式化函数，并传入文章自己的时间戳
@@ -58,25 +66,41 @@ struct ArticleDetailView: View {
                         .font(.subheadline).foregroundColor(.gray)
                 }
                 .padding(.horizontal, 20)
-
+                // 第一张图片保持不变
                 if let firstImage = article.images.first {
                     ArticleImageView(imageName: firstImage, timestamp: article.timestamp)
                 }
-                
+
+                // 正文段落 + 插图
                 ForEach(paragraphs.indices, id: \.self) { pIndex in
                     Text(paragraphs[pIndex])
-                        .font(.custom("NewYork-Regular", size: 21)).lineSpacing(15)
-                        .padding(.horizontal, 18).textSelection(.enabled)
-                    
-                    if insertionInterval > 0 && (pIndex + 1) % insertionInterval == 0 {
-                        let imageIndexToInsert = ((pIndex + 1) / insertionInterval) - 1
+                        .font(.custom("NewYork-Regular", size: 21))
+                        .lineSpacing(15)
+                        .padding(.horizontal, 18)
+
+                    // 计算应该插入哪一张图
+                    if (pIndex + 1) % insertionInterval == 0 {
+                        let imageIndexToInsert = (pIndex + 1) / insertionInterval - 1
                         if imageIndexToInsert < remainingImages.count {
-                            ArticleImageView(imageName: remainingImages[imageIndexToInsert], timestamp: article.timestamp)
+                            ArticleImageView(
+                                imageName: remainingImages[imageIndexToInsert],
+                                timestamp: article.timestamp
+                            )
                         }
                     }
                 }
-                
-                Color.clear.frame(height: 1).onAppear { self.isAtBottom = true }
+
+                // ---------- 新增：当图片多于段落时，把多余的图片追加到末尾 ----------
+                if !distributeEvenly && remainingImages.count > paragraphs.count {
+                    let extraImages = remainingImages.dropFirst(paragraphs.count)
+                    ForEach(Array(extraImages), id: \.self) { imageName in
+                        ArticleImageView(imageName: imageName, timestamp: article.timestamp)
+                    }
+                }
+                // ------------------------------------------------------------------
+
+                Color.clear.frame(height: 1) // 用于检测是否滚动到底部
+                    .onAppear { self.isAtBottom = true }
                     .onDisappear { self.isAtBottom = false }
             }
             .padding(.vertical)
