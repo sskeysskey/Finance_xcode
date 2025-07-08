@@ -83,8 +83,8 @@ class ResourceManager: ObservableObject {
             }
             
             if filesToDownload.isEmpty {
-                syncMessage = "当前资源已经是最新的了。"
-                try await Task.sleep(nanoseconds: 1_500_000_000)
+                syncMessage = "正在更新..."
+                try await Task.sleep(nanoseconds: 1_000_000_000)
                 self.isSyncing = false
                 return
             }
