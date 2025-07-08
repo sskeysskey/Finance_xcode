@@ -20,15 +20,16 @@ struct ArticleRowCardView: View {
             }
             
             Text(article.topic)
-                .font(.system(size: 20, weight: .semibold))  // ↑ 改成更大的字体
+                .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(article.isRead ? .secondary : .primary)
                 .lineLimit(3)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // ==================== 核心修改 3: 将卡片背景改为全局背景色 ====================
-        .background(Color.viewBackground) // 不再使用 Color(.systemBackground)
+        // ==================== 核心修改 1: 减小卡片内部的垂直内边距 ====================
+        // 将 .padding(16) 改为更精确的控制，减少上下边距，使卡片更薄
+        .padding(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
         // ==========================================================================
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.viewBackground)
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
     }
@@ -72,7 +73,9 @@ struct ArticleListView: View {
                             )) {
                                 ArticleRowCardView(article: article, sourceName: nil)
                             }
-                            .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
+                            // ==================== 核心修改 2: 调整行间距，使其紧凑且一致 ====================
+                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                            // ==========================================================================
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .contextMenu {
@@ -161,7 +164,9 @@ struct AllArticlesListView: View {
                             )) {
                                 ArticleRowCardView(article: item.article, sourceName: item.sourceName)
                             }
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                            // ==================== 核心修改 3: 减小行间距，与另一个列表统一 ====================
+                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                            // ==========================================================================
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .contextMenu {
