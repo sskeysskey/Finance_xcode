@@ -59,11 +59,14 @@ struct ArticleListView: View {
         VStack {
             List {
                 ForEach(sortedTimestamps, id: \.self) { timestamp in
+                    // ==================== 修改点 ====================
+                    // 移除了 .padding(.leading)，让 List 自动处理 Header 和 Row 的对齐
                     Section(header: Text(formatTimestamp(timestamp))
                                 .font(.headline)
                                 .padding(.vertical, 4)
-                                .padding(.leading)
+                                // .padding(.leading) // <-- 此行已被移除
                     ) {
+                    // ===============================================
                         ForEach(groupedArticles[timestamp] ?? []) { article in
                             NavigationLink(destination: ArticleContainerView(
                                 article: article,
@@ -73,7 +76,7 @@ struct ArticleListView: View {
                             )) {
                                 ArticleRowCardView(article: article, sourceName: nil)
                             }
-                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                            .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .contextMenu {
@@ -148,11 +151,14 @@ struct AllArticlesListView: View {
         VStack {
             List {
                 ForEach(sortedTimestamps, id: \.self) { timestamp in
+                    // ==================== 修改点 ====================
+                    // 移除了 .padding(.leading)，让 List 自动处理 Header 和 Row 的对齐
                     Section(header: Text(formatTimestamp(timestamp))
                                 .font(.headline)
                                 .padding(.vertical, 4)
-                                .padding(.leading)
+                                // .padding(.leading) // <-- 此行已被移除
                     ) {
+                    // ===============================================
                         ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
                             NavigationLink(destination: ArticleContainerView(
                                 article: item.article,
@@ -162,7 +168,7 @@ struct AllArticlesListView: View {
                             )) {
                                 ArticleRowCardView(article: item.article, sourceName: item.sourceName)
                             }
-                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                            .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .contextMenu {
