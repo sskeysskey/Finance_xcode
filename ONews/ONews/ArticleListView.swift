@@ -20,12 +20,11 @@ struct ArticleRowCardView: View {
             }
             
             Text(article.topic)
-                .font(.headline)
-                .fontWeight(.semibold)
+                .font(.system(size: 20, weight: .semibold))  // ↑ 改成更大的字体
                 .foregroundColor(article.isRead ? .secondary : .primary)
                 .lineLimit(3)
         }
-        .padding()
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         // ==================== 核心修改 3: 将卡片背景改为全局背景色 ====================
         .background(Color.viewBackground) // 不再使用 Color(.systemBackground)
@@ -73,7 +72,7 @@ struct ArticleListView: View {
                             )) {
                                 ArticleRowCardView(article: article, sourceName: nil)
                             }
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                            .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .contextMenu {
