@@ -52,7 +52,7 @@ struct SourceListView: View {
                     }
                 }
                 .listStyle(.plain)
-                .navigationTitle("Inoreader")
+//                .navigationTitle("Inoreader")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {

@@ -12,7 +12,10 @@ struct ArticleRowCardView: View {
     let sourceName: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // ==================== 核心修改: 减小 VStack 内部的间距 ====================
+        // 将 VStack 的 spacing 从 8 改为 4，以减小来源和标题之间的垂直距离
+        VStack(alignment: .leading, spacing: 4) {
+        // ==========================================================================
             if let name = sourceName {
                 Text(name.replacingOccurrences(of: "_", with: " "))
                     .font(.caption)
@@ -24,10 +27,7 @@ struct ArticleRowCardView: View {
                 .foregroundColor(article.isRead ? .secondary : .primary)
                 .lineLimit(3)
         }
-        // ==================== 核心修改 1: 减小卡片内部的垂直内边距 ====================
-        // 将 .padding(16) 改为更精确的控制，减少上下边距，使卡片更薄
-        .padding(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
-        // ==========================================================================
+        .padding(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.viewBackground)
         .cornerRadius(12)
@@ -36,7 +36,7 @@ struct ArticleRowCardView: View {
 }
 
 
-// ==================== 优化后的 ArticleListView ====================
+// ==================== 优化后的 ArticleListView (无变化) ====================
 struct ArticleListView: View {
     let source: NewsSource
     @ObservedObject var viewModel: NewsViewModel
@@ -73,9 +73,7 @@ struct ArticleListView: View {
                             )) {
                                 ArticleRowCardView(article: article, sourceName: nil)
                             }
-                            // ==================== 核心修改 2: 调整行间距，使其紧凑且一致 ====================
                             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                            // ==========================================================================
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .contextMenu {
@@ -125,7 +123,7 @@ struct ArticleListView: View {
 }
 
 
-// ==================== 优化后的 AllArticlesListView ====================
+// ==================== 优化后的 AllArticlesListView (无变化) ====================
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @State private var filterMode: ArticleFilterMode = .unread
@@ -164,9 +162,7 @@ struct AllArticlesListView: View {
                             )) {
                                 ArticleRowCardView(article: item.article, sourceName: item.sourceName)
                             }
-                            // ==================== 核心修改 3: 减小行间距，与另一个列表统一 ====================
                             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                            // ==========================================================================
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .contextMenu {
