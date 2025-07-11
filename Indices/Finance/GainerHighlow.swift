@@ -151,13 +151,6 @@ struct CustomTabBar: View {
         }
         .frame(height: 50)
         .background(Color(.systemBackground))
-        .onAppear {
-            // loadDataIfNeeded 仅加载一次，如果需要每次都刷新，应调用 loadData()
-            // 这里我们假设数据在应用启动时已通过 MainContentView 的 onAppear 加载
-             dataService.loadDataIfNeeded()
-             // 确保 high/low 数据也被加载
-             dataService.loadData()
-        }
     }
 }
 

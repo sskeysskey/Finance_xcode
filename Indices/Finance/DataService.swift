@@ -102,18 +102,8 @@ class DataService: ObservableObject {
     @Published var symbolTimeMarkers: [String: [Date: String]] = [:]
     
     private var isDataLoaded = false
-    private var loadingTask: Task<Void, Never>?
-    private let cache = NSCache<NSString, AnyObject>()
-    
-    // MARK: - Public methods
-    func loadDataIfNeeded() {
-        guard !isDataLoaded else { return }
-        
-        loadingTask?.cancel()
-        loadingTask = Task {
-            await loadDataAsync()
-        }
-    }
+//    private var loadingTask: Task<Void, Never>?
+//    private let cache = NSCache<NSString, AnyObject>()
     
     func loadData() {
         loadMarketCapData() // <--- 修改此方法
@@ -123,15 +113,20 @@ class DataService: ObservableObject {
         loadSectorsPanel()
         loadEarningRelease()
         loadHighLowData() // 新增：调用加载 High/Low 数据的方法
+        loadCompareStock()
+        
+        isDataLoaded = true
+        print("DataService: 所有数据加载完毕。")
     }
     
     // MARK: - Private methods
     
     /// 新增：加载和解析 HighLow.txt 文件
     private func loadHighLowData() {
-        guard let url = Bundle.main.url(forResource: "HighLow", withExtension: "txt") else {
+        // MARK: - 修改
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "HighLow") else {
             DispatchQueue.main.async {
-                self.errorMessage = "HighLow.txt 文件未找到"
+                self.errorMessage = "HighLow 文件未在 Documents 中找到"
             }
             return
         }
@@ -203,29 +198,11 @@ class DataService: ObservableObject {
             }
         }
     }
-    
-    private func loadDataAsync() async {
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await self.loadCompareStockAsync() }
-        }
         
-        await MainActor.run {
-            self.isDataLoaded = true
-        }
-    }
-    
-    private func loadFromCache<T>(_ key: String) -> T? {
-        return cache.object(forKey: key as NSString) as? T
-    }
-    
-    private func saveToCache<T>(_ value: T, forKey key: String) {
-        cache.setObject(value as AnyObject, forKey: key as NSString)
-    }
-    
     private func loadEarningRelease() {
-        guard let url = Bundle.main.url(forResource: "Earnings_Release_new", withExtension: "txt") else { return }
-        do {
-            let content = try String(contentsOf: url, encoding: .utf8)
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "Earnings_Release_new") else { return }
+            do {
+                let content = try String(contentsOf: url, encoding: .utf8)
             let lines = content.split(separator: "\n")
             
             earningReleases = lines.compactMap { line -> EarningRelease? in
@@ -268,17 +245,14 @@ class DataService: ObservableObject {
         }
     }
     
-    private func loadCompareStockAsync() async {
-            if let cached: ([Stock], [Stock]) = loadFromCache("compareStock") {
-                await MainActor.run {
-                    self.topGainers = cached.0
-                    self.topLosers = cached.1
+    private func loadCompareStock() {
+            guard let url = FileManagerHelper.getLatestFileUrl(for: "CompareStock") else {
+                DispatchQueue.main.async {
+                    self.errorMessage = "CompareStock 文件未在 Documents 中找到"
                 }
                 return
             }
-            
-            guard let url = Bundle.main.url(forResource: "CompareStock", withExtension: "txt") else { return }
-            
+                
             do {
                 let content = try String(contentsOf: url, encoding: .utf8)
                 let lines = content.split(separator: "\n")
@@ -289,21 +263,21 @@ class DataService: ObservableObject {
                 let newTopGainers = topGainersLines.compactMap { parseStockLine(String($0)) }
                 let newTopLosers = topLosersLines.compactMap { parseStockLine(String($0)) }
                 
-                saveToCache((newTopGainers, newTopLosers), forKey: "compareStock")
-                await MainActor.run {
+                DispatchQueue.main.async {
                     self.topGainers = newTopGainers
                     self.topLosers = newTopLosers
                 }
             } catch {
-                await MainActor.run {
-                    self.errorMessage = "加载 CompareStock.txt 失败: \(error.localizedDescription)"
+                DispatchQueue.main.async {
+                    self.errorMessage = "加载 CompareStock 文件失败: \(error.localizedDescription)"
                 }
             }
         }
     
     private func loadSectorsPanel() {
-        guard let url = Bundle.main.url(forResource: "Sectors_panel", withExtension: "json") else {
-            DispatchQueue.main.async { self.errorMessage = "Sectors_panel.json 文件未找到" }
+        // MARK: - 修改
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "Sectors_panel") else {
+            DispatchQueue.main.async { self.errorMessage = "Sectors_panel 文件未在 Documents 中找到" }
             return
         }
         do {
@@ -316,8 +290,9 @@ class DataService: ObservableObject {
     }
     
     private func loadDescriptionData() {
-        guard let url = Bundle.main.url(forResource: "description", withExtension: "json") else {
-            self.errorMessage = "description.json 文件未找到"
+        // MARK: - 修改
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "description") else {
+            self.errorMessage = "description 文件未在 Documents 中找到"
             return
         }
         do {
@@ -363,8 +338,9 @@ class DataService: ObservableObject {
     }
     
     private func loadSectorsData() {
-        guard let url = Bundle.main.url(forResource: "Sectors_All", withExtension: "json") else {
-            self.errorMessage = "Sectors_All.json 文件未找到"
+        // MARK: - 修改
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "Sectors_All") else {
+            self.errorMessage = "Sectors_All 文件未在 Documents 中找到"
             return
         }
         do {
@@ -418,8 +394,9 @@ class DataService: ObservableObject {
     }
     
     private func loadCompareData() {
-        guard let url = Bundle.main.url(forResource: "Compare_All", withExtension: "txt") else {
-            self.errorMessage = "Compare_All.txt 文件未找到"
+        // MARK: - 修改
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "Compare_All") else {
+            self.errorMessage = "Compare_All 文件未在 Documents 中找到"
             return
         }
         do {

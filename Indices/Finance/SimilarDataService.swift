@@ -36,66 +36,71 @@ class DataService1 {
     var compareData1: [String: String] = [:]
     
     private init() {
-        loadDescriptionData1()
-        loadWeightGroups()
-        loadCompareData1()
-    }
-    
-    private func loadDescriptionData1() {
-        guard let path = Bundle.main.path(forResource: "description", ofType: "json") else {
-            print("description.json 文件未找到")
-            return
+            loadAllData()
         }
-        let url = URL(fileURLWithPath: path)
-        do {
-            let data = try Data(contentsOf: url)
-            let decoder = JSONDecoder()
-            self.descriptionData1 = try decoder.decode(DescriptionData1.self, from: data)
-        } catch {
-            print("解析 description.json 时出错: \(error)")
+        
+        // MARK: - 修改
+        // 合并加载方法
+        func loadAllData() {
+            print("DataService1: 开始加载所有数据...")
+            loadDescriptionData1()
+            loadWeightGroups()
+            loadCompareData1()
+            print("DataService1: 所有数据加载完毕。")
         }
-    }
-    
-    func loadWeightGroups() {
-        guard let path = Bundle.main.path(forResource: "tags_weight", ofType: "json") else {
-            print("tags_weight.json 文件未找到")
-            return
+        
+        private func loadDescriptionData1() {
+            guard let url = FileManagerHelper.getLatestFileUrl(for: "description") else {
+                print("DataService1: description 文件未在 Documents 中找到")
+                return
+            }
+            do {
+                let data = try Data(contentsOf: url)
+                let decoder = JSONDecoder()
+                self.descriptionData1 = try decoder.decode(DescriptionData1.self, from: data)
+            } catch {
+                print("DataService1: 解析 description 文件时出错: \(error)")
+            }
         }
-        let url = URL(fileURLWithPath: path)
-        do {
-            let data = try Data(contentsOf: url)
-            let rawData = try JSONSerialization.jsonObject(with: data, options: []) as? [String: [String]]
-            var weightGroups: [Double: [String]] = [:]
-            if let rawData = rawData {
-                for (k, v) in rawData {
-                    if let key = Double(k) {
-                        weightGroups[key] = v
+        
+        func loadWeightGroups() {
+            guard let url = FileManagerHelper.getLatestFileUrl(for: "tags_weight") else {
+                print("DataService1: tags_weight 文件未在 Documents 中找到")
+                return
+            }
+            do {
+                let data = try Data(contentsOf: url)
+                let rawData = try JSONSerialization.jsonObject(with: data, options: []) as? [String: [String]]
+                var weightGroups: [Double: [String]] = [:]
+                if let rawData = rawData {
+                    for (k, v) in rawData {
+                        if let key = Double(k) {
+                            weightGroups[key] = v
+                        }
                     }
                 }
+                self.tagsWeightConfig = weightGroups
+            } catch {
+                print("DataService1: 解析 tags_weight 文件时出错: \(error)")
             }
-            self.tagsWeightConfig = weightGroups
-        } catch {
-            print("解析 tags_weight.json 时出错: \(error)")
         }
-    }
-    
-    private func loadCompareData1() {
-        guard let path = Bundle.main.path(forResource: "Compare_All", ofType: "txt") else {
-            print("Compare_All.txt 文件未找到")
-            return
-        }
-        let url = URL(fileURLWithPath: path)
-        do {
-            let content = try String(contentsOf: url, encoding: .utf8)
-            let lines = content.split(separator: "\n")
-            for line in lines {
-                let components = line.split(separator: ":", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespaces) }
-                if components.count == 2 {
-                    compareData1[components[0]] = components[1]
+        
+        private func loadCompareData1() {
+            guard let url = FileManagerHelper.getLatestFileUrl(for: "Compare_All") else {
+                print("DataService1: Compare_All 文件未在 Documents 中找到")
+                return
+            }
+            do {
+                let content = try String(contentsOf: url, encoding: .utf8)
+                let lines = content.split(separator: "\n")
+                for line in lines {
+                    let components = line.split(separator: ":", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespaces) }
+                    if components.count == 2 {
+                        compareData1[components[0]] = components[1]
+                    }
                 }
+            } catch {
+                print("DataService1: 解析 Compare_All 文件时出错: \(error)")
             }
-        } catch {
-            print("解析 Compare_All.txt 时出错: \(error)")
         }
-    }
 }

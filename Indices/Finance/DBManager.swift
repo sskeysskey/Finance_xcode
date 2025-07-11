@@ -15,16 +15,27 @@ class DatabaseManager {
     
     private init() {
         print("=== DatabaseManager Debug ===")
-        // 首先尝试获取 bundle 中的数据库路径
-        if let dbPath = Bundle.main.path(forResource: "Finance", ofType: "db") {
-            if sqlite3_open(dbPath, &db) == SQLITE_OK {
-                print("Successfully opened database")
-            } else {
-                print("Could not open database")
+        
+        // 1. 使用 FileManagerHelper 查找最新的数据库文件。
+        //    这解决了您的第二个问题：动态读取带时间戳的数据库。
+        //    我们使用 "Finance" 作为基础名，助手函数会自动匹配 "Finance_YYMMDD.db" 格式。
+        guard let dbUrl = FileManagerHelper.getLatestFileUrl(for: "Finance") else {
+            // 如果在 Documents 目录中找不到任何数据库文件（例如首次离线启动），
+            // 则打印错误并直接返回。此时 db 属性将保持为 nil，后续的数据库查询会安全地失败（返回空数组）。
+            print("错误：在 Documents 目录中未找到任何 Finance 数据库文件。这在首次离线启动时是正常行为。")
+                return
             }
+
+        // 2. 直接从找到的 URL 打开数据库。
+        //    这里不再有任何从 App Bundle 复制的逻辑，解决了您的第一个问题。
+        if sqlite3_open(dbUrl.path, &db) == SQLITE_OK {
+            print("成功从 Documents 目录打开数据库: \(dbUrl.lastPathComponent)")
         } else {
-            print("Database file not found")
+            // 如果打开失败，打印更详细的 SQLite 错误信息
+            let errorMessage = String(cString: sqlite3_errmsg(db))
+            print("无法从 Documents 目录打开数据库: \(dbUrl.lastPathComponent)。错误: \(errorMessage)")
         }
+        // MARK: - 修改结束
     }
     
     deinit {
@@ -40,6 +51,12 @@ class DatabaseManager {
     
     // 新增方法：从指定表（如 MNSPP）中获取所有市值相关数据
     func fetchAllMarketCapData(from tableName: String) -> [MarketCapInfo] {
+        // 在执行任何查询前，先检查数据库连接是否有效
+        guard db != nil else {
+            print("数据库连接无效，无法执行 fetchAllMarketCapData。")
+            return []
+        }
+        
         var results: [MarketCapInfo] = []
         // 注意：您的表名是 "MNSPP "，末尾有一个空格，这里需要精确匹配。如果实际表名没有空格，请移除它。
         let query = "SELECT symbol, marketcap, pe_ratio, pb FROM \"\(tableName)\""
@@ -77,6 +94,7 @@ class DatabaseManager {
     
     // 新增的方法：获取特定 ETF 的最新 volume
     func fetchLatestVolume(forSymbol symbol: String, tableName: String) -> Int64? {
+        guard db != nil else { return nil }
         let query = "SELECT volume FROM \(tableName) WHERE name = ? ORDER BY date DESC LIMIT 1"
         var statement: OpaquePointer?
         var latestVolume: Int64? = nil
@@ -103,6 +121,7 @@ class DatabaseManager {
         tableName: String,
         dateRange: DateRangeInput
     ) -> [PriceData] {
+        guard db != nil else { return [] }
         var result: [PriceData] = []
         let dateFormat = "yyyy-MM-dd"
         
@@ -161,6 +180,7 @@ class DatabaseManager {
     }
 
     func fetchEarningData(forSymbol symbol: String) -> [EarningData] {
+        guard db != nil else { return [] }
         var result: [EarningData] = []
         let dateFormat = "yyyy-MM-dd"
         let formatter = DateFormatter()
@@ -192,6 +212,7 @@ class DatabaseManager {
     
     // 添加辅助方法来检查表是否包含 volume 列
     private func checkIfTableHasVolume(tableName: String) -> Bool {
+        guard db != nil else { return false }
         var hasVolume = false
         var statement: OpaquePointer?
         
