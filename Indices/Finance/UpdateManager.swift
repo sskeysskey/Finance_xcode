@@ -58,15 +58,17 @@ class UpdateManager: ObservableObject {
         return localVersion == nil || localVersion == "0.0"
     }
     
-    // MARK: - 修改: 根据新的错误处理逻辑重构
     func checkForUpdates(isManual: Bool = false) async -> Bool {
-        if case .checking = updateState { return false }
+        if case .checking = updateState, !isManual { return false } // 避免后台任务重入
         if case .downloading = updateState { return false }
         
-        // MARK: - 修改 1: 仅在手动或非首次启动时显示“检查中”
-        // 首次启动时，让检查在后台静默进行，不打扰用户
         if isManual || !isInitialLoad {
             self.updateState = .checking
+            
+            // MARK: - 此处为核心修改
+            // 给予UI线程一个极短的喘息时间来渲染“.checking”状态，
+            // 然后再开始执行耗时的网络请求。这能确保用户点击后立即看到状态反馈。
+            try? await Task.sleep(for: .milliseconds(1))
         }
         
         print("开始检查更新... (手动触发: \(isManual), 首次启动: \(isInitialLoad))")
@@ -109,25 +111,20 @@ class UpdateManager: ObservableObject {
         case .failure(let errorType):
             switch errorType {
             case .clientOffline:
-                // 用户设备没联网或自身网络问题时，保持安静，不弹窗
                 print("检查更新失败：客户端离线。")
                 self.updateState = .idle
                 
-            // MARK: - 修改 2: 恢复对首次启动时服务器错误的静默处理
             case .serverUnreachable(let message):
-                // 如果是首次启动，服务器连不上是可接受的，不应打扰用户
                 if isInitialLoad {
                     print("首次启动网络检查失败，属正常情况，已忽略错误提示。")
-                    self.updateState = .idle // 保持静默
+                    self.updateState = .idle
                 } else {
-                    // 对于非首次启动的用户，需要提示他们服务器有问题
                     print("检查更新失败：服务器无法访问。错误: \(message)")
                     self.updateState = .error(message: "无法连接到服务器。")
                     resetStateAfterDelay()
                 }
                 
             case .decodingFailed(let message):
-                // 服务器返回数据格式错误，弹窗提示
                 print("检查更新失败：数据解析失败。错误: \(message)")
                 self.updateState = .error(message: "服务器异常...请重启客户端尝试")
                 resetStateAfterDelay()
@@ -145,7 +142,6 @@ class UpdateManager: ObservableObject {
         }
     }
     
-    // MARK: - 修改: 详细区分网络错误类型
     private func fetchServerVersion() async -> ServerVersionResult {
         guard let url = URL(string: "\(serverBaseURL)/check_version") else {
             return .failure(.decodingFailed("无效的URL"))
@@ -159,35 +155,28 @@ class UpdateManager: ObservableObject {
             let decodedResponse = try JSONDecoder().decode(VersionResponse.self, from: data)
             return .success(decodedResponse)
         } catch {
-            // 检查错误的具体类型
             if let urlError = error as? URLError {
                 switch urlError.code {
                 case .notConnectedToInternet, .networkConnectionLost:
-                    // 这些是客户端网络问题，应静默处理.
                     print("网络错误：设备未连接到互联网。")
                     return .failure(.clientOffline)
                 case .cannotFindHost, .cannotConnectToHost, .timedOut:
-                    // 这些是服务器端问题，应提示用户.
                     print("网络错误：无法连接到主机或请求超时。 \(urlError.localizedDescription)")
                     return .failure(.serverUnreachable(urlError.localizedDescription))
                 default:
-                    // 其他URL错误也归为服务器问题
                     print("未分类的URL错误: \(urlError.localizedDescription)")
                     return .failure(.serverUnreachable(urlError.localizedDescription))
                 }
             } else if error is DecodingError {
-                // JSON解析失败
                 print("数据解析错误: \(error.localizedDescription)")
                 return .failure(.decodingFailed(error.localizedDescription))
             } else {
-                // 其他未知错误
                 print("未知网络错误: \(error.localizedDescription)")
                 return .failure(.serverUnreachable(error.localizedDescription))
             }
         }
     }
     
-    // ... downloadFiles, downloadFile, cleanupOldFiles 方法保持不变 ...
     private func downloadFiles(from versionResponse: VersionResponse) async -> Bool {
         let filesToDownload = versionResponse.files
         let totalFiles = filesToDownload.count
