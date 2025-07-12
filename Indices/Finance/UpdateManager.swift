@@ -24,7 +24,7 @@ enum UpdateState: Equatable {
     case error(message: String)
 }
 
-// MARK: - 新增: 用于区分网络错误类型的枚举
+// MARK: - 网络错误类型枚举 (无修改)
 enum NetworkErrorType {
     /// 客户端网络问题 (例如，未连接到互联网)
     case clientOffline
@@ -34,7 +34,7 @@ enum NetworkErrorType {
     case decodingFailed(String)
 }
 
-// MARK: - 新增: 用于 fetchServerVersion 的返回结果枚举
+// MARK: - fetchServerVersion 的返回结果枚举 (无修改)
 enum ServerVersionResult {
     case success(VersionResponse)
     case failure(NetworkErrorType)
@@ -59,19 +59,15 @@ class UpdateManager: ObservableObject {
     }
     
     func checkForUpdates(isManual: Bool = false) async -> Bool {
-        if case .checking = updateState, !isManual { return false } // 避免后台任务重入
+        if case .checking = updateState, !isManual { return false }
         if case .downloading = updateState { return false }
         
-        if isManual || !isInitialLoad {
+        if isManual { // 仅在手动检查时立即显示 "checking"
             self.updateState = .checking
-            
-            // MARK: - 此处为核心修改
-            // 给予UI线程一个极短的喘息时间来渲染“.checking”状态，
-            // 然后再开始执行耗时的网络请求。这能确保用户点击后立即看到状态反馈。
             try? await Task.sleep(for: .milliseconds(1))
         }
         
-        print("开始检查更新... (手动触发: \(isManual), 首次启动: \(isInitialLoad))")
+        print("开始检查更新... (手动触发: \(isManual))")
         
         let result = await fetchServerVersion()
         
@@ -108,26 +104,27 @@ class UpdateManager: ObservableObject {
                 return false
             }
 
+        // MARK: - 核心修改部分
+        // 这里是实现您需求的关键
         case .failure(let errorType):
-            switch errorType {
-            case .clientOffline:
-                print("检查更新失败：客户端离线。")
-                self.updateState = .idle
-                
-            case .serverUnreachable(let message):
-                if isInitialLoad {
-                    print("首次启动网络检查失败，属正常情况，已忽略错误提示。")
-                    self.updateState = .idle
-                } else {
-                    print("检查更新失败：服务器无法访问。错误: \(message)")
-                    self.updateState = .error(message: "无法连接到服务器。")
-                    resetStateAfterDelay()
+            // 只有在用户“手动”刷新时，才显示网络相关的错误提示
+            if isManual {
+                let errorMessage: String
+                switch errorType {
+                case .clientOffline:
+                    errorMessage = "网络未连接，请检查设置。"
+                case .serverUnreachable:
+                    errorMessage = "无法连接到服务器。"
+                case .decodingFailed:
+                    errorMessage = "服务器响应异常，请稍后重试。"
                 }
-                
-            case .decodingFailed(let message):
-                print("检查更新失败：数据解析失败。错误: \(message)")
-                self.updateState = .error(message: "服务器异常...请重启客户端尝试")
+                print("手动检查更新失败: \(errorMessage)")
+                self.updateState = .error(message: errorMessage)
                 resetStateAfterDelay()
+            } else {
+                // 如果是应用启动时的“自动”检查，则静默失败，不打扰用户
+                print("后台自动检查更新失败，已静默处理。错误: \(errorType)")
+                self.updateState = .idle // 直接重置状态，UI上不会有任何提示
             }
             return false
         }
