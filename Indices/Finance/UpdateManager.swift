@@ -12,14 +12,13 @@ struct FileInfo: Codable, Hashable {
     let type: String
 }
 
-// MARK: - 更新状态
-// MARK: 修改 - 拆分 finished 状态，使其更具体
+// MARK: - 更新状态 (无修改)
 enum UpdateState: Equatable {
     case idle
     case checking
     case downloading(progress: Double, total: Int)
-    case updateCompleted // 替代原来的 finished，表示更新成功
-    case alreadyUpToDate // 新增状态，表示已是最新
+    case updateCompleted
+    case alreadyUpToDate
     case error(message: String)
 }
 
@@ -35,19 +34,36 @@ class UpdateManager: ObservableObject {
     
     private init() {}
     
+    // MARK: - 新增辅助属性
+    /// 检查本地是否已存在数据版本。如果版本号为 nil 或 "0.0"，则认为是首次加载。
+    private var isInitialLoad: Bool {
+        let localVersion = UserDefaults.standard.string(forKey: localVersionKey)
+        return localVersion == nil || localVersion == "0.0"
+    }
+    
     func checkForUpdates() async -> Bool {
-        guard updateState != .checking && updateState != .downloading(progress: 0, total: 0) else {
-            print("正在进行更新，请勿重复操作。")
-            return false
-        }
+        // 确保在 .checking 或 .downloading 状态时不会重复触发
+        // 注意：这里对 downloading 的比较需要更精确
+        if case .checking = updateState { return false }
+        if case .downloading = updateState { return false }
         
         self.updateState = .checking
         print("开始检查更新...")
         
         guard let serverVersionResponse = await fetchServerVersion() else {
-            let errorMessage = "无法获取服务器版本信息。"
-            self.updateState = .error(message: errorMessage)
-            resetStateAfterDelay() // 错误提示自动消失
+            // MARK: - 修改点
+            // 如果获取服务器版本失败，先判断是否为首次启动
+            if isInitialLoad {
+                // 如果是首次启动，网络失败是预期行为（可能在等待授权），不应显示错误。
+                // 我们静默地将状态重置为 idle，然后返回 false。
+                print("首次启动网络检查失败，属正常情况，已忽略错误提示。")
+                self.updateState = .idle
+            } else {
+                // 如果不是首次启动，说明是真的网络问题或服务器问题，此时应提示用户。
+                let errorMessage = "无法获取服务器版本信息。"
+                self.updateState = .error(message: errorMessage)
+                resetStateAfterDelay() // 错误提示自动消失
+            }
             return false
         }
         
@@ -62,24 +78,25 @@ class UpdateManager: ObservableObject {
                 cleanupOldFiles(keeping: serverVersionResponse.files)
                 UserDefaults.standard.set(serverVersionResponse.version, forKey: localVersionKey)
                 print("本地版本已更新至: \(serverVersionResponse.version)")
-                self.updateState = .updateCompleted // MARK: 修改 - 设置为更新完成状态
-                resetStateAfterDelay() // 提示自动消失
+                self.updateState = .updateCompleted
+                resetStateAfterDelay()
                 return true
             } else {
                 let errorMessage = "文件下载失败。"
                 self.updateState = .error(message: errorMessage)
-                resetStateAfterDelay() // 错误提示自动消失
+                resetStateAfterDelay()
                 return false
             }
         } else {
             print("当前已是最新版本。")
-            self.updateState = .alreadyUpToDate // MARK: 修改 - 设置为已是最新状态
-            resetStateAfterDelay() // 提示自动消失
+            self.updateState = .alreadyUpToDate
+            resetStateAfterDelay()
+            // 注意：这里返回 false 表示没有进行“更新”操作，但流程是成功的。
+            // 在调用方，无论返回 true/false，都应该继续加载本地数据。
             return false
         }
     }
     
-    // MARK: 新增 - 辅助函数，用于在短暂延迟后将状态重置为 idle
     private func resetStateAfterDelay(seconds: TimeInterval = 2) {
         Task {
             try? await Task.sleep(for: .seconds(seconds))
@@ -93,7 +110,11 @@ class UpdateManager: ObservableObject {
         guard let url = URL(string: "\(serverBaseURL)/check_version") else { return nil }
         
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            // 设置一个合理的超时时间，例如10秒
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 10
+            
+            let (data, _) = try await URLSession.shared.data(for: request)
             let decodedResponse = try JSONDecoder().decode(VersionResponse.self, from: data)
             return decodedResponse
         } catch {
@@ -102,6 +123,7 @@ class UpdateManager: ObservableObject {
         }
     }
     
+    // ... downloadFiles, downloadFile, cleanupOldFiles 方法保持不变 ...
     private func downloadFiles(from versionResponse: VersionResponse) async -> Bool {
         let filesToDownload = versionResponse.files
         let totalFiles = filesToDownload.count
@@ -140,7 +162,10 @@ class UpdateManager: ObservableObject {
         
         do {
             print("正在下载: \(filename)")
-            let (data, _) = try await URLSession.shared.data(from: url)
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 60 // 给文件下载更长的超时时间
+            
+            let (data, _) = try await URLSession.shared.data(for: request)
             
             let destinationURL = FileManagerHelper.documentsDirectory.appendingPathComponent(filename)
             try data.write(to: destinationURL)
@@ -190,6 +215,7 @@ class UpdateManager: ObservableObject {
     }
 }
 
+// ... FileManagerHelper 保持不变 ...
 class FileManagerHelper {
     
     static var documentsDirectory: URL {
