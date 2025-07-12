@@ -330,10 +330,16 @@ struct IndicesContentView: View {
 
 struct LoadingView: View {
     var body: some View {
-        VStack {
-            ProgressView("加载中，请稍候...")
+        VStack(spacing: 16) {
+            // 圆形进度指示器
+            ProgressView()
                 .progressViewStyle(CircularProgressViewStyle(tint: .blue))
-                .scaleEffect(1.5, anchor: .center)
+                .scaleEffect(1.5)
+            
+            // 独立出来的文字，居中对齐
+            Text("服务器连接异常\n请点击右上角刷新↻按钮...")
+                .multilineTextAlignment(.center)
+                .foregroundColor(.primary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))
