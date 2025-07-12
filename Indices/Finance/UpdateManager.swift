@@ -1,3 +1,5 @@
+// /Users/yanzhang/Documents/Xcode/Indices/Finance/UpdateManager.swift
+
 import Foundation
 import SwiftUI
 
@@ -34,35 +36,27 @@ class UpdateManager: ObservableObject {
     
     private init() {}
     
-    // MARK: - 新增辅助属性
-    /// 检查本地是否已存在数据版本。如果版本号为 nil 或 "0.0"，则认为是首次加载。
     private var isInitialLoad: Bool {
         let localVersion = UserDefaults.standard.string(forKey: localVersionKey)
         return localVersion == nil || localVersion == "0.0"
     }
     
-    func checkForUpdates() async -> Bool {
-        // 确保在 .checking 或 .downloading 状态时不会重复触发
-        // 注意：这里对 downloading 的比较需要更精确
+    // MARK: - 修改 1: 为函数添加 isManual 参数，并提供默认值
+    func checkForUpdates(isManual: Bool = false) async -> Bool {
         if case .checking = updateState { return false }
         if case .downloading = updateState { return false }
         
         self.updateState = .checking
-        print("开始检查更新...")
+        print("开始检查更新... (手动触发: \(isManual))")
         
         guard let serverVersionResponse = await fetchServerVersion() else {
-            // MARK: - 修改点
-            // 如果获取服务器版本失败，先判断是否为首次启动
             if isInitialLoad {
-                // 如果是首次启动，网络失败是预期行为（可能在等待授权），不应显示错误。
-                // 我们静默地将状态重置为 idle，然后返回 false。
                 print("首次启动网络检查失败，属正常情况，已忽略错误提示。")
                 self.updateState = .idle
             } else {
-                // 如果不是首次启动，说明是真的网络问题或服务器问题，此时应提示用户。
                 let errorMessage = "无法获取服务器版本信息。"
                 self.updateState = .error(message: errorMessage)
-                resetStateAfterDelay() // 错误提示自动消失
+                resetStateAfterDelay()
             }
             return false
         }
@@ -89,10 +83,14 @@ class UpdateManager: ObservableObject {
             }
         } else {
             print("当前已是最新版本。")
-            self.updateState = .alreadyUpToDate
-            resetStateAfterDelay()
-            // 注意：这里返回 false 表示没有进行“更新”操作，但流程是成功的。
-            // 在调用方，无论返回 true/false，都应该继续加载本地数据。
+            // MARK: - 修改 2: 仅在手动刷新时显示“已是最新”提示
+            if isManual {
+                self.updateState = .alreadyUpToDate
+                resetStateAfterDelay()
+            } else {
+                // 如果是自动检查，则静默地重置状态，不打扰用户
+                self.updateState = .idle
+            }
             return false
         }
     }
@@ -110,7 +108,6 @@ class UpdateManager: ObservableObject {
         guard let url = URL(string: "\(serverBaseURL)/check_version") else { return nil }
         
         do {
-            // 设置一个合理的超时时间，例如10秒
             var request = URLRequest(url: url)
             request.timeoutInterval = 10
             
@@ -163,7 +160,7 @@ class UpdateManager: ObservableObject {
         do {
             print("正在下载: \(filename)")
             var request = URLRequest(url: url)
-            request.timeoutInterval = 60 // 给文件下载更长的超时时间
+            request.timeoutInterval = 60
             
             let (data, _) = try await URLSession.shared.data(for: request)
             

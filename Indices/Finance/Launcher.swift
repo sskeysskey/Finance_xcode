@@ -1,3 +1,5 @@
+// /Users/yanzhang/Documents/Xcode/Indices/Finance/Launcher.swift
+
 import SwiftUI
 import Foundation
 
@@ -10,7 +12,7 @@ struct Finance: App {
     }
 }
 
-// MARK: - 修改：更新状态视图以处理新状态
+// MARK: - 修改：更新状态视图以处理新状态 (无修改)
 struct UpdateOverlayView: View {
     @ObservedObject var updateManager: UpdateManager
 
@@ -33,11 +35,9 @@ struct UpdateOverlayView: View {
                 .cornerRadius(10)
                 .shadow(radius: 10)
                 
-            // MARK: 新增 - 处理“已是最新”状态
             case .alreadyUpToDate:
                 StatusView(icon: "checkmark.circle.fill", iconColor: .green, message: "当前已是最新版本")
 
-            // MARK: 新增 - 处理“更新完成”状态
             case .updateCompleted:
                 StatusView(icon: "arrow.down.circle.fill", iconColor: .blue, message: "更新完成")
 
@@ -57,7 +57,7 @@ struct UpdateOverlayView: View {
     }
 }
 
-// MARK: - 新增：可重用的状态提示视图
+// MARK: - 新增：可重用的状态提示视图 (无修改)
 struct StatusView: View {
     let icon: String?
     var iconColor: Color = .secondary
@@ -102,20 +102,17 @@ struct MainContentView: View {
             NavigationStack {
                 VStack(spacing: 0) {
                     if isDataReady {
-                        // ... 内容视图 (无修改) ...
                         IndicesContentView()
                             .frame(maxHeight: .infinity, alignment: .top)
                         
                         Divider()
                         
-                        // 2. 中部：搜索框
                         SearchContentView()
                             .frame(height: 60)
                             .padding(.vertical, 10)
                         
                         Divider()
                         
-                        // 3. 下部：自定义标签栏
                         TopContentView()
                             .frame(height: 60)
                             .background(Color(.systemBackground))
@@ -132,7 +129,8 @@ struct MainContentView: View {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(action: {
                             Task {
-                                if await updateManager.checkForUpdates() {
+                                // MARK: - 修改 1: 手动刷新时，传递 isManual: true
+                                if await updateManager.checkForUpdates(isManual: true) {
                                     DatabaseManager.shared.reconnectToLatestDatabase()
                                     dataService.loadData()
                                 }
@@ -148,7 +146,8 @@ struct MainContentView: View {
             .onAppear {
                 if !isDataReady {
                     Task {
-                        if await updateManager.checkForUpdates() {
+                        // MARK: - 修改 2: 启动时自动检查，传递 isManual: false
+                        if await updateManager.checkForUpdates(isManual: false) {
                             DatabaseManager.shared.reconnectToLatestDatabase()
                         }
                         
