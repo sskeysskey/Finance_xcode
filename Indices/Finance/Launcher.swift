@@ -88,12 +88,9 @@ struct MainContentView: View {
     @StateObject private var updateManager = UpdateManager.shared
     @State private var isDataReady = false
 
-    // MARK: - 此处为核心修改
+    // 判断更新流程是否在进行中，用来 disable 刷新按钮
     private var isUpdateInProgress: Bool {
-        // 只要更新管理器的状态不是“空闲”，就认为更新流程正在进行中。
-        // 这会确保按钮在检查、下载、显示结果（成功/失败）的整个过程中都保持禁用，
-        // 直到状态被重置回 .idle 为止。
-        return updateManager.updateState != .idle
+        updateManager.updateState != .idle
     }
 
     var body: some View {
@@ -103,22 +100,18 @@ struct MainContentView: View {
                     if isDataReady {
                         IndicesContentView()
                             .frame(maxHeight: .infinity, alignment: .top)
-                        
                         Divider()
-                        
                         SearchContentView()
                             .frame(height: 60)
                             .padding(.vertical, 10)
-                        
                         Divider()
-                        
                         TopContentView()
                             .frame(height: 60)
                             .background(Color(.systemBackground))
                     } else {
                         VStack {
                             Spacer()
-                            ProgressView("正在准备数据...")
+                            ProgressView("正在准备数据…")
                             Spacer()
                         }
                     }
@@ -126,15 +119,15 @@ struct MainContentView: View {
                 .navigationBarTitle("经济数据与搜索", displayMode: .inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button(action: {
+                        Button {
                             Task {
-                                // 手动刷新时，等待检查更新流程完成
+                                // 手动检查更新时，要等整个流程完成才重新 loadData
                                 if await updateManager.checkForUpdates(isManual: true) {
                                     DatabaseManager.shared.reconnectToLatestDatabase()
                                     dataService.loadData()
                                 }
                             }
-                        }) {
+                        } label: {
                             Image(systemName: "arrow.clockwise")
                         }
                         .disabled(isUpdateInProgress)
@@ -143,22 +136,38 @@ struct MainContentView: View {
             }
             .environmentObject(dataService)
             .onAppear {
-                if !isDataReady {
-                    // 立即加载数据并准备UI，让用户能立刻看到主界面
+                // 先检查本地是否已有 description.json
+                let hasLocalDescription = FileManagerHelper.getLatestFileUrl(for: "description") != nil
+
+                if !hasLocalDescription {
+                    // 首次启动，Documents 里没有任何数据文件
+                    // 先执行一次「同步」更新
+                    Task {
+                        let updated = await updateManager.checkForUpdates(isManual: false)
+                        if updated {
+                            DatabaseManager.shared.reconnectToLatestDatabase()
+                        }
+                        // 不管更新是否成功，都尝试加载（如果更新失败，则可能依然无本地数据，界面会报错）
+                        dataService.loadData()
+                        isDataReady = true
+                    }
+                } else {
+                    // 已经有本地数据，立即加载并展示
                     dataService.loadData()
                     isDataReady = true
 
-                    // 将检查更新放入一个独立的后台任务，不阻塞UI
+                    // 后台异步发起一次更新
                     Task {
                         if await updateManager.checkForUpdates(isManual: false) {
-                            // 如果后台检查发现并成功下载了更新，则刷新数据
+                            // 如果更新成功，重新打开 DB，reload 本地数据
                             DatabaseManager.shared.reconnectToLatestDatabase()
                             dataService.loadData()
                         }
                     }
                 }
             }
-            
+
+            // 更新状态浮层
             UpdateOverlayView(updateManager: updateManager)
         }
     }
