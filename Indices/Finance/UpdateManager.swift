@@ -214,7 +214,7 @@ class UpdateManager: ObservableObject {
         }
         
         do {
-            print("正在下载: \(filename)")
+            print("正在下载最新数据: \(filename)")
             var request = URLRequest(url: url)
             request.timeoutInterval = 60
             
