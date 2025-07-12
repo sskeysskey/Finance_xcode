@@ -24,6 +24,23 @@ enum UpdateState: Equatable {
     case error(message: String)
 }
 
+// MARK: - 新增: 用于区分网络错误类型的枚举
+enum NetworkErrorType {
+    /// 客户端网络问题 (例如，未连接到互联网)
+    case clientOffline
+    /// 服务器无法访问 (例如，IP错误、服务器关闭、超时)
+    case serverUnreachable(String)
+    /// 数据解析失败 (例如，服务器返回了无效的JSON)
+    case decodingFailed(String)
+}
+
+// MARK: - 新增: 用于 fetchServerVersion 的返回结果枚举
+enum ServerVersionResult {
+    case success(VersionResponse)
+    case failure(NetworkErrorType)
+}
+
+
 // MARK: - UpdateManager
 @MainActor
 class UpdateManager: ObservableObject {
@@ -31,7 +48,7 @@ class UpdateManager: ObservableObject {
     
     @Published var updateState: UpdateState = .idle
     
-    private let serverBaseURL = "http://192.168.50.148:5000/api/Finance"
+    private let serverBaseURL = "http://192.168.50.247:5000/api/Finance"
     private let localVersionKey = "FinanceAppLocalDataVersion"
     
     private init() {}
@@ -41,7 +58,7 @@ class UpdateManager: ObservableObject {
         return localVersion == nil || localVersion == "0.0"
     }
     
-    // MARK: - 修改 1: 为函数添加 isManual 参数，并提供默认值
+    // MARK: - 修改: 根据新的错误处理逻辑重构
     func checkForUpdates(isManual: Bool = false) async -> Bool {
         if case .checking = updateState { return false }
         if case .downloading = updateState { return false }
@@ -49,47 +66,64 @@ class UpdateManager: ObservableObject {
         self.updateState = .checking
         print("开始检查更新... (手动触发: \(isManual))")
         
-        guard let serverVersionResponse = await fetchServerVersion() else {
-            if isInitialLoad {
-                print("首次启动网络检查失败，属正常情况，已忽略错误提示。")
-                self.updateState = .idle
-            } else {
-                let errorMessage = "无法获取服务器版本信息。"
-                self.updateState = .error(message: errorMessage)
-                resetStateAfterDelay()
-            }
-            return false
-        }
+        let result = await fetchServerVersion()
         
-        let localVersion = UserDefaults.standard.string(forKey: localVersionKey) ?? "0.0"
-        print("服务器版本: \(serverVersionResponse.version), 本地版本: \(localVersion)")
-        
-        if serverVersionResponse.version.compare(localVersion, options: .numeric) == .orderedDescending {
-            print("发现新版本，开始下载文件...")
-            let downloadSuccess = await downloadFiles(from: serverVersionResponse)
-            if downloadSuccess {
-                print("所有文件下载成功。")
-                cleanupOldFiles(keeping: serverVersionResponse.files)
-                UserDefaults.standard.set(serverVersionResponse.version, forKey: localVersionKey)
-                print("本地版本已更新至: \(serverVersionResponse.version)")
-                self.updateState = .updateCompleted
-                resetStateAfterDelay()
-                return true
+        switch result {
+        case .success(let serverVersionResponse):
+            let localVersion = UserDefaults.standard.string(forKey: localVersionKey) ?? "0.0"
+            print("服务器版本: \(serverVersionResponse.version), 本地版本: \(localVersion)")
+            
+            if serverVersionResponse.version.compare(localVersion, options: .numeric) == .orderedDescending {
+                print("发现新版本，开始下载文件...")
+                let downloadSuccess = await downloadFiles(from: serverVersionResponse)
+                if downloadSuccess {
+                    print("所有文件下载成功。")
+                    cleanupOldFiles(keeping: serverVersionResponse.files)
+                    UserDefaults.standard.set(serverVersionResponse.version, forKey: localVersionKey)
+                    print("本地版本已更新至: \(serverVersionResponse.version)")
+                    self.updateState = .updateCompleted
+                    resetStateAfterDelay()
+                    return true
+                } else {
+                    let errorMessage = "文件下载失败。"
+                    self.updateState = .error(message: errorMessage)
+                    resetStateAfterDelay()
+                    return false
+                }
             } else {
-                let errorMessage = "文件下载失败。"
-                self.updateState = .error(message: errorMessage)
-                resetStateAfterDelay()
+                print("当前已是最新版本。")
+                if isManual {
+                    self.updateState = .alreadyUpToDate
+                    resetStateAfterDelay()
+                } else {
+                    self.updateState = .idle
+                }
                 return false
             }
-        } else {
-            print("当前已是最新版本。")
-            // MARK: - 修改 2: 仅在手动刷新时显示“已是最新”提示
-            if isManual {
-                self.updateState = .alreadyUpToDate
-                resetStateAfterDelay()
-            } else {
-                // 如果是自动检查，则静默地重置状态，不打扰用户
+
+        case .failure(let errorType):
+            switch errorType {
+            case .clientOffline:
+                // 用户设备没联网或自身网络问题时，保持安静，不弹窗
+                print("检查更新失败：客户端离线。")
                 self.updateState = .idle
+                
+            case .serverUnreachable(let message):
+                // 服务器问题，且不是首次启动时，弹窗提示
+                if isInitialLoad {
+                    print("首次启动网络检查失败，属正常情况，已忽略错误提示。")
+                    self.updateState = .idle
+                } else {
+                    print("检查更新失败：服务器无法访问。错误: \(message)")
+                    self.updateState = .error(message: "无法连接到服务器。")
+                    resetStateAfterDelay()
+                }
+                
+            case .decodingFailed(let message):
+                // 服务器返回数据格式错误，弹窗提示
+                print("检查更新失败：数据解析失败。错误: \(message)")
+                self.updateState = .error(message: "连接异常...请重启客户端尝试")
+                resetStateAfterDelay()
             }
             return false
         }
@@ -104,19 +138,45 @@ class UpdateManager: ObservableObject {
         }
     }
     
-    private func fetchServerVersion() async -> VersionResponse? {
-        guard let url = URL(string: "\(serverBaseURL)/check_version") else { return nil }
+    // MARK: - 修改: 详细区分网络错误类型
+    private func fetchServerVersion() async -> ServerVersionResult {
+        guard let url = URL(string: "\(serverBaseURL)/check_version") else {
+            return .failure(.decodingFailed("无效的URL"))
+        }
         
         do {
             var request = URLRequest(url: url)
-            request.timeoutInterval = 10
+            request.timeoutInterval = 5
             
             let (data, _) = try await URLSession.shared.data(for: request)
             let decodedResponse = try JSONDecoder().decode(VersionResponse.self, from: data)
-            return decodedResponse
+            return .success(decodedResponse)
         } catch {
-            print("获取或解析版本文件失败: \(error)")
-            return nil
+            // 检查错误的具体类型
+            if let urlError = error as? URLError {
+                switch urlError.code {
+                case .notConnectedToInternet, .networkConnectionLost:
+                    // 这些是客户端网络问题，应静默处理. [1, 6]
+                    print("网络错误：设备未连接到互联网。")
+                    return .failure(.clientOffline)
+                case .cannotFindHost, .cannotConnectToHost, .timedOut:
+                    // 这些是服务器端问题，应提示用户. [2, 8]
+                    print("网络错误：无法连接到主机或请求超时。 \(urlError.localizedDescription)")
+                    return .failure(.serverUnreachable(urlError.localizedDescription))
+                default:
+                    // 其他URL错误也归为服务器问题
+                    print("未分类的URL错误: \(urlError.localizedDescription)")
+                    return .failure(.serverUnreachable(urlError.localizedDescription))
+                }
+            } else if error is DecodingError {
+                // JSON解析失败
+                print("数据解析错误: \(error.localizedDescription)")
+                return .failure(.decodingFailed(error.localizedDescription))
+            } else {
+                // 其他未知错误
+                print("未知网络错误: \(error.localizedDescription)")
+                return .failure(.serverUnreachable(error.localizedDescription))
+            }
         }
     }
     
