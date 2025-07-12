@@ -122,7 +122,7 @@ class UpdateManager: ObservableObject {
             case .decodingFailed(let message):
                 // 服务器返回数据格式错误，弹窗提示
                 print("检查更新失败：数据解析失败。错误: \(message)")
-                self.updateState = .error(message: "连接异常...请重启客户端尝试")
+                self.updateState = .error(message: "服务器异常...请重启客户端尝试")
                 resetStateAfterDelay()
             }
             return false
