@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-// MARK: - 数据模型
+// MARK: - 数据模型 (无修改)
 struct VersionResponse: Codable {
     let version: String
     let files: [FileInfo]
@@ -13,12 +13,13 @@ struct FileInfo: Codable, Hashable {
 }
 
 // MARK: - 更新状态
-// MARK: 修改 - 添加 Equatable 协议，以便在视图中进行比较
+// MARK: 修改 - 拆分 finished 状态，使其更具体
 enum UpdateState: Equatable {
     case idle
     case checking
     case downloading(progress: Double, total: Int)
-    case finished
+    case updateCompleted // 替代原来的 finished，表示更新成功
+    case alreadyUpToDate // 新增状态，表示已是最新
     case error(message: String)
 }
 
@@ -35,7 +36,6 @@ class UpdateManager: ObservableObject {
     private init() {}
     
     func checkForUpdates() async -> Bool {
-        // 防止在检查或下载过程中重复触发
         guard updateState != .checking && updateState != .downloading(progress: 0, total: 0) else {
             print("正在进行更新，请勿重复操作。")
             return false
@@ -44,27 +44,16 @@ class UpdateManager: ObservableObject {
         self.updateState = .checking
         print("开始检查更新...")
         
-        // 1. 获取服务器版本信息
         guard let serverVersionResponse = await fetchServerVersion() else {
             let errorMessage = "无法获取服务器版本信息。"
-            print(errorMessage)
             self.updateState = .error(message: errorMessage)
-            
-            // MARK: 新增 - 错误提示显示3秒后自动消失
-            Task {
-                try? await Task.sleep(for: .seconds(3))
-                await MainActor.run {
-                    self.updateState = .idle
-                }
-            }
+            resetStateAfterDelay() // 错误提示自动消失
             return false
         }
         
-        // 2. 获取本地版本信息
         let localVersion = UserDefaults.standard.string(forKey: localVersionKey) ?? "0.0"
         print("服务器版本: \(serverVersionResponse.version), 本地版本: \(localVersion)")
         
-        // 3. 比较版本
         if serverVersionResponse.version.compare(localVersion, options: .numeric) == .orderedDescending {
             print("发现新版本，开始下载文件...")
             let downloadSuccess = await downloadFiles(from: serverVersionResponse)
@@ -73,26 +62,30 @@ class UpdateManager: ObservableObject {
                 cleanupOldFiles(keeping: serverVersionResponse.files)
                 UserDefaults.standard.set(serverVersionResponse.version, forKey: localVersionKey)
                 print("本地版本已更新至: \(serverVersionResponse.version)")
-                self.updateState = .finished
+                self.updateState = .updateCompleted // MARK: 修改 - 设置为更新完成状态
+                resetStateAfterDelay() // 提示自动消失
                 return true
             } else {
                 let errorMessage = "文件下载失败。"
-                print(errorMessage)
                 self.updateState = .error(message: errorMessage)
-                
-                // MARK: 新增 - 错误提示显示3秒后自动消失
-                Task {
-                    try? await Task.sleep(for: .seconds(3))
-                    await MainActor.run {
-                        self.updateState = .idle
-                    }
-                }
+                resetStateAfterDelay() // 错误提示自动消失
                 return false
             }
         } else {
             print("当前已是最新版本。")
-            self.updateState = .finished
+            self.updateState = .alreadyUpToDate // MARK: 修改 - 设置为已是最新状态
+            resetStateAfterDelay() // 提示自动消失
             return false
+        }
+    }
+    
+    // MARK: 新增 - 辅助函数，用于在短暂延迟后将状态重置为 idle
+    private func resetStateAfterDelay(seconds: TimeInterval = 2) {
+        Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            await MainActor.run {
+                self.updateState = .idle
+            }
         }
     }
     

@@ -10,24 +10,19 @@ struct Finance: App {
     }
 }
 
-// MARK: - 更新状态视图 (无修改)
+// MARK: - 修改：更新状态视图以处理新状态
 struct UpdateOverlayView: View {
     @ObservedObject var updateManager: UpdateManager
 
     var body: some View {
         Group {
             switch updateManager.updateState {
-            case .idle, .finished:
+            case .idle:
                 EmptyView()
+                
             case .checking:
-                VStack {
-                    ProgressView()
-                    Text("正在检查更新...")
-                }
-                .padding()
-                .background(Color(.systemBackground).opacity(0.8))
-                .cornerRadius(10)
-                .shadow(radius: 10)
+                StatusView(icon: nil, message: "正在检查更新...")
+                
             case .downloading(let progress, let total):
                 VStack {
                     ProgressView(value: progress)
@@ -37,6 +32,15 @@ struct UpdateOverlayView: View {
                 .background(Color(.systemBackground).opacity(0.8))
                 .cornerRadius(10)
                 .shadow(radius: 10)
+                
+            // MARK: 新增 - 处理“已是最新”状态
+            case .alreadyUpToDate:
+                StatusView(icon: "checkmark.circle.fill", iconColor: .green, message: "当前已是最新版本")
+
+            // MARK: 新增 - 处理“更新完成”状态
+            case .updateCompleted:
+                StatusView(icon: "arrow.down.circle.fill", iconColor: .blue, message: "更新完成")
+
             case .error(let message):
                 VStack {
                     Image(systemName: "xmark.octagon.fill").foregroundColor(.red)
@@ -49,13 +53,35 @@ struct UpdateOverlayView: View {
                 .shadow(radius: 10)
             }
         }
-        // MARK: 新增 - 添加动画，使提示出现和消失更平滑
         .animation(.easeInOut, value: updateManager.updateState)
     }
 }
 
+// MARK: - 新增：可重用的状态提示视图
+struct StatusView: View {
+    let icon: String?
+    var iconColor: Color = .secondary
+    let message: String
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            if let iconName = icon {
+                Image(systemName: iconName)
+                    .font(.largeTitle)
+                    .foregroundColor(iconColor)
+            } else {
+                ProgressView()
+            }
+            Text(message)
+                .font(.headline)
+        }
+        .padding(20)
+        .background(Color(.systemBackground).opacity(0.85))
+        .cornerRadius(15)
+        .shadow(radius: 10)
+    }
+}
 
-// ... Launcher.swift 的其他部分 ...
 
 struct MainContentView: View {
     @StateObject private var dataService = DataService.shared
@@ -75,21 +101,25 @@ struct MainContentView: View {
         ZStack {
             NavigationStack {
                 VStack(spacing: 0) {
-                    // ... 内部视图 ...
                     if isDataReady {
-                        // 内容视图
+                        // ... 内容视图 (无修改) ...
                         IndicesContentView()
                             .frame(maxHeight: .infinity, alignment: .top)
+                        
                         Divider()
+                        
+                        // 2. 中部：搜索框
                         SearchContentView()
                             .frame(height: 60)
                             .padding(.vertical, 10)
+                        
                         Divider()
+                        
+                        // 3. 下部：自定义标签栏
                         TopContentView()
                             .frame(height: 60)
                             .background(Color(.systemBackground))
                     } else {
-                        // 加载视图
                         VStack {
                             Spacer()
                             ProgressView("正在准备数据...")
@@ -102,14 +132,8 @@ struct MainContentView: View {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(action: {
                             Task {
-                                // MARK: - 修改点在这里
-                                // 1. 检查更新，如果返回 true，说明有新文件下载
                                 if await updateManager.checkForUpdates() {
-                                    
-                                    // 2. 关键步骤：强制数据库管理器重新连接
                                     DatabaseManager.shared.reconnectToLatestDatabase()
-                                    
-                                    // 3. 现在，从新的数据库连接中加载数据
                                     dataService.loadData()
                                 }
                             }
@@ -125,8 +149,6 @@ struct MainContentView: View {
                 if !isDataReady {
                     Task {
                         if await updateManager.checkForUpdates() {
-                            // 如果首次启动就有更新，也需要重新连接
-                            // 虽然在这种情况下 init 应该就找到了最新的，但为了逻辑一致性加上也无妨
                             DatabaseManager.shared.reconnectToLatestDatabase()
                         }
                         
