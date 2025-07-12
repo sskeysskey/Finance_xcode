@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import SwiftUI
 
+// ... 其他模型定义保持不变 ...
 // MARK: - 新增：High/Low 数据模型
 struct HighLowItem: Identifiable, Codable {
     var id = UUID()
@@ -72,6 +73,7 @@ struct EarningRelease: Identifiable {
     let date: String
 }
 
+
 class DataService: ObservableObject {
     // MARK: - Singleton
     static let shared = DataService()
@@ -102,17 +104,27 @@ class DataService: ObservableObject {
     @Published var symbolTimeMarkers: [String: [Date: String]] = [:]
     
     private var isDataLoaded = false
-//    private var loadingTask: Task<Void, Never>?
-//    private let cache = NSCache<NSString, AnyObject>()
     
+    // MARK: - 新增辅助属性
+    /// 检查本地是否已存在数据版本。如果版本号为 nil 或 "0.0"，则认为是首次加载，此时文件不存在是正常情况。
+    private var isInitialLoad: Bool {
+        let localVersion = UserDefaults.standard.string(forKey: "FinanceAppLocalDataVersion")
+        return localVersion == nil || localVersion == "0.0"
+    }
+
     func loadData() {
-        loadMarketCapData() // <--- 修改此方法
+        // 在加载前清除旧的错误信息
+        DispatchQueue.main.async {
+            self.errorMessage = nil
+        }
+        
+        loadMarketCapData()
         loadDescriptionData()
         loadSectorsData()
         loadCompareData()
         loadSectorsPanel()
         loadEarningRelease()
-        loadHighLowData() // 新增：调用加载 High/Low 数据的方法
+        loadHighLowData()
         loadCompareStock()
         
         isDataLoaded = true
@@ -121,12 +133,14 @@ class DataService: ObservableObject {
     
     // MARK: - Private methods
     
-    /// 新增：加载和解析 HighLow.txt 文件
     private func loadHighLowData() {
-        // MARK: - 修改
         guard let url = FileManagerHelper.getLatestFileUrl(for: "HighLow") else {
-            DispatchQueue.main.async {
-                self.errorMessage = "HighLow 文件未在 Documents 中找到"
+            // MARK: - 修改
+            // 仅在非首次加载时才报告错误
+            if !isInitialLoad {
+                DispatchQueue.main.async {
+                    self.errorMessage = "HighLow 文件未在 Documents 中找到"
+                }
             }
             return
         }
@@ -146,7 +160,7 @@ class DataService: ObservableObject {
 
                 if trimmedLine.hasPrefix("[") && trimmedLine.hasSuffix("]") {
                     currentTimeInterval = String(trimmedLine.dropFirst().dropLast())
-                    currentSection = nil // 重置 section
+                    currentSection = nil
                     continue
                 }
 
@@ -162,7 +176,6 @@ class DataService: ObservableObject {
                 
                 if trimmedLine.isEmpty { continue }
 
-                // 处理 symbol 列表
                 if let interval = currentTimeInterval, let section = currentSection {
                     let symbols = trimmedLine.split(separator: ",").map {
                         HighLowItem(symbol: String($0).trimmingCharacters(in: .whitespaces))
@@ -184,7 +197,6 @@ class DataService: ObservableObject {
                 }
             }
             
-            // 定义显示顺序，确保UI列表顺序一致
             let timeIntervalOrder = ["5Y", "2Y", "1Y", "6 months", "3 months", "1 months"]
             
             DispatchQueue.main.async {
@@ -200,12 +212,20 @@ class DataService: ObservableObject {
     }
         
     private func loadEarningRelease() {
-        guard let url = FileManagerHelper.getLatestFileUrl(for: "Earnings_Release_new") else { return }
-            do {
-                let content = try String(contentsOf: url, encoding: .utf8)
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "Earnings_Release_new") else {
+            // MARK: - 修改
+            if !isInitialLoad {
+                DispatchQueue.main.async {
+                    self.errorMessage = "Earnings_Release_new 文件未在 Documents 中找到"
+                }
+            }
+            return
+        }
+        do {
+            let content = try String(contentsOf: url, encoding: .utf8)
             let lines = content.split(separator: "\n")
             
-            earningReleases = lines.compactMap { line -> EarningRelease? in
+            let newEarningReleases = lines.compactMap { line -> EarningRelease? in
                 let parts = line.split(separator: ":")
                 let firstPart = String(parts[0]).trimmingCharacters(in: .whitespaces)
                 
@@ -228,8 +248,13 @@ class DataService: ObservableObject {
                 
                 return nil
             }
+            DispatchQueue.main.async {
+                self.earningReleases = newEarningReleases
+            }
         } catch {
-            self.errorMessage = "加载 Earnings_Release_new.txt 失败: \(error.localizedDescription)"
+            DispatchQueue.main.async {
+                self.errorMessage = "加载 Earnings_Release_new.txt 失败: \(error.localizedDescription)"
+            }
         }
     }
     
@@ -246,38 +271,43 @@ class DataService: ObservableObject {
     }
     
     private func loadCompareStock() {
-            guard let url = FileManagerHelper.getLatestFileUrl(for: "CompareStock") else {
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "CompareStock") else {
+            // MARK: - 修改
+            if !isInitialLoad {
                 DispatchQueue.main.async {
                     self.errorMessage = "CompareStock 文件未在 Documents 中找到"
                 }
-                return
             }
+            return
+        }
                 
-            do {
-                let content = try String(contentsOf: url, encoding: .utf8)
-                let lines = content.split(separator: "\n")
-                
-                let topGainersLines = lines.prefix(20)
-                let topLosersLines = lines.suffix(20).reversed()
-                
-                let newTopGainers = topGainersLines.compactMap { parseStockLine(String($0)) }
-                let newTopLosers = topLosersLines.compactMap { parseStockLine(String($0)) }
-                
-                DispatchQueue.main.async {
-                    self.topGainers = newTopGainers
-                    self.topLosers = newTopLosers
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self.errorMessage = "加载 CompareStock 文件失败: \(error.localizedDescription)"
-                }
+        do {
+            let content = try String(contentsOf: url, encoding: .utf8)
+            let lines = content.split(separator: "\n")
+            
+            let topGainersLines = lines.prefix(20)
+            let topLosersLines = lines.suffix(20).reversed()
+            
+            let newTopGainers = topGainersLines.compactMap { parseStockLine(String($0)) }
+            let newTopLosers = topLosersLines.compactMap { parseStockLine(String($0)) }
+            
+            DispatchQueue.main.async {
+                self.topGainers = newTopGainers
+                self.topLosers = newTopLosers
+            }
+        } catch {
+            DispatchQueue.main.async {
+                self.errorMessage = "加载 CompareStock 文件失败: \(error.localizedDescription)"
             }
         }
+    }
     
     private func loadSectorsPanel() {
-        // MARK: - 修改
         guard let url = FileManagerHelper.getLatestFileUrl(for: "Sectors_panel") else {
-            DispatchQueue.main.async { self.errorMessage = "Sectors_panel 文件未在 Documents 中找到" }
+            // MARK: - 修改
+            if !isInitialLoad {
+                DispatchQueue.main.async { self.errorMessage = "Sectors_panel 文件未在 Documents 中找到" }
+            }
             return
         }
         do {
@@ -290,28 +320,34 @@ class DataService: ObservableObject {
     }
     
     private func loadDescriptionData() {
-        // MARK: - 修改
         guard let url = FileManagerHelper.getLatestFileUrl(for: "description") else {
-            self.errorMessage = "description 文件未在 Documents 中找到"
+            // MARK: - 修改
+            if !isInitialLoad {
+                DispatchQueue.main.async {
+                    self.errorMessage = "description 文件未在 Documents 中找到"
+                }
+            }
             return
         }
         do {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
-            descriptionData = try decoder.decode(DescriptionData.self, from: data)
+            let loadedDescriptionData = try decoder.decode(DescriptionData.self, from: data)
             
             let dateFormatter = DateFormatter()
             dateFormatter.dateFormat = "yyyy-MM-dd"
             
-            if let global = descriptionData?.global {
+            var newGlobalTimeMarkers: [Date: String] = [:]
+            if let global = loadedDescriptionData.global {
                 for (dateString, text) in global {
                     if let date = dateFormatter.date(from: dateString) {
-                        globalTimeMarkers[date] = text
+                        newGlobalTimeMarkers[date] = text
                     }
                 }
             }
             
-            let processItems: ([SearchDescribableItem]) -> Void = { items in
+            var newSymbolTimeMarkers: [String: [Date: String]] = [:]
+            let _: ([SearchDescribableItem]) -> Void = { items in
                 for item in items {
                     if let description3 = (item as? SearchStock)?.description3 ?? (item as? SearchETF)?.description3 {
                         var markers: [Date: String] = [:]
@@ -323,31 +359,47 @@ class DataService: ObservableObject {
                             }
                         }
                         if !markers.isEmpty {
-                            self.symbolTimeMarkers[item.symbol.uppercased()] = markers
+                            newSymbolTimeMarkers[item.symbol.uppercased()] = markers
                         }
                     }
                 }
             }
 
-            if let stocks = descriptionData?.stocks { processItems(stocks) }
-            if let etfs = descriptionData?.etfs { processItems(etfs) }
+            
+            
+            DispatchQueue.main.async {
+                self.descriptionData = loadedDescriptionData
+                self.globalTimeMarkers = newGlobalTimeMarkers
+                self.symbolTimeMarkers = newSymbolTimeMarkers
+            }
 
         } catch {
-            self.errorMessage = "加载 description.json 失败: \(error.localizedDescription)"
+            DispatchQueue.main.async {
+                self.errorMessage = "加载 description.json 失败: \(error.localizedDescription)"
+            }
         }
     }
     
     private func loadSectorsData() {
-        // MARK: - 修改
         guard let url = FileManagerHelper.getLatestFileUrl(for: "Sectors_All") else {
-            self.errorMessage = "Sectors_All 文件未在 Documents 中找到"
+            // MARK: - 修改
+            if !isInitialLoad {
+                DispatchQueue.main.async {
+                    self.errorMessage = "Sectors_All 文件未在 Documents 中找到"
+                }
+            }
             return
         }
         do {
             let data = try Data(contentsOf: url)
-            sectorsData = try JSONDecoder().decode([String: [String]].self, from: data)
+            let decodedData = try JSONDecoder().decode([String: [String]].self, from: data)
+            DispatchQueue.main.async {
+                self.sectorsData = decodedData
+            }
         } catch {
-            self.errorMessage = "加载 Sectors_All.json 失败: \(error.localizedDescription)"
+            DispatchQueue.main.async {
+                self.errorMessage = "加载 Sectors_All.json 失败: \(error.localizedDescription)"
+            }
         }
     }
     
@@ -360,43 +412,41 @@ class DataService: ObservableObject {
         return nil
     }
     
-    // MARK: - 修改此方法
     private func loadMarketCapData() {
-        // 从数据库加载数据，而不是从 marketcap_pe.txt 文件
-        // 注意：根据您的描述，表名为 "MNSPP " (末尾有空格)，如果实际没有，请移除
         let allMarketCapInfo = DatabaseManager.shared.fetchAllMarketCapData(from: "MNSPP")
         
-        // 检查是否有数据返回
         if allMarketCapInfo.isEmpty {
-            self.errorMessage = "未能从数据库 MNSPP 表加载到市值数据。"
+            // MARK: - 修改
+            if !isInitialLoad {
+                self.errorMessage = "未能从数据库 MNSPP 表加载到市值数据。"
+            }
             return
         }
         
-        // 清空旧数据
         var newData: [String: MarketCapDataItem] = [:]
         
-        // 遍历从数据库获取的结果
         for info in allMarketCapInfo {
-            // 将数据库查询结果转换为 MarketCapDataItem
             let item = MarketCapDataItem(
                 marketCap: info.marketCap,
                 peRatio: info.peRatio,
                 pb: info.pb
             )
-            // 将数据存入字典，键为大写的 symbol
             newData[info.symbol.uppercased()] = item
         }
         
-        // 在主线程更新 @Published 属性
         DispatchQueue.main.async {
             self.marketCapData = newData
         }
     }
     
     private func loadCompareData() {
-        // MARK: - 修改
         guard let url = FileManagerHelper.getLatestFileUrl(for: "Compare_All") else {
-            self.errorMessage = "Compare_All 文件未在 Documents 中找到"
+            // MARK: - 修改
+            if !isInitialLoad {
+                DispatchQueue.main.async {
+                    self.errorMessage = "Compare_All 文件未在 Documents 中找到"
+                }
+            }
             return
         }
         do {
@@ -415,12 +465,17 @@ class DataService: ObservableObject {
                     upperCaseMap[symbol.uppercased()] = value
                 }
             }
-            compareData = upperCaseMap.merging(originalCaseData) { (_, new) in new }
+            DispatchQueue.main.async {
+                self.compareData = upperCaseMap.merging(originalCaseData) { (_, new) in new }
+            }
         } catch {
-            self.errorMessage = "加载 Compare_All.txt 失败: \(error.localizedDescription)"
+            DispatchQueue.main.async {
+                self.errorMessage = "加载 Compare_All.txt 失败: \(error.localizedDescription)"
+            }
         }
     }
     
+    // ... 其他辅助方法 parseStockLine, parseETFLine, cleanSymbol 保持不变 ...
     private func cleanSymbol(_ symbol: String) -> String {
         let pattern = "^([A-Za-z-]+)"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
