@@ -149,12 +149,21 @@ struct ArticleDetailView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                VStack {
-                    Text(sourceName.replacingOccurrences(of: "_", with: " ")).font(.headline)
-                    Text("\(unreadCount) unread").font(.caption).foregroundColor(.secondary)
+            // 中间位置：源名称 + unread + 日期
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 2) {
+                        // 源名称
+                        Text(sourceName.replacingOccurrences(of: "_", with: " "))
+                            .font(.headline)
+                        // unread + 日期
+                        HStack(spacing: 8) {
+                            Text("\(unreadCount) unread")
+                            Text(formatMonthDay(from: article.timestamp))
+                        }
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    }
                 }
-            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { isSharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
             }
@@ -171,6 +180,19 @@ struct ArticleDetailView: View {
                 else if self.isAtTop && value.translation.height > 300 { self.requestPreviousArticle() }
             }
         )
+    }
+    
+    // 在 struct ArticleDetailView 里，和 formatDate 同级添加：
+    private func formatMonthDay(from timestamp: String) -> String {
+        let input = DateFormatter()
+        input.dateFormat = "yyMMdd"
+        guard let date = input.date(from: timestamp) else {
+            return timestamp
+        }
+        let output = DateFormatter()
+        output.dateFormat = "MMMM d"
+        output.locale = Locale(identifier: "en_US_POSIX")
+        return output.string(from: date)
     }
     
     private func formatDate(from timestamp: String) -> String {
