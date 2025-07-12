@@ -48,7 +48,7 @@ class UpdateManager: ObservableObject {
     
     @Published var updateState: UpdateState = .idle
     
-    private let serverBaseURL = "http://192.168.50.247:5000/api/Finance"
+    private let serverBaseURL = "http://192.168.50.148:5000/api/Finance"
     private let localVersionKey = "FinanceAppLocalDataVersion"
     
     private init() {}
