@@ -12,7 +12,7 @@ struct Finance: App {
     }
 }
 
-// MARK: - 修改：更新状态视图以处理新状态 (无修改)
+// MARK: - 更新状态视图 (无修改)
 struct UpdateOverlayView: View {
     @ObservedObject var updateManager: UpdateManager
 
@@ -57,7 +57,7 @@ struct UpdateOverlayView: View {
     }
 }
 
-// MARK: - 新增：可重用的状态提示视图 (无修改)
+// MARK: - 可重用的状态提示视图 (无修改)
 struct StatusView: View {
     let icon: String?
     var iconColor: Color = .secondary
@@ -88,13 +88,12 @@ struct MainContentView: View {
     @StateObject private var updateManager = UpdateManager.shared
     @State private var isDataReady = false
 
+    // MARK: - 此处为核心修改
     private var isUpdateInProgress: Bool {
-        switch updateManager.updateState {
-        case .checking, .downloading:
-            return true
-        default:
-            return false
-        }
+        // 只要更新管理器的状态不是“空闲”，就认为更新流程正在进行中。
+        // 这会确保按钮在检查、下载、显示结果（成功/失败）的整个过程中都保持禁用，
+        // 直到状态被重置回 .idle 为止。
+        return updateManager.updateState != .idle
     }
 
     var body: some View {
@@ -129,7 +128,7 @@ struct MainContentView: View {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(action: {
                             Task {
-                                // 手动刷新时，仍然是阻塞的，这是符合预期的行为
+                                // 手动刷新时，等待检查更新流程完成
                                 if await updateManager.checkForUpdates(isManual: true) {
                                     DatabaseManager.shared.reconnectToLatestDatabase()
                                     dataService.loadData()
@@ -145,17 +144,14 @@ struct MainContentView: View {
             .environmentObject(dataService)
             .onAppear {
                 if !isDataReady {
-                    // MARK: - 此处为核心修改
-                    // 1. 立即加载数据并准备UI，让用户能立刻看到主界面
+                    // 立即加载数据并准备UI，让用户能立刻看到主界面
                     dataService.loadData()
-                    isDataReady = true // 直接设置为true，让界面立即响应
+                    isDataReady = true
 
-                    // 2. 将检查更新放入一个独立的后台任务，它将独立运行，不阻塞UI
+                    // 将检查更新放入一个独立的后台任务，不阻塞UI
                     Task {
-                        // isManual: false 表示这是后台自动检查
                         if await updateManager.checkForUpdates(isManual: false) {
-                            // 如果后台检查发现并成功下载了更新，
-                            // 那么需要重新连接数据库并刷新数据。
+                            // 如果后台检查发现并成功下载了更新，则刷新数据
                             DatabaseManager.shared.reconnectToLatestDatabase()
                             dataService.loadData()
                         }
