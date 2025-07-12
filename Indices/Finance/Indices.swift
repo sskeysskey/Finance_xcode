@@ -337,7 +337,7 @@ struct LoadingView: View {
                 .scaleEffect(1.5)
             
             // 独立出来的文字，居中对齐
-            Text("更新资源失败\n请点击右上角刷新↻按钮重试...")
+            Text("如果页面数据异常\n请点击右上角刷新↻按钮重试...")
                 .multilineTextAlignment(.center)
                 .foregroundColor(.primary)
         }
