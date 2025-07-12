@@ -129,7 +129,7 @@ struct MainContentView: View {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(action: {
                             Task {
-                                // MARK: - 修改 1: 手动刷新时，传递 isManual: true
+                                // 手动刷新时，仍然是阻塞的，这是符合预期的行为
                                 if await updateManager.checkForUpdates(isManual: true) {
                                     DatabaseManager.shared.reconnectToLatestDatabase()
                                     dataService.loadData()
@@ -145,16 +145,19 @@ struct MainContentView: View {
             .environmentObject(dataService)
             .onAppear {
                 if !isDataReady {
+                    // MARK: - 此处为核心修改
+                    // 1. 立即加载数据并准备UI，让用户能立刻看到主界面
+                    dataService.loadData()
+                    isDataReady = true // 直接设置为true，让界面立即响应
+
+                    // 2. 将检查更新放入一个独立的后台任务，它将独立运行，不阻塞UI
                     Task {
-                        // MARK: - 修改 2: 启动时自动检查，传递 isManual: false
+                        // isManual: false 表示这是后台自动检查
                         if await updateManager.checkForUpdates(isManual: false) {
+                            // 如果后台检查发现并成功下载了更新，
+                            // 那么需要重新连接数据库并刷新数据。
                             DatabaseManager.shared.reconnectToLatestDatabase()
-                        }
-                        
-                        dataService.loadData()
-                        
-                        withAnimation {
-                            isDataReady = true
+                            dataService.loadData()
                         }
                     }
                 }

@@ -63,8 +63,13 @@ class UpdateManager: ObservableObject {
         if case .checking = updateState { return false }
         if case .downloading = updateState { return false }
         
-        self.updateState = .checking
-        print("开始检查更新... (手动触发: \(isManual))")
+        // MARK: - 修改 1: 仅在手动或非首次启动时显示“检查中”
+        // 首次启动时，让检查在后台静默进行，不打扰用户
+        if isManual || !isInitialLoad {
+            self.updateState = .checking
+        }
+        
+        print("开始检查更新... (手动触发: \(isManual), 首次启动: \(isInitialLoad))")
         
         let result = await fetchServerVersion()
         
@@ -108,12 +113,14 @@ class UpdateManager: ObservableObject {
                 print("检查更新失败：客户端离线。")
                 self.updateState = .idle
                 
+            // MARK: - 修改 2: 恢复对首次启动时服务器错误的静默处理
             case .serverUnreachable(let message):
-                // 服务器问题，且不是首次启动时，弹窗提示
+                // 如果是首次启动，服务器连不上是可接受的，不应打扰用户
                 if isInitialLoad {
                     print("首次启动网络检查失败，属正常情况，已忽略错误提示。")
-                    self.updateState = .idle
+                    self.updateState = .idle // 保持静默
                 } else {
+                    // 对于非首次启动的用户，需要提示他们服务器有问题
                     print("检查更新失败：服务器无法访问。错误: \(message)")
                     self.updateState = .error(message: "无法连接到服务器。")
                     resetStateAfterDelay()
@@ -156,11 +163,11 @@ class UpdateManager: ObservableObject {
             if let urlError = error as? URLError {
                 switch urlError.code {
                 case .notConnectedToInternet, .networkConnectionLost:
-                    // 这些是客户端网络问题，应静默处理. [1, 6]
+                    // 这些是客户端网络问题，应静默处理.
                     print("网络错误：设备未连接到互联网。")
                     return .failure(.clientOffline)
                 case .cannotFindHost, .cannotConnectToHost, .timedOut:
-                    // 这些是服务器端问题，应提示用户. [2, 8]
+                    // 这些是服务器端问题，应提示用户.
                     print("网络错误：无法连接到主机或请求超时。 \(urlError.localizedDescription)")
                     return .failure(.serverUnreachable(urlError.localizedDescription))
                 default:
