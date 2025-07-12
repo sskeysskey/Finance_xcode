@@ -29,9 +29,22 @@
 		A3BF5A952CFCA71100F7578C /* FinanceUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FinanceUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A30B97EC2E2223E700EB3328 /* Exceptions for "Finance" folder in "Finance" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A3BF5A7A2CFCA71000F7578C /* Finance */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A3BF5A7D2CFCA71000F7578C /* Finance */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A30B97EC2E2223E700EB3328 /* Exceptions for "Finance" folder in "Finance" target */,
+			);
 			path = Finance;
 			sourceTree = "<group>";
 		};
@@ -411,6 +424,7 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Finance/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Finance/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -440,6 +454,7 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Finance/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Finance/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

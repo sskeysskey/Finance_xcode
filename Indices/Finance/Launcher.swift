@@ -10,7 +10,7 @@ struct Finance: App {
     }
 }
 
-// MARK: - 新增：更新状态视图
+// MARK: - 更新状态视图 (无修改)
 struct UpdateOverlayView: View {
     @ObservedObject var updateManager: UpdateManager
 
@@ -49,40 +49,47 @@ struct UpdateOverlayView: View {
                 .shadow(radius: 10)
             }
         }
+        // MARK: 新增 - 添加动画，使提示出现和消失更平滑
+        .animation(.easeInOut, value: updateManager.updateState)
     }
 }
 
 
+// ... Launcher.swift 的其他部分 ...
+
 struct MainContentView: View {
-    // MARK: - 修改
     @StateObject private var dataService = DataService.shared
     @StateObject private var updateManager = UpdateManager.shared
     @State private var isDataReady = false
+
+    private var isUpdateInProgress: Bool {
+        switch updateManager.updateState {
+        case .checking, .downloading:
+            return true
+        default:
+            return false
+        }
+    }
 
     var body: some View {
         ZStack {
             NavigationStack {
                 VStack(spacing: 0) {
+                    // ... 内部视图 ...
                     if isDataReady {
-                        // 1. 上部：Sectors 展示
+                        // 内容视图
                         IndicesContentView()
                             .frame(maxHeight: .infinity, alignment: .top)
-                        
                         Divider()
-                        
-                        // 2. 中部：搜索框
                         SearchContentView()
                             .frame(height: 60)
                             .padding(.vertical, 10)
-                        
                         Divider()
-                        
-                        // 3. 下部：自定义标签栏
                         TopContentView()
                             .frame(height: 60)
                             .background(Color(.systemBackground))
                     } else {
-                        // 在数据加载完成前显示一个加载指示器
+                        // 加载视图
                         VStack {
                             Spacer()
                             ProgressView("正在准备数据...")
@@ -91,19 +98,40 @@ struct MainContentView: View {
                     }
                 }
                 .navigationBarTitle("经济数据与搜索", displayMode: .inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: {
+                            Task {
+                                // MARK: - 修改点在这里
+                                // 1. 检查更新，如果返回 true，说明有新文件下载
+                                if await updateManager.checkForUpdates() {
+                                    
+                                    // 2. 关键步骤：强制数据库管理器重新连接
+                                    DatabaseManager.shared.reconnectToLatestDatabase()
+                                    
+                                    // 3. 现在，从新的数据库连接中加载数据
+                                    dataService.loadData()
+                                }
+                            }
+                        }) {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .disabled(isUpdateInProgress)
+                    }
+                }
             }
             .environmentObject(dataService)
             .onAppear {
-                // 仅在首次出现时执行更新和加载
                 if !isDataReady {
                     Task {
-                        // 1. 检查并执行更新
-                        _ = await updateManager.checkForUpdates()
+                        if await updateManager.checkForUpdates() {
+                            // 如果首次启动就有更新，也需要重新连接
+                            // 虽然在这种情况下 init 应该就找到了最新的，但为了逻辑一致性加上也无妨
+                            DatabaseManager.shared.reconnectToLatestDatabase()
+                        }
                         
-                        // 2. 更新完成后，加载所有数据到内存
                         dataService.loadData()
                         
-                        // 3. 更新UI，显示主内容
                         withAnimation {
                             isDataReady = true
                         }
@@ -111,7 +139,6 @@ struct MainContentView: View {
                 }
             }
             
-            // 更新状态的浮层
             UpdateOverlayView(updateManager: updateManager)
         }
     }

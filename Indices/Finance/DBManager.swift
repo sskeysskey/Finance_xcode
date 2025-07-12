@@ -5,7 +5,6 @@ class DatabaseManager {
     static let shared = DatabaseManager()
     private var db: OpaquePointer?
     
-    // 新增：用于承载从 MNSPP 表查询出的数据的结构体
     struct MarketCapInfo {
         let symbol: String
         let marketCap: Double
@@ -14,51 +13,67 @@ class DatabaseManager {
     }
     
     private init() {
-        print("=== DatabaseManager Debug ===")
+        print("=== DatabaseManager Initializing ===")
+        // 初始化时，执行一次数据库打开操作
+        openLatestDatabase()
+    }
+    
+    // MARK: - 新增：重新连接到最新的数据库
+    /// 当数据库文件更新后，调用此方法来关闭旧连接并打开新连接。
+    func reconnectToLatestDatabase() {
+        print("=== DatabaseManager Reconnecting ===")
+        // 1. 先关闭现有的数据库连接（如果存在）
+        if db != nil {
+            sqlite3_close(db)
+            db = nil // 将指针设为 nil
+            print("已关闭旧的数据库连接。")
+        }
         
-        // 1. 使用 FileManagerHelper 查找最新的数据库文件。
-        //    这解决了您的第二个问题：动态读取带时间戳的数据库。
-        //    我们使用 "Finance" 作为基础名，助手函数会自动匹配 "Finance_YYMMDD.db" 格式。
-        guard let dbUrl = FileManagerHelper.getLatestFileUrl(for: "Finance") else {
-            // 如果在 Documents 目录中找不到任何数据库文件（例如首次离线启动），
-            // 则打印错误并直接返回。此时 db 属性将保持为 nil，后续的数据库查询会安全地失败（返回空数组）。
-            print("错误：在 Documents 目录中未找到任何 Finance 数据库文件。这在首次离线启动时是正常行为。")
-                return
-            }
+        // 2. 重新执行打开最新数据库的逻辑
+        openLatestDatabase()
+    }
 
-        // 2. 直接从找到的 URL 打开数据库。
-        //    这里不再有任何从 App Bundle 复制的逻辑，解决了您的第一个问题。
+    // MARK: - 新增：将打开数据库的逻辑提取到私有方法
+    /// 查找最新的数据库文件并打开连接。
+    private func openLatestDatabase() {
+        guard let dbUrl = FileManagerHelper.getLatestFileUrl(for: "Finance") else {
+            print("错误：在 Documents 目录中未找到任何 Finance 数据库文件。")
+            // 确保 db 为 nil
+            self.db = nil
+            return
+        }
+
+        // 尝试打开新的数据库文件
         if sqlite3_open(dbUrl.path, &db) == SQLITE_OK {
             print("成功从 Documents 目录打开数据库: \(dbUrl.lastPathComponent)")
         } else {
-            // 如果打开失败，打印更详细的 SQLite 错误信息
             let errorMessage = String(cString: sqlite3_errmsg(db))
             print("无法从 Documents 目录打开数据库: \(dbUrl.lastPathComponent)。错误: \(errorMessage)")
+            // 确保打开失败时 db 为 nil
+            self.db = nil
         }
-        // MARK: - 修改结束
     }
     
     deinit {
-        sqlite3_close(db)
+        if db != nil {
+            sqlite3_close(db)
+        }
     }
     
     struct PriceData: Identifiable {
         let id: Int
         let date: Date
         let price: Double
-        let volume: Int64?  // 修改为可选类型
+        let volume: Int64?
     }
     
-    // 新增方法：从指定表（如 MNSPP）中获取所有市值相关数据
     func fetchAllMarketCapData(from tableName: String) -> [MarketCapInfo] {
-        // 在执行任何查询前，先检查数据库连接是否有效
         guard db != nil else {
             print("数据库连接无效，无法执行 fetchAllMarketCapData。")
             return []
         }
         
         var results: [MarketCapInfo] = []
-        // 注意：您的表名是 "MNSPP "，末尾有一个空格，这里需要精确匹配。如果实际表名没有空格，请移除它。
         let query = "SELECT symbol, marketcap, pe_ratio, pb FROM \"\(tableName)\""
         var statement: OpaquePointer?
         
@@ -67,20 +82,8 @@ class DatabaseManager {
                 let symbol = String(cString: sqlite3_column_text(statement, 0))
                 let marketCap = sqlite3_column_double(statement, 1)
                 
-                // pe_ratio 和 pb 可能为 NULL，需要检查
-                let peRatio: Double?
-                if sqlite3_column_type(statement, 2) != SQLITE_NULL {
-                    peRatio = sqlite3_column_double(statement, 2)
-                } else {
-                    peRatio = nil
-                }
-                
-                let pb: Double?
-                if sqlite3_column_type(statement, 3) != SQLITE_NULL {
-                    pb = sqlite3_column_double(statement, 3)
-                } else {
-                    pb = nil
-                }
+                let peRatio: Double? = sqlite3_column_type(statement, 2) != SQLITE_NULL ? sqlite3_column_double(statement, 2) : nil
+                let pb: Double? = sqlite3_column_type(statement, 3) != SQLITE_NULL ? sqlite3_column_double(statement, 3) : nil
                 
                 results.append(MarketCapInfo(symbol: symbol, marketCap: marketCap, peRatio: peRatio, pb: pb))
             }
@@ -91,6 +94,10 @@ class DatabaseManager {
         sqlite3_finalize(statement)
         return results
     }
+    
+    // ... 其他 fetch 方法保持不变 ...
+    // fetchLatestVolume, fetchHistoricalData, fetchEarningData, checkIfTableHasVolume
+    // 这些方法都不需要修改，因为它们依赖于 db 连接，只要 db 连接是正确的，它们就能正常工作。
     
     // 新增的方法：获取特定 ETF 的最新 volume
     func fetchLatestVolume(forSymbol symbol: String, tableName: String) -> Int64? {
