@@ -22,19 +22,15 @@ struct ArticleDetailView: View {
     let sourceName: String
     let unreadCount: Int
     @ObservedObject var viewModel: NewsViewModel
-    var requestNextArticle: () -> Void
-    var requestPreviousArticle: () -> Void
     
-    @State private var isSharePresented = false
-    @State private var isAtTop = false
-    @State private var isAtBottom = false
+    // ==================== 修改点 1: 重新添加 requestNextArticle 回调 ====================
+    var requestNextArticle: () -> Void
+    // ==============================================================================
 
-    // ==================== 修改点 1 of 3：新增状态变量 ====================
-    // 用于控制“已复制”提示条的显示
+    @State private var isSharePresented = false
+
     @State private var showCopyToast = false
-    // 提示条要显示的文字
     @State private var toastMessage = ""
-    // =================================================================
 
     var body: some View {
         let paragraphs = article.article
@@ -48,14 +44,8 @@ struct ArticleDetailView: View {
             ? paragraphs.count / (remainingImages.count + 1)
             : 1
 
-        // ==================== 修改点 2 of 3：使用 ZStack 包裹视图 ====================
-        // ZStack 允许我们将提示条（Toast）浮动在滚动视图之上
         ZStack {
             ScrollView {
-                Color.clear.frame(height: 1)
-                    .onAppear { self.isAtTop = true }
-                    .onDisappear { self.isAtTop = false }
-
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(formatDate(from: article.timestamp))
@@ -77,20 +67,14 @@ struct ArticleDetailView: View {
                             .font(.custom("NewYork-Regular", size: 21))
                             .lineSpacing(15)
                             .padding(.horizontal, 18)
-                            // ==================== 修改点 3 of 3：修改长按手势的逻辑 ====================
                             .gesture(
                                 LongPressGesture()
                                     .onEnded { _ in
-                                        // 1. 复制文本到剪贴板
                                         UIPasteboard.general.string = paragraphs[pIndex]
-                                        
-                                        // 2. 设置提示文字并显示提示条（带动画）
                                         self.toastMessage = "选中段落已复制"
                                         withAnimation(.spring()) {
                                             self.showCopyToast = true
                                         }
-                                        
-                                        // 3. 2秒后自动隐藏提示条（带动画）
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                                             withAnimation(.spring()) {
                                                 self.showCopyToast = false
@@ -98,7 +82,6 @@ struct ArticleDetailView: View {
                                         }
                                     }
                             )
-                            // ==========================================================================
 
                         if (pIndex + 1) % insertionInterval == 0 {
                             let imageIndexToInsert = (pIndex + 1) / insertionInterval - 1
@@ -117,15 +100,30 @@ struct ArticleDetailView: View {
                             ArticleImageView(imageName: imageName, timestamp: article.timestamp)
                         }
                     }
-
-                    Color.clear.frame(height: 1)
-                        .onAppear { self.isAtBottom = true }
-                        .onDisappear { self.isAtBottom = false }
+                    
+                    // ==================== 修改点 2: 在文章末尾添加按钮 ====================
+                    Button(action: {
+                        // 调用从父视图传递过来的闭包
+                        self.requestNextArticle()
+                    }) {
+                        HStack {
+                            Text("读取下一篇")
+                                .fontWeight(.bold)
+                            Image(systemName: "arrow.right.circle.fill")
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.blue) // 使用醒目的颜色
+                        .cornerRadius(12)
+                    }
+                    .padding(.horizontal, 20) // 与文章内容对齐
+                    .padding(.vertical, 20)   // 增加垂直间距
+                    // ====================================================================
                 }
                 .padding(.vertical)
             }
             
-            // --- 这是新增的提示条视图 ---
             if showCopyToast {
                 VStack {
                     HStack {
@@ -138,32 +136,29 @@ struct ArticleDetailView: View {
                     .padding(.vertical, 12)
                     .padding(.horizontal, 20)
                     .background(Color.black.opacity(0.75))
-                    .clipShape(Capsule()) // 使用胶囊形状
+                    .clipShape(Capsule())
                     .shadow(radius: 10)
                     
-                    Spacer() // 将提示条推到顶部
+                    Spacer()
                 }
-                .padding(.top, 5) // 距离顶部安全区一点距离
-                .transition(.move(edge: .top).combined(with: .opacity)) // 定义出现和消失的动画
-                .zIndex(1) // 确保它在最上层
+                .padding(.top, 5)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(1)
             }
         }
         .toolbar {
-            // 中间位置：源名称 + unread + 日期
-                ToolbarItem(placement: .principal) {
-                    VStack(spacing: 2) {
-                        // 源名称
-                        Text(sourceName.replacingOccurrences(of: "_", with: " "))
-                            .font(.headline)
-                        // unread + 日期
-                        HStack(spacing: 8) {
-                            Text("\(unreadCount) unread")
-                            Text(formatMonthDay(from: article.timestamp))
-                        }
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 2) {
+                    Text(sourceName.replacingOccurrences(of: "_", with: " "))
+                        .font(.headline)
+                    HStack(spacing: 8) {
+                        Text("\(unreadCount) unread")
+                        Text(formatMonthDay(from: article.timestamp))
                     }
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 }
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { isSharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
             }
@@ -174,15 +169,8 @@ struct ArticleDetailView: View {
             ActivityView(activityItems: [shareText])
                 .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
         }
-        .simultaneousGesture(
-            DragGesture().onEnded { value in
-                if self.isAtBottom && value.translation.height < -300 { self.requestNextArticle() }
-                else if self.isAtTop && value.translation.height > 300 { self.requestPreviousArticle() }
-            }
-        )
     }
     
-    // 在 struct ArticleDetailView 里，和 formatDate 同级添加：
     private func formatMonthDay(from timestamp: String) -> String {
         let input = DateFormatter()
         input.dateFormat = "yyMMdd"
@@ -212,6 +200,7 @@ struct ArticleDetailView: View {
 }
 
 // ArticleImageView, ZoomableImageView, ZoomableScrollView 的代码保持不变
+// ... (剩余代码保持不变)
 struct ArticleImageView: View {
     let imageName: String
     let timestamp: String

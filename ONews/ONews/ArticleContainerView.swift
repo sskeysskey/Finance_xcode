@@ -9,10 +9,8 @@ struct ArticleContainerView: View {
     @State private var currentArticle: Article
     @State private var currentSourceName: String
     
-    // 1. 用于在当前页面生命周期内，实时更新未读计数的局部状态变量
     @State private var liveUnreadCount: Int
     
-    // 2. 用于累积在本次查看会话中所有被读过的文章ID
     @State private var readArticleIDsInThisSession: Set<UUID> = []
     
     @State private var showNoNextToast = false
@@ -23,7 +21,6 @@ struct ArticleContainerView: View {
         case fromAllArticles
     }
 
-    // 这个计算属性现在只用于初始化
     private var initialUnreadCount: Int {
         switch navigationContext {
         case .fromAllArticles:
@@ -33,17 +30,14 @@ struct ArticleContainerView: View {
         }
     }
 
-    // 我们需要自定义 init 来正确初始化新的 @State 变量 liveUnreadCount
     init(article: Article, sourceName: String, context: NavigationContext, viewModel: NewsViewModel) {
         self.initialArticle = article
         self.navigationContext = context
         self.viewModel = viewModel
         
-        // 初始化内部状态
         self._currentArticle = State(initialValue: article)
         self._currentSourceName = State(initialValue: sourceName)
         
-        // 根据上下文计算初始的未读数，并用它来初始化 liveUnreadCount
         let baseCount: Int
         switch context {
         case .fromAllArticles:
@@ -56,19 +50,18 @@ struct ArticleContainerView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            // 将我们实时的、局部的未读数传递给详情页
+            // ==================== 修改点: 更新 ArticleDetailView 的调用 ====================
+            // 重新传入 requestNextArticle 参数，并将我们的切换函数传递给它
             ArticleDetailView(
                 article: currentArticle,
                 sourceName: currentSourceName,
-                unreadCount: liveUnreadCount, // <- 使用局部状态
+                unreadCount: liveUnreadCount,
                 viewModel: viewModel,
                 requestNextArticle: {
                     self.switchToNextArticle()
-                },
-                requestPreviousArticle: {
-                    self.switchToPreviousArticle()
                 }
             )
+            // ==========================================================================
             .id(currentArticle.id)
             .transition(.asymmetric(
                 insertion: .move(edge: .bottom).combined(with: .opacity),
@@ -83,45 +76,25 @@ struct ArticleContainerView: View {
                 ToastView(message: "这已经是第一篇文章了")
             }
         }
-        // --- 已移除: .onAppear ---
-        // .onAppear 修饰符已完全删除，不再更新 lastViewedArticleID
-        
-        // --- .onDisappear 逻辑保持不变 ---
         .onDisappear {
-            // 当视图最终消失时，将当前正在看的文章也加入待处理集合
-            // 我们需要检查这篇文章是否本身就是未读的
             if !currentArticle.isRead {
                 readArticleIDsInThisSession.insert(currentArticle.id)
             }
             
-            // 一次性将所有在本次会话中读过的文章ID提交给ViewModel
             for articleID in readArticleIDsInThisSession {
                 viewModel.markAsRead(articleID: articleID)
             }
         }
-        // --- 修改: .onChange ---
         .onChange(of: currentArticle.id) { oldValue, newValue in
-            // --- 已移除 ---
-            // 更新 lastViewedArticleID 的代码行已被删除
-            // viewModel.lastViewedArticleID = newValue
-            
-            // 当文章切换时，我们处理刚刚离开的文章 (oldValue)
-            
-            // 检查这篇文章是否本身是未读的，并且我们还没有处理过它
             let wasArticleUnread = !viewModel.sources.flatMap { $0.articles }.first { $0.id == oldValue }!.isRead
             let isNewToSession = !readArticleIDsInThisSession.contains(oldValue)
 
             if wasArticleUnread && isNewToSession {
-                // 如果它确实是篇新的未读文章，那么：
-                // 1. 将局部未读数减 1，立即更新UI
                 liveUnreadCount -= 1
-                // 2. 将它的ID加入待处理集合，以便在最后统一提交
                 readArticleIDsInThisSession.insert(oldValue)
             }
         }
-        // ==================== 核心修改 5: 应用全局背景色 ====================
         .background(Color.viewBackground.ignoresSafeArea())
-        // ====================================================================
     }
 
     /// 切换到下一篇文章的逻辑
@@ -143,7 +116,7 @@ struct ArticleContainerView: View {
         }
     }
     
-    /// 切换到上一篇文章的逻辑
+    /// 切换到上一篇文章的逻辑 (此方法当前未被UI调用)
     private func switchToPreviousArticle() {
         let sourceNameToSearch: String?
         switch navigationContext {
@@ -161,7 +134,6 @@ struct ArticleContainerView: View {
         }
     }
     
-    /// 辅助函数，接收一个“设置器”闭包来显示和隐藏提示
     private func showToast(setter: @escaping (Bool) -> Void) {
         setter(true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
