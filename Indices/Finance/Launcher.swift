@@ -16,6 +16,14 @@ struct Finance: App {
 struct UpdateOverlayView: View {
     @ObservedObject var updateManager: UpdateManager
 
+    // 用于格式化字节数的工具
+    private let byteFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB, .useKB]
+        formatter.countStyle = .file
+        return formatter
+    }()
+
     var body: some View {
         Group {
             switch updateManager.updateState {
@@ -24,15 +32,43 @@ struct UpdateOverlayView: View {
                 
             case .checking:
                 StatusView(icon: nil, message: "正在检查更新...")
-                
-            case .downloading(let progress, let total):
-                VStack {
+            
+            // --- 修改：处理新的 downloadingFile case ---
+            case .downloadingFile(let name, let progress, let downloaded, let total):
+                VStack(spacing: 12) {
+                    Text("正在下载 \(name)")
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    
                     ProgressView(value: progress)
-                    Text("正在下载 \(Int(progress * Double(total)))/\(total)...")
+                        .progressViewStyle(LinearProgressViewStyle())
+                    
+                    // --- 修改：只显示 已下载 / 总大小 ---
+                    Text("\(byteFormatter.string(fromByteCount: downloaded)) / \(byteFormatter.string(fromByteCount: total))")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
-                .padding()
-                .background(Color(.systemBackground).opacity(0.8))
-                .cornerRadius(10)
+                .padding(20)
+                .frame(maxWidth: 300)
+                .background(Color(.systemBackground).opacity(0.9))
+                .cornerRadius(15)
+                .shadow(radius: 10)
+
+            // 旧的下载视图，用于显示文件总数进度
+            case .downloading(let progress, let total):
+                 VStack(spacing: 12) {
+                    Text("正在处理文件...")
+                         .font(.headline)
+                    ProgressView(value: progress)
+                    Text("已完成 \(Int(progress * Double(total)))/\(total)")
+                         .font(.caption)
+                         .foregroundColor(.secondary)
+                }
+                .padding(20)
+                .frame(maxWidth: 300)
+                .background(Color(.systemBackground).opacity(0.9))
+                .cornerRadius(15)
                 .shadow(radius: 10)
                 
             case .alreadyUpToDate:

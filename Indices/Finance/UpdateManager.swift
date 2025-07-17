@@ -83,11 +83,33 @@ enum JSONValue: Codable {
 enum UpdateState: Equatable {
     case idle
     case checking
+    // --- 修改此行：移除了 speed 参数 ---
+    case downloadingFile(name: String, progress: Double, downloadedBytes: Int64, totalBytes: Int64)
     case downloading(progress: Double, total: Int)
     case updateCompleted
     case alreadyUpToDate
     case error(message: String)
+    
+    // Equatable 的实现需要更新
+    static func == (lhs: UpdateState, rhs: UpdateState) -> Bool {
+        switch (lhs, rhs) {
+        case (.idle, .idle): return true
+        case (.checking, .checking): return true
+        // --- 修改此行：匹配新的 case 定义 ---
+        case (let .downloadingFile(n1, p1, db1, tb1), let .downloadingFile(n2, p2, db2, tb2)):
+            return n1 == n2 && p1 == p2 && db1 == db2 && tb1 == tb2
+        case (let .downloading(p1, t1), let .downloading(p2, t2)):
+            return p1 == p2 && t1 == t2
+        case (.updateCompleted, .updateCompleted): return true
+        case (.alreadyUpToDate, .alreadyUpToDate): return true
+        case (let .error(m1), let .error(m2)):
+            return m1 == m2
+        default:
+            return false
+        }
+    }
 }
+
 
 // MARK: - 网络错误类型枚举 (无修改)
 enum NetworkErrorType {
@@ -126,7 +148,7 @@ class UpdateManager: ObservableObject {
     
     func checkForUpdates(isManual: Bool = false) async -> Bool {
         if case .checking = updateState, !isManual { return false }
-        if case .downloading = updateState { return false }
+        if case .downloading = updateState, case .downloadingFile = updateState { return false }
         
         if isManual { // 仅在手动检查时立即显示 "checking"
             self.updateState = .checking
@@ -162,8 +184,7 @@ class UpdateManager: ObservableObject {
                     resetStateAfterDelay()
                     return true
                 } else {
-                    let errorMessage = "文件更新失败。"
-                    self.updateState = .error(message: errorMessage)
+                    self.updateState = .error(message: "文件更新失败。")
                     resetStateAfterDelay()
                     return false
                 }
@@ -310,14 +331,17 @@ class UpdateManager: ObservableObject {
             // 如果是首次安装，数据库文件不存在，需要全量下载一次
             if !FileManagerHelper.fileExists(named: "Finance.db") {
                 print("本地数据库不存在，执行首次全量下载...")
-                success = await downloadFile(named: fileInfo.name)
-                // 下载成功后，需要获取服务器最新的 log id 并保存，以便下次增量同步
+                // --- 核心修改点：调用新的带进度的下载方法 ---
+                success = await downloadFileWithProgress(named: fileInfo.name)
+                
                 if success {
                      await resetSyncIDToLatest()
                 }
             } else {
                 // 否则，执行增量同步
                 print("执行数据库增量同步...")
+                // 在开始同步前，设置一个状态，让用户知道正在处理
+                self.updateState = .downloading(progress: 0, total: totalTasks)
                 success = await syncDatabase()
             }
             
@@ -328,6 +352,7 @@ class UpdateManager: ObservableObject {
             
             completedTasks += 1
             let progress = Double(completedTasks) / Double(totalTasks)
+            // 更新整体进度
             self.updateState = .downloading(progress: progress, total: totalTasks)
         }
         
@@ -339,6 +364,7 @@ class UpdateManager: ObservableObject {
         return await withTaskGroup(of: Bool.self, body: { group in
             for fileInfo in downloadableFiles {
                 group.addTask {
+                    // 小文件继续使用旧的下载方法
                     return await self.downloadFile(named: fileInfo.name)
                 }
             }
@@ -417,7 +443,47 @@ class UpdateManager: ObservableObject {
         }
     }
 
+    // --- 新增：带进度的文件下载方法 ---
+    private func downloadFileWithProgress(named filename: String) async -> Bool {
+        guard let url = URL(string: "\(serverBaseURL)/download?filename=\(filename)") else {
+            print("无效的下载URL for \(filename)")
+            return false
+        }
+        
+        // --- 修改：初始状态不包含 speed ---
+        await MainActor.run {
+            self.updateState = .downloadingFile(name: filename, progress: 0, downloadedBytes: 0, totalBytes: 1)
+        }
+        
+        do {
+            // 使用 FileDownloader 执行下载
+            let downloader = FileDownloader()
+            // --- 修改：回调闭包不再接收 speed ---
+            let fileData = try await downloader.download(from: url) { progress, downloaded, total in
+                Task { @MainActor in
+                    // --- 修改：设置状态时不再传递 speed ---
+                    self.updateState = .downloadingFile(
+                        name: filename,
+                        progress: progress,
+                        downloadedBytes: downloaded,
+                        totalBytes: total
+                    )
+                }
+            }
+            
+            // 下载成功后，保存文件
+            let destinationURL = FileManagerHelper.documentsDirectory.appendingPathComponent(filename)
+            try fileData.write(to: destinationURL)
+            print("成功保存 (带进度): \(filename) 到 Documents")
+            return true
+            
+        } catch {
+            print("下载或保存文件 \(filename) 失败: \(error)")
+            return false
+        }
+    }
     
+    // 旧的下载方法保持不变，用于下载无需显示进度的小文件
     private func downloadFile(named filename: String) async -> Bool {
         guard let url = URL(string: "\(serverBaseURL)/download?filename=\(filename)") else {
             print("无效的下载URL for \(filename)")
@@ -488,7 +554,71 @@ class UpdateManager: ObservableObject {
     }
 }
 
-// MARK: - FileManagerHelper (新增一个辅助方法)
+// MARK: - 新增：FileDownloader 辅助类
+private class FileDownloader: NSObject {
+    // --- 修改：ProgressHandler 的定义不再包含 speed ---
+    typealias ProgressHandler = @MainActor (Double, Int64, Int64) -> Void
+    
+    private var progressHandler: ProgressHandler?
+    private var continuation: CheckedContinuation<Data, Error>?
+    
+    private var receivedData = Data()
+    private var expectedContentLength: Int64 = 0
+    
+    // --- 已移除：所有与速度计算相关的属性 ---
+
+    func download(from url: URL, onProgress: @escaping ProgressHandler) async throws -> Data {
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            self.progressHandler = onProgress
+            
+            let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+            session.dataTask(with: url).resume()
+        }
+    }
+}
+
+extension FileDownloader: URLSessionDataDelegate {
+    // 1. 收到服务器响应
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode),
+              let contentLength = httpResponse.value(forHTTPHeaderField: "Content-Length"),
+              let totalBytes = Int64(contentLength) else {
+            continuation?.resume(throwing: URLError(.badServerResponse))
+            completionHandler(.cancel)
+            return
+        }
+        self.expectedContentLength = totalBytes
+        completionHandler(.allow)
+    }
+
+    // 2. 收到数据块 (此方法会被多次调用)
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        receivedData.append(data)
+        let progress = Double(receivedData.count) / Double(expectedContentLength)
+        
+        // --- 已移除：速度计算的逻辑 ---
+        
+        // --- 修改：调用进度回调，不再传递 speed ---
+        Task { @MainActor in
+            self.progressHandler?(progress, Int64(receivedData.count), expectedContentLength)
+        }
+    }
+
+    // 3. 任务完成
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            continuation?.resume(throwing: error)
+        } else {
+            // 成功完成，返回所有数据
+            continuation?.resume(returning: receivedData)
+        }
+    }
+}
+
+
+// MARK: - FileManagerHelper (无修改)
 class FileManagerHelper {
     
     static var documentsDirectory: URL {
