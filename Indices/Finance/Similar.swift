@@ -108,9 +108,6 @@ class SimilarViewModel: ObservableObject {
             // 加载数据
             let dataService = DataService1.shared
             
-            // 获取 tags_weight 数据
-            dataService.loadWeightGroups()
-            
             // 获取 symbol 的 tags 及权重
             let targetTagsWithWeight = self.findTagsBySymbol(symbol: self.symbol, data: dataService.descriptionData1)
             

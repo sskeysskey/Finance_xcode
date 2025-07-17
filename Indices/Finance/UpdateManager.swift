@@ -222,10 +222,23 @@ class UpdateManager: ObservableObject {
             var request = URLRequest(url: url)
             request.timeoutInterval = 5
             
-            let (data, _) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            // --- 新增：检查 HTTP 状态码 ---
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                print("服务器返回了非预期的状态码: \(statusCode)")
+                // 你可以认为这也是一种服务器无法访问的错误
+                return .failure(.serverUnreachable("服务器返回状态码 \(statusCode)"))
+            }
+            // ---------------------------------
+            
+            // 只有在状态码是 200 的情况下，才尝试解码
             let decodedResponse = try JSONDecoder().decode(VersionResponse.self, from: data)
             return .success(decodedResponse)
+            
         } catch {
+            // ... catch 块的逻辑保持不变
             if let urlError = error as? URLError {
                 switch urlError.code {
                 case .notConnectedToInternet, .networkConnectionLost:
@@ -240,6 +253,8 @@ class UpdateManager: ObservableObject {
                 }
             } else if error is DecodingError {
                 print("数据解析错误: \(error.localizedDescription)")
+                // 加上这一句，可以帮助调试
+                // if let responseString = String(data: data, encoding: .utf8) { print(responseString) }
                 return .failure(.decodingFailed(error.localizedDescription))
             } else {
                 print("未知网络错误: \(error.localizedDescription)")
