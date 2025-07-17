@@ -15,10 +15,16 @@ class DatabaseManager {
     private init() {
         print("=== DatabaseManager Initializing ===")
         // 初始化时，执行一次数据库打开操作
-        openLatestDatabase()
+        openDatabase()
     }
     
-    // MARK: - 新增：重新连接到最新的数据库
+    deinit {
+        if db != nil {
+            sqlite3_close(db)
+        }
+    }
+    
+    // MARK: - 修改：重命名并简化打开逻辑
     /// 当数据库文件更新后，调用此方法来关闭旧连接并打开新连接。
     func reconnectToLatestDatabase() {
         print("=== DatabaseManager Reconnecting ===")
@@ -28,36 +34,158 @@ class DatabaseManager {
             db = nil // 将指针设为 nil
             print("已关闭旧的数据库连接。")
         }
-        
-        // 2. 重新执行打开最新数据库的逻辑
-        openLatestDatabase()
+        openDatabase()
     }
 
-    // MARK: - 新增：将打开数据库的逻辑提取到私有方法
-    /// 查找最新的数据库文件并打开连接。
-    private func openLatestDatabase() {
-        guard let dbUrl = FileManagerHelper.getLatestFileUrl(for: "Finance") else {
-            print("错误：在 Documents 目录中未找到任何 Finance 数据库文件。")
-            // 确保 db 为 nil
+    // MARK: - 修改：直接打开固定名称的数据库
+    /// 查找名为 "Finance.db" 的数据库文件并打开连接。
+    private func openDatabase() {
+        let dbName = "Finance.db"
+        let dbUrl = FileManagerHelper.documentsDirectory.appendingPathComponent(dbName)
+
+        // 先检查文件是否存在
+        guard FileManager.default.fileExists(atPath: dbUrl.path) else {
+            print("错误：数据库文件 \(dbName) 在 Documents 目录中未找到。")
             self.db = nil
             return
         }
 
         // 尝试打开新的数据库文件
         if sqlite3_open(dbUrl.path, &db) == SQLITE_OK {
-            print("成功从 Documents 目录打开数据库: \(dbUrl.lastPathComponent)")
+            print("成功从 Documents 目录打开数据库: \(dbName)")
         } else {
             let errorMessage = String(cString: sqlite3_errmsg(db))
-            print("无法从 Documents 目录打开数据库: \(dbUrl.lastPathComponent)。错误: \(errorMessage)")
-            // 确保打开失败时 db 为 nil
+            print("无法从 Documents 目录打开数据库: \(dbName)。错误: \(errorMessage)")
             self.db = nil
         }
     }
-    
-    deinit {
-        if db != nil {
-            sqlite3_close(db)
+
+    // MARK: - 新增：应用从服务器同步的变更
+    func applySyncChanges(_ changes: [Change]) async -> Bool {
+        guard db != nil else {
+            print("数据库连接无效，无法应用变更。")
+            return false
         }
+        
+        // 在后台线程执行数据库操作
+        return await Task.detached {
+            // 1. 开始事务
+            guard sqlite3_exec(self.db, "BEGIN TRANSACTION", nil, nil, nil) == SQLITE_OK else {
+                print("开启事务失败: \(String(cString: sqlite3_errmsg(self.db)))")
+                return false
+            }
+            
+            for change in changes {
+                var success = false
+                switch change.op {
+                case "I", "U":
+                    success = self.applyReplace(for: change)
+                case "D":
+                    success = self.applyDelete(for: change)
+                default:
+                    print("未知的操作类型: \(change.op)")
+                    success = true // 或者 false，取决于严格程度
+                }
+                
+                // 如果任何一步失败，则回滚并退出
+                if !success {
+                    print("应用变更失败，正在回滚...")
+                    sqlite3_exec(self.db, "ROLLBACK TRANSACTION", nil, nil, nil)
+                    return false
+                }
+            }
+            
+            // 3. 提交事务
+            guard sqlite3_exec(self.db, "COMMIT TRANSACTION", nil, nil, nil) == SQLITE_OK else {
+                print("提交事务失败: \(String(cString: sqlite3_errmsg(self.db)))")
+                // 尝试回滚
+                sqlite3_exec(self.db, "ROLLBACK TRANSACTION", nil, nil, nil)
+                return false
+            }
+            
+            print("成功应用 \(changes.count) 条变更。")
+            return true
+        }.value
+    }
+
+    private func applyDelete(for change: Change) -> Bool {
+        let sql = "DELETE FROM \"\(change.table)\" WHERE rowid = ?;"
+        var statement: OpaquePointer?
+        
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            print("为 DELETE 操作准备语句失败: \(String(cString: sqlite3_errmsg(db)))")
+            return false
+        }
+        
+        sqlite3_bind_int(statement, 1, Int32(change.rowid))
+        
+        let result = sqlite3_step(statement)
+        sqlite3_finalize(statement)
+        
+        guard result == SQLITE_DONE else {
+            print("执行 DELETE 失败 (table: \(change.table), rowid: \(change.rowid)): \(String(cString: sqlite3_errmsg(db)))")
+            return false
+        }
+        
+        return true
+    }
+
+    private func applyReplace(for change: Change) -> Bool {
+        guard let data = change.data, !data.isEmpty else { return false }
+        
+        // 1. 关键修复：先对键进行字母排序，得到一个唯一的、固定的顺序
+        let sortedKeys = data.keys.sorted()
+        
+        // 2. 使用这个固定的顺序来构建列名部分
+        let columns = sortedKeys.map { "\"\($0)\"" }.joined(separator: ", ")
+        let placeholders = Array(repeating: "?", count: data.count).joined(separator: ", ")
+        let sql = "REPLACE INTO \"\(change.table)\" (\(columns)) VALUES (\(placeholders));"
+        
+        var statement: OpaquePointer?
+        
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            print("为 REPLACE 操作准备语句失败: \(String(cString: sqlite3_errmsg(db)))")
+            // 如果准备失败，也打印出 change 方便调试
+            print("导致准备失败的变更是: \(change)")
+            return false
+        }
+        
+        // 3. 使用完全相同的 sortedKeys 顺序来绑定值
+        var index: Int32 = 1
+        for key in sortedKeys {
+            let value = data[key]!
+            
+            switch value {
+            case .int(let intValue):
+                sqlite3_bind_int64(statement, index, Int64(intValue))
+                
+            case .double(let doubleValue):
+                if doubleValue.truncatingRemainder(dividingBy: 1) == 0 {
+                    sqlite3_bind_int64(statement, index, Int64(doubleValue))
+                } else {
+                    sqlite3_bind_double(statement, index, doubleValue)
+                }
+                
+            case .string(let stringValue):
+                sqlite3_bind_text(statement, index, (stringValue as NSString).utf8String, -1, nil)
+                
+            case .null:
+                sqlite3_bind_null(statement, index)
+            }
+            
+            index += 1
+        }
+        
+        let result = sqlite3_step(statement)
+        sqlite3_finalize(statement)
+        
+        guard result == SQLITE_DONE else {
+            print("导致错误的变更是: \(change)")
+            print("执行 REPLACE 失败 (table: \(change.table), rowid: \(change.rowid)): \(String(cString: sqlite3_errmsg(db)))")
+            return false
+        }
+        
+        return true
     }
     
     struct PriceData: Identifiable {

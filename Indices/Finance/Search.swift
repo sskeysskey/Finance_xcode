@@ -194,7 +194,7 @@ struct SearchView: View {
     var body: some View {
         VStack(spacing: 0) {
             searchBar
-                .padding()
+                .padding(.vertical, 4)
             
             // 剪贴板小条
             if showClipboardBar {
@@ -211,6 +211,7 @@ struct SearchView: View {
                 .background(Color(.systemGray5))
                 .cornerRadius(8)
                 .padding(.horizontal)
+                .padding(.bottom, 12) // <<< 修改点：在这里增加一个底部的间距
                 .onTapGesture {
                     // 粘贴并隐藏小条
                     searchText = clipboardContent
