@@ -150,8 +150,11 @@ class UpdateManager: ObservableObject {
         if case .checking = updateState, !isManual { return false }
         if case .downloading = updateState, case .downloadingFile = updateState { return false }
         
+        // 一开始就把状态置为 checking，无论手动还是自动
+            await MainActor.run { self.updateState = .checking }
+        
         if isManual { // 仅在手动检查时立即显示 "checking"
-            self.updateState = .checking
+//            self.updateState = .checking
             try? await Task.sleep(for: .milliseconds(1))
         }
         

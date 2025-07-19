@@ -319,9 +319,10 @@ class DataService: ObservableObject {
         }
     }
     
+    // 在 DataService.swift 中
+
     private func loadDescriptionData() {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "description") else {
-            // MARK: - 修改
             if !isInitialLoad {
                 DispatchQueue.main.async {
                     self.errorMessage = "description 文件未在 Documents 中找到"
@@ -337,6 +338,9 @@ class DataService: ObservableObject {
             let dateFormatter = DateFormatter()
             dateFormatter.dateFormat = "yyyy-MM-dd"
             
+            // --- 开始修改 ---
+
+            // 1. 处理全局时间标记 (这部分逻辑是正确的，保持不变)
             var newGlobalTimeMarkers: [Date: String] = [:]
             if let global = loadedDescriptionData.global {
                 for (dateString, text) in global {
@@ -346,30 +350,43 @@ class DataService: ObservableObject {
                 }
             }
             
+            // 2. 处理特定股票/ETF的时间标记
             var newSymbolTimeMarkers: [String: [Date: String]] = [:]
-            let _: ([SearchDescribableItem]) -> Void = { items in
+            
+            // 定义一个可重用的闭包来处理包含 description3 的项目
+            let processItemsWithDescription3 = { (items: [SearchDescribableItem]) in
                 for item in items {
-                    if let description3 = (item as? SearchStock)?.description3 ?? (item as? SearchETF)?.description3 {
-                        var markers: [Date: String] = [:]
-                        for markerDict in description3 {
-                            for (dateString, text) in markerDict {
-                                if let date = dateFormatter.date(from: dateString) {
-                                    markers[date] = text
-                                }
+                    // 使用可选链和类型转换来获取 description3
+                    guard let description3 = (item as? SearchStock)?.description3 ?? (item as? SearchETF)?.description3 else {
+                        continue
+                    }
+                    
+                    var markers: [Date: String] = [:]
+                    for markerDict in description3 {
+                        for (dateString, text) in markerDict {
+                            if let date = dateFormatter.date(from: dateString) {
+                                markers[date] = text
                             }
                         }
-                        if !markers.isEmpty {
-                            newSymbolTimeMarkers[item.symbol.uppercased()] = markers
-                        }
+                    }
+                    
+                    if !markers.isEmpty {
+                        // 将解析出的标记存入字典，键为大写的 symbol
+                        newSymbolTimeMarkers[item.symbol.uppercased()] = markers
                     }
                 }
             }
+            
+            // 3. 显式调用闭包，分别处理 stocks 和 etfs 数组
+            processItemsWithDescription3(loadedDescriptionData.stocks)
+            processItemsWithDescription3(loadedDescriptionData.etfs)
+            
+            // --- 结束修改 ---
 
-            
-            
             DispatchQueue.main.async {
                 self.descriptionData = loadedDescriptionData
                 self.globalTimeMarkers = newGlobalTimeMarkers
+                // 现在 newSymbolTimeMarkers 将包含正确解析的数据
                 self.symbolTimeMarkers = newSymbolTimeMarkers
             }
 
