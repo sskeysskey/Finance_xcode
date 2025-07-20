@@ -109,21 +109,49 @@ class DatabaseManager {
     }
 
     private func applyDelete(for change: Change) -> Bool {
-        let sql = "DELETE FROM \"\(change.table)\" WHERE rowid = ?;"
+        var sql: String
         var statement: OpaquePointer?
         
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            print("为 DELETE 操作准备语句失败: \(String(cString: sqlite3_errmsg(db)))")
-            return false
+        // --- 核心修改：使用 switch 来处理不同表的删除逻辑 ---
+        switch change.table {
+        case "Earning":
+            guard case let .string(name) = change.key["name"],
+                  case let .string(date) = change.key["date"] else {
+                print("Earning 删除失败：无法从 key 解析 name 和 date。Key: \(change.key)")
+                return false
+            }
+            sql = "DELETE FROM \"Earning\" WHERE name = ? AND date = ?;"
+            
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                print("为 Earning DELETE 准备语句失败: \(String(cString: sqlite3_errmsg(db)))")
+                return false
+            }
+            sqlite3_bind_text(statement, 1, (name as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(statement, 2, (date as NSString).utf8String, -1, nil)
+
+        case "MNSPP":
+            guard case let .string(symbol) = change.key["symbol"] else {
+                print("MNSPP 删除失败：无法从 key 解析 symbol。Key: \(change.key)")
+                return false
+            }
+            sql = "DELETE FROM \"MNSPP\" WHERE symbol = ?;"
+            
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                print("为 MNSPP DELETE 准备语句失败: \(String(cString: sqlite3_errmsg(db)))")
+                return false
+            }
+            sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
+            
+        default:
+            print("未知的表类型 \(change.table)，无法执行删除。")
+            return false // 或者 true，取决于您想不想让未知表中断整个同步
         }
-        
-        sqlite3_bind_int(statement, 1, Int32(change.rowid))
         
         let result = sqlite3_step(statement)
         sqlite3_finalize(statement)
         
         guard result == SQLITE_DONE else {
-            print("执行 DELETE 失败 (table: \(change.table), rowid: \(change.rowid)): \(String(cString: sqlite3_errmsg(db)))")
+            print("执行 DELETE 失败 (table: \(change.table), key: \(change.key)): \(String(cString: sqlite3_errmsg(db)))")
             return false
         }
         
@@ -131,62 +159,62 @@ class DatabaseManager {
     }
 
     private func applyReplace(for change: Change) -> Bool {
-        guard let data = change.data, !data.isEmpty else { return false }
-        
-        // 1. 关键修复：先对键进行字母排序，得到一个唯一的、固定的顺序
-        let sortedKeys = data.keys.sorted()
-        
-        // 2. 使用这个固定的顺序来构建列名部分
-        let columns = sortedKeys.map { "\"\($0)\"" }.joined(separator: ", ")
-        let placeholders = Array(repeating: "?", count: data.count).joined(separator: ", ")
-        let sql = "REPLACE INTO \"\(change.table)\" (\(columns)) VALUES (\(placeholders));"
-        
-        var statement: OpaquePointer?
-        
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            print("为 REPLACE 操作准备语句失败: \(String(cString: sqlite3_errmsg(db)))")
-            // 如果准备失败，也打印出 change 方便调试
-            print("导致准备失败的变更是: \(change)")
-            return false
-        }
-        
-        // 3. 使用完全相同的 sortedKeys 顺序来绑定值
-        var index: Int32 = 1
-        for key in sortedKeys {
-            let value = data[key]!
-            
-            switch value {
-            case .int(let intValue):
-                sqlite3_bind_int64(statement, index, Int64(intValue))
+                guard let data = change.data, !data.isEmpty else { return false }
                 
-            case .double(let doubleValue):
-                if doubleValue.truncatingRemainder(dividingBy: 1) == 0 {
-                    sqlite3_bind_int64(statement, index, Int64(doubleValue))
-                } else {
-                    sqlite3_bind_double(statement, index, doubleValue)
+                // 1. 关键修复：先对键进行字母排序，得到一个唯一的、固定的顺序
+                let sortedKeys = data.keys.sorted()
+                
+                // 2. 使用这个固定的顺序来构建列名部分
+                let columns = sortedKeys.map { "\"\($0)\"" }.joined(separator: ", ")
+                let placeholders = Array(repeating: "?", count: data.count).joined(separator: ", ")
+                let sql = "REPLACE INTO \"\(change.table)\" (\(columns)) VALUES (\(placeholders));"
+                
+                var statement: OpaquePointer?
+                
+                guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                    print("为 REPLACE 操作准备语句失败: \(String(cString: sqlite3_errmsg(db)))")
+                    // 如果准备失败，也打印出 change 方便调试
+                    print("导致准备失败的变更是: \(change)")
+                    return false
                 }
                 
-            case .string(let stringValue):
-                sqlite3_bind_text(statement, index, (stringValue as NSString).utf8String, -1, nil)
+                // 3. 使用完全相同的 sortedKeys 顺序来绑定值
+                var index: Int32 = 1
+                for key in sortedKeys {
+                    let value = data[key]!
+                    
+                    switch value {
+                    case .int(let intValue):
+                        sqlite3_bind_int64(statement, index, Int64(intValue))
+                        
+                    case .double(let doubleValue):
+                        if doubleValue.truncatingRemainder(dividingBy: 1) == 0 {
+                            sqlite3_bind_int64(statement, index, Int64(doubleValue))
+                        } else {
+                            sqlite3_bind_double(statement, index, doubleValue)
+                        }
+                        
+                    case .string(let stringValue):
+                        sqlite3_bind_text(statement, index, (stringValue as NSString).utf8String, -1, nil)
+                        
+                    case .null:
+                        sqlite3_bind_null(statement, index)
+                    }
+                    
+                    index += 1
+                }
                 
-            case .null:
-                sqlite3_bind_null(statement, index)
+                let result = sqlite3_step(statement)
+                sqlite3_finalize(statement)
+                
+                guard result == SQLITE_DONE else {
+            // --- 优化日志 ---
+            print("执行 REPLACE 失败 (table: \(change.table), key: \(change.key)): \(String(cString: sqlite3_errmsg(db)))")
+                    return false
+                }
+                
+                return true
             }
-            
-            index += 1
-        }
-        
-        let result = sqlite3_step(statement)
-        sqlite3_finalize(statement)
-        
-        guard result == SQLITE_DONE else {
-            print("导致错误的变更是: \(change)")
-            print("执行 REPLACE 失败 (table: \(change.table), rowid: \(change.rowid)): \(String(cString: sqlite3_errmsg(db)))")
-            return false
-        }
-        
-        return true
-    }
     
     struct PriceData: Identifiable {
         let id: Int

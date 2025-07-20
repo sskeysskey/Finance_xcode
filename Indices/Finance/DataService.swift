@@ -2,7 +2,6 @@ import Foundation
 import Combine
 import SwiftUI
 
-// ... 其他模型定义保持不变 ...
 // MARK: - 新增：High/Low 数据模型
 struct HighLowItem: Identifiable, Codable {
     var id = UUID()

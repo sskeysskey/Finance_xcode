@@ -36,15 +36,18 @@ struct Change: Codable {
     let logId: Int
     let table: String
     let op: String // "I", "U", "D"
-    let rowid: Int
-    let data: [String: JSONValue]? // 用于 I 和 U 操作
+    
+    // 新增：用于定位记录的键，例如 ["name": "AAPL", "date": "2025-01-01"]
+    let key: [String: JSONValue]
+    
+    // data 字段保持不变，用于 I 和 U 操作
+    let data: [String: JSONValue]?
     
     enum CodingKeys: String, CodingKey {
         case logId = "log_id"
-        case table, op, rowid, data
+        case table, op, key, data
     }
 }
-
 // 用于解码 [String: Any] 的辅助类型
 enum JSONValue: Codable {
     case int(Int)
