@@ -233,68 +233,72 @@ class DataService: ObservableObject {
     // ==================== 修改开始 ====================
     // 2. 重写 loadEarningRelease 方法以解析新格式
     private func loadEarningRelease() {
-        guard let url = FileManagerHelper.getLatestFileUrl(for: "Earnings_Release_new") else {
+        // 1. 定义要查找的两个文件前缀
+        let filePrefixes = ["Earnings_Release_new", "Earnings_Release_next"]
+        
+        // 2. 获取这两个文件的最新 URL
+        //    使用 compactMap 可以方便地过滤掉未找到的文件（返回 nil 的情况）
+        let urlsToProcess = filePrefixes.compactMap { prefix in
+            FileManagerHelper.getLatestFileUrl(for: prefix)
+        }
+
+        // 3. 检查是否至少找到了一个文件
+        guard !urlsToProcess.isEmpty else {
             if !isInitialLoad {
                 DispatchQueue.main.async {
-                    self.errorMessage = "Earnings_Release_new 文件未在 Documents 中找到"
+                    // 更新错误信息，使其更明确
+                    self.errorMessage = "Earnings_Release_new 或 Earnings_Release_next 文件未在 Documents 中找到"
                 }
             }
             return
         }
         
+        // 4. 创建一个数组来存储所有解析出的数据
+        var allEarningReleases: [EarningRelease] = []
+        
         do {
-            let content = try String(contentsOf: url, encoding: .utf8)
-            let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-            
-            var newEarningReleases: [EarningRelease] = []
-            
-            for line in lines {
-                // 按冒号分割，并去除两端空格
-                let parts = line.split(separator: ":").map { $0.trimmingCharacters(in: .whitespaces) }
+            // 5. 遍历所有找到的 URL
+            for url in urlsToProcess {
+                let content = try String(contentsOf: url, encoding: .utf8)
+                let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
                 
-                // 确保有三个部分：Symbol, Timing, Date
-                guard parts.count == 3 else { continue }
-                
-                let symbol = parts[0]
-                let timing = parts[1]
-                let fullDateStr = parts[2] // "YYYY-MM-DD"
-                
-                // 从 "YYYY-MM-DD" 中提取 "MM-DD"
-                let dateComponents = fullDateStr.split(separator: "-")
-                guard dateComponents.count == 3 else { continue }
-                
-                let month = dateComponents[1]
-                let day = dateComponents[2]
-                let displayDate = "\(month)-\(day)"
-                
-                let release = EarningRelease(symbol: symbol, timing: timing, date: displayDate)
-                newEarningReleases.append(release)
+                // 内部解析逻辑保持不变
+                for line in lines {
+                    let parts = line.split(separator: ":").map { $0.trimmingCharacters(in: .whitespaces) }
+                    
+                    guard parts.count == 3 else { continue }
+                    
+                    let symbol = String(parts[0])
+                    let timing = String(parts[1])
+                    let fullDateStr = String(parts[2]) // "YYYY-MM-DD"
+                    
+                    let dateComponents = fullDateStr.split(separator: "-")
+                    guard dateComponents.count == 3 else { continue }
+                    
+                    let month = dateComponents[1]
+                    let day = dateComponents[2]
+                    let displayDate = "\(month)-\(day)"
+                    
+                    let release = EarningRelease(symbol: symbol, timing: timing, date: displayDate)
+                    // 将解析结果添加到总数组中
+                    allEarningReleases.append(release)
+                }
             }
             
+            // 6. 所有文件都处理完毕后，在主线程上更新发布的属性
             DispatchQueue.main.async {
-                self.earningReleases = newEarningReleases
+                self.earningReleases = allEarningReleases
             }
             
         } catch {
             DispatchQueue.main.async {
-                self.errorMessage = "加载 Earnings_Release_new.txt 失败: \(error.localizedDescription)"
+                // 更新错误信息
+                self.errorMessage = "加载财报文件失败: \(error.localizedDescription)"
             }
         }
     }
     // ==================== 修改结束 ====================
 
-    private func getColor(for identifier: String) -> Color {
-        switch identifier {
-        case "Y": return .yellow
-        case "C": return .cyan
-        case "B": return .green
-        case "W": return .white
-        case "O": return .orange
-        case "b": return .blue
-        default: return .gray
-        }
-    }
-    
     private func loadCompareStock() {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "CompareStock") else {
             // MARK: - 修改
