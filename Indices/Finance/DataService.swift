@@ -96,6 +96,9 @@ class DataService: ObservableObject {
     
     @Published var earningReleases: [EarningRelease] = []
     
+    // MARK: - 修改 1：添加一个私有状态，用于跟踪数据是否已加载
+    private var isDataLoaded = false
+    
     // 新增：用于存储 High/Low 数据的属性
     @Published var highGroups: [HighLowGroup] = []
     @Published var lowGroups: [HighLowGroup] = []
@@ -105,16 +108,30 @@ class DataService: ObservableObject {
     @Published var globalTimeMarkers: [Date: String] = [:]
     @Published var symbolTimeMarkers: [String: [Date: String]] = [:]
     
-    private var isDataLoaded = false
-    
     // MARK: - 新增辅助属性
     /// 检查本地是否已存在数据版本。如果版本号为 nil 或 "0.0"，则认为是首次加载，此时文件不存在是正常情况。
     private var isInitialLoad: Bool {
         let localVersion = UserDefaults.standard.string(forKey: "FinanceAppLocalDataVersion")
         return localVersion == nil || localVersion == "0.0"
     }
+    
+    // MARK: - 修改 2：创建一个新的公共方法，用于强制重新加载数据
+        /// 强制重新加载所有数据。此方法会重置加载状态，通常在手动刷新或数据文件更新后调用。
+        func forceReloadData() {
+            print("DataService: 收到强制刷新请求，将重新加载所有数据。")
+            // 重置加载状态标志
+            self.isDataLoaded = false
+            // 调用原始的加载方法
+            self.loadData()
+        }
 
     func loadData() {
+        // MARK: - 修改 3：在 loadData 方法的入口处添加“哨兵”检查
+        // 如果数据已经加载过，则直接返回，避免重复执行。
+        guard !isDataLoaded else {
+            print("DataService: 数据已加载，跳过重复加载。")
+            return
+        }
         // 在加载前清除旧的错误信息
         DispatchQueue.main.async {
             self.errorMessage = nil

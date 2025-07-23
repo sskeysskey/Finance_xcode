@@ -81,7 +81,6 @@ struct EarningReleaseView: View {
     .listStyle(.plain) // 使用 plain 样式，让我们的自定义背景色可以撑满整行
     .navigationTitle("财报发布")
     .onAppear {
-      dataService.loadData()
       initializeExpandedStates()
     }
     .onReceive(dataService.$earningReleases) { _ in

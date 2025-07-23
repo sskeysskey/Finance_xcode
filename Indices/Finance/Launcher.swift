@@ -160,7 +160,8 @@ struct MainContentView: View {
                                 // 手动检查更新时，要等整个流程完成才重新 loadData
                                 if await updateManager.checkForUpdates(isManual: true) {
                                     DatabaseManager.shared.reconnectToLatestDatabase()
-                                    dataService.loadData()
+                                    // MARK: - 修改：调用新的强制刷新方法
+                                    dataService.forceReloadData()
                                 }
                             }
                         } label: {
@@ -182,6 +183,8 @@ struct MainContentView: View {
                         let updated = await updateManager.checkForUpdates(isManual: false)
                         if updated {
                             DatabaseManager.shared.reconnectToLatestDatabase()
+                            // MARK: - 修改：首次启动后也调用强制刷新
+                            dataService.forceReloadData()
                         }
                         // 不管更新是否成功，都尝试加载（如果更新失败，则可能依然无本地数据，界面会报错）
                         dataService.loadData()
@@ -197,7 +200,8 @@ struct MainContentView: View {
                         if await updateManager.checkForUpdates(isManual: false) {
                             // 如果更新成功，重新打开 DB，reload 本地数据
                             DatabaseManager.shared.reconnectToLatestDatabase()
-                            dataService.loadData()
+                            // MARK: - 修改：后台更新成功后，调用强制刷新
+                            dataService.forceReloadData()
                         }
                     }
                 }
