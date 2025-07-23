@@ -65,12 +65,15 @@ struct MarketCapDataItem {
     }
 }
 
+// ==================== 修改开始 ====================
+// 1. 更新 EarningRelease 模型以匹配新格式
 struct EarningRelease: Identifiable {
     let id = UUID()
     let symbol: String
-    let color: Color
-    let date: String
+    let timing: String // BMO, AMC, TNS
+    let date: String   // 存储 "MM-dd" 格式的日期
 }
+// ==================== 修改结束 ====================
 
 
 class DataService: ObservableObject {
@@ -210,9 +213,10 @@ class DataService: ObservableObject {
         }
     }
         
+    // ==================== 修改开始 ====================
+    // 2. 重写 loadEarningRelease 方法以解析新格式
     private func loadEarningRelease() {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "Earnings_Release_new") else {
-            // MARK: - 修改
             if !isInitialLoad {
                 DispatchQueue.main.async {
                     self.errorMessage = "Earnings_Release_new 文件未在 Documents 中找到"
@@ -220,43 +224,48 @@ class DataService: ObservableObject {
             }
             return
         }
+        
         do {
             let content = try String(contentsOf: url, encoding: .utf8)
-            let lines = content.split(separator: "\n")
+            let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
             
-            let newEarningReleases = lines.compactMap { line -> EarningRelease? in
-                let parts = line.split(separator: ":")
-                let firstPart = String(parts[0]).trimmingCharacters(in: .whitespaces)
+            var newEarningReleases: [EarningRelease] = []
+            
+            for line in lines {
+                // 按冒号分割，并去除两端空格
+                let parts = line.split(separator: ":").map { $0.trimmingCharacters(in: .whitespaces) }
                 
-                let symbol = firstPart.trimmingCharacters(in: .whitespaces)
-                var color: Color = .gray
+                // 确保有三个部分：Symbol, Timing, Date
+                guard parts.count == 3 else { continue }
                 
-                if parts.count > 1 {
-                    let colorIdentifier = String(parts[1].prefix(1))
-                    color = self.getColor(for: colorIdentifier)
-                }
+                let symbol = parts[0]
+                let timing = parts[1]
+                let fullDateStr = parts[2] // "YYYY-MM-DD"
                 
-                let dateParts = line.split(separator: ":").last?
-                    .trimmingCharacters(in: .whitespaces)
-                    .split(separator: "-")
+                // 从 "YYYY-MM-DD" 中提取 "MM-DD"
+                let dateComponents = fullDateStr.split(separator: "-")
+                guard dateComponents.count == 3 else { continue }
                 
-                if let month = dateParts?[1], let day = dateParts?[2] {
-                    let dateStr = "\(month)-\(day)"
-                    return EarningRelease(symbol: symbol, color: color, date: dateStr)
-                }
+                let month = dateComponents[1]
+                let day = dateComponents[2]
+                let displayDate = "\(month)-\(day)"
                 
-                return nil
+                let release = EarningRelease(symbol: symbol, timing: timing, date: displayDate)
+                newEarningReleases.append(release)
             }
+            
             DispatchQueue.main.async {
                 self.earningReleases = newEarningReleases
             }
+            
         } catch {
             DispatchQueue.main.async {
                 self.errorMessage = "加载 Earnings_Release_new.txt 失败: \(error.localizedDescription)"
             }
         }
     }
-    
+    // ==================== 修改结束 ====================
+
     private func getColor(for identifier: String) -> Color {
         switch identifier {
         case "Y": return .yellow
