@@ -4,9 +4,6 @@ import Combine
 struct EarningReleaseView: View {
   @EnvironmentObject var dataService: DataService
 
-  // ==================== 修改开始 ====================
-  // 1. 定义新的嵌套数据结构
-  
   // 时段分组 (BMO, AMC, etc.)
   struct TimingGroup: Identifiable {
     let id: String // 唯一标识，例如 "07-21-BMO"
@@ -31,60 +28,47 @@ struct EarningReleaseView: View {
     let timingGroups: [TimingGroup]
   }
 
-  // 状态变量，使用 TimingGroup 的 id 作为 key
   @State private var expandedSections: [String: Bool] = [:]
   @State private var showSearchView = false
 
-  // 2. 重构 groupedReleases 以支持两级分组
   private var groupedReleases: [DateGroup] {
-    // 按日期分组
     let groupedByDate = Dictionary(grouping: dataService.earningReleases, by: { $0.date })
     
     var dateGroups: [DateGroup] = []
 
-    // 遍历每个日期
     for (date, releasesOnDate) in groupedByDate {
-      // 在日期内，再按时段 (timing) 分组
       let groupedByTiming = Dictionary(grouping: releasesOnDate, by: { $0.timing })
       
       var timingGroups: [TimingGroup] = []
       
-      // 遍历每个时段
       for (timing, items) in groupedByTiming {
-        // 创建 TimingGroup，使用 "date-timing" 作为唯一 ID
         let timingGroup = TimingGroup(id: "\(date)-\(timing)", timing: timing, items: items)
         timingGroups.append(timingGroup)
       }
       
-      // 按 BMO -> AMC -> TNS 的顺序对时段进行排序
       let timingOrder: [String: Int] = ["BMO": 0, "AMC": 1, "TNS": 2]
       timingGroups.sort {
           (timingOrder[$0.timing] ?? 99) < (timingOrder[$1.timing] ?? 99)
       }
       
-      // 创建 DateGroup
       let dateGroup = DateGroup(id: date, date: date, timingGroups: timingGroups)
       dateGroups.append(dateGroup)
     }
 
-    // 按日期升序排序
     dateGroups.sort { $0.date < $1.date }
     return dateGroups
   }
-  // ==================== 修改结束 ====================
 
   var body: some View {
+    // 使用 .insetGrouped 样式，可以让 Section 之间的区别更明显
     List {
-      // 遍历日期分组
       ForEach(groupedReleases) { dateGroup in
         // Section Header 显示日期
         Section(header: Text(dateGroup.date).font(.headline).foregroundColor(.primary).padding(.vertical, 5)) {
-          // 遍历该日期下的时段分组
           ForEach(dateGroup.timingGroups) { timingGroup in
-            // 时段分组的 Header，可点击折叠
+            // 时段分组的 Header
             timingGroupHeader(for: timingGroup)
             
-            // 如果该时段分组是展开的，则显示其下的 Symbol
             if expandedSections[timingGroup.id] ?? true {
               ForEach(timingGroup.items) { item in
                 sectionRow(for: item)
@@ -94,6 +78,7 @@ struct EarningReleaseView: View {
         }
       }
     }
+    .listStyle(.plain) // 使用 plain 样式，让我们的自定义背景色可以撑满整行
     .navigationTitle("财报发布")
     .onAppear {
       dataService.loadData()
@@ -117,41 +102,46 @@ struct EarningReleaseView: View {
   }
 
     // ==================== 修改开始 ====================
-    // 3. 创建新的 timingGroupHeader 视图
+    // 3. 调整 timingGroupHeader 视图，使其在视觉上更突出
     @ViewBuilder
     private func timingGroupHeader(for group: TimingGroup) -> some View {
         HStack {
-            // 显示时段名称和 Symbol 数量
+            // 1. 字体加粗，增加视觉重量
             Text("\(group.displayName)  \(group.items.count)")
-                .font(.subheadline)
+                .font(.subheadline.weight(.semibold)) // 使用 .semibold 加粗
                 .foregroundColor(.secondary)
+            
             Spacer()
-            // 折叠/展开的箭头图标
+            
             Image(systemName: (expandedSections[group.id] ?? true)
                   ? "chevron.down"
                   : "chevron.right")
                 .foregroundColor(.secondary)
         }
-        .padding(.leading) // 增加缩进，以表示层级关系
-        .padding(.vertical, 3)
+        // 2. 增加内边距，让内容和背景之间有更多空间
+        .padding(.horizontal) // 给左右也加上 padding
+        .padding(.vertical, 8) // 增加垂直 padding
         .contentShape(Rectangle())
         .onTapGesture {
-            // 切换折叠/展开状态
             let isExpanded = expandedSections[group.id] ?? true
             withAnimation {
                 expandedSections[group.id] = !isExpanded
             }
         }
+        // 3. 设置行内边距为0，这样背景色可以撑满整行
+        .listRowInsets(EdgeInsets())
+        // 4. 添加一个微妙的背景色，以和内容行区分
+        //    Color(.systemGray5) 是一个很好的选择，它能自适应浅色/深色模式
+        .background(Color(.systemGray5))
     }
+    // ==================== 修改结束 ====================
 
-    // 4. 修改 sectionRow，移除对颜色的引用
     private func sectionRow(for item: EarningRelease) -> some View {
         let groupName = dataService.getCategory(for: item.symbol) ?? "Stocks"
         return NavigationLink(destination: ChartView(symbol: item.symbol, groupName: groupName)) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.symbol)
                     .font(.system(.body, design: .monospaced))
-                    // .foregroundColor(item.color) // 移除颜色设置
                 if let tags = getTags(for: item.symbol), !tags.isEmpty {
                     Text(tags.joined(separator: ", "))
                         .font(.footnote)
@@ -162,25 +152,21 @@ struct EarningReleaseView: View {
                 }
             }
             .padding(.vertical, 2)
-            .padding(.leading) // 增加缩进，与时段 Header 对齐
+            // 保持 Symbol 行的缩进
+            .padding(.leading)
         }
     }
 
-    // 5. 更新 initializeExpandedStates 以适应新结构
     private func initializeExpandedStates() {
         for dateGroup in groupedReleases {
             for timingGroup in dateGroup.timingGroups {
-                // 只有还没设置过的时段分组，才根据条目数设初始值
                 if expandedSections[timingGroup.id] == nil {
-                    // 超过 5 条折叠(false)，否则展开(true)
                     expandedSections[timingGroup.id] = (timingGroup.items.count <= 5)
                 }
             }
         }
     }
-    // ==================== 修改结束 ====================
 
-    // MARK: - 获取 Tags
     private func getTags(for symbol: String) -> [String]? {
         if let stockTags = dataService.descriptionData?
             .stocks.first(where: { $0.symbol.uppercased() == symbol.uppercased() })?.tag {
