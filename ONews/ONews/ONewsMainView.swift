@@ -52,9 +52,32 @@ class NewsViewModel: ObservableObject {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
     
+    // ==================== 核心修改 1: 创建一个权威的、排序后的一维文章列表 ====================
+        /// 提供一个按显示逻辑排序（日期降序 -> 来源名升序 -> 标题升序）的扁平化文章列表。
+        /// 这是“All Articles”视图和相关导航逻辑的唯一数据源。
+    // ==================== 核心修改点: 调整此处的排序逻辑 ====================
+        /// 提供一个按显示逻辑排序（日期降序 -> 标题升序）的扁平化文章列表。
+        /// 这是“All Articles”视图和相关导航逻辑的唯一数据源。
+        var allArticlesSortedForDisplay: [(article: Article, sourceName: String)] {
+            let flatList = self.sources.flatMap { source in
+                source.articles.map { (article: $0, sourceName: source.name) }
+            }
+            
+            return flatList.sorted { item1, item2 in
+                // 主要排序条件：按时间戳降序 (新日期在前)
+                if item1.article.timestamp != item2.article.timestamp {
+                    return item1.article.timestamp > item2.article.timestamp
+                }
+                
+                // 次要排序条件：如果日期相同，直接按文章标题升序 (字母顺序)
+                // (已移除按来源排序的逻辑，以实现混杂阅读)
+                return item1.article.topic < item2.article.topic
+            }
+        }
+        // ===============
+    
     init() {
         loadReadRecords()
-//        loadNews()
         
         // ==================== 新增修改 2: 设置 Combine 管道 ====================
         // 监听 @Published var sources 的任何变化
@@ -233,58 +256,78 @@ class NewsViewModel: ObservableObject {
         }
     }
     
-    private func getArticleList(for sourceName: String?) -> [Article] {
-        let list: [Article]
-        if let name = sourceName, let source = self.sources.first(where: { $0.name == name }) {
-            list = source.articles
-        } else {
-            list = self.sources.flatMap { $0.articles }.sorted {
-                if $0.timestamp != $1.timestamp {
-                    return $0.timestamp > $1.timestamp
-                }
-                return $0.topic < $1.topic
+    // ==================== 核心修改 2: 更新 getArticleList 以使用新排序 ====================
+        private func getArticleList(for sourceName: String?) -> [Article] {
+            if let name = sourceName, let source = self.sources.first(where: { $0.name == name }) {
+                // 如果是单个来源，其内部文章已在 loadNews 中排序，直接返回
+                return source.articles
+            } else {
+                // 如果是“所有文章”，使用我们新的权威排序列表
+                return self.allArticlesSortedForDisplay.map { $0.article }
             }
         }
-        return list
-    }
+        // ==============================================
 
     /// 计算总未读数
     var totalUnreadCount: Int {
         sources.flatMap { $0.articles }.filter { !$0.isRead }.count
     }
     
-    // findNext/Previous 系列方法保持不变...
-    func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
-        let relevantSources: [NewsSource]
-        if let name = sourceName {
-            relevantSources = self.sources.filter { $0.name == name }
-        } else {
-            relevantSources = self.sources
-        }
-        let unreadArticles = relevantSources.flatMap { source -> [(article: Article, sourceName: String)] in
-            source.articles.filter { !$0.isRead }.map { article in (article: article, sourceName: source.name) }
-        }
-        guard !unreadArticles.isEmpty else { return nil }
-        guard let currentIndex = unreadArticles.firstIndex(where: { $0.article.id == id }) else {
-            return unreadArticles.first
-        }
-        let nextIndex = (currentIndex + 1) % unreadArticles.count
-        return unreadArticles[nextIndex]
-    }
-    func findPreviousUnread(before id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
-        let list: [(Article, String)]
-        if let sourceName = sourceName, let source = sources.first(where: { $0.name == sourceName }) {
-            list = source.articles.filter { !$0.isRead }.map { ($0, source.name) }
-        } else {
-            list = sources.flatMap { src in
-                src.articles.filter { !$0.isRead }.map { ($0, src.name) }
+    // ==================== 核心修改 3: 更新 findNextUnread 以使用新排序 ====================
+        func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
+            let list: [(article: Article, sourceName: String)]
+            
+            // 根据上下文获取正确的文章列表
+            if let name = sourceName, let source = self.sources.first(where: { $0.name == name }) {
+                // 单个来源内部的导航
+                list = source.articles
+                    .filter { !$0.isRead }
+                    .map { (article: $0, sourceName: name) }
+            } else {
+                // “所有文章”的导航，使用我们新的权威排序列表
+                list = self.allArticlesSortedForDisplay.filter { !$0.article.isRead }
+            }
+            
+            guard !list.isEmpty else { return nil }
+            
+            // 寻找当前文章在列表中的位置
+            guard let currentIndex = list.firstIndex(where: { $0.article.id == id }) else {
+                // 如果当前文章已读，可能不在未读列表中，此时返回列表中的第一篇
+                return list.first
+            }
+            
+            // 计算并返回下一篇文章
+            let nextIndex = currentIndex + 1
+            if list.indices.contains(nextIndex) {
+                return list[nextIndex]
+            } else {
+                // 如果已经是最后一篇，则返回 nil
+                return nil
             }
         }
-        if let idx = list.firstIndex(where: { $0.0.id == id }), idx > 0 {
-            return list[idx-1]
+        // =================================================================================
+
+        // ==================== 核心修改 4: 更新 findPreviousUnread 以使用新排序 ====================
+        func findPreviousUnread(before id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
+            let list: [(article: Article, sourceName: String)]
+            
+            if let name = sourceName, let source = sources.first(where: { $0.name == name }) {
+                list = source.articles
+                    .filter { !$0.isRead }
+                    .map { (article: $0, sourceName: name) }
+            } else {
+                list = self.allArticlesSortedForDisplay.filter { !$0.article.isRead }
+            }
+            
+            guard !list.isEmpty else { return nil }
+            
+            if let currentIndex = list.firstIndex(where: { $0.article.id == id }), currentIndex > 0 {
+                return list[currentIndex - 1]
+            }
+            
+            return nil
         }
-        return nil
-    }
+        // =========
 }
 
 // NewsSource 和 Article 结构体保持不变

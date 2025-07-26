@@ -126,39 +126,44 @@ struct ArticleListView: View {
 }
 
 
-// ==================== 优化后的 AllArticlesListView (无变化) ====================
+// ==================== 优化后的 AllArticlesListView (有修改) ====================
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @State private var filterMode: ArticleFilterMode = .unread
     
+    // ==================== 核心修改: 直接使用 ViewModel 中排好序的列表 ====================
     private var filteredArticles: [(article: Article, sourceName: String)] {
-        viewModel.sources.flatMap { source in
-            source.articles
-                .filter { filterMode == .unread ? !$0.isRead : $0.isRead }
-                .map { (article: $0, sourceName: source.name) }
+        // 直接从 viewModel 获取权威、排序好的列表，然后根据 filterMode 过滤
+        viewModel.allArticlesSortedForDisplay.filter { item in
+            filterMode == .unread ? !item.article.isRead : item.article.isRead
         }
     }
+    // =================================================================================
+    
+    // Grouping logic remains the same, but now operates on the correctly sorted data
     private var groupedArticles: [String: [(article: Article, sourceName: String)]] {
         Dictionary(grouping: filteredArticles, by: { $0.article.timestamp })
     }
+    
+    // Sorting of timestamps is still needed for section headers
     private var sortedTimestamps: [String] {
+        // 注意：因为 viewModel.allArticlesSortedForDisplay 已经是降序了，
+        // 所以这里的 keys 顺序可能不是严格的降序。我们必须重新排序。
         groupedArticles.keys.sorted().reversed()
     }
+    
     private var totalUnreadCount: Int { viewModel.totalUnreadCount }
     private var totalReadCount: Int { viewModel.sources.flatMap { $0.articles }.filter { $0.isRead }.count }
     
     var body: some View {
         VStack {
             List {
+                // The rest of the view body remains exactly the same
                 ForEach(sortedTimestamps, id: \.self) { timestamp in
-                    // ==================== 修改点 ====================
-                    // 移除了 .padding(.leading)，让 List 自动处理 Header 和 Row 的对齐
                     Section(header: Text(formatTimestamp(timestamp))
                                 .font(.headline)
                                 .padding(.vertical, 4)
-                                // .padding(.leading) // <-- 此行已被移除
                     ) {
-                    // ===============================================
                         ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
                             NavigationLink(destination: ArticleContainerView(
                                 article: item.article,
