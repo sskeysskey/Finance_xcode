@@ -273,39 +273,40 @@ class NewsViewModel: ObservableObject {
         sources.flatMap { $0.articles }.filter { !$0.isRead }.count
     }
     
-    // ==================== 核心修改 3: 更新 findNextUnread 以使用新排序 ====================
+    // ==================== 核心修改: findNextUnread 函数 ====================
+        /// 寻找下一篇未读文章。如果到达列表末尾，则循环回到第一篇。
         func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
             let list: [(article: Article, sourceName: String)]
             
-            // 根据上下文获取正确的文章列表
+            // 1. 获取正确的未读文章列表 (此逻辑保持不变)
             if let name = sourceName, let source = self.sources.first(where: { $0.name == name }) {
-                // 单个来源内部的导航
                 list = source.articles
                     .filter { !$0.isRead }
                     .map { (article: $0, sourceName: name) }
             } else {
-                // “所有文章”的导航，使用我们新的权威排序列表
                 list = self.allArticlesSortedForDisplay.filter { !$0.article.isRead }
             }
             
+            // 2. 如果根本没有未读文章，则直接返回 nil (此逻辑保持不变)
             guard !list.isEmpty else { return nil }
             
-            // 寻找当前文章在列表中的位置
+            // 3. 寻找当前文章在未读列表中的索引 (此逻辑保持不变)
             guard let currentIndex = list.firstIndex(where: { $0.article.id == id }) else {
-                // 如果当前文章已读，可能不在未读列表中，此时返回列表中的第一篇
+                // 如果当前文章不在未读列表中（可能刚被标记为已读），则从第一篇未读文章开始
                 return list.first
             }
             
-            // 计算并返回下一篇文章
-            let nextIndex = currentIndex + 1
-            if list.indices.contains(nextIndex) {
-                return list[nextIndex]
-            } else {
-                // 如果已经是最后一篇，则返回 nil
-                return nil
-            }
+            // 4. 【核心修改】计算下一篇文章的索引，使用模运算实现循环
+            // (currentIndex + 1) 会得到常规的下一个索引
+            // % list.count (对列表总数取模) 能确保结果永远不会越界。
+            // 例如，如果列表有5篇文章 (索引0-4)，当前在最后一篇 (索引4):
+            // (4 + 1) % 5  ->  5 % 5  ->  结果是 0。完美地回到了列表开头。
+            let nextIndex = (currentIndex + 1) % list.count
+            
+            // 5. 返回计算出的下一篇文章
+            return list[nextIndex]
         }
-        // =================================================================================
+        // ======================================================================
 
         // ==================== 核心修改 4: 更新 findPreviousUnread 以使用新排序 ====================
         func findPreviousUnread(before id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
