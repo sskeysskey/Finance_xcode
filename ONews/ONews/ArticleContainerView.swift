@@ -1,3 +1,5 @@
+// 文件: /Users/yanzhang/Documents/Xcode/ONews/ONews/ArticleContainerView.swift
+
 import SwiftUI
 
 struct ArticleContainerView: View {
@@ -50,8 +52,6 @@ struct ArticleContainerView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            // ==================== 修改点: 更新 ArticleDetailView 的调用 ====================
-            // 重新传入 requestNextArticle 参数，并将我们的切换函数传递给它
             ArticleDetailView(
                 article: currentArticle,
                 sourceName: currentSourceName,
@@ -61,7 +61,6 @@ struct ArticleContainerView: View {
                     self.switchToNextArticle()
                 }
             )
-            // ==========================================================================
             .id(currentArticle.id)
             .transition(.asymmetric(
                 insertion: .move(edge: .bottom).combined(with: .opacity),
@@ -97,6 +96,7 @@ struct ArticleContainerView: View {
         .background(Color.viewBackground.ignoresSafeArea())
     }
 
+    // ==================== 最终修改: 简化并统一 switchToNextArticle 逻辑 ====================
     /// 切换到下一篇文章的逻辑
     private func switchToNextArticle() {
         let sourceNameToSearch: String?
@@ -107,14 +107,26 @@ struct ArticleContainerView: View {
 
         if let next = viewModel.findNextUnread(after: currentArticle.id,
                                                inSource: sourceNameToSearch) {
-            withAnimation(.easeInOut(duration: 0.4)) {
-                self.currentArticle = next.article
-                self.currentSourceName = next.sourceName
+            
+            // 关键逻辑：不再区分上下文，统一进行检查。
+            // 如果 ViewModel 循环推荐的下一篇文章，是我们在本轮会话中已经读过的，
+            // 那么就意味着我们已经完成了对当前范围内所有未读文章的阅读。
+            if readArticleIDsInThisSession.contains(next.article.id) {
+                // 停止跳转，并显示提示。
+                showToast { shouldShow in self.showNoNextToast = shouldShow }
+            } else {
+                // 否则，这是一篇真正“新”的未读文章，执行跳转。
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    self.currentArticle = next.article
+                    self.currentSourceName = next.sourceName
+                }
             }
         } else {
+            // 这个分支处理的是一开始就没有任何未读文章的情况。
             showToast { shouldShow in self.showNoNextToast = shouldShow }
         }
     }
+    // ====================================================================================
     
     /// 切换到上一篇文章的逻辑 (此方法当前未被UI调用)
     private func switchToPreviousArticle() {
