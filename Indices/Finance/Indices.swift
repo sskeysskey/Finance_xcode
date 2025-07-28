@@ -225,7 +225,7 @@ struct IndicesContentView: View {
                     
                     // 1. 定义分组和顺序 (这部分逻辑保持不变)
                     let topRowOrder = ["Currencies", "Commodities", "Bonds"]
-                    let bottomRowNames = ["Qualified_Symbol", "Earning_Filter"]
+                    let bottomRowNames = ["Qualified", "Earning_Filter", "Next_Week"]
                     let excludedNames = topRowOrder + bottomRowNames
                     
                     // 2. 根据定义的规则，过滤和排序数据 (这部分逻辑保持不变)
@@ -278,7 +278,7 @@ struct IndicesContentView: View {
                             }
                         }
                         
-                        // MARK: - 最后渲染底部特定行 (Qualified_Symbol, Earning_Filter)
+                        // MARK: - 最后渲染底部特定行 (Qualified, Earning_Filter)
                         if !bottomSectors.isEmpty {
                             HStack(spacing: 12) {
                                 ForEach(bottomSectors) { sector in
@@ -286,14 +286,7 @@ struct IndicesContentView: View {
                                         SectorDetailView(sector: sector)
                                             .navigationBarTitleDisplayMode(.inline)
                                     } label: {
-                                        // ******** 这里是修改的核心 ********
-                                        if sector.name == "Qualified_Symbol" {
-                                            // 如果是 "Qualified_Symbol"，使用新的绚丽按钮
-                                            DazzlingSectorButtonView(sectorName: sector.name)
-                                        } else {
-                                            // 否则，使用原来的普通按钮
                                             SectorButtonView(sectorName: sector.name)
-                                        }
                                     }
                                 }
                             }
@@ -365,94 +358,6 @@ struct SectorButtonView: View {
             .cornerRadius(10)
             .shadow(color: Color.black.opacity(0.15), radius: 3, x: 2, y: 2)
             .frame(minHeight: 44)
-    }
-}
-
-// =================================================================
-// MARK: - 绚丽夺目的特殊按钮视图 (新代码)
-// =================================================================
-struct DazzlingSectorButtonView: View {
-    let sectorName: String
-    
-    // 状态变量，用于驱动动画
-    @State private var isAnimating = false
-
-    var body: some View {
-        // 使用 TimelineView 来创建持续更新的动画，性能更好
-        TimelineView(.animation) { timeline in
-            // 计算当前时间，用于驱动渐变动画
-            let time = timeline.date.timeIntervalSince1970
-            
-            HStack(spacing: 8) {
-                // 添加一个星星图标
-                Image(systemName: "star.fill")
-                    .foregroundColor(.yellow)
-                
-                Text(sectorName.replacingOccurrences(of: "_", with: " "))
-                    .font(.subheadline).bold()
-                    .foregroundColor(.white)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .frame(minHeight: 44)
-            // 主要背景：一个旋转的角向渐变，创造流光效果
-            .background(
-                AngularGradient(
-                    gradient: Gradient(colors: [
-                        .red, .orange, .yellow, .green, .blue, .purple, .red
-                    ]),
-                    center: .center,
-                    angle: .degrees(time * 45) // 角度随时间变化
-                )
-            )
-            .cornerRadius(10)
-            // 光泽扫过效果
-            .overlay(
-                ShimmerEffect()
-                    .cornerRadius(10)
-                    .mask(
-                        RoundedRectangle(cornerRadius: 10)
-                    )
-            )
-            // 脉冲动画
-            .scaleEffect(isAnimating ? 1.05 : 1.0)
-            // 辉光效果
-            .shadow(color: .yellow.opacity(0.8), radius: isAnimating ? 12 : 6, x: 0, y: 0)
-            .shadow(color: Color.black.opacity(0.2), radius: 3, x: 2, y: 2)
-            .onAppear {
-                // 启动脉冲动画
-                withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
-                    isAnimating = true
-                }
-            }
-        }
-    }
-}
-
-// 光泽效果的辅助视图
-struct ShimmerEffect: View {
-    @State private var startPoint: UnitPoint = .init(x: -1.8, y: -1.2)
-    @State private var endPoint: UnitPoint = .init(x: 0, y: -0.2)
-    
-    var body: some View {
-        LinearGradient(
-            gradient: Gradient(colors: [
-                .white.opacity(0.5),
-                .white.opacity(0.2),
-                .white.opacity(0.0)
-            ]),
-            startPoint: startPoint,
-            endPoint: endPoint
-        )
-        .onAppear {
-            withAnimation(
-                .easeInOut(duration: 1.5)
-                .repeatForever(autoreverses: false)
-            ) {
-                startPoint = .init(x: 1, y: 1.2)
-                endPoint = .init(x: 2.8, y: 2.2)
-            }
-        }
     }
 }
 
