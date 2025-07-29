@@ -68,7 +68,7 @@ struct ArticleContainerView: View {
             )
             
             if showNoNextToast {
-                ToastView(message: "该分组内已无更多文章了")
+                ToastView(message: "该分组内已无更多文章")
             }
             
             if showNoPreviousToast {
