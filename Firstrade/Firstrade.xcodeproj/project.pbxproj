@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A3B0A5A42DDED66000112373 /* Password.json in Resources */ = {isa = PBXBuildFile; fileRef = A3B0A5A32DDED66000112373 /* Password.json */; };
 		A3B0A5A62DDEDD2F00112373 /* Firstrade.db in Resources */ = {isa = PBXBuildFile; fileRef = A3B0A5A52DDEDD2F00112373 /* Firstrade.db */; };
+		A3EBF5BD2E38C3BC004F1013 /* Password.json in Resources */ = {isa = PBXBuildFile; fileRef = A3EBF5BC2E38C3BC004F1013 /* Password.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32,13 +32,26 @@
 		A3B0A5762DDED5C500112373 /* Firstrade.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Firstrade.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A3B0A5832DDED5C600112373 /* FirstradeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FirstradeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A3B0A58D2DDED5C600112373 /* FirstradeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FirstradeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A3B0A5A32DDED66000112373 /* Password.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = Password.json; path = ../../Financial_System/Modules/Password.json; sourceTree = "<group>"; };
 		A3B0A5A52DDEDD2F00112373 /* Firstrade.db */ = {isa = PBXFileReference; lastKnownFileType = file; name = Firstrade.db; path = ../../Database/Firstrade.db; sourceTree = "<group>"; };
+		A3EBF5BC2E38C3BC004F1013 /* Password.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = Password.json; path = ../../Finance_python/Modules/Password.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A3EBF5B92E38C35A004F1013 /* Exceptions for "Firstrade" folder in "Firstrade" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Password.json,
+			);
+			target = A3B0A5752DDED5C500112373 /* Firstrade */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A3B0A5782DDED5C500112373 /* Firstrade */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A3EBF5B92E38C35A004F1013 /* Exceptions for "Firstrade" folder in "Firstrade" target */,
+			);
 			path = Firstrade;
 			sourceTree = "<group>";
 		};
@@ -82,8 +95,8 @@
 		A3B0A56D2DDED5C500112373 = {
 			isa = PBXGroup;
 			children = (
+				A3EBF5BC2E38C3BC004F1013 /* Password.json */,
 				A3B0A5A52DDEDD2F00112373 /* Firstrade.db */,
-				A3B0A5A32DDED66000112373 /* Password.json */,
 				A3B0A5782DDED5C500112373 /* Firstrade */,
 				A3B0A5862DDED5C600112373 /* FirstradeTests */,
 				A3B0A5902DDED5C600112373 /* FirstradeUITests */,
@@ -223,8 +236,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A3EBF5BD2E38C3BC004F1013 /* Password.json in Resources */,
 				A3B0A5A62DDEDD2F00112373 /* Firstrade.db in Resources */,
-				A3B0A5A42DDED66000112373 /* Password.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
