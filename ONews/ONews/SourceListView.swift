@@ -24,10 +24,9 @@ struct SourceListView: View {
         ZStack {
             NavigationView {
                 List {
-                    // "Unread" 行 (无变化)
                     ZStack {
                         HStack {
-                            Text("Unread")
+                            Text("ALL")
                                 .font(.system(size: 28, weight: .bold))
                                 .foregroundColor(.primary)
                             Spacer()

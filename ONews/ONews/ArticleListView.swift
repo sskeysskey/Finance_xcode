@@ -197,7 +197,6 @@ struct AllArticlesListView: View {
                 }
             }
             .listStyle(PlainListStyle())
-            .navigationTitle(filterMode.rawValue)
             .navigationBarTitleDisplayMode(.inline)
             
             Picker("Filter", selection: $filterMode) {
