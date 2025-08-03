@@ -71,8 +71,13 @@ struct ArticleContainerView: View {
             }
         }
         .onDisappear {
-            // 在退出时批量提交所有已读状态到 ViewModel
+            // ==================== 修复点 2: 返回列表页时标记当前文章为已读 ====================
+            // 先将当前正在查看的文章标记为本地已读
+            markCurrentArticleAsReadLocally()
+            
+            // 然后批量提交所有已读状态到 ViewModel
             commitReadStatusToViewModel()
+            // ===============================================================================
         }
         .background(Color.viewBackground.ignoresSafeArea())
     }
@@ -134,13 +139,25 @@ struct ArticleContainerView: View {
             // 将文章添加到会话已读集合
             readArticleIDsInThisSession.insert(articleID)
             
-            // 只更新本地的未读计数显示，不触发 ViewModel 更新
+            // 更新本地的未读计数显示
             if liveUnreadCount > 0 {
                 liveUnreadCount -= 1
             }
             
+            // ==================== 修复点 1: 实时更新 App 角标 ====================
+            // 计算当前应该显示的全局未读数（原始未读数 - 本次会话已读数）
+            let currentGlobalUnread = viewModel.totalUnreadCount - readArticleIDsInThisSession.count
+            
+            // 立即更新 App 角标
+            if let badgeUpdater = viewModel.badgeUpdater {
+                badgeUpdater(currentGlobalUnread)
+                print("App 角标已更新为: \(currentGlobalUnread)")
+            }
+            // =====================================================================
+            
             print("文章已加入本地已读集合: \(currentArticle.topic)")
             print("本地未读数: \(liveUnreadCount)")
+            print("本次会话已读文章数: \(readArticleIDsInThisSession.count)")
         } else {
             print("文章已经是已读状态，跳过: \(currentArticle.topic)")
         }
@@ -148,6 +165,11 @@ struct ArticleContainerView: View {
     
     /// 将本地已读状态批量提交到 ViewModel
     private func commitReadStatusToViewModel() {
+        guard !readArticleIDsInThisSession.isEmpty else {
+            print("没有需要提交的已读状态")
+            return
+        }
+        
         print("开始提交已读状态到 ViewModel，共 \(readArticleIDsInThisSession.count) 篇文章")
         
         // 批量提交所有已读文章

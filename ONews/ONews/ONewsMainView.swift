@@ -206,11 +206,8 @@ class NewsViewModel: ObservableObject {
                         print("ViewModel: 文章已标记为已读: \(topic)")
                         print("ViewModel: 新的总未读数: \(self.totalUnreadCount)")
                         
-                        // 由于我们修改了 @Published var sources，Combine 应该会自动触发
-                        // 但我们可以手动确保角标更新
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            self.badgeUpdater?(self.totalUnreadCount)
-                        }
+                        // 由于我们在 ArticleContainerView 中已经实时更新角标，
+                        // 这里的 Combine 管道会确保最终状态的一致性
                     }
                     return
                 }
