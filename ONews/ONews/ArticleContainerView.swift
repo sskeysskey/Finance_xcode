@@ -96,55 +96,54 @@ struct ArticleContainerView: View {
         .background(Color.viewBackground.ignoresSafeArea())
     }
 
-    // ==================== 最终修改: 简化并统一 switchToNextArticle 逻辑 ====================
-    /// 切换到下一篇文章的逻辑
-    private func switchToNextArticle() {
-        let sourceNameToSearch: String?
-        switch navigationContext {
-        case .fromSource(let name): sourceNameToSearch = name
-        case .fromAllArticles: sourceNameToSearch = nil
-        }
+    // ==================== 最终修复: 调整 switchToNextArticle 逻辑 ====================
+        /// 切换到下一篇文章的逻辑
+        private func switchToNextArticle() {
+            // --- 核心修复点 开始 ---
+            // 在寻找下一篇之前，立即将当前文章标记为“本轮会话已读”。
+            // 这是解决“最后一篇文章”问题的关键。
+            // 我们需要确保在检查循环时，当前文章的ID已经被记录下来。
+            let wasArticleUnread = !viewModel.sources.flatMap { $0.articles }.first { $0.id == currentArticle.id }!.isRead
+            let isNewToSession = !readArticleIDsInThisSession.contains(currentArticle.id)
 
-        if let next = viewModel.findNextUnread(after: currentArticle.id,
-                                               inSource: sourceNameToSearch) {
-            
-            // 关键逻辑：不再区分上下文，统一进行检查。
-            // 如果 ViewModel 循环推荐的下一篇文章，是我们在本轮会话中已经读过的，
-            // 那么就意味着我们已经完成了对当前范围内所有未读文章的阅读。
-            if readArticleIDsInThisSession.contains(next.article.id) {
-                // 停止跳转，并显示提示。
-                showToast { shouldShow in self.showNoNextToast = shouldShow }
-            } else {
-                // 否则，这是一篇真正“新”的未读文章，执行跳转。
-                withAnimation(.easeInOut(duration: 0.4)) {
-                    self.currentArticle = next.article
-                    self.currentSourceName = next.sourceName
+            if wasArticleUnread && isNewToSession {
+                // 将当前文章加入会话已读集合
+                readArticleIDsInThisSession.insert(currentArticle.id)
+                
+                // 因为我们可能不会切换到新文章（即这是最后一篇），
+                // .onChange 将不会触发。因此，我们需要在这里手动更新UI上的未读计数。
+                if liveUnreadCount > 0 {
+                    liveUnreadCount -= 1
                 }
             }
-        } else {
-            // 这个分支处理的是一开始就没有任何未读文章的情况。
-            showToast { shouldShow in self.showNoNextToast = shouldShow }
-        }
-    }
-    // ====================================================================================
-    
-    /// 切换到上一篇文章的逻辑 (此方法当前未被UI调用)
-    private func switchToPreviousArticle() {
-        let sourceNameToSearch: String?
-        switch navigationContext {
-        case .fromSource(let name): sourceNameToSearch = name
-        case .fromAllArticles: sourceNameToSearch = nil
-        }
+            // --- 核心修复点 结束 ---
 
-        if let prev = viewModel.findPreviousUnread(before: currentArticle.id, inSource: sourceNameToSearch) {
-            withAnimation(.interactiveSpring(response: 0.4, dampingFraction: 0.8)) {
-                self.currentArticle = prev.article
-                self.currentSourceName = prev.sourceName
+            let sourceNameToSearch: String?
+            switch navigationContext {
+            case .fromSource(let name): sourceNameToSearch = name
+            case .fromAllArticles: sourceNameToSearch = nil
             }
-        } else {
-            showToast { shouldShow in self.showNoPreviousToast = shouldShow }
+
+            if let next = viewModel.findNextUnread(after: currentArticle.id,
+                                                   inSource: sourceNameToSearch) {
+                
+                // 现在，当 findNextUnread 循环推荐回同一篇文章时，
+                // 下面的检查会因为我们刚刚在上面插入的 ID 而成功。
+                if readArticleIDsInThisSession.contains(next.article.id) {
+                    // 停止跳转，并显示提示。
+                    showToast { shouldShow in self.showNoNextToast = shouldShow }
+                } else {
+                    // 否则，这是一篇真正“新”的未读文章，执行跳转。
+                    withAnimation(.easeInOut(duration: 0.4)) {
+                        self.currentArticle = next.article
+                        self.currentSourceName = next.sourceName
+                    }
+                }
+            } else {
+                // 这个分支处理的是一开始就没有任何未读文章的情况。
+                showToast { shouldShow in self.showNoNextToast = shouldShow }
+            }
         }
-    }
     
     private func showToast(setter: @escaping (Bool) -> Void) {
         setter(true)
