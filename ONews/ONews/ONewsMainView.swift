@@ -191,6 +191,9 @@ class NewsViewModel: ObservableObject {
         }
     }
 
+    // markAsRead, markAsUnread, markAllAboveAsRead, markAllBelowAsRead 等方法保持不变
+    // 因为我们使用了 Combine，这些方法在修改 `sources` 数组后，会自动触发角标更新，无需在每个函数里单独调用。
+    
     /// 用户阅读完文章后调用
     func markAsRead(articleID: UUID) {
         DispatchQueue.main.async {
@@ -201,18 +204,10 @@ class NewsViewModel: ObservableObject {
                         let topic = self.sources[i].articles[j].topic
                         self.readRecords[topic] = Date()
                         self.saveReadRecords()
-                        
-                        // 添加调试信息
-                        print("ViewModel: 文章已标记为已读: \(topic)")
-                        print("ViewModel: 新的总未读数: \(self.totalUnreadCount)")
-                        
-                        // 由于我们在 ArticleContainerView 中已经实时更新角标，
-                        // 这里的 Combine 管道会确保最终状态的一致性
                     }
                     return
                 }
             }
-            print("ViewModel: 警告 - 未找到要标记为已读的文章 ID: \(articleID)")
         }
     }
 
