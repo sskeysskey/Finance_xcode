@@ -88,10 +88,19 @@ struct ArticleListView: View {
                                     label: { Label("标记为已读", systemImage: "checkmark.circle") }
                                     if filterMode == .unread {
                                         Divider()
-                                        Button { viewModel.markAllAboveAsRead(articleID: article.id, inSource: source.name) }
+                                        // ==================== 调用修正后的方法 ====================
+                                        Button {
+                                            // 传入当前视图正在使用的、已过滤的文章列表
+                                            viewModel.markAllAboveAsRead(articleID: article.id, inVisibleList: self.filteredArticles)
+                                        }
                                         label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
-                                        Button { viewModel.markAllBelowAsRead(articleID: article.id, inSource: source.name) }
+                                        
+                                        Button {
+                                            // 传入当前视图正在使用的、已过滤的文章列表
+                                            viewModel.markAllBelowAsRead(articleID: article.id, inVisibleList: self.filteredArticles)
+                                        }
                                         label: { Label("以下全部已读", systemImage: "arrow.down.to.line.compact") }
+                                        // ==========================================================
                                     }
                                 }
                             }
@@ -185,10 +194,20 @@ struct AllArticlesListView: View {
                                     label: { Label("标记为已读", systemImage: "checkmark.circle") }
                                     if filterMode == .unread {
                                         Divider()
-                                        Button { viewModel.markAllAboveAsRead(articleID: item.article.id, inSource: nil) }
+                                        // ==================== 调用修正后的方法 ====================
+                                        Button {
+                                            // filteredArticles 是 [(Article, String)], 我们需要 [Article]
+                                            let visibleArticleList = self.filteredArticles.map { $0.article }
+                                            viewModel.markAllAboveAsRead(articleID: item.article.id, inVisibleList: visibleArticleList)
+                                        }
                                         label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
-                                        Button { viewModel.markAllBelowAsRead(articleID: item.article.id, inSource: nil) }
+                                        
+                                        Button {
+                                            let visibleArticleList = self.filteredArticles.map { $0.article }
+                                            viewModel.markAllBelowAsRead(articleID: item.article.id, inVisibleList: visibleArticleList)
+                                        }
                                         label: { Label("以下全部已读", systemImage: "arrow.down.to.line.compact") }
+                                        // ==========================================================
                                     }
                                 }
                             }

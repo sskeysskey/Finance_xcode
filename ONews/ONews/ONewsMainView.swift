@@ -228,33 +228,44 @@ class NewsViewModel: ObservableObject {
         }
     }
     
-    func markAllAboveAsRead(articleID: UUID, inSource sourceName: String?) {
-        DispatchQueue.main.async {
-            let articlesToProcess = self.getArticleList(for: sourceName)
-            
-            guard let pivotIndex = articlesToProcess.firstIndex(where: { $0.id == articleID }) else { return }
-            
-            let articlesAbove = articlesToProcess[0...pivotIndex]
-            
-            for article in articlesAbove where !article.isRead {
-                self.markAsRead(articleID: article.id)
+    /// **修正后的方法: 直接操作传入的可见文章列表**
+    /// 修正后的方法: 将指定文章以上的所有文章标记为已读（不包括该文章本身）
+        func markAllAboveAsRead(articleID: UUID, inVisibleList visibleArticles: [Article]) {
+            DispatchQueue.main.async {
+                // 1. 在可见列表中找到触发操作的文章的索引
+                guard let pivotIndex = visibleArticles.firstIndex(where: { $0.id == articleID }) else { return }
+                
+                // 如果 pivotIndex 是 0（即第一篇文章），那么它上面没有文章，直接返回。
+                guard pivotIndex > 0 else { return }
+
+                // 2. 【核心修改】使用半开区间 [0..<pivotIndex] 来获取上方所有文章，排除自身。
+                let articlesAbove = visibleArticles[0..<pivotIndex]
+                
+                // 3. 遍历这个精确的子集，并将其中未读的文章标记为已读
+                for article in articlesAbove where !article.isRead {
+                    self.markAsRead(articleID: article.id)
+                }
             }
         }
-    }
-    
-    func markAllBelowAsRead(articleID: UUID, inSource sourceName: String?) {
-        DispatchQueue.main.async {
-            let articlesToProcess = self.getArticleList(for: sourceName)
-            
-            guard let pivotIndex = articlesToProcess.firstIndex(where: { $0.id == articleID }) else { return }
-            
-            let articlesBelow = articlesToProcess[pivotIndex...]
-            
-            for article in articlesBelow where !article.isRead {
-                self.markAsRead(articleID: article.id)
+
+        /// 修正后的方法: 将指定文章以下的所有文章标记为已读（不包括该文章本身）
+        func markAllBelowAsRead(articleID: UUID, inVisibleList visibleArticles: [Article]) {
+            DispatchQueue.main.async {
+                // 1. 在可见列表中找到触发操作的文章的索引
+                guard let pivotIndex = visibleArticles.firstIndex(where: { $0.id == articleID }) else { return }
+                
+                // 如果 pivotIndex 是最后一篇文章，那么它下面没有文章，直接返回。
+                guard pivotIndex < visibleArticles.count - 1 else { return }
+
+                // 2. 【核心修改】从 pivotIndex + 1 开始切片，以获取下方所有文章，排除自身。
+                let articlesBelow = visibleArticles[(pivotIndex + 1)...]
+                
+                // 3. 遍历这个精确的子集，并将其中未读的文章标记为已读
+                for article in articlesBelow where !article.isRead {
+                    self.markAsRead(articleID: article.id)
+                }
             }
         }
-    }
     
     // ==================== 核心修改 2: 更新 getArticleList 以使用新排序 ====================
         private func getArticleList(for sourceName: String?) -> [Article] {
