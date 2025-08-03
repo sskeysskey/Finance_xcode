@@ -71,74 +71,96 @@ struct ArticleContainerView: View {
             }
         }
         .onDisappear {
-            if !currentArticle.isRead {
-                readArticleIDsInThisSession.insert(currentArticle.id)
-            }
-            
-            for articleID in readArticleIDsInThisSession {
-                viewModel.markAsRead(articleID: articleID)
-            }
-        }
-        .onChange(of: currentArticle.id) { oldValue, newValue in
-            let wasArticleUnread = !viewModel.sources.flatMap { $0.articles }.first { $0.id == oldValue }!.isRead
-            let isNewToSession = !readArticleIDsInThisSession.contains(oldValue)
-
-            if wasArticleUnread && isNewToSession {
-                liveUnreadCount -= 1
-                readArticleIDsInThisSession.insert(oldValue)
-            }
+            // 在退出时批量提交所有已读状态到 ViewModel
+            commitReadStatusToViewModel()
         }
         .background(Color.viewBackground.ignoresSafeArea())
     }
 
-    // ==================== 最终修复: 调整 switchToNextArticle 逻辑 ====================
-        /// 切换到下一篇文章的逻辑
-        private func switchToNextArticle() {
-            // --- 核心修复点 开始 ---
-            // 在寻找下一篇之前，立即将当前文章标记为“本轮会话已读”。
-            // 这是解决“最后一篇文章”问题的关键。
-            // 我们需要确保在检查循环时，当前文章的ID已经被记录下来。
-            let wasArticleUnread = !viewModel.sources.flatMap { $0.articles }.first { $0.id == currentArticle.id }!.isRead
-            let isNewToSession = !readArticleIDsInThisSession.contains(currentArticle.id)
-
-            if wasArticleUnread && isNewToSession {
-                // 将当前文章加入会话已读集合
-                readArticleIDsInThisSession.insert(currentArticle.id)
-                
-                // 因为我们可能不会切换到新文章（即这是最后一篇），
-                // .onChange 将不会触发。因此，我们需要在这里手动更新UI上的未读计数。
-                if liveUnreadCount > 0 {
-                    liveUnreadCount -= 1
-                }
-            }
-            // --- 核心修复点 结束 ---
-
-            let sourceNameToSearch: String?
-            switch navigationContext {
-            case .fromSource(let name): sourceNameToSearch = name
-            case .fromAllArticles: sourceNameToSearch = nil
-            }
-
-            if let next = viewModel.findNextUnread(after: currentArticle.id,
-                                                   inSource: sourceNameToSearch) {
-                
-                // 现在，当 findNextUnread 循环推荐回同一篇文章时，
-                // 下面的检查会因为我们刚刚在上面插入的 ID 而成功。
-                if readArticleIDsInThisSession.contains(next.article.id) {
-                    // 停止跳转，并显示提示。
-                    showToast { shouldShow in self.showNoNextToast = shouldShow }
-                } else {
-                    // 否则，这是一篇真正“新”的未读文章，执行跳转。
-                    withAnimation(.easeInOut(duration: 0.4)) {
-                        self.currentArticle = next.article
-                        self.currentSourceName = next.sourceName
-                    }
-                }
-            } else {
-                // 这个分支处理的是一开始就没有任何未读文章的情况。
-                showToast { shouldShow in self.showNoNextToast = shouldShow }
-            }
+    // ==================== 核心修改: 分离本地状态管理和 ViewModel 更新 ====================
+    /// 切换到下一篇文章的逻辑
+    private func switchToNextArticle() {
+        // 1. 将当前文章加入本地已读集合（不立即提交到 ViewModel）
+        markCurrentArticleAsReadLocally()
+        
+        // 2. 寻找下一篇文章
+        let sourceNameToSearch: String?
+        switch navigationContext {
+        case .fromSource(let name): sourceNameToSearch = name
+        case .fromAllArticles: sourceNameToSearch = nil
         }
+
+        if let next = viewModel.findNextUnread(after: currentArticle.id,
+                                               inSource: sourceNameToSearch) {
+            
+            // 检查是否已经在本次会话中读过这篇文章（防止无限循环）
+            if readArticleIDsInThisSession.contains(next.article.id) {
+                // 所有文章都读过了，提交状态并显示提示
+                commitReadStatusToViewModel()
+                showToast { shouldShow in self.showNoNextToast = shouldShow }
+            } else {
+                // 切换到下一篇文章
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    self.currentArticle = next.article
+                    self.currentSourceName = next.sourceName
+                }
+            }
+        } else {
+            // 没有更多未读文章，提交状态并显示提示
+            commitReadStatusToViewModel()
+            showToast { shouldShow in self.showNoNextToast = shouldShow }
+        }
+    }
+    
+    // ==================== 新增: 本地状态管理方法 ====================
+    /// 将当前文章标记为本地已读（不立即提交到 ViewModel）
+    private func markCurrentArticleAsReadLocally() {
+        let articleID = currentArticle.id
+        
+        // 防止重复处理
+        if readArticleIDsInThisSession.contains(articleID) {
+            print("文章已在本次会话中处理过，跳过: \(currentArticle.topic)")
+            return
+        }
+        
+        // 检查文章当前的已读状态
+        guard let article = viewModel.sources.flatMap({ $0.articles }).first(where: { $0.id == articleID }) else {
+            print("无法找到文章 ID: \(articleID)")
+            return
+        }
+        
+        // 只处理未读文章
+        if !article.isRead {
+            // 将文章添加到会话已读集合
+            readArticleIDsInThisSession.insert(articleID)
+            
+            // 只更新本地的未读计数显示，不触发 ViewModel 更新
+            if liveUnreadCount > 0 {
+                liveUnreadCount -= 1
+            }
+            
+            print("文章已加入本地已读集合: \(currentArticle.topic)")
+            print("本地未读数: \(liveUnreadCount)")
+        } else {
+            print("文章已经是已读状态，跳过: \(currentArticle.topic)")
+        }
+    }
+    
+    /// 将本地已读状态批量提交到 ViewModel
+    private func commitReadStatusToViewModel() {
+        print("开始提交已读状态到 ViewModel，共 \(readArticleIDsInThisSession.count) 篇文章")
+        
+        // 批量提交所有已读文章
+        for articleID in readArticleIDsInThisSession {
+            viewModel.markAsRead(articleID: articleID)
+        }
+        
+        // 清空本地集合
+        readArticleIDsInThisSession.removeAll()
+        
+        print("已读状态提交完成，全局未读数: \(viewModel.totalUnreadCount)")
+    }
+    // =============================================================================
     
     private func showToast(setter: @escaping (Bool) -> Void) {
         setter(true)
