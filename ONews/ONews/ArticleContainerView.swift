@@ -16,7 +16,6 @@ struct ArticleContainerView: View {
     @State private var readArticleIDsInThisSession: Set<UUID> = []
     
     @State private var showNoNextToast = false
-    @State private var showNoPreviousToast = false
 
     enum NavigationContext {
         case fromSource(String)
@@ -69,10 +68,6 @@ struct ArticleContainerView: View {
             
             if showNoNextToast {
                 ToastView(message: "该分组内已无更多文章")
-            }
-            
-            if showNoPreviousToast {
-                ToastView(message: "这已经是第一篇文章了")
             }
         }
         .onDisappear {
