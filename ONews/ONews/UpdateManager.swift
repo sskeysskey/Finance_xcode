@@ -24,7 +24,7 @@ class ResourceManager: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var progressText = ""
     
-    private let serverBaseURL = "http://192.168.50.148:5000/api/ONews"
+    private let serverBaseURL = "http://192.168.50.148:5001/api/ONews"
     private let fileManager = FileManager.default
     private var documentsDirectory: URL {
         fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
