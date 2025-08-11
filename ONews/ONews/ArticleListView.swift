@@ -50,7 +50,8 @@ struct ArticleListView: View {
         Dictionary(grouping: filteredArticles, by: { $0.timestamp })
     }
     private var sortedTimestamps: [String] {
-        groupedArticles.keys.sorted().reversed()
+//        groupedArticles.keys.sorted().reversed()
+        groupedArticles.keys.sorted()
     }
     private var unreadCount: Int { source.articles.filter { !$0.isRead }.count }
     private var readCount: Int { source.articles.filter { $0.isRead }.count }
@@ -158,7 +159,8 @@ struct AllArticlesListView: View {
     private var sortedTimestamps: [String] {
         // 注意：因为 viewModel.allArticlesSortedForDisplay 已经是降序了，
         // 所以这里的 keys 顺序可能不是严格的降序。我们必须重新排序。
-        groupedArticles.keys.sorted().reversed()
+//        groupedArticles.keys.sorted().reversed()
+        groupedArticles.keys.sorted()
     }
     
     private var totalUnreadCount: Int { viewModel.totalUnreadCount }

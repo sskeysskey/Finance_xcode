@@ -66,7 +66,8 @@ class NewsViewModel: ObservableObject {
             return flatList.sorted { item1, item2 in
                 // 主要排序条件：按时间戳降序 (新日期在前)
                 if item1.article.timestamp != item2.article.timestamp {
-                    return item1.article.timestamp > item2.article.timestamp
+//                    return item1.article.timestamp > item2.article.timestamp
+                    return item1.article.timestamp < item2.article.timestamp
                 }
                 
                 // 次要排序条件：如果日期相同，直接按文章标题升序 (字母顺序)
@@ -166,7 +167,8 @@ class NewsViewModel: ObservableObject {
             // 修改排序规则：首先按时间戳倒序，然后按主题排序，确保每次加载顺序一致
             let sortedArticles = articles.sorted {
                 if $0.timestamp != $1.timestamp {
-                    return $0.timestamp > $1.timestamp
+//                    return $0.timestamp > $1.timestamp
+                    return $0.timestamp < $1.timestamp
                 }
                 return $0.topic < $1.topic
             }
