@@ -14,6 +14,7 @@ struct RelatedSymbol: Identifiable {
     let totalWeight: Double
     let compareValue: String
     let allTags: [String]
+    let marketCap: Double?
     let earning: Double? // 新增字段
 }
 struct SimilarView: View {
@@ -46,7 +47,7 @@ struct SimilarView: View {
                             // 使用 NavigationLink 并传递正确的 groupName
                             NavigationLink(destination: ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Unknown")) {
                                 VStack(alignment: .leading, spacing: 8) {
-                                    // 上面一行：symbol、totalWeight、compareValue
+                                    // 上面一行：symbol、totalWeight、compareValue、marketCap
                                     HStack(spacing: 12) {
                                         // 1) symbol 颜色：白色
                                         Text(item.symbol)
@@ -126,6 +127,17 @@ class SimilarViewModel: ObservableObject {
                 // 加载数据
                 let dataService = DataService1.shared
                 
+                // 预取 MNSPP 市值映射
+                let marketCapMap: [String: Double] = {
+                    let rows = DatabaseManager.shared.fetchAllMarketCapData(from: "MNSPP")
+                    var dict: [String: Double] = [:]
+                    dict.reserveCapacity(rows.count)
+                    for row in rows {
+                        dict[row.symbol.uppercased()] = row.marketCap
+                    }
+                    return dict
+                }()
+                
                 // 获取 symbol 的 tags 及权重
                 let targetTagsWithWeight = self.findTagsBySymbol(symbol: self.symbol, data: dataService.descriptionData1)
                 
@@ -150,20 +162,22 @@ class SimilarViewModel: ObservableObject {
                     let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
                     let compareValue = dataService.compareData1[item.symbol] ?? ""
                     let allTags = item.allTags
+                    let mc = marketCapMap[item.symbol.uppercased()]
                     // 在同一个串行队列中获取 earning 数据
                     let earningData = DatabaseManager.shared.fetchEarningData(forSymbol: item.symbol)
                     let latestEarning = earningData.sorted(by: { $0.date > $1.date }).first?.price
-                    return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, earning: latestEarning)
+                    return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc, earning: latestEarning)
                 }
                 
                 let etfsRelated = etfs.map { item -> RelatedSymbol in
                     let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
                     let compareValue = dataService.compareData1[item.symbol] ?? ""
                     let allTags = item.allTags
+                    let mc = marketCapMap[item.symbol.uppercased()]
                     // 在同一个串行队列中获取 earning 数据
                     let earningData = DatabaseManager.shared.fetchEarningData(forSymbol: item.symbol)
                     let latestEarning = earningData.sorted(by: { $0.date > $1.date }).first?.price
-                    return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, earning: latestEarning)
+                    return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc, earning: latestEarning)
                 }
                 
                 let allSymbols = (stocksRelated + etfsRelated).filter { !$0.compareValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -172,7 +186,11 @@ class SimilarViewModel: ObservableObject {
                     if a.totalWeight != b.totalWeight {
                         return a.totalWeight > b.totalWeight
                     }
-                    
+                    let amc = a.marketCap ?? -Double.greatestFiniteMagnitude
+                    let bmc = b.marketCap ?? -Double.greatestFiniteMagnitude
+                    if amc != bmc {
+                        return amc > bmc
+                    }
                     return a.symbol < b.symbol
                 }.prefix(50)
                 
