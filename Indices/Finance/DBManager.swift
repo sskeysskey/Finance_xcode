@@ -1,6 +1,8 @@
 import Foundation
 import SQLite3
 
+extension DatabaseManager: @unchecked Sendable {}
+
 class DatabaseManager {
     static let shared = DatabaseManager()
     private var db: OpaquePointer?
@@ -67,45 +69,51 @@ class DatabaseManager {
     }
 
     func applySyncChanges(_ changes: [Change]) async -> Bool {
-        guard db != nil else {
-            print("数据库连接无效，无法应用变更。")
-            return false
-        }
-        
-        return await Task.detached {
-            guard sqlite3_exec(self.db, "BEGIN TRANSACTION", nil, nil, nil) == SQLITE_OK else {
-                print("开启事务失败: \(String(cString: sqlite3_errmsg(self.db)))")
-                return false
-            }
-            
-            for change in changes {
-                var success = false
-                switch change.op {
-                case "I", "U":
-                    success = self.applyReplace(for: change)
-                case "D":
-                    success = self.applyDelete(for: change)
-                default:
-                    print("未知的操作类型: \(change.op)")
-                    success = true
+        return await withCheckedContinuation { continuation in
+            dbQueue.async {
+                guard self.db != nil else {
+                    print("数据库连接无效，无法应用变更。")
+                    continuation.resume(returning: false)
+                    return
                 }
                 
-                if !success {
-                    print("应用变更失败，正在回滚...")
-                    sqlite3_exec(self.db, "ROLLBACK TRANSACTION", nil, nil, nil)
-                    return false
+                guard sqlite3_exec(self.db, "BEGIN TRANSACTION", nil, nil, nil) == SQLITE_OK else {
+                    print("开启事务失败: \(String(cString: sqlite3_errmsg(self.db)))")
+                    continuation.resume(returning: false)
+                    return
                 }
+                
+                for change in changes {
+                    var success = false
+                    switch change.op {
+                    case "I", "U":
+                        success = self.applyReplace(for: change)
+                    case "D":
+                        success = self.applyDelete(for: change)
+                    default:
+                        print("未知的操作类型: \(change.op)")
+                        success = true
+                    }
+                    
+                    if !success {
+                        print("应用变更失败，正在回滚...")
+                        sqlite3_exec(self.db, "ROLLBACK TRANSACTION", nil, nil, nil)
+                        continuation.resume(returning: false)
+                        return
+                    }
+                }
+                
+                guard sqlite3_exec(self.db, "COMMIT TRANSACTION", nil, nil, nil) == SQLITE_OK else {
+                    print("提交事务失败: \(String(cString: sqlite3_errmsg(self.db)))")
+                    sqlite3_exec(self.db, "ROLLBACK TRANSACTION", nil, nil, nil)
+                    continuation.resume(returning: false)
+                    return
+                }
+                
+                print("成功应用 \(changes.count) 条变更。")
+                continuation.resume(returning: true)
             }
-            
-            guard sqlite3_exec(self.db, "COMMIT TRANSACTION", nil, nil, nil) == SQLITE_OK else {
-                print("提交事务失败: \(String(cString: sqlite3_errmsg(self.db)))")
-                sqlite3_exec(self.db, "ROLLBACK TRANSACTION", nil, nil, nil)
-                return false
-            }
-            
-            print("成功应用 \(changes.count) 条变更。")
-            return true
-        }.value
+        }
     }
 
     // ==================== 【最终版修复代码】 ====================
@@ -278,51 +286,55 @@ class DatabaseManager {
         tableName: String,
         dateRange: DateRangeInput
     ) -> [PriceData] {
-        guard db != nil else { return [] }
         var result: [PriceData] = []
-        let dateFormat = "yyyy-MM-dd"
         
-        let (startDate, endDate): (Date, Date) = {
-            switch dateRange {
-            case .timeRange(let timeRange):
-                return (timeRange.startDate, Date())
-            case .customRange(let start, let end):
-                return (start, end)
-            }
-        }()
-        
-        let hasVolumeColumn = checkIfTableHasVolume(tableName: tableName)
-        
-        let query = """
-            SELECT id, date, price\(hasVolumeColumn ? ", volume" : "")
-            FROM \(tableName)
-            WHERE name = ? AND date BETWEEN ? AND ?
-            ORDER BY date ASC
-        """
-        
-        var statement: OpaquePointer?
-        
-        if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
-            let formatter = DateFormatter()
-            formatter.dateFormat = dateFormat
+        dbQueue.sync {
+            guard db != nil else { return }
+            let dateFormat = "yyyy-MM-dd"
             
-            sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(statement, 2, (formatter.string(from: startDate) as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(statement, 3, (formatter.string(from: endDate) as NSString).utf8String, -1, nil)
+            let (startDate, endDate): (Date, Date) = {
+                switch dateRange {
+                case .timeRange(let timeRange):
+                    return (timeRange.startDate, Date())
+                case .customRange(let start, let end):
+                    return (start, end)
+                }
+            }()
             
-            while sqlite3_step(statement) == SQLITE_ROW {
-                let id = Int(sqlite3_column_int(statement, 0))
-                let dateString = String(cString: sqlite3_column_text(statement, 1))
-                let price = sqlite3_column_double(statement, 2)
+            let hasVolumeColumn = self.checkIfTableHasVolumeInternal(tableName: tableName)
+            
+            let query = """
+                SELECT id, date, price\(hasVolumeColumn ? ", volume" : "")
+                FROM "\(tableName)"
+                WHERE name = ? AND date BETWEEN ? AND ?
+                ORDER BY date ASC
+            """
+            
+            var statement: OpaquePointer?
+            
+            if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
+                let formatter = DateFormatter()
+                formatter.dateFormat = dateFormat
                 
-                if let date = formatter.date(from: dateString) {
-                    let volume = hasVolumeColumn ? sqlite3_column_int64(statement, 3) : nil
-                    result.append(PriceData(id: id, date: date, price: price, volume: volume))
+                sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(statement, 2, (formatter.string(from: startDate) as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(statement, 3, (formatter.string(from: endDate) as NSString).utf8String, -1, nil)
+                
+                while sqlite3_step(statement) == SQLITE_ROW {
+                    let id = Int(sqlite3_column_int(statement, 0))
+                    let dateString = String(cString: sqlite3_column_text(statement, 1))
+                    let price = sqlite3_column_double(statement, 2)
+                    
+                    if let date = formatter.date(from: dateString) {
+                        let volume = hasVolumeColumn ? sqlite3_column_int64(statement, 3) : nil
+                        result.append(PriceData(id: id, date: date, price: price, volume: volume))
+                    }
                 }
             }
+            
+            sqlite3_finalize(statement)
         }
         
-        sqlite3_finalize(statement)
         return result
     }
     
@@ -367,12 +379,13 @@ class DatabaseManager {
             return result
         }
     
-    private func checkIfTableHasVolume(tableName: String) -> Bool {
+    // 将原来的 checkIfTableHasVolume 拆分为两个方法
+    private func checkIfTableHasVolumeInternal(tableName: String) -> Bool {
         guard db != nil else { return false }
         var hasVolume = false
         var statement: OpaquePointer?
         
-        let query = "PRAGMA table_info(\(tableName))"
+        let query = "PRAGMA table_info(\"\(tableName)\")"
         
         if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
             while sqlite3_step(statement) == SQLITE_ROW {
@@ -388,5 +401,13 @@ class DatabaseManager {
         
         sqlite3_finalize(statement)
         return hasVolume
+    }
+
+    func checkIfTableHasVolume(tableName: String) -> Bool {
+        var result = false
+        dbQueue.sync {
+            result = checkIfTableHasVolumeInternal(tableName: tableName)
+        }
+        return result
     }
 }
