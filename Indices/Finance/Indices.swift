@@ -225,7 +225,7 @@ struct IndicesContentView: View {
                     
                     // 1. 定义分组和顺序 (这部分逻辑保持不变)
                     let topRowOrder = ["Currencies", "Commodities", "Bonds"]
-                    let bottomRowNames = ["Qualified", "PE_valid", "Next_Week"]
+                    let bottomRowNames = ["PE_valid", "PE_invalid", "Today"]
                     let excludedNames = topRowOrder + bottomRowNames
                     
                     // 2. 根据定义的规则，过滤和排序数据 (这部分逻辑保持不变)
@@ -278,7 +278,7 @@ struct IndicesContentView: View {
                             }
                         }
                         
-                        // MARK: - 最后渲染底部特定行 (Qualified, PE_valid)
+                        // MARK: - 最后渲染底部特定行 (Qualified, PE_valid, PE_invalid)
                         if !bottomSectors.isEmpty {
                             HStack(spacing: 12) {
                                 ForEach(bottomSectors) { sector in

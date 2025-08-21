@@ -28,13 +28,11 @@ struct SimilarView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(viewModel.relatedSymbols
-                            .sorted(by: { $0.totalWeight > $1.totalWeight }),
-                            id: \.symbol) { item in
+                        ForEach(viewModel.relatedSymbols, id: \.id) { item in
                             // 使用 NavigationLink 并传递正确的 groupName
                             NavigationLink(destination: ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Unknown")) {
                                 VStack(alignment: .leading, spacing: 8) {
-                                    // 上面一行：symbol、totalWeight 和 compareValue
+                                    // 上面一行：symbol、totalWeight、compareValue、marketCap
                                     HStack(spacing: 12) {
                                         Text(item.symbol)
                                             .font(.system(size: 20, weight: .bold))
@@ -107,6 +105,17 @@ class SimilarViewModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             // 加载数据
             let dataService = DataService1.shared
+            // 预取 MNSPP 市值映射，避免重复查询
+            let marketCapMap: [String: Double] = {
+                let rows = DatabaseManager.shared.fetchAllMarketCapData(from: "MNSPP")
+                // 使用大写键，和匹配时一并大写，避免大小写问题
+                var dict: [String: Double] = [:]
+                dict.reserveCapacity(rows.count)
+                for row in rows {
+                    dict[row.symbol.uppercased()] = row.marketCap
+                }
+                return dict
+            }()
             
             // 获取 symbol 的 tags 及权重
             let targetTagsWithWeight = self.findTagsBySymbol(symbol: self.symbol, data: dataService.descriptionData1)
@@ -128,25 +137,41 @@ class SimilarViewModel: ObservableObject {
             stocks.removeAll { $0.symbol.uppercased() == self.symbol.uppercased() }
             etfs.removeAll { $0.symbol.uppercased() == self.symbol.uppercased() }
             
-            // 创建 RelatedSymbol 数组并设置分类
+            // 创建 RelatedSymbol 数组并设置分类，附带 marketCap
             let stocksRelated = stocks.map { item -> RelatedSymbol in
                 let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
                 let compareValue = dataService.compareData1[item.symbol] ?? ""
                 let allTags = item.allTags
-                return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags)
+                let mc = marketCapMap[item.symbol.uppercased()]  // 可能为 nil
+                                return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc)
             }
             
             let etfsRelated = etfs.map { item -> RelatedSymbol in
                 let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
                 let compareValue = dataService.compareData1[item.symbol] ?? ""
                 let allTags = item.allTags
-                return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags)
+                let mc = marketCapMap[item.symbol.uppercased()]
+                                return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc)
             }
             
             let allSymbols = stocksRelated + etfsRelated
             
             // 按 totalWeight 降序排序
-            let sortedSymbols = allSymbols.sorted { $0.totalWeight > $1.totalWeight }.prefix(50)
+            // 排序规则：
+            // 1) totalWeight 降序
+            // 2) marketCap 降序（nil 视为最小）
+            // 3) symbol 升序（兜底，确保稳定）
+            let sortedSymbols = allSymbols.sorted { a, b in
+                if a.totalWeight != b.totalWeight {
+                    return a.totalWeight > b.totalWeight
+                }
+                let amc = a.marketCap ?? -Double.greatestFiniteMagnitude
+                let bmc = b.marketCap ?? -Double.greatestFiniteMagnitude
+                if amc != bmc {
+                    return amc > bmc
+                }
+                return a.symbol < b.symbol
+            }.prefix(50)
             
             DispatchQueue.main.async {
                 self.relatedSymbols = Array(sortedSymbols)
@@ -263,4 +288,6 @@ struct RelatedSymbol: Identifiable {
     let totalWeight: Double
     let compareValue: String
     let allTags: [String]
+    // 新增：用于二级排序的市值
+    let marketCap: Double?
 }

@@ -183,7 +183,7 @@ struct ChartView: View {
     // 3. 在ChartView中添加状态变量存储气泡数据
     @State private var bubbleMarkers: [BubbleMarker] = []
     @State private var shouldUpdateBubbles: Bool = true
-    @State private var showBubbles: Bool = true  // 浮窗显示开关默认打开
+    @State private var showBubbles: Bool = false  // 浮窗显示开关
     
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.presentationMode) var presentationMode
