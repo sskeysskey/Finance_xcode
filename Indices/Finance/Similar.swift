@@ -2,6 +2,22 @@ import SwiftUI
 import Foundation
 import Combine
 
+struct MatchedSymbol {
+    let symbol: String
+    let matchedTags: [(tag: String, weight: Double)]
+    let allTags: [String]
+}
+
+struct RelatedSymbol: Identifiable {
+    let id = UUID()
+    let symbol: String
+    let totalWeight: Double
+    let compareValue: String
+    let allTags: [String]
+    // 新增：用于二级排序的市值
+    let marketCap: Double?
+}
+
 struct SimilarView: View {
     @EnvironmentObject var dataService: DataService  // 注入 DataService
     @ObservedObject var viewModel: SimilarViewModel
@@ -279,20 +295,4 @@ class SimilarViewModel: ObservableObject {
         
         return relatedSymbols
     }
-}
-
-struct MatchedSymbol {
-    let symbol: String
-    let matchedTags: [(tag: String, weight: Double)]
-    let allTags: [String]
-}
-
-struct RelatedSymbol: Identifiable {
-    let id = UUID()
-    let symbol: String
-    let totalWeight: Double
-    let compareValue: String
-    let allTags: [String]
-    // 新增：用于二级排序的市值
-    let marketCap: Double?
 }
