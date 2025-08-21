@@ -34,18 +34,21 @@ struct SimilarView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     // 上面一行：symbol、totalWeight、compareValue、marketCap
                                     HStack(spacing: 12) {
+                                        // 1) symbol 颜色：白色
                                         Text(item.symbol)
                                             .font(.system(size: 20, weight: .bold))
-                                            .foregroundColor(.blue)
+                                            .foregroundColor(.white)
                                             .shadow(radius: 1)
                                         
+                                        // 2) score(totalWeight) 颜色：灰色
                                         Text("\(item.totalWeight, specifier: "%.2f")")
                                             .font(.subheadline)
-                                            .foregroundColor(.white)
+                                            .foregroundColor(.gray)
                                         
+                                        // 3) compare_all 文本颜色：白色（不再按正负变色）
                                         Text("\(item.compareValue)")
                                             .font(.subheadline)
-                                            .foregroundColor(item.compareValue.hasPrefix("-") ? .red : .green)
+                                            .foregroundColor(.white)
                                         
                                         Spacer()
                                     }
@@ -151,10 +154,12 @@ class SimilarViewModel: ObservableObject {
                 let compareValue = dataService.compareData1[item.symbol] ?? ""
                 let allTags = item.allTags
                 let mc = marketCapMap[item.symbol.uppercased()]
-                                return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc)
+                return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc)
             }
             
-            let allSymbols = stocksRelated + etfsRelated
+            // 过滤：compare_all 缺失或为空字符串的 symbol 不显示
+            // compareValue 来源于 dataService.compareData1，如果取不到会是 ""（上面用了 ?? ""）
+            let allSymbols = (stocksRelated + etfsRelated).filter { !$0.compareValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             
             // 按 totalWeight 降序排序
             // 排序规则：
