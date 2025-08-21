@@ -4,6 +4,7 @@ import SQLite3
 class DatabaseManager {
     static let shared = DatabaseManager()
     private var db: OpaquePointer?
+    private let dbQueue = DispatchQueue(label: "com.finance.db.queue") // 新增：串行队列
     
     // MARK: - 表分组定义
     // 定义使用 (name, date) 作为复合主键的表集合
@@ -220,43 +221,52 @@ class DatabaseManager {
     }
     
     func fetchAllMarketCapData(from tableName: String) -> [MarketCapInfo] {
-        guard db != nil else { return [] }
-        var results: [MarketCapInfo] = []
-        let query = "SELECT symbol, marketcap, pe_ratio, pb FROM \"\(tableName)\""
-        var statement: OpaquePointer?
-        
-        if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
-            while sqlite3_step(statement) == SQLITE_ROW {
-                let symbol = String(cString: sqlite3_column_text(statement, 0))
-                let marketCap = sqlite3_column_double(statement, 1)
-                let peRatio: Double? = sqlite3_column_type(statement, 2) != SQLITE_NULL ? sqlite3_column_double(statement, 2) : nil
-                let pb: Double? = sqlite3_column_type(statement, 3) != SQLITE_NULL ? sqlite3_column_double(statement, 3) : nil
-                results.append(MarketCapInfo(symbol: symbol, marketCap: marketCap, peRatio: peRatio, pb: pb))
+            var results: [MarketCapInfo] = []
+            
+            // 在串行队列中同步执行数据库操作
+            dbQueue.sync {
+                guard db != nil else { return }
+                let query = "SELECT symbol, marketcap, pe_ratio, pb FROM \"\(tableName)\""
+                var statement: OpaquePointer?
+                
+                if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
+                    while sqlite3_step(statement) == SQLITE_ROW {
+                        let symbol = String(cString: sqlite3_column_text(statement, 0))
+                        let marketCap = sqlite3_column_double(statement, 1)
+                        let peRatio: Double? = sqlite3_column_type(statement, 2) != SQLITE_NULL ? sqlite3_column_double(statement, 2) : nil
+                        let pb: Double? = sqlite3_column_type(statement, 3) != SQLITE_NULL ? sqlite3_column_double(statement, 3) : nil
+                        results.append(MarketCapInfo(symbol: symbol, marketCap: marketCap, peRatio: peRatio, pb: pb))
+                    }
+                } else {
+                    print("Failed to prepare statement for market cap data: \(String(cString: sqlite3_errmsg(db)))")
+                }
+                sqlite3_finalize(statement)
             }
-        } else {
-            print("Failed to prepare statement for market cap data: \(String(cString: sqlite3_errmsg(db)))")
+            
+            return results
         }
-        sqlite3_finalize(statement)
-        return results
-    }
     
     func fetchLatestVolume(forSymbol symbol: String, tableName: String) -> Int64? {
-        guard db != nil else { return nil }
-        let query = "SELECT volume FROM \(tableName) WHERE name = ? ORDER BY date DESC LIMIT 1"
-        var statement: OpaquePointer?
-        var latestVolume: Int64? = nil
+            var latestVolume: Int64? = nil
+            
+            dbQueue.sync {
+                guard db != nil else { return }
+                let query = "SELECT volume FROM \(tableName) WHERE name = ? ORDER BY date DESC LIMIT 1"
+                var statement: OpaquePointer?
 
-        if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
-            sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
-            if sqlite3_step(statement) == SQLITE_ROW {
-                latestVolume = sqlite3_column_int64(statement, 0)
+                if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
+                    sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
+                    if sqlite3_step(statement) == SQLITE_ROW {
+                        latestVolume = sqlite3_column_int64(statement, 0)
+                    }
+                } else {
+                    print("Failed to prepare statement: \(String(cString: sqlite3_errmsg(db)))")
+                }
+                sqlite3_finalize(statement)
             }
-        } else {
-            print("Failed to prepare statement: \(String(cString: sqlite3_errmsg(db)))")
+            
+            return latestVolume
         }
-        sqlite3_finalize(statement)
-        return latestVolume
-    }
     
     enum DateRangeInput {
         case timeRange(TimeRange)
@@ -322,35 +332,40 @@ class DatabaseManager {
     }
 
     func fetchEarningData(forSymbol symbol: String) -> [EarningData] {
-        guard db != nil else { return [] }
-        var result: [EarningData] = []
-        let dateFormat = "yyyy-MM-dd"
-        let formatter = DateFormatter()
-        formatter.dateFormat = dateFormat
-        
-        let query = "SELECT date, price FROM Earning WHERE name = ?"
-        var statement: OpaquePointer?
-        
-        if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
-            sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
+            var result: [EarningData] = []
             
-            while sqlite3_step(statement) == SQLITE_ROW {
-                if let dateString = sqlite3_column_text(statement, 0) {
-                    let dateStr = String(cString: dateString)
-                    let price = sqlite3_column_double(statement, 1)
+            // 在串行队列中同步执行数据库操作
+            dbQueue.sync {
+                guard db != nil else { return }
+                let dateFormat = "yyyy-MM-dd"
+                let formatter = DateFormatter()
+                formatter.dateFormat = dateFormat
+                
+                let query = "SELECT date, price FROM Earning WHERE name = ?"
+                var statement: OpaquePointer?
+                
+                if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
+                    sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
                     
-                    if let date = formatter.date(from: dateStr) {
-                        result.append(EarningData(date: date, price: price))
+                    while sqlite3_step(statement) == SQLITE_ROW {
+                        if let dateString = sqlite3_column_text(statement, 0) {
+                            let dateStr = String(cString: dateString)
+                            let price = sqlite3_column_double(statement, 1)
+                            
+                            if let date = formatter.date(from: dateStr) {
+                                result.append(EarningData(date: date, price: price))
+                            }
+                        }
                     }
+                } else {
+                    print("Failed to prepare statement: \(String(cString: sqlite3_errmsg(db)))")
                 }
+                
+                sqlite3_finalize(statement)
             }
-        } else {
-            print("Failed to prepare statement: \(String(cString: sqlite3_errmsg(db)))")
+            
+            return result
         }
-        
-        sqlite3_finalize(statement)
-        return result
-    }
     
     private func checkIfTableHasVolume(tableName: String) -> Bool {
         guard db != nil else { return false }
