@@ -17,13 +17,13 @@ struct RelatedSymbol: Identifiable {
     let marketCap: Double?
     let earning: Double? // 新增字段
 }
+
 struct SimilarView: View {
     @EnvironmentObject var dataService: DataService  // 注入 DataService
     @ObservedObject var viewModel: SimilarViewModel
     // 新增：用于控制搜索页面显示的状态变量
     @State private var showSearchView = false
     
-//    var symbol: String
     let symbol: String
     
     init(symbol: String) {
@@ -60,10 +60,11 @@ struct SimilarView: View {
                                             .font(.subheadline)
                                             .foregroundColor(.gray)
                                         
-                                        // 3) compare_all 文本颜色：白色（不再按正负变色）
+                                        // 3) compare_all 文本颜色：根据内容动态变化
                                         Text("\(item.compareValue)")
                                             .font(.subheadline)
-                                            .foregroundColor(.white)
+                                            // 【修改】: 使用辅助函数动态设置文本颜色
+                                            .foregroundColor(colorForCompareValue(item.compareValue))
                                         
                                         Spacer()
                                     }
@@ -103,103 +104,112 @@ struct SimilarView: View {
             SearchView(isSearchActive: true, dataService: dataService)
         }
     }
+    
+    // 【新增】：用于根据 compareValue 决定颜色的辅助函数
+    private func colorForCompareValue(_ value: String) -> Color {
+        if value.contains("前") || value.contains("后") || value.contains("未") {
+            return .orange
+        } else {
+            return .white
+        }
+    }
 }
 
 class SimilarViewModel: ObservableObject {
     @Published var relatedSymbols: [RelatedSymbol] = []
-        @Published var errorMessage: String? = nil
-        @Published var isLoading: Bool = false
+    @Published var errorMessage: String? = nil
+    @Published var isLoading: Bool = false
+    
+    private var cancellables = Set<AnyCancellable>()
+    private let symbol: String
+    private let dbQueue = DispatchQueue(label: "com.finance.db.queue") // 新增：创建串行队列
+    
+    init(symbol: String) {
+        self.symbol = symbol
+        loadSimilarSymbols()
+    }
+    
+    private func loadSimilarSymbols() {
+        isLoading = true
         
-        private var cancellables = Set<AnyCancellable>()
-        private let symbol: String
-        private let dbQueue = DispatchQueue(label: "com.finance.db.queue") // 新增：创建串行队列
-        
-        init(symbol: String) {
-            self.symbol = symbol
-            loadSimilarSymbols()
-        }
-        
-        private func loadSimilarSymbols() {
-            isLoading = true
+        // 使用串行队列处理数据库操作
+        dbQueue.async {
+            // 加载数据
+            let dataService = DataService1.shared
             
-            // 使用串行队列处理数据库操作
-            dbQueue.async {
-                // 加载数据
-                let dataService = DataService1.shared
-                
-                // 预取 MNSPP 市值映射
-                let marketCapMap: [String: Double] = {
-                    let rows = DatabaseManager.shared.fetchAllMarketCapData(from: "MNSPP")
-                    var dict: [String: Double] = [:]
-                    dict.reserveCapacity(rows.count)
-                    for row in rows {
-                        dict[row.symbol.uppercased()] = row.marketCap
-                    }
-                    return dict
-                }()
-                
-                // 获取 symbol 的 tags 及权重
-                let targetTagsWithWeight = self.findTagsBySymbol(symbol: self.symbol, data: dataService.descriptionData1)
-                
-                guard !targetTagsWithWeight.isEmpty else {
-                    DispatchQueue.main.async {
-                        self.errorMessage = "未找到该 symbol 的 tags"
-                        self.isLoading = false
-                    }
-                    return
+            // 预取 MNSPP 市值映射
+            let marketCapMap: [String: Double] = {
+                let rows = DatabaseManager.shared.fetchAllMarketCapData(from: "MNSPP")
+                var dict: [String: Double] = [:]
+                dict.reserveCapacity(rows.count)
+                for row in rows {
+                    dict[row.symbol.uppercased()] = row.marketCap
                 }
-                
-                // 查找相似的 symbols
-                let relatedSymbolsDict = self.findSymbolsByTags(targetTagsWithWeight: targetTagsWithWeight, weightGroups: dataService.tagsWeightConfig, data: dataService.descriptionData1)
-                
-                var stocks = relatedSymbolsDict["stocks"] ?? []
-                var etfs = relatedSymbolsDict["etfs"] ?? []
-                stocks.removeAll { $0.symbol.uppercased() == self.symbol.uppercased() }
-                etfs.removeAll { $0.symbol.uppercased() == self.symbol.uppercased() }
-                
-                // 创建 RelatedSymbol 数组
-                let stocksRelated = stocks.map { item -> RelatedSymbol in
-                    let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
-                    let compareValue = dataService.compareData1[item.symbol] ?? ""
-                    let allTags = item.allTags
-                    let mc = marketCapMap[item.symbol.uppercased()]
-                    // 在同一个串行队列中获取 earning 数据
-                    let earningData = DatabaseManager.shared.fetchEarningData(forSymbol: item.symbol)
-                    let latestEarning = earningData.sorted(by: { $0.date > $1.date }).first?.price
-                    return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc, earning: latestEarning)
-                }
-                
-                let etfsRelated = etfs.map { item -> RelatedSymbol in
-                    let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
-                    let compareValue = dataService.compareData1[item.symbol] ?? ""
-                    let allTags = item.allTags
-                    let mc = marketCapMap[item.symbol.uppercased()]
-                    // 在同一个串行队列中获取 earning 数据
-                    let earningData = DatabaseManager.shared.fetchEarningData(forSymbol: item.symbol)
-                    let latestEarning = earningData.sorted(by: { $0.date > $1.date }).first?.price
-                    return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc, earning: latestEarning)
-                }
-                
-                let allSymbols = (stocksRelated + etfsRelated).filter { !$0.compareValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                
-                let sortedSymbols = allSymbols.sorted { a, b in
-                    if a.totalWeight != b.totalWeight {
-                        return a.totalWeight > b.totalWeight
-                    }
-                    let amc = a.marketCap ?? -Double.greatestFiniteMagnitude
-                    let bmc = b.marketCap ?? -Double.greatestFiniteMagnitude
-                    if amc != bmc {
-                        return amc > bmc
-                    }
-                    return a.symbol < b.symbol
-                }.prefix(50)
-                
+                return dict
+            }()
+            
+            // 获取 symbol 的 tags 及权重
+            let targetTagsWithWeight = self.findTagsBySymbol(symbol: self.symbol, data: dataService.descriptionData1)
+            
+            guard !targetTagsWithWeight.isEmpty else {
                 DispatchQueue.main.async {
-                    self.relatedSymbols = Array(sortedSymbols)
+                    self.errorMessage = "未找到该 symbol 的 tags"
                     self.isLoading = false
                 }
+                return
+            }
+            
+            // 查找相似的 symbols
+            let relatedSymbolsDict = self.findSymbolsByTags(targetTagsWithWeight: targetTagsWithWeight, weightGroups: dataService.tagsWeightConfig, data: dataService.descriptionData1)
+            
+            var stocks = relatedSymbolsDict["stocks"] ?? []
+            var etfs = relatedSymbolsDict["etfs"] ?? []
+            stocks.removeAll { $0.symbol.uppercased() == self.symbol.uppercased() }
+            etfs.removeAll { $0.symbol.uppercased() == self.symbol.uppercased() }
+            
+            // 创建 RelatedSymbol 数组
+            let stocksRelated = stocks.map { item -> RelatedSymbol in
+                let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
+                let compareValue = dataService.compareData1[item.symbol] ?? ""
+                let allTags = item.allTags
+                let mc = marketCapMap[item.symbol.uppercased()]
+                // 在同一个串行队列中获取 earning 数据
+                let earningData = DatabaseManager.shared.fetchEarningData(forSymbol: item.symbol)
+                let latestEarning = earningData.sorted(by: { $0.date > $1.date }).first?.price
+                return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc, earning: latestEarning)
+            }
+            
+            let etfsRelated = etfs.map { item -> RelatedSymbol in
+                let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
+                let compareValue = dataService.compareData1[item.symbol] ?? ""
+                let allTags = item.allTags
+                let mc = marketCapMap[item.symbol.uppercased()]
+                // 在同一个串行队列中获取 earning 数据
+                let earningData = DatabaseManager.shared.fetchEarningData(forSymbol: item.symbol)
+                let latestEarning = earningData.sorted(by: { $0.date > $1.date }).first?.price
+                return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc, earning: latestEarning)
+            }
+            
+            let allSymbols = (stocksRelated + etfsRelated).filter { !$0.compareValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            
+            let sortedSymbols = allSymbols.sorted { a, b in
+                if a.totalWeight != b.totalWeight {
+                    return a.totalWeight > b.totalWeight
+                }
+                let amc = a.marketCap ?? -Double.greatestFiniteMagnitude
+                let bmc = b.marketCap ?? -Double.greatestFiniteMagnitude
+                if amc != bmc {
+                    return amc > bmc
+                }
+                return a.symbol < b.symbol
+            }.prefix(50)
+            
+            DispatchQueue.main.async {
+                self.relatedSymbols = Array(sortedSymbols)
+                self.isLoading = false
             }
         }
+    }
     
     // MARK: - Helper Functions
     
