@@ -551,15 +551,15 @@ struct SearchResultRow: View {
     private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
         switch trend {
         case .positiveAndUp:
-            return .red // 亮红色
-        case .positiveAndDown:
-            return Color(red: 0.7, green: 0.1, blue: 0.1) // 暗红色
+            return .purple // 紫色
         case .negativeAndUp:
-            return .green // 亮绿色
+            return .red // 红色
+        case .positiveAndDown:
+            return .blue // 蓝色
         case .negativeAndDown:
-            return Color(red: 0.1, green: 0.6, blue: 0.1) // 暗绿色
+            return .green // 绿色
         case .insufficientData:
-            return .blue // 默认颜色（在搜索结果中，蓝色比白色更突出）
+            return .white // 默认白色
         }
     }
 }
