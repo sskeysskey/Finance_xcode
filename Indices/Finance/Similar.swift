@@ -2,6 +2,15 @@ import SwiftUI
 import Foundation
 import Combine
 
+// 【新增】: 定义一个枚举来表示财报和股价的组合趋势
+enum EarningTrend {
+    case positiveAndUp    // 财报为正，股价上涨（亮红色）
+    case positiveAndDown  // 财报为正，股价下跌（暗红色）
+    case negativeAndUp    // 财报为负，股价上涨（亮绿色）
+    case negativeAndDown  // 财报为负，股价下跌（暗绿色）
+    case insufficientData // 数据不足，无法判断（白色）
+}
+
 struct MatchedSymbol {
     let symbol: String
     let matchedTags: [(tag: String, weight: Double)]
@@ -15,11 +24,13 @@ struct RelatedSymbol: Identifiable {
     let compareValue: String
     let allTags: [String]
     let marketCap: Double?
-    let earning: Double? // 新增字段
+    // 【修改】: 使用新的 EarningTrend 枚举
+    let earningTrend: EarningTrend
 }
 
 struct SimilarView: View {
-    @EnvironmentObject var dataService: DataService  // 注入 DataService
+    // 【注意】: 这里仍然使用主 DataService，因为它被传递给 ChartView 和 SearchView
+    @EnvironmentObject var dataService: DataService
     @ObservedObject var viewModel: SimilarViewModel
     // 新增：用于控制搜索页面显示的状态变量
     @State private var showSearchView = false
@@ -44,15 +55,15 @@ struct SimilarView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(viewModel.relatedSymbols, id: \.id) { item in
-                            // 使用 NavigationLink 并传递正确的 groupName
+                            // 【注意】: 此处的 getCategory 来自于 @EnvironmentObject var dataService
                             NavigationLink(destination: ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Unknown")) {
                                 VStack(alignment: .leading, spacing: 8) {
                                     // 上面一行：symbol、totalWeight、compareValue、marketCap
                                     HStack(spacing: 12) {
-                                        // 1) symbol 颜色：白色
+                                        // 【修改】: 根据 EarningTrend 设置颜色
                                         Text(item.symbol)
                                             .font(.system(size: 20, weight: .bold))
-                                            .foregroundColor(item.earning.map { $0 > 0 ? .red : .green } ?? .white)
+                                            .foregroundColor(colorForEarningTrend(item.earningTrend))
                                             .shadow(radius: 1)
                                         
                                         // 2) score(totalWeight) 颜色：灰色
@@ -113,6 +124,22 @@ struct SimilarView: View {
             return .white
         }
     }
+    
+    // 【新增】: 根据 EarningTrend 返回相应颜色的辅助函数
+    private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
+        switch trend {
+        case .positiveAndUp:
+            return .red // 亮红色
+        case .positiveAndDown:
+            return Color(red: 0.7, green: 0.1, blue: 0.1) // 暗红色
+        case .negativeAndUp:
+            return .green // 亮绿色
+        case .negativeAndDown:
+            return Color(red: 0.1, green: 0.6, blue: 0.1) // 暗绿色
+        case .insufficientData:
+            return .white // 默认白色
+        }
+    }
 }
 
 class SimilarViewModel: ObservableObject {
@@ -134,8 +161,8 @@ class SimilarViewModel: ObservableObject {
         
         // 使用串行队列处理数据库操作
         dbQueue.async {
-            // 加载数据
-            let dataService = DataService1.shared
+            // 正确地使用 DataService1 单例
+            let dataService1 = DataService1.shared
             
             // 预取 MNSPP 市值映射
             let marketCapMap: [String: Double] = {
@@ -149,7 +176,7 @@ class SimilarViewModel: ObservableObject {
             }()
             
             // 获取 symbol 的 tags 及权重
-            let targetTagsWithWeight = self.findTagsBySymbol(symbol: self.symbol, data: dataService.descriptionData1)
+            let targetTagsWithWeight = self.findTagsBySymbol(symbol: self.symbol, data: dataService1.descriptionData1)
             
             guard !targetTagsWithWeight.isEmpty else {
                 DispatchQueue.main.async {
@@ -160,7 +187,7 @@ class SimilarViewModel: ObservableObject {
             }
             
             // 查找相似的 symbols
-            let relatedSymbolsDict = self.findSymbolsByTags(targetTagsWithWeight: targetTagsWithWeight, weightGroups: dataService.tagsWeightConfig, data: dataService.descriptionData1)
+            let relatedSymbolsDict = self.findSymbolsByTags(targetTagsWithWeight: targetTagsWithWeight, weightGroups: dataService1.tagsWeightConfig, data: dataService1.descriptionData1)
             
             var stocks = relatedSymbolsDict["stocks"] ?? []
             var etfs = relatedSymbolsDict["etfs"] ?? []
@@ -168,27 +195,48 @@ class SimilarViewModel: ObservableObject {
             etfs.removeAll { $0.symbol.uppercased() == self.symbol.uppercased() }
             
             // 创建 RelatedSymbol 数组
-            let stocksRelated = stocks.map { item -> RelatedSymbol in
+            let createRelatedSymbol = { (item: MatchedSymbol) -> RelatedSymbol in
                 let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
-                let compareValue = dataService.compareData1[item.symbol] ?? ""
+                let compareValue = dataService1.compareData1[item.symbol.uppercased()] ?? ""
                 let allTags = item.allTags
                 let mc = marketCapMap[item.symbol.uppercased()]
-                // 在同一个串行队列中获取 earning 数据
-                let earningData = DatabaseManager.shared.fetchEarningData(forSymbol: item.symbol)
-                let latestEarning = earningData.sorted(by: { $0.date > $1.date }).first?.price
-                return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc, earning: latestEarning)
+                
+                // --- 开始新的财报趋势计算逻辑 ---
+                var trend: EarningTrend = .insufficientData
+
+                let sortedEarnings = DatabaseManager.shared.fetchEarningData(forSymbol: item.symbol).sorted { $0.date > $1.date }
+
+                if sortedEarnings.count >= 2 {
+                    let latestEarningReport = sortedEarnings[0]
+                    let previousEarningReport = sortedEarnings[1]
+
+                    // 【核心修正】: 调用 DataService1 中新增的 getCategory 方法
+                    if let tableName = dataService1.getCategory(for: item.symbol) {
+                        let latestClosePrice = DatabaseManager.shared.fetchClosingPrice(
+                            forSymbol: item.symbol, onDate: latestEarningReport.date, tableName: tableName
+                        )
+                        let previousClosePrice = DatabaseManager.shared.fetchClosingPrice(
+                            forSymbol: item.symbol, onDate: previousEarningReport.date, tableName: tableName
+                        )
+
+                        if let latestPrice = latestClosePrice, let previousPrice = previousClosePrice {
+                            let earningValue = latestEarningReport.price
+                            
+                            if earningValue > 0 {
+                                trend = (latestPrice > previousPrice) ? .positiveAndUp : .positiveAndDown
+                            } else {
+                                trend = (latestPrice > previousPrice) ? .negativeAndUp : .negativeAndDown
+                            }
+                        }
+                    }
+                }
+                // --- 结束新的财报趋势计算逻辑 ---
+
+                return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc, earningTrend: trend)
             }
             
-            let etfsRelated = etfs.map { item -> RelatedSymbol in
-                let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
-                let compareValue = dataService.compareData1[item.symbol] ?? ""
-                let allTags = item.allTags
-                let mc = marketCapMap[item.symbol.uppercased()]
-                // 在同一个串行队列中获取 earning 数据
-                let earningData = DatabaseManager.shared.fetchEarningData(forSymbol: item.symbol)
-                let latestEarning = earningData.sorted(by: { $0.date > $1.date }).first?.price
-                return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc, earning: latestEarning)
-            }
+            let stocksRelated = stocks.map(createRelatedSymbol)
+            let etfsRelated = etfs.map(createRelatedSymbol)
             
             let allSymbols = (stocksRelated + etfsRelated).filter { !$0.compareValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             

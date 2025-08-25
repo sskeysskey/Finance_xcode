@@ -379,6 +379,37 @@ class DatabaseManager {
             return result
         }
     
+        /// 根据 symbol, date 和 table name 获取单日的收盘价
+        func fetchClosingPrice(forSymbol symbol: String, onDate date: Date, tableName: String) -> Double? {
+            var price: Double?
+            
+            dbQueue.sync {
+                guard db != nil else { return }
+                
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                let dateString = formatter.string(from: date)
+                
+                let query = "SELECT price FROM \"\(tableName)\" WHERE name = ? AND date = ? LIMIT 1"
+                var statement: OpaquePointer?
+                
+                if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
+                    sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(statement, 2, (dateString as NSString).utf8String, -1, nil)
+                    
+                    if sqlite3_step(statement) == SQLITE_ROW {
+                        price = sqlite3_column_double(statement, 0)
+                    }
+                } else {
+                    print("Failed to prepare statement for closing price: \(String(cString: sqlite3_errmsg(db)))")
+                }
+                
+                sqlite3_finalize(statement)
+            }
+            
+            return price
+        }
+    
     // 将原来的 checkIfTableHasVolume 拆分为两个方法
     private func checkIfTableHasVolumeInternal(tableName: String) -> Bool {
         guard db != nil else { return false }

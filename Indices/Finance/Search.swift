@@ -61,6 +61,8 @@ class SearchResult: Identifiable, ObservableObject {
     @Published var pb: String?  // 添加 pb 属性
     @Published var compare: String?
     @Published var volume: String?
+    // 【新增】: 添加 earningTrend 属性，用于驱动颜色变化
+    @Published var earningTrend: EarningTrend = .insufficientData
     
     init(symbol: String, name: String, tag: [String],
          marketCap: String? = nil, peRatio: String? = nil, pb: String? = nil,
@@ -73,6 +75,7 @@ class SearchResult: Identifiable, ObservableObject {
         self.pb = pb  // 初始化 pb
         self.compare = compare
         self.volume = volume
+        // earningTrend 会在之后异步更新
     }
 }
 
@@ -156,8 +159,8 @@ struct SearchContentView: View {
             CompareView(initialSymbol: "")
         }
         .navigationDestination(isPresented: $showEarning) {
-                    EarningReleaseView()
-                }
+            EarningReleaseView()
+        }
     }
 }
 
@@ -498,8 +501,9 @@ struct SearchResultRow: View {
             HStack {
                 VStack(alignment: .leading) {
                     HStack {
+                        // 【修改】: 应用动态颜色
                         Text(result.symbol)
-                            .foregroundColor(.blue)
+                            .foregroundColor(colorForEarningTrend(result.earningTrend))
                         Text(result.name)
                             .foregroundColor(.primary)
                             .lineLimit(1)
@@ -541,6 +545,22 @@ struct SearchResultRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+    
+    // 【新增】: 根据 EarningTrend 返回颜色的辅助函数
+    private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
+        switch trend {
+        case .positiveAndUp:
+            return .red // 亮红色
+        case .positiveAndDown:
+            return Color(red: 0.7, green: 0.1, blue: 0.1) // 暗红色
+        case .negativeAndUp:
+            return .green // 亮绿色
+        case .negativeAndDown:
+            return Color(red: 0.1, green: 0.6, blue: 0.1) // 暗绿色
+        case .insufficientData:
+            return .blue // 默认颜色（在搜索结果中，蓝色比白色更突出）
+        }
     }
 }
 
@@ -659,14 +679,69 @@ class SearchViewModel: ObservableObject {
                     self.addSearchHistory(term: query)
                 }
                 self.groupedSearchResults = sortedGroups
+                
+                // 【修改】: 将数据获取流程串联起来
                 self.fetchLatestVolumes(for: sortedGroups) {
-                    completion(sortedGroups)
+                    // 在获取 volume 之后，接着获取财报趋势
+                    self.fetchEarningTrends(for: sortedGroups) {
+                        // 所有数据都获取完毕后，才最终回调
+                        completion(sortedGroups)
+                    }
                 }
             }
         }
     }
     
-    // 为 ETF 搜索结果获取最新 volume
+    // 【新增】: 为所有搜索结果异步获取财报趋势
+    private func fetchEarningTrends(for groupedResults: [GroupedSearchResults], completion: @escaping () -> Void) {
+        let dispatchGroup = DispatchGroup()
+
+        for group in groupedResults {
+            for entry in group.results {
+                dispatchGroup.enter()
+                
+                // 确保在后台线程执行数据库查询
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let symbol = entry.result.symbol
+                    var trend: EarningTrend = .insufficientData
+
+                    // 获取所有财报数据并排序
+                    let sortedEarnings = DatabaseManager.shared.fetchEarningData(forSymbol: symbol).sorted { $0.date > $1.date }
+
+                    if sortedEarnings.count >= 2 {
+                        let latestEarning = sortedEarnings[0]
+                        let previousEarning = sortedEarnings[1]
+
+                        // 使用 dataService 获取正确的表名
+                        if let tableName = self.dataService.getCategory(for: symbol) {
+                            let latestClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: latestEarning.date, tableName: tableName)
+                            let previousClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: previousEarning.date, tableName: tableName)
+
+                            if let latest = latestClose, let previous = previousClose {
+                                if latestEarning.price > 0 {
+                                    trend = (latest > previous) ? .positiveAndUp : .positiveAndDown
+                                } else {
+                                    trend = (latest > previous) ? .negativeAndUp : .negativeAndDown
+                                }
+                            }
+                        }
+                    }
+
+                    // 回到主线程更新 UI 相关的属性
+                    DispatchQueue.main.async {
+                        entry.result.earningTrend = trend
+                        dispatchGroup.leave()
+                    }
+                }
+            }
+        }
+
+        // 当所有异步任务都完成后，调用最终的 completion
+        dispatchGroup.notify(queue: .main) {
+            completion()
+        }
+    }
+    
     private func fetchLatestVolumes(for groupedResults: [GroupedSearchResults], completion: @escaping () -> Void) {
         let etfCategories: Set<MatchCategory> = [.etfSymbol, .etfName, .etfDescription, .etfTag]
         
