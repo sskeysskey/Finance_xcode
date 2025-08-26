@@ -535,7 +535,8 @@ struct SearchResultRow: View {
                 if let compare = result.compare {
                     Text(compare)
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        // 【修改】: 应用动态颜色
+                        .foregroundColor(colorForCompareValue(compare))
                 }
                 if let volume = result.volume {
                     Text(volume)
@@ -560,6 +561,15 @@ struct SearchResultRow: View {
             return .green // 绿色
         case .insufficientData:
             return .white // 默认白色
+        }
+    }
+    
+    // 【新增】: 根据 compare_all 内容返回颜色的辅助函数
+    private func colorForCompareValue(_ value: String) -> Color {
+        if value.contains("前") || value.contains("后") || value.contains("未") {
+            return .orange
+        } else {
+            return .secondary // 默认颜色
         }
     }
 }
