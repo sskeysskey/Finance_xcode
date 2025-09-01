@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import Combine
 import SwiftUI
+import MediaPlayer
 
 @MainActor
 class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate, @preconcurrency AVAudioPlayerDelegate {
@@ -24,9 +25,78 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     private var audioFile: AVAudioFile?
 
     override init() {
-        super.init()
-        self.speechSynthesizer.delegate = self
-    }
+            super.init()
+            self.speechSynthesizer.delegate = self
+            setupRemoteTransportControls()
+            setupNotifications()
+        }
+    
+    // 设置远程控制
+        private func setupRemoteTransportControls() {
+            let commandCenter = MPRemoteCommandCenter.shared()
+            
+            // 播放命令
+            commandCenter.playCommand.addTarget { [weak self] _ in
+                guard let self = self else { return .commandFailed }
+                if !self.isPlaying {
+                    self.playPause()
+                    return .success
+                }
+                return .commandFailed
+            }
+            
+            // 暂停命令
+            commandCenter.pauseCommand.addTarget { [weak self] _ in
+                guard let self = self else { return .commandFailed }
+                if self.isPlaying {
+                    self.playPause()
+                    return .success
+                }
+                return .commandFailed
+            }
+            
+            // 停止命令
+            commandCenter.stopCommand.addTarget { [weak self] _ in
+                self?.stop()
+                return .success
+            }
+        }
+        
+        // 设置通知观察
+        private func setupNotifications() {
+            NotificationCenter.default.addObserver(self,
+                selector: #selector(handleInterruption),
+                name: AVAudioSession.interruptionNotification,
+                object: nil)
+        }
+        
+        // 处理音频中断
+        @objc private func handleInterruption(notification: Notification) {
+            guard let userInfo = notification.userInfo,
+                  let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+                return
+            }
+            
+            switch type {
+            case .began:
+                // 音频被中断（如来电）
+                if isPlaying {
+                    playPause()
+                }
+            case .ended:
+                guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
+                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+                if options.contains(.shouldResume) {
+                    // 中断结束，可以恢复播放
+                    if !isPlaying {
+                        playPause()
+                    }
+                }
+            @unknown default:
+                break
+            }
+        }
 
     // MARK: - Public Control Methods
     
@@ -43,23 +113,18 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         isSynthesizing = true
         isPlaybackActive = true
         
-        // --- 核心修改 1: 优化语音质量 ---
         let utterance = AVSpeechUtterance(string: text)
         
-        // 1. 选择更高质量的语音
-        // "Ting-Ting" 是一个常见的、质量较好的中文女声。我们尝试找到它，如果找不到，就用系统默认的。
         let voice = AVSpeechSynthesisVoice.speechVoices()
             .first(where: { $0.language == "zh-CN" && $0.name.contains("Ting-Ting") })
             ?? AVSpeechSynthesisVoice(language: "zh-CN")
         utterance.voice = voice
         
-        // 2. 调整语速和语调
-        // AVSpeechUtteranceDefaultSpeechRate 约为 0.5。我们将其稍微降低，使其更像播音员的沉稳语速。
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.92
-        utterance.pitchMultiplier = 1.0 // 保持默认音高
-        utterance.postUtteranceDelay = 0.2 // 结束后留一点空白，更自然
-        // ------------------------------------
+        utterance.pitchMultiplier = 1.0
+        utterance.postUtteranceDelay = 0.2
 
+        // 修改临时文件的创建方式
         let tempDir = FileManager.default.temporaryDirectory
         let fileName = UUID().uuidString + ".caf"
         temporaryAudioFileURL = tempDir.appendingPathComponent(fileName)
@@ -96,7 +161,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         }
     }
     
-    // ... (playPause, stop, seek 方法保持不变) ...
     func playPause() {
         guard let player = audioPlayer else { return }
         if player.isPlaying {
@@ -210,17 +274,32 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     @objc private func updateProgress() {
-        guard let player = audioPlayer, player.duration > 0 else { return }
-        progress = player.currentTime / player.duration
-        currentTimeString = formatTime(player.currentTime)
-    }
+            guard let player = audioPlayer, player.duration > 0 else { return }
+            progress = player.currentTime / player.duration
+            currentTimeString = formatTime(player.currentTime)
+            
+            // 更新锁屏界面进度
+            var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [String: Any]()
+            nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime
+            nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = player.duration
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+        }
 
     // MARK: - Audio Session and Error Handling
     
     private func setupAudioSession() throws {
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-        try AVAudioSession.sharedInstance().setActive(true)
-        print("音频会话已成功激活。")
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .default)
+        try session.setActive(true)
+        
+        // 更新锁屏界面信息
+        var nowPlayingInfo = [String: Any]()
+        nowPlayingInfo[MPMediaItemPropertyTitle] = "正在播放的文章"
+        nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = audioPlayer?.currentTime ?? 0
+        nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = audioPlayer?.duration ?? 0
+        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
     }
     
     private func deactivateAudioSession() {
@@ -252,7 +331,7 @@ struct AudioPlayerView: View {
     @State private var isEditingSlider = false
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 20) {
             if playerManager.isSynthesizing {
                 HStack(spacing: 12) {
                     ProgressView()
@@ -293,7 +372,7 @@ struct AudioPlayerView: View {
             }
         }
         .foregroundColor(.white)
-        .padding(EdgeInsets(top: 15, leading: 20, bottom: 15, trailing: 20))
+        .padding(EdgeInsets(top: 35, leading: 20, bottom: 15, trailing: 20))
         .background(.black.opacity(0.8))
         .cornerRadius(20)
         .overlay(

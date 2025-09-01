@@ -25,9 +25,6 @@ struct CompareView: View {
     // Default start date: year 2014
     @State private var startDate: Date = Calendar.current.date(from: DateComponents(year: 2024))!
     
-    // Uppercase toggle
-    @State private var shouldUppercase = true
-
     var body: some View {
         VStack {
             ScrollView {
@@ -74,28 +71,13 @@ struct CompareView: View {
                         }
                     }
                     
-                    // Uppercase toggle
-                    Toggle("", isOn: $shouldUppercase)
-                        .onChange(of: shouldUppercase) { _, newValue in
-                            if newValue {
-                                symbols = symbols.map { $0.uppercased() }
-                            }
-                        }
-                    
                     // Stock symbol input fields
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(0..<symbols.count, id: \.self) { index in
                             HStack {
                                 CustomTextField(
                                     placeholder: "股票代码 \(index + 1)",
-                                    text: Binding(
-                                        get: { symbols[index] },
-                                        set: { newValue in
-                                            symbols[index] = shouldUppercase
-                                                ? newValue.uppercased()
-                                                : newValue
-                                        }
-                                    ),
+                                    text: $symbols[index],
                                     onClear: {
                                         focusedField = index
                                     }
@@ -169,7 +151,6 @@ struct CompareView: View {
     }
     
     func formatSymbol(_ symbol: String) -> String {
-        let uppercasedInputSymbol = symbol.uppercased()
         guard let url = Bundle.main.url(forResource: "Sectors_All", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let sectorData = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: [String]] else {
@@ -178,7 +159,7 @@ struct CompareView: View {
         
         for (_, symbolList) in sectorData {
             for originalJsonSymbol in symbolList {
-                if originalJsonSymbol.uppercased() == uppercasedInputSymbol {
+                if originalJsonSymbol == symbol {
                     return originalJsonSymbol
                 }
             }
