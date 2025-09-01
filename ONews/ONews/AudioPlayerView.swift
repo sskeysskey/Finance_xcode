@@ -96,19 +96,22 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             handleError("文本内容为空，无法播放。")
             return
         }
+        
+        // 添加文本预处理
+        let processedText = preprocessText(text)
 
         isSynthesizing = true
         isPlaybackActive = true
         
-        let utterance = AVSpeechUtterance(string: text)
+        let utterance = AVSpeechUtterance(string: processedText)
         
         // 使用修正后的方法动态选择语音
         utterance.voice = getBestVoice(for: text)
         
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.pitchMultiplier = 1.0
-        utterance.postUtteranceDelay = 0.2
-        utterance.preUtteranceDelay = 0.1
+        utterance.postUtteranceDelay = 0.3
+        utterance.preUtteranceDelay = 0.2
 
         let tempDir = FileManager.default.temporaryDirectory
         let fileName = UUID().uuidString + ".caf"
@@ -330,6 +333,74 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+    
+    private func preprocessText(_ text: String) -> String {
+        // 1. 首先处理特殊词汇替换
+        let processedSpecialTerms = processEnglishText(text)
+        
+        // 2. 添加英文片段前后的停顿
+        let pattern = "([\\u4e00-\\u9fa5])(\\s*[a-zA-Z]+\\s*)([\\u4e00-\\u9fa5])"
+        let regex = try? NSRegularExpression(pattern: pattern, options: [])
+        let range = NSRange(processedSpecialTerms.startIndex..<processedSpecialTerms.endIndex, in: processedSpecialTerms)
+        
+        let modifiedText = regex?.stringByReplacingMatches(
+            in: processedSpecialTerms,
+            options: [],
+            range: range,
+            withTemplate: "$1, $2, $3"
+        ) ?? processedSpecialTerms
+        
+        return modifiedText
+    }
+
+    private func processEnglishText(_ text: String) -> String {
+        // 你原有的替换词典代码保持不变
+        var processed = text
+        let replacements = [
+            "API": "A.P.I",
+            "URL": "U.R.L",
+            "HTTP": "H.T.T.P",
+            "JSON": "Jason",
+            "HTML": "H.T.M.L",
+            "CSS": "C.S.S",
+            "JS": "J.S",
+            "SDK": "S.D.K",
+            "iOS": "i O S",
+            "iPhone": "i Phone",
+            "iPad": "i Pad",
+            "macOS": "mac O S",
+            "UI": "U.I",
+            "GUI": "G.U.I",
+            "CLI": "C.L.I",
+            "SQL": "S.Q.L",
+            "NASA": "NASA",
+            "JPEG": "J.PEG",
+            "PNG": "P.N.G",
+            "PDF": "P.D.F",
+            "ID": "I.D",
+            "vs": "versus",
+            "etc": "等等",
+            "i.e": "也就是说",
+            "e.g": "举例来说",
+            "&": "and",
+            "+": "plus",
+            "=": "等于",
+            "@": "at",
+            "#": "hash",
+            "*": "asterisk",
+            "~": "tilde",
+            "^": "caret",
+            "|": "vertical bar",
+            "\\": "backslash",
+            "/": "slash"
+        ]
+        
+        for (key, value) in replacements {
+            processed = processed.replacingOccurrences(of: key, with: value)
+        }
+        
+        return processed
     }
 }
 
