@@ -119,14 +119,18 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         
         let utterance = AVSpeechUtterance(string: text)
         
-        let voice = AVSpeechSynthesisVoice.speechVoices()
-            .first(where: { $0.language == "zh-CN" && $0.name.contains("Ting-Ting") })
+        // 优先使用高质量的Ting-Ting语音,如果没有则回退到其他中文语音
+        let voices = AVSpeechSynthesisVoice.speechVoices()
+        let voice = voices.first(where: { $0.language == "zh-CN" && $0.quality == .enhanced })
+            ?? voices.first(where: { $0.language == "zh-CN" && $0.name.contains("Ting-Ting") })
             ?? AVSpeechSynthesisVoice(language: "zh-CN")
         utterance.voice = voice
         
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.92
-        utterance.pitchMultiplier = 1.0
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.85
+        utterance.pitchMultiplier = 1.1
         utterance.postUtteranceDelay = 0.2
+        utterance.preUtteranceDelay = 0.1 // 添加句前停顿
+        utterance.postUtteranceDelay = 0.3 // 增加句后停顿到0.3秒
 
         // 修改临时文件的创建方式
         let tempDir = FileManager.default.temporaryDirectory
