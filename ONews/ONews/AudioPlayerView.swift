@@ -145,7 +145,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         
         // 1. 获取语言代码的 rawValue，而不是 bcp47
         guard let languageCode = recognizer.dominantLanguage?.rawValue else {
-            return AVSpeechSynthesisVoice(language: Locale.current.languageCode ?? "en-US")
+            return AVSpeechSynthesisVoice(language: Locale.current.language.languageCode?.identifier ?? "en-US")
         }
 
         let voices = AVSpeechSynthesisVoice.speechVoices()
@@ -355,8 +355,21 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     private func processEnglishText(_ text: String) -> String {
-        // 你原有的替换词典代码保持不变
         var processed = text
+        
+        // 先处理连字符的特殊情况
+        let hyphenPattern = "(\\d+)-(\\d*)"
+        let regex = try? NSRegularExpression(pattern: hyphenPattern, options: [])
+        let range = NSRange(processed.startIndex..<processed.endIndex, in: processed)
+        
+        // 如果数字后面跟着连字符，则将连字符替换为"到"
+        processed = regex?.stringByReplacingMatches(
+            in: processed,
+            options: [],
+            range: range,
+            withTemplate: "$1到$2"
+        ) ?? processed
+        
         let replacements = [
             "API": "A.P.I",
             "URL": "U.R.L",
@@ -467,7 +480,7 @@ struct AudioPlayerView: View {
             .padding(8),
             alignment: .topTrailing
         )
-        .offset(y: 50) // 向下偏移100点，你可以根据需要调整这个值
+        .offset(y: -50) // 向下偏移100点，你可以根据需要调整这个值
         .padding(.horizontal) // 添加水平内边距确保不会太靠近屏幕边缘
         .onChange(of: playerManager.progress) { _, newValue in
             // 只有在用户没有拖动滑块时，才更新滑块位置
