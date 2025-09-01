@@ -23,7 +23,10 @@ struct ArticleDetailView: View {
     let unreadCount: Int
     @ObservedObject var viewModel: NewsViewModel
     
-    // ==================== 修改点 1: 重新添加 requestNextArticle 回调 ====================
+    // ==================== 新增修改 1: 接收 AudioPlayerManager ====================
+    @ObservedObject var audioPlayerManager: AudioPlayerManager
+    // =========================================================================
+
     var requestNextArticle: () -> Void
     // ==============================================================================
 
@@ -159,9 +162,30 @@ struct ArticleDetailView: View {
                     .foregroundColor(.secondary)
                 }
             }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button { isSharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
-            }
+            // ==================== 新增修改 2: 添加音频播放按钮 ====================
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            HStack {
+                                // 音频播放按钮
+                                Button(action: {
+                                    // 如果当前正在播放，则停止；否则开始播放
+                                    if audioPlayerManager.isPlaybackActive {
+                                        audioPlayerManager.stop()
+                                    } else {
+                                        // 将所有段落合并成一个长字符串
+                                        let fullText = paragraphs.joined(separator: "\n\n")
+                                        audioPlayerManager.startPlayback(text: fullText)
+                                    }
+                                }) {
+                                    // 根据状态显示不同图标
+                                    Image(systemName: audioPlayerManager.isPlaybackActive ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                                }
+                                .disabled(audioPlayerManager.isSynthesizing) // 合成时禁用按钮
+                                
+                                // 分享按钮
+                                Button { isSharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
+                            }
+                        }
+                        // ====================================================================
         }
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isSharePresented) {

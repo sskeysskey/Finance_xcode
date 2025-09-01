@@ -6,6 +6,10 @@ struct ArticleContainerView: View {
     
     @ObservedObject var viewModel: NewsViewModel
     
+    // ==================== 新增修改 1: 创建并持有 AudioPlayerManager ====================
+    @StateObject private var audioPlayerManager = AudioPlayerManager()
+    // ==============================================================================
+    
     @State private var currentArticle: Article
     @State private var currentSourceName: String
     
@@ -54,6 +58,9 @@ struct ArticleContainerView: View {
                 sourceName: currentSourceName,
                 unreadCount: liveUnreadCount,
                 viewModel: viewModel,
+                // ==================== 新增修改 2: 将 audioPlayerManager 传递给子视图 ====================
+                audioPlayerManager: audioPlayerManager,
+                // ====================================================================================
                 requestNextArticle: {
                     self.switchToNextArticle()
                 }
@@ -67,8 +74,21 @@ struct ArticleContainerView: View {
             if showNoNextToast {
                 ToastView(message: "该分组内已无更多文章")
             }
+            
+            // ==================== 新增修改 3: 显示音频播放器UI ====================
+            if audioPlayerManager.isPlaybackActive {
+                AudioPlayerView(playerManager: audioPlayerManager)
+                    .padding(.horizontal)
+                    .padding(.bottom, 30) // 调整播放器位置
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(2) // 确保在 Toast 之上
+            }
+            // ====================================================================
         }
         .onDisappear {
+            // 当视图消失时，停止音频并清理会话
+            audioPlayerManager.stop()
+            
             if !currentArticle.isRead {
                 readArticleIDsInThisSession.insert(currentArticle.id)
             }
@@ -78,6 +98,9 @@ struct ArticleContainerView: View {
             }
         }
         .onChange(of: currentArticle.id) { oldValue, newValue in
+            // 当文章切换时，停止上一篇文章的音频
+            audioPlayerManager.stop()
+            
             let wasArticleUnread = !viewModel.sources.flatMap { $0.articles }.first { $0.id == oldValue }!.isRead
             let isNewToSession = !readArticleIDsInThisSession.contains(oldValue)
 
