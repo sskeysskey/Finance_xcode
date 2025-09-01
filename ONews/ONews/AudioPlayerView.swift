@@ -34,6 +34,10 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     // 设置远程控制
         private func setupRemoteTransportControls() {
             let commandCenter = MPRemoteCommandCenter.shared()
+            // 启用命令
+                commandCenter.playCommand.isEnabled = true
+                commandCenter.pauseCommand.isEnabled = true
+                commandCenter.stopCommand.isEnabled = true
             
             // 播放命令
             commandCenter.playCommand.addTarget { [weak self] _ in
@@ -191,6 +195,15 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         currentTimeString = "00:00"
         durationString = "00:00"
         
+        // 清理锁屏界面信息
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        
+        // 禁用远程控制命令
+        let commandCenter = MPRemoteCommandCenter.shared()
+        commandCenter.playCommand.isEnabled = false
+        commandCenter.pauseCommand.isEnabled = false
+        commandCenter.stopCommand.isEnabled = false
+        
         stopDisplayLink()
         cleanupTemporaryFile()
         deactivateAudioSession()
@@ -323,6 +336,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         let seconds = Int(time) % 60
         return String(format: "%02d:%02d", minutes, seconds)
     }
+    
 }
 
 struct AudioPlayerView: View {
@@ -388,6 +402,8 @@ struct AudioPlayerView: View {
             .padding(8),
             alignment: .topTrailing
         )
+        .offset(y: 50) // 向下偏移100点，你可以根据需要调整这个值
+        .padding(.horizontal) // 添加水平内边距确保不会太靠近屏幕边缘
         .onChange(of: playerManager.progress) { _, newValue in
             // 只有在用户没有拖动滑块时，才更新滑块位置
             if !isEditingSlider {
