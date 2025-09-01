@@ -20,10 +20,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     private var audioPlayer: AVAudioPlayer?
     private var displayLink: CADisplayLink?
     
-    // --- 核心修改 1: 持有对临时文件和写入文件的引用 ---
     private var temporaryAudioFileURL: URL?
     private var audioFile: AVAudioFile?
-    // ---------------------------------------------
 
     override init() {
         super.init()
@@ -45,26 +43,30 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         isSynthesizing = true
         isPlaybackActive = true
         
+        // --- 核心修改 1: 优化语音质量 ---
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         
-        // --- 核心修改 2: 准备文件路径和 AVAudioFile 对象 ---
+        // 1. 选择更高质量的语音
+        // "Ting-Ting" 是一个常见的、质量较好的中文女声。我们尝试找到它，如果找不到，就用系统默认的。
+        let voice = AVSpeechSynthesisVoice.speechVoices()
+            .first(where: { $0.language == "zh-CN" && $0.name.contains("Ting-Ting") })
+            ?? AVSpeechSynthesisVoice(language: "zh-CN")
+        utterance.voice = voice
+        
+        // 2. 调整语速和语调
+        // AVSpeechUtteranceDefaultSpeechRate 约为 0.5。我们将其稍微降低，使其更像播音员的沉稳语速。
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.92
+        utterance.pitchMultiplier = 1.0 // 保持默认音高
+        utterance.postUtteranceDelay = 0.2 // 结束后留一点空白，更自然
+        // ------------------------------------
+
         let tempDir = FileManager.default.temporaryDirectory
         let fileName = UUID().uuidString + ".caf"
         temporaryAudioFileURL = tempDir.appendingPathComponent(fileName)
         
-        do {
-            // 在合成开始前，就基于第一个数据块的格式创建好用于写入的文件
-            // 注意：这里的 settings 只是一个占位符，将在收到第一个 buffer 时被真实格式覆盖
-            let settings = [AVFormatIDKey: kAudioFormatLinearPCM, AVNumberOfChannelsKey: 1, AVSampleRateKey: 44100]
-            audioFile = try AVAudioFile(forWriting: temporaryAudioFileURL!, settings: settings)
-        } catch {
-            handleError("创建音频文件失败: \(error)")
-            return
-        }
-        // -------------------------------------------------
-
+        // --- 核心修改 2: 不再提前创建 audioFile ---
+        // 我们将在收到第一个音频数据块时，根据它的格式来创建文件。
+        
         speechSynthesizer.write(utterance) { [weak self] (buffer) in
             guard let self = self else { return }
             guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
@@ -75,11 +77,26 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             if pcmBuffer.frameLength == 0 {
                 self.synthesisToFileCompleted()
             } else {
+                // --- 核心修改 3: 动态创建音频文件 ---
+                // 如果 audioFile 尚未创建（即这是第一个数据块）
+                if self.audioFile == nil {
+                    do {
+                        // 使用 pcmBuffer 的格式来创建文件，确保采样率完全匹配！
+                        self.audioFile = try AVAudioFile(forWriting: self.temporaryAudioFileURL!, settings: pcmBuffer.format.settings)
+                    } catch {
+                        self.handleError("根据音频数据格式创建文件失败: \(error)")
+                        return
+                    }
+                }
+                // ------------------------------------
+                
+                // 将数据块写入文件
                 self.appendBufferToFile(buffer: pcmBuffer)
             }
         }
     }
     
+    // ... (playPause, stop, seek 方法保持不变) ...
     func playPause() {
         guard let player = audioPlayer else { return }
         if player.isPlaying {
@@ -124,20 +141,15 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
     // MARK: - Synthesis and File Handling
     
-    // --- 核心修改 3: 简化 append 方法，直接写入已打开的文件 ---
     private func appendBufferToFile(buffer: AVAudioPCMBuffer) {
         do {
-            // 确保 audioFile 存在，然后直接写入
             try self.audioFile?.write(from: buffer)
         } catch {
             handleError("写入音频文件失败: \(error)")
         }
     }
-    // -----------------------------------------------------
     
-    // --- 核心修改 4: 合成结束后，关闭文件并准备播放 ---
     private func synthesisToFileCompleted() {
-        // 写入完成，将 audioFile 设置为 nil 来关闭它
         self.audioFile = nil
         
         guard let url = self.temporaryAudioFileURL else {
@@ -150,16 +162,13 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             self.setupAndPlayAudioPlayer(from: url)
         }
     }
-    // ------------------------------------------------
     
     private func cleanupTemporaryFile() {
-        // --- 核心修改 5: 清理时也要确保关闭文件引用 ---
-        audioFile = nil // 关闭文件句柄
+        audioFile = nil
         if let url = temporaryAudioFileURL {
             try? FileManager.default.removeItem(at: url)
             temporaryAudioFileURL = nil
         }
-        // ------------------------------------------
     }
 
     // MARK: - AVAudioPlayer Setup and Delegate
