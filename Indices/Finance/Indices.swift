@@ -225,8 +225,10 @@ struct IndicesContentView: View {
                     
                     // 1. 定义分组和顺序 (这部分逻辑保持不变)
                     let topRowOrder = ["Strategy12", "Strategy34", "Watching"]
-                    let bottomRowNames = ["PE_valid", "PE_invalid", "Today", "Next Week"]
-                    let excludedNames = topRowOrder + bottomRowNames
+                    let bottomRowNames = ["PE_valid", "PE_invalid", "Today"]
+                    // 添加不需要显示的分组名称
+                    let hiddenNames = ["Next Week", "2 Weeks", "3 Weeks"]
+                    let excludedNames = topRowOrder + bottomRowNames + hiddenNames
                     
                     // 2. 根据定义的规则，过滤和排序数据 (这部分逻辑保持不变)
                     
@@ -342,8 +344,45 @@ struct LoadingView: View {
 struct SectorButtonView: View {
     let sectorName: String
     
+    private var displayName: String {
+            switch sectorName {
+            case "Strategy12":
+                return "12"
+            case "Strategy34":
+                return "34"
+            case "Basic_Materials":
+                return "原材料"
+            case "Commodities":
+                return "大宗商品"
+            case "Consumer_Cyclical":
+                return "非必需"
+            case "Consumer_Defensive":
+                return "必需"
+            case "Economic_All":
+                return "全部Eco"
+            case "Economics":
+                return "Eco"
+            case "Currencies":
+                return "货币"
+            case "Financial_Services":
+                return "金融"
+            case "Healthcare":
+                return "健康"
+            case "Technology":
+                return "技术"
+            case "Industrials":
+                return "工业"
+            case "Real_Estate":
+                return "房地产"
+            case "Communication_Services":
+                return "通信服务"
+            default:
+                return sectorName.replacingOccurrences(of: "_", with: " ")
+            }
+        }
+    
     var body: some View {
-        Text(sectorName.replacingOccurrences(of: "_", with: " "))
+        Text(displayName)
             .font(.subheadline).bold()
             .foregroundColor(.white)
             .padding(.horizontal, 12)
