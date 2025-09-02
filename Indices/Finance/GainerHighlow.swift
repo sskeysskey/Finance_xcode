@@ -37,20 +37,31 @@ struct ETF: MarketItem {
     let descriptions: String
 }
 
+// ==================== 修改开始：重构 MarketItemRow ====================
 // MARK: - 单个 Market Item 行视图
 struct MarketItemRow<T: MarketItem>: View {
     let item: T
+    @EnvironmentObject var dataService: DataService
+
+    private var earningTrend: EarningTrend {
+        dataService.earningTrends[item.symbol.uppercased()] ?? .insufficientData
+    }
     
     var body: some View {
         NavigationLink(destination: ChartView(symbol: item.symbol, groupName: item.groupName)) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
+                    // 根据财报趋势设置颜色
                     Text(item.rawSymbol)
                         .font(.headline)
+                        .foregroundColor(colorForEarningTrend(earningTrend))
+                    
                     Spacer()
+                    
+                    // 涨跌幅颜色逻辑保持不变
                     Text(item.value)
                         .font(.subheadline)
-                        .foregroundColor(item.numericValue > 0 ? .green : (item.numericValue < 0 ? .red : .gray))
+//                        .foregroundColor(item.numericValue > 0 ? .green : (item.numericValue < 0 ? .red : .gray))
                 }
                 Text(item.descriptions)
                     .font(.caption)
@@ -58,9 +69,33 @@ struct MarketItemRow<T: MarketItem>: View {
             }
             .padding(5)
         }
+        .onAppear {
+            // 当单个 item 出现时，如果数据还未加载，可以触发一次
+            if earningTrend == .insufficientData {
+                dataService.fetchEarningTrends(for: [item.symbol])
+            }
+        }
+    }
+    
+    // 辅助函数，用于根据财报趋势返回颜色
+    private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
+        switch trend {
+        case .positiveAndUp:
+            return .red
+        case .negativeAndUp:
+            return .purple
+        case .positiveAndDown:
+            return .cyan
+        case .negativeAndDown:
+            return .green
+        case .insufficientData:
+            return .primary
+        }
     }
 }
+// ==================== 修改结束 ====================
 
+// ==================== 修改开始：重构 MarketListView ====================
 // MARK: - 通用 MarketItem 列表视图
 struct MarketListView<T: MarketItem>: View {
     let title: String
@@ -68,14 +103,19 @@ struct MarketListView<T: MarketItem>: View {
     @StateObject private var dataService = DataService.shared // 使用单例
     // 新增：用于控制搜索页面显示的状态变量
     @State private var showSearchView = false
-
     
     var body: some View {
+        // 将 dataService 注入到环境中，以便 MarketItemRow 可以访问
         List(items) { item in
             MarketItemRow(item: item)
+                .environmentObject(dataService)
         }
         .navigationTitle(title)
-        // 新增：在导航栏添加工具栏
+        .onAppear {
+            // 当列表出现时，为所有项目获取财报趋势数据
+            let symbols = items.map { $0.symbol }
+            dataService.fetchEarningTrends(for: symbols)
+        }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
@@ -93,6 +133,7 @@ struct MarketListView<T: MarketItem>: View {
         }
     }
 }
+// ==================== 修改结束 ====================
 
 typealias StockListView = MarketListView<Stock>
 typealias ETFListView = MarketListView<ETF>

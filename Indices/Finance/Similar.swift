@@ -2,15 +2,6 @@ import SwiftUI
 import Foundation
 import Combine
 
-// 【新增】: 定义一个枚举来表示财报和股价的组合趋势
-enum EarningTrend {
-    case positiveAndUp    // 财报为正，股价上涨（亮红色）
-    case positiveAndDown  // 财报为正，股价下跌（暗红色）
-    case negativeAndUp    // 财报为负，股价上涨（亮绿色）
-    case negativeAndDown  // 财报为负，股价下跌（暗绿色）
-    case insufficientData // 数据不足，无法判断（白色）
-}
-
 struct MatchedSymbol {
     let symbol: String
     let matchedTags: [(tag: String, weight: Double)]

@@ -450,10 +450,19 @@ struct SectorDetailView: View {
             )
         }
         .onAppear {
-            // 如果没有子分组，则加载 symbol 数组
-            if sector.subSectors == nil || sector.subSectors!.isEmpty {
+            // ==================== 修改开始 ====================
+            // 1. 触发财报趋势数据加载
+            if let subSectors = sector.subSectors, !subSectors.isEmpty {
+                // 如果有子分组，则为所有子分组中的 symbols 请求数据
+                let allSymbols = subSectors.flatMap { $0.symbols.map { $0.symbol } }
+                dataService.fetchEarningTrends(for: allSymbols)
+            } else {
+                // 如果没有子分组，则加载当前分组的 symbols
                 loadSymbols()
+                // 并为这些 symbols 请求数据
+                dataService.fetchEarningTrends(for: symbols.map { $0.symbol })
             }
+            // ==================== 修改结束 ====================
         }
         // 新增：在导航栏添加工具栏
         .toolbar {
@@ -516,12 +525,17 @@ struct SectorDetailView: View {
     }
 }
 
-// 修改 SymbolItemView 只显示 symbol
+// ==================== 修改开始：整个 SymbolItemView 被重写 ====================
 struct SymbolItemView: View {
     let symbol: IndicesSymbol
     let sectorName: String
     // 注入 DataService
     @EnvironmentObject private var dataService: DataService
+    
+    // 从 DataService 的缓存中获取当前 symbol 的财报趋势
+    private var earningTrend: EarningTrend {
+        dataService.earningTrends[symbol.symbol.uppercased()] ?? .insufficientData
+    }
     
     private var fallbackGroupName: String {
         switch sectorName {
@@ -545,14 +559,16 @@ struct SymbolItemView: View {
             VStack(alignment: .leading, spacing: 8) {
                 // 只显示 symbol
                 HStack {
+                    // 应用财报趋势颜色
                     Text(symbol.symbol)
                         .font(.headline)
-                        .foregroundColor(.primary)
+                        .foregroundColor(colorForEarningTrend(earningTrend))
                     
                     Spacer()
                     
+                    // 应用 compare_all 数据的颜色
                     Text(symbol.value)
-                        .foregroundColor(getValueColor(value: symbol.value))
+                        .foregroundColor(colorForCompareValue(symbol.value))
                         .fontWeight(.semibold)
                 }
                 
@@ -574,17 +590,39 @@ struct SymbolItemView: View {
             )
             .padding(.vertical, 4)
         }
+        .onAppear {
+            // 当视图出现时，如果缓存中没有数据，可以触发一次单独加载
+            if earningTrend == .insufficientData {
+                dataService.fetchEarningTrends(for: [symbol.symbol])
+            }
+        }
     }
     
-    private func getValueColor(value: String) -> Color {
-        if value.contains("+") {
-            return .green
-        } else if value.contains("-") {
+    // 辅助函数：根据 EarningTrend 返回颜色 (从 SearchResultRow 移植)
+    private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
+        switch trend {
+        case .positiveAndUp:
             return .red
+        case .negativeAndUp:
+            return .purple
+        case .positiveAndDown:
+            return .cyan
+        case .negativeAndDown:
+            return .green
+        case .insufficientData:
+            return .primary // 默认颜色使用 .primary
+        }
+    }
+    
+    // 辅助函数：根据 compare_all 内容返回颜色 (从 SearchResultRow 移植)
+    private func colorForCompareValue(_ value: String) -> Color {
+        if value.contains("前") || value.contains("后") || value.contains("未") {
+            return .orange
         } else if value == "N/A" {
             return .gray
         } else {
-            return .blue
+            return .white
         }
     }
 }
+// ==================== 修改结束 ====================

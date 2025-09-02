@@ -65,7 +65,6 @@ struct MarketCapDataItem {
     }
 }
 
-// ==================== 修改开始 ====================
 // 1. 更新 EarningRelease 模型以匹配新格式
 struct EarningRelease: Identifiable {
     let id = UUID()
@@ -73,8 +72,15 @@ struct EarningRelease: Identifiable {
     let timing: String // BMO, AMC, TNS
     let date: String   // 存储 "MM-dd" 格式的日期
 }
-// ==================== 修改结束 ====================
 
+// 【新增】: 定义一个枚举来表示财报和股价的组合趋势
+enum EarningTrend {
+    case positiveAndUp    // 财报为正，股价上涨（亮红色）
+    case positiveAndDown  // 财报为正，股价下跌（暗红色）
+    case negativeAndUp    // 财报为负，股价上涨（亮绿色）
+    case negativeAndDown  // 财报为负，股价下跌（暗绿色）
+    case insufficientData // 数据不足，无法判断（白色）
+}
 
 class DataService: ObservableObject {
     // MARK: - Singleton
@@ -96,7 +102,12 @@ class DataService: ObservableObject {
     
     @Published var earningReleases: [EarningRelease] = []
     
-    // MARK: - 修改 1：添加一个私有状态，用于跟踪数据是否已加载
+    // ==================== 修改开始 ====================
+    // 2. 新增一个公开的属性，用于缓存所有已获取的财报趋势
+    //    键是 uppercased 的 symbol，值是对应的趋势
+    @Published var earningTrends: [String: EarningTrend] = [:]
+    // ==================== 修改结束 ====================
+    
     private var isDataLoaded = false
     
     // 新增：用于存储 High/Low 数据的属性
@@ -149,6 +160,69 @@ class DataService: ObservableObject {
         isDataLoaded = true
         print("DataService: 所有数据加载完毕。")
     }
+    
+    // ==================== 修改开始 ====================
+    // 3. 新增一个公共方法，用于异步获取并缓存一组 symbol 的财报趋势
+    /// 为给定的 symbol 列表异步获取财报趋势，并更新 `earningTrends` 缓存。
+    /// - Parameter symbols: 需要获取趋势的 symbol 字符串数组。
+    public func fetchEarningTrends(for symbols: [String]) {
+        // 使用 DispatchGroup 来跟踪所有异步任务
+        let dispatchGroup = DispatchGroup()
+
+        for symbol in symbols {
+            let upperSymbol = symbol.uppercased()
+            
+            // 如果缓存中已经存在该数据，则跳过，避免重复计算
+            if self.earningTrends[upperSymbol] != nil {
+                continue
+            }
+            
+            dispatchGroup.enter()
+            
+            // 在后台线程执行耗时的数据库查询
+            DispatchQueue.global(qos: .userInitiated).async {
+                var trend: EarningTrend = .insufficientData
+
+                // 1. 获取该 symbol 的所有财报数据并按日期降序排序
+                let sortedEarnings = DatabaseManager.shared.fetchEarningData(forSymbol: symbol).sorted { $0.date > $1.date }
+
+                // 2. 必须至少有两条财报数据才能进行比较
+                if sortedEarnings.count >= 2 {
+                    let latestEarning = sortedEarnings[0]
+                    let previousEarning = sortedEarnings[1]
+
+                    // 3. 获取 symbol 所属的表名，以便查询收盘价
+                    if let tableName = self.getCategory(for: symbol) {
+                        // 4. 分别获取两次财报日期的收盘价
+                        let latestClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: latestEarning.date, tableName: tableName)
+                        let previousClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: previousEarning.date, tableName: tableName)
+
+                        // 5. 如果两次的收盘价都成功获取
+                        if let latest = latestClose, let previous = previousClose {
+                            // 根据最新财报是盈利还是亏损，以及股价是上涨还是下跌，来确定最终的趋势
+                            if latestEarning.price > 0 { // 财报为正
+                                trend = (latest > previous) ? .positiveAndUp : .positiveAndDown
+                            } else { // 财报为负
+                                trend = (latest > previous) ? .negativeAndUp : .negativeAndDown
+                            }
+                        }
+                    }
+                }
+
+                // 6. 回到主线程更新 UI 相关的 @Published 属性
+                DispatchQueue.main.async {
+                    self.earningTrends[upperSymbol] = trend
+                    dispatchGroup.leave()
+                }
+            }
+        }
+
+        // 你可以添加一个 notify 回调，以便在所有任务完成后执行某些操作（如果需要）
+        dispatchGroup.notify(queue: .main) {
+            // print("所有请求的 Earning Trends 都已获取完毕。")
+        }
+    }
+    // ==================== 修改结束 ====================
     
     // MARK: - Private methods
     
@@ -347,8 +421,6 @@ class DataService: ObservableObject {
             DispatchQueue.main.async { self.errorMessage = "加载 Sectors_panel.json 失败: \(error.localizedDescription)" }
         }
     }
-    
-    // 在 DataService.swift 中
 
     private func loadDescriptionData() {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "description") else {
