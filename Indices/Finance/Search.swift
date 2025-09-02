@@ -61,10 +61,7 @@ class SearchResult: Identifiable, ObservableObject {
     @Published var pb: String?  // 添加 pb 属性
     @Published var compare: String?
     @Published var volume: String?
-    
-    // 这里的 earningTrend 将由 DataService 的中央缓存驱动
-    // 但为了让 SearchResultRow 能够响应更新，我们依然保留它
-    // 另一种方法是让 SearchResultRow 直接观察 DataService，但当前结构更简单
+    // 【新增】: 添加 earningTrend 属性，用于驱动颜色变化
     @Published var earningTrend: EarningTrend = .insufficientData
     
     init(symbol: String, name: String, tag: [String],
@@ -274,12 +271,6 @@ struct SearchView: View {
                 }
             }
         }
-        // ==================== 修改开始 ====================
-        // 监听 DataService 的 earningTrends 变化，并更新本地的 SearchResult
-        .onReceive(viewModel.dataService.$earningTrends) { trends in
-            viewModel.updateResultsWithTrends(trends)
-        }
-        // ==================== 修改结束 ====================
     }
     
     private var searchBar: some View {
@@ -569,8 +560,7 @@ struct SearchResultRow: View {
         case .negativeAndDown:
             return .green // 绿色
         case .insufficientData:
-            // 与 SymbolItemView 保持一致
-            return .primary
+            return .white // 默认白色
         }
     }
     
@@ -647,22 +637,6 @@ class SearchViewModel: ObservableObject {
         loadSearchHistory()
     }
     
-    // ==================== 修改开始 ====================
-    // 新增方法，用于在 DataService 的缓存更新时，同步更新本地搜索结果的趋势
-    func updateResultsWithTrends(_ trends: [String: EarningTrend]) {
-        for group in groupedSearchResults {
-            for (result, _) in group.results {
-                if let trend = trends[result.symbol.uppercased()] {
-                    // 确保在主线程更新
-                    DispatchQueue.main.async {
-                        result.earningTrend = trend
-                    }
-                }
-            }
-        }
-    }
-    // ==================== 修改结束 ====================
-    
     func performSearch(query: String, completion: @escaping ([GroupedSearchResults]) -> Void) {
         let keywords = query.lowercased().split(separator: " ").map { String($0) }
         
@@ -716,27 +690,67 @@ class SearchViewModel: ObservableObject {
                 }
                 self.groupedSearchResults = sortedGroups
                 
-                // ==================== 修改开始 ====================
-                // 1. 获取所有搜索结果的 symbols
-                let allSymbols = sortedGroups.flatMap { $0.results.map { $0.result.symbol } }
-                
-                // 2. 调用 DataService 的中央方法来获取财报趋势
-                self.dataService.fetchEarningTrends(for: allSymbols)
-                
-                // 3. volume 的获取逻辑保持不变
+                // 【修改】: 将数据获取流程串联起来
                 self.fetchLatestVolumes(for: sortedGroups) {
-                    // 4. 最终回调，此时财报趋势可能还在后台加载中，但UI会通过 .onReceive 自动更新
-                    completion(sortedGroups)
+                    // 在获取 volume 之后，接着获取财报趋势
+                    self.fetchEarningTrends(for: sortedGroups) {
+                        // 所有数据都获取完毕后，才最终回调
+                        completion(sortedGroups)
+                    }
                 }
-                // ==================== 修改结束 ====================
             }
         }
     }
     
-    // ==================== 修改开始 ====================
-    // fetchEarningTrends 方法已被移至 DataService，此处应删除
-    // private func fetchEarningTrends(...) { ... }
-    // ==================== 修改结束 ====================
+    // 【新增】: 为所有搜索结果异步获取财报趋势
+    private func fetchEarningTrends(for groupedResults: [GroupedSearchResults], completion: @escaping () -> Void) {
+        let dispatchGroup = DispatchGroup()
+
+        for group in groupedResults {
+            for entry in group.results {
+                dispatchGroup.enter()
+                
+                // 确保在后台线程执行数据库查询
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let symbol = entry.result.symbol
+                    var trend: EarningTrend = .insufficientData
+
+                    // 获取所有财报数据并排序
+                    let sortedEarnings = DatabaseManager.shared.fetchEarningData(forSymbol: symbol).sorted { $0.date > $1.date }
+
+                    if sortedEarnings.count >= 2 {
+                        let latestEarning = sortedEarnings[0]
+                        let previousEarning = sortedEarnings[1]
+
+                        // 使用 dataService 获取正确的表名
+                        if let tableName = self.dataService.getCategory(for: symbol) {
+                            let latestClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: latestEarning.date, tableName: tableName)
+                            let previousClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: previousEarning.date, tableName: tableName)
+
+                            if let latest = latestClose, let previous = previousClose {
+                                if latestEarning.price > 0 {
+                                    trend = (latest > previous) ? .positiveAndUp : .positiveAndDown
+                                } else {
+                                    trend = (latest > previous) ? .negativeAndUp : .negativeAndDown
+                                }
+                            }
+                        }
+                    }
+
+                    // 回到主线程更新 UI 相关的属性
+                    DispatchQueue.main.async {
+                        entry.result.earningTrend = trend
+                        dispatchGroup.leave()
+                    }
+                }
+            }
+        }
+
+        // 当所有异步任务都完成后，调用最终的 completion
+        dispatchGroup.notify(queue: .main) {
+            completion()
+        }
+    }
     
     private func fetchLatestVolumes(for groupedResults: [GroupedSearchResults], completion: @escaping () -> Void) {
         let etfCategories: Set<MatchCategory> = [.etfSymbol, .etfName, .etfDescription, .etfTag]
