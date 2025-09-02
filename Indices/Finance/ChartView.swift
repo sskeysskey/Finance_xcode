@@ -189,6 +189,13 @@ struct ChartView: View {
     @Environment(\.presentationMode) var presentationMode
     @EnvironmentObject var dataService: DataService
     
+    // ==================== 修改开始 ====================
+    // 1. 添加一个计算属性，用于从 DataService 获取当前 symbol 的财报趋势
+    private var earningTrend: EarningTrend {
+        dataService.earningTrends[symbol.uppercased()] ?? .insufficientData
+    }
+    // ==================== 修改结束 ====================
+    
     private struct RenderedPoint {
         let x: CGFloat
         let y: CGFloat
@@ -663,11 +670,15 @@ struct ChartView: View {
             Spacer() // 添加Spacer让所有内容靠顶部
         }
         .background(backgroundColor.edgesIgnoringSafeArea(.all))
+        // ==================== 修改开始：修改 Toolbar ====================
         .toolbar {
+            // 2. 修改 Toolbar 内容
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 8) {
+                    // 为 symbol 应用财报趋势颜色
                     Text(symbol)
                         .font(.headline)
+                        .foregroundColor(colorForEarningTrend(earningTrend))
                     
                     if let marketCapItem = dataService.marketCapData[symbol.uppercased()] {
                         Text(marketCapItem.marketCap)
@@ -689,37 +700,65 @@ struct ChartView: View {
                     }
                     
                     if let compareStock = dataService.compareData[symbol.uppercased()] {
+                        // 为 compare_all 数据应用动态颜色
                         Text(compareStock)
                             .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(colorForCompareValue(compareStock))
                     }
                 }
             }
-        }
-        .navigationBarTitleDisplayMode(.inline) // 保持导航栏标题显示为居中
-        .onAppear {
-            loadChartData()
-        }
-        // 新增：在导航栏添加工具栏
-        .toolbar {
+            
+            // 保持搜索按钮不变
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
                     // 点击按钮时，触发导航
                     showSearchView = true
                 }) {
                     Image(systemName: "magnifyingglass")
-                        .imageScale(.small)            // 缩小图标
-                        .font(.system(size: 14))       // 或者直接用更小的系统字体
-                        .padding(0)                    // 适当留白
+                        .imageScale(.small)
+                        .font(.system(size: 14))
+                        .padding(0)
                 }
             }
         }
-        // 新增：定义导航的目标视图
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            // 3. 在 onAppear 中触发财报趋势数据加载
+            loadChartData()
+            dataService.fetchEarningTrends(for: [symbol])
+        }
         .navigationDestination(isPresented: $showSearchView) {
             // 传入 dataService 并设置 isSearchActive 为 true，让搜索框自动激活
             SearchView(isSearchActive: true, dataService: dataService)
         }
     }
+    
+    // ==================== 修改开始：添加颜色辅助函数 ====================
+    // 4. 添加两个标准的颜色辅助函数
+    private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
+        switch trend {
+        case .positiveAndUp:
+            return .red
+        case .negativeAndUp:
+            return .purple
+        case .positiveAndDown:
+            return .cyan
+        case .negativeAndDown:
+            return .green
+        case .insufficientData:
+            return .primary
+        }
+    }
+    
+    private func colorForCompareValue(_ value: String) -> Color {
+        if value.contains("前") || value.contains("后") || value.contains("未") {
+            return .orange
+        } else {
+            // 对于导航栏，使用 .secondary 可能比 .white/.black 更合适，因为它能适应亮/暗模式
+            return .secondary
+        }
+    }
+    // ==================== 修改结束 ====================
     
     // MARK: - X轴刻度绘制
     private func getXAxisTicks() -> [Date] {
