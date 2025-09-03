@@ -64,6 +64,7 @@ struct ArticleListView: View {
                     // 移除了 .padding(.leading)，让 List 自动处理 Header 和 Row 的对齐
                     Section(header: Text(formatTimestamp(timestamp))
                                 .font(.headline)
+                                .foregroundColor(.blue.opacity(0.7))  // 添加这一行，使用淡蓝色
                                 .padding(.vertical, 4)
                                 // .padding(.leading) // <-- 此行已被移除
                     ) {
@@ -173,6 +174,7 @@ struct AllArticlesListView: View {
                 ForEach(sortedTimestamps, id: \.self) { timestamp in
                     Section(header: Text(formatTimestamp(timestamp))
                                 .font(.headline)
+                                .foregroundColor(.blue.opacity(0.7))  // 添加这一行，使用淡蓝色
                                 .padding(.vertical, 4)
                     ) {
                         ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
