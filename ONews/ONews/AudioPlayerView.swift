@@ -357,6 +357,12 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     private func processEnglishText(_ text: String) -> String {
         var processed = text
         
+        processed = processed
+        .replacingOccurrences(of: "“", with: "")
+        .replacingOccurrences(of: "”", with: "")
+        .replacingOccurrences(of: "「", with: "")
+        .replacingOccurrences(of: "」", with: "")
+        
         // 先处理连字符的特殊情况
         let hyphenPattern = "(\\d+)-(\\d*)"
         let regex = try? NSRegularExpression(pattern: hyphenPattern, options: [])
@@ -406,7 +412,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "^": "caret",
             "|": "vertical bar",
             "\\": "backslash",
-            "/": "slash"
+            "/": "slash",
         ]
         
         for (key, value) in replacements {
