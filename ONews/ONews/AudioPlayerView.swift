@@ -16,6 +16,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     @Published var progress: Double = 0.0
     @Published var currentTimeString: String = "00:00"
     @Published var durationString: String = "00:00"
+    // NEW: 播放自然结束回调（非 stop() 主动停止）
+    var onPlaybackFinished: (() -> Void)?
 
     // MARK: - Private Properties
     private var speechSynthesizer = AVSpeechSynthesizer()
@@ -183,12 +185,17 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             player.pause()
             isPlaying = false
             stopDisplayLink()
+            // NEW: 播放暂停 -> playbackRate = 0
+            updateNowPlayingInfo(playbackRate: 0.0, elapsed: player.currentTime, duration: player.duration)
         } else {
             do {
                 try setupAudioSession()
                 player.play()
                 isPlaying = true
                 startDisplayLink()
+                // NEW: 播放继续 -> playbackRate = 1，且确保命令启用
+                enableRemoteCommandsForActivePlayback()
+                updateNowPlayingInfo(playbackRate: 1.0, elapsed: player.currentTime, duration: player.duration)
             } catch {
                 handleError("恢复播放时，重新激活音频会话失败: \(error)")
             }
@@ -217,6 +224,26 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         stopDisplayLink()
         cleanupTemporaryFile()
         deactivateAudioSession()
+    }
+    
+    // NEW: 自然结束时的收尾，不隐藏面板
+    private func finishNaturally() {
+        audioPlayer?.stop()
+        isPlaying = false
+        // 保留 isPlaybackActive = true，以便 UI 继续显示面板和“下一篇”按钮
+        isSynthesizing = false
+        stopDisplayLink()
+        
+        // 可选：将进度归终点
+        if let player = audioPlayer {
+        progress = 1.0
+        currentTimeString = formatTime(player.duration)
+            // NEW: 标记为已播完，速率 0，进度到尾
+            updateNowPlayingInfo(playbackRate: 0.0, elapsed: player.duration, duration: player.duration)
+            // 保持命令启用，允许锁屏上“播放”重启（如果你的设计允许）
+            enableRemoteCommandsForActivePlayback()
+        }
+        onPlaybackFinished?()
     }
     
     func seek(to value: Double) {
@@ -268,13 +295,35 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             audioPlayer?.play()
             isPlaying = true
             startDisplayLink()
+            // NEW: 每次开始播放时，确保远程命令启用
+             enableRemoteCommandsForActivePlayback()
+             
+             // NEW: 刷新 NowPlayingInfo，尤其是 PlaybackRate
+             updateNowPlayingInfo(playbackRate: 1.0, elapsed: audioPlayer?.currentTime ?? 0, duration: audioPlayer?.duration ?? 0)
         } catch {
             handleError("创建或播放 AVAudioPlayer 失败: \(error)")
         }
     }
     
+    private func enableRemoteCommandsForActivePlayback() {
+    let commandCenter = MPRemoteCommandCenter.shared()
+    commandCenter.playCommand.isEnabled = true
+    commandCenter.pauseCommand.isEnabled = true
+    commandCenter.stopCommand.isEnabled = true
+    }
+    
+    private func updateNowPlayingInfo(playbackRate: Double, elapsed: TimeInterval, duration: TimeInterval) {
+    var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+    info[MPMediaItemPropertyTitle] = "正在播放的文章"
+    info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
+    info[MPMediaItemPropertyPlaybackDuration] = duration
+    info[MPNowPlayingInfoPropertyPlaybackRate] = playbackRate
+    MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+    
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        stop()
+        // UPDATED: 自然播放结束时，不调用 stop()，而是保留面板并触发回调
+        finishNaturally()
     }
     
     // MARK: - Progress Update (CADisplayLink)
@@ -307,13 +356,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .default)
         try session.setActive(true)
-        
-        var nowPlayingInfo = [String: Any]()
-        nowPlayingInfo[MPMediaItemPropertyTitle] = "正在播放的文章"
-        nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = audioPlayer?.currentTime ?? 0
-        nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = audioPlayer?.duration ?? 0
-        nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
     }
     
     private func deactivateAudioSession() {
@@ -427,6 +469,8 @@ struct AudioPlayerView: View {
     @ObservedObject var playerManager: AudioPlayerManager
     @State private var sliderValue: Double = 0.0
     @State private var isEditingSlider = false
+    // NEW: 从上层注入“播放下一篇并自动朗读”的动作
+    var playNextAndStart: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 20) {
@@ -466,6 +510,25 @@ struct AudioPlayerView: View {
                             .font(.system(size: 30))
                     }
                     Spacer()
+                }
+                // NEW: 播放完毕后显示“播放下一篇”按钮
+                if playerManager.isPlaybackActive && !playerManager.isSynthesizing && !playerManager.isPlaying {
+                    Button(action: {
+                        playNextAndStart?()
+                    }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.forward.circle.fill")
+                                .font(.system(size: 20, weight: .semibold))
+                            Text("播放下一篇")
+                                .fontWeight(.bold)
+                        }
+                        .foregroundColor(.black)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.white)
+                        .cornerRadius(12)
+                    }
+                    .padding(.top, 4)
                 }
             }
         }
