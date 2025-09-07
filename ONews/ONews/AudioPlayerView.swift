@@ -514,7 +514,7 @@ var body: some View {
                 Button(action: { playerManager.playPause() }) {
                     Image(systemName: playPauseIconName)
                         .font(.system(size: 54, weight: .regular)) // 放大
-                        .symbolRenderingMode(.hierarchical)
+//                        .symbolRenderingMode(.hierarchical)
                 }
                 .disabled(playerManager.isSynthesizing || !playerManager.isPlaybackActive)
                 .opacity(playerManager.isSynthesizing || !playerManager.isPlaybackActive ? 0.6 : 1.0)
@@ -528,7 +528,7 @@ var body: some View {
                     playerManager.isAutoPlayEnabled.toggle()
                 }) {
                     Image(systemName: autoModeIconName)
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(.system(size: 35, weight: .semibold))
                         .symbolRenderingMode(.hierarchical)
                 }
                 .accessibilityLabel(playerManager.isAutoPlayEnabled ? "自动连播" : "单次播放")
