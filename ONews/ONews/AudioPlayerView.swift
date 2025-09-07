@@ -592,6 +592,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "PNG": "P.N.G",
             "PDF": "P.D.F",
             "ID": "I.D",
+            "Dr.": "Doctor",
             "vs": "versus",
             "etc": "等等",
             "i.e": "也就是说",
