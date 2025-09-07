@@ -74,7 +74,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         audioPlayer = nil
         speechSynthesizer.stopSpeaking(at: .immediate)
         speechSynthesizer.delegate = nil
-        DispatchQueue.main.async { [weak self] in
+        Task { @MainActor [weak self] in
             self?.invalidateSynthesisWatchdog()
         }
         // 其余完整清理由外部 stop() 负责
@@ -257,14 +257,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .spokenAudio)
             if !session.isOtherAudioPlaying {
-                // 尽量保持激活；若已是 active，再次 setActive(true) 也不会出错
                 try session.setActive(true, options: [])
             } else {
-                // 即使有其他音频，spokenAudio 也允许 duck；此处不强求抢占
                 try session.setActive(true, options: [])
             }
         } catch {
-            // 不要在这里 stop()（那会 teardown），而是给出错误并尝试稍后再试
             print("激活音频会话警告: \(error.localizedDescription)")
         }
 
@@ -286,11 +283,13 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         synthesisLastWriteAt = Date()
         startSynthesisWatchdog()
 
-        speechSynthesizer.write(utterance) { [weak self] (buffer) in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
+        // AVSpeechSynthesizer.write 的闭包是 Sendable 语境，切回主 actor 访问/更新状态
+        speechSynthesizer.write(utterance) { [weak self] buffer in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
                 guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
-                    self.handleError("无法获取 PCM 缓冲。"); return
+                    self.handleError("无法获取 PCM 缓冲。")
+                    return
                 }
 
                 // 喂狗
@@ -301,9 +300,14 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 } else {
                     if self.audioFile == nil {
                         do {
-                            self.audioFile = try AVAudioFile(forWriting: self.temporaryAudioFileURL!, settings: pcmBuffer.format.settings)
+                            guard let url = self.temporaryAudioFileURL else {
+                                self.handleError("无法创建音频文件：临时 URL 缺失。")
+                                return
+                            }
+                            self.audioFile = try AVAudioFile(forWriting: url, settings: pcmBuffer.format.settings)
                         } catch {
-                            self.handleError("根据音频数据格式创建文件失败: \(error)"); return
+                            self.handleError("根据音频数据格式创建文件失败: \(error)")
+                            return
                         }
                     }
                     self.appendBufferToFile(buffer: pcmBuffer)
@@ -441,12 +445,14 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     private func startSynthesisWatchdog(timeout: TimeInterval = 15) {
         invalidateSynthesisWatchdog()
         synthesisWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            guard self.isSynthesizing else { self.invalidateSynthesisWatchdog(); return }
-            guard let last = self.synthesisLastWriteAt else { return }
-            let elapsed = Date().timeIntervalSince(last)
-            if elapsed > timeout {
-                self.handleError("语音合成阶段长时间无响应（可能在后台被系统限制）。已中止此次合成。")
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.isSynthesizing else { self.invalidateSynthesisWatchdog(); return }
+                guard let last = self.synthesisLastWriteAt else { return }
+                let elapsed = Date().timeIntervalSince(last)
+                if elapsed > timeout {
+                    self.handleError("语音合成阶段长时间无响应（可能在后台被系统限制）。已中止此次合成。")
+                }
             }
         }
         RunLoop.main.add(synthesisWatchdogTimer!, forMode: .common)
@@ -559,6 +565,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             .replacingOccurrences(of: "”", with: "")
             .replacingOccurrences(of: "\"", with: "")
 
+        // 可选：若不想匹配“3-”（缺失右侧数字），把正则改为 (\\d+)-(\\d+)
         let hyphenPattern = "(\\d+)-(\\d*)"
         let regex = try? NSRegularExpression(pattern: hyphenPattern, options: [])
         let range = NSRange(processed.startIndex..<processed.endIndex, in: processed)
@@ -592,7 +599,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "PNG": "P.N.G",
             "PDF": "P.D.F",
             "ID": "I.D",
-            "Dr.": "Doctor",
             "vs": "versus",
             "etc": "等等",
             "i.e": "也就是说",

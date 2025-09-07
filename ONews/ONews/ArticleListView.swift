@@ -39,8 +39,8 @@ struct ArticleListView: View {
     
     @State private var filterMode: ArticleFilterMode = .unread
     
-    // 编程式导航用状态
-    @State private var navigateToFirst = false
+    // 编程式导航用状态（新写法）
+    @State private var showFirstTarget = false
     @State private var firstTargetArticle: Article?
     
     private var filteredArticles: [Article] {
@@ -57,22 +57,6 @@ struct ArticleListView: View {
 
     var body: some View {
         VStack {
-            // 隐形导航桥接 NavigationLink（修正 destination 返回类型）
-            NavigationLink(
-                destination: firstTargetArticle != nil
-                    ? AnyView(
-                        ArticleContainerView(
-                            article: firstTargetArticle!,
-                            sourceName: source.name,
-                            context: .fromSource(source.name),
-                            viewModel: viewModel
-                        )
-                      )
-                    : AnyView(EmptyView()),
-                isActive: $navigateToFirst
-            ) { EmptyView() }
-            .hidden()
-            
             List {
                 ForEach(sortedTimestamps, id: \.self) { timestamp in
                     Section(header: Text(formatTimestamp(timestamp))
@@ -141,6 +125,19 @@ struct ArticleListView: View {
             .padding([.horizontal, .bottom])
         }
         .background(Color.viewBackground.ignoresSafeArea())
+        // 新导航目的地（替代废弃 API）
+        .navigationDestination(isPresented: $showFirstTarget) {
+            if let target = firstTargetArticle {
+                ArticleContainerView(
+                    article: target,
+                    sourceName: source.name,
+                    context: .fromSource(source.name),
+                    viewModel: viewModel
+                )
+            } else {
+                EmptyView()
+            }
+        }
     }
     
     private func formatTimestamp(_ timestamp: String) -> String {
@@ -158,7 +155,7 @@ struct ArticleListView: View {
         // 优先第一篇未读，否则就第一篇
         let target = visibleList.first(where: { !$0.isRead }) ?? visibleList.first!
         self.firstTargetArticle = target
-        self.navigateToFirst = true
+        self.showFirstTarget = true
         // 等待导航入栈后，发送自动播放请求
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             NotificationCenter.default.post(name: .onewsAutoPlayRequest, object: nil, userInfo: ["articleID": target.id])
@@ -171,8 +168,8 @@ struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @State private var filterMode: ArticleFilterMode = .unread
     
-    // 编程式导航用状态
-    @State private var navigateToFirst = false
+    // 编程式导航用状态（新写法）
+    @State private var showFirstTarget = false
     @State private var firstTarget: (article: Article, sourceName: String)?
     
     private var filteredArticles: [(article: Article, sourceName: String)] {
@@ -194,22 +191,6 @@ struct AllArticlesListView: View {
     
     var body: some View {
         VStack {
-            // 隐形导航桥接（修正 destination 返回类型）
-            NavigationLink(
-                destination: firstTarget != nil
-                    ? AnyView(
-                        ArticleContainerView(
-                            article: firstTarget!.article,
-                            sourceName: firstTarget!.sourceName,
-                            context: .fromAllArticles,
-                            viewModel: viewModel
-                        )
-                      )
-                    : AnyView(EmptyView()),
-                isActive: $navigateToFirst
-            ) { EmptyView() }
-            .hidden()
-            
             List {
                 ForEach(sortedTimestamps, id: \.self) { timestamp in
                     Section(header: Text(formatTimestamp(timestamp))
@@ -279,6 +260,19 @@ struct AllArticlesListView: View {
             .padding([.horizontal, .bottom])
         }
         .background(Color.viewBackground.ignoresSafeArea())
+        // 新导航目的地（替代废弃 API）
+        .navigationDestination(isPresented: $showFirstTarget) {
+            if let target = firstTarget {
+                ArticleContainerView(
+                    article: target.article,
+                    sourceName: target.sourceName,
+                    context: .fromAllArticles,
+                    viewModel: viewModel
+                )
+            } else {
+                EmptyView()
+            }
+        }
     }
     
     private func formatTimestamp(_ timestamp: String) -> String {
@@ -295,7 +289,7 @@ struct AllArticlesListView: View {
         guard !filteredArticles.isEmpty else { return }
         let target = filteredArticles.first(where: { !$0.article.isRead }) ?? filteredArticles.first!
         self.firstTarget = target
-        self.navigateToFirst = true
+        self.showFirstTarget = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             NotificationCenter.default.post(name: .onewsAutoPlayRequest, object: nil, userInfo: ["articleID": target.article.id])
         }
