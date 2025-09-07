@@ -18,6 +18,9 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     @Published var durationString: String = "00:00"
     // NEW: 播放自然结束回调（非 stop() 主动停止）
     var onPlaybackFinished: (() -> Void)?
+    // 在类内添加回调占位（你可以从外部注入）
+    var onNextRequested: (() -> Void)?
+    var onToggleRepeatRequested: (() -> Void)?
     @Published var isAutoPlayEnabled = false // NEW: 自动连播开关（默认关闭）
 
     // MARK: - Private Properties
@@ -35,30 +38,80 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         setupNotifications()
     }
     
+    private func prepareForNext() {
+    // 停止合成和播放，但不重置 isPlaybackActive，让面板留着
+    speechSynthesizer.stopSpeaking(at: .immediate)
+    audioPlayer?.stop()
+    stopDisplayLink()
+    isPlaying = false
+    isSynthesizing = false
+    // 不清空 nowPlayingInfo，这样锁屏面板不会立刻消失
+    // 不禁用 remote commands，保持可用
+    // 清理临时文件，防止残留
+    cleanupTemporaryFile()
+    }
+
+    
     // 设置远程控制
     private func setupRemoteTransportControls() {
         let commandCenter = MPRemoteCommandCenter.shared()
+
         commandCenter.playCommand.isEnabled = true
         commandCenter.pauseCommand.isEnabled = true
         commandCenter.stopCommand.isEnabled = true
-        
-        commandCenter.playCommand.addTarget { [weak self] _ in
+
+        commandCenter.playCommand.addTarget(handler: { [weak self] (event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus in
             guard let self = self else { return .commandFailed }
             if !self.isPlaying { self.playPause(); return .success }
             return .commandFailed
-        }
-        
-        commandCenter.pauseCommand.addTarget { [weak self] _ in
+        })
+
+        commandCenter.pauseCommand.addTarget(handler: { [weak self] (event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus in
             guard let self = self else { return .commandFailed }
             if self.isPlaying { self.playPause(); return .success }
             return .commandFailed
-        }
-        
-        commandCenter.stopCommand.addTarget { [weak self] _ in
+        })
+
+        commandCenter.stopCommand.addTarget(handler: { [weak self] (event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus in
             self?.stop()
             return .success
+        })
+
+        // 下一篇
+        commandCenter.nextTrackCommand.addTarget { [weak self] _ in
+        guard let self = self else { return .commandFailed }
+        // 无论是否在播/合成都先打断当前内容
+        self.prepareForNext()
+        // 通知上层切换
+        self.onNextRequested?()
+        return .success
         }
+
+        // 不支持上一首
+        commandCenter.previousTrackCommand.isEnabled = false
+
+        // 如果你要“借位”一个按钮切换自动连播（可选）：
+        // let bookmarkCmd = commandCenter.bookmarkCommand
+        // bookmarkCmd.isEnabled = true
+        // bookmarkCmd.addTarget(handler: { [weak self] (event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus in
+        //     guard let self = self else { return .commandFailed }
+        //     self.isAutoPlayEnabled.toggle()
+        //     self.onToggleRepeatRequested?()
+        //     self.refreshNowPlayingInfoForStateSync()
+        //     return .success
+        // })
     }
+    
+    private func updateRepeatStateInNowPlaying() {
+            var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+            info[MPMediaItemPropertyTitle] = info[MPMediaItemPropertyTitle] ?? "正在播放的文章"
+            if let player = audioPlayer {
+                info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime
+                info[MPMediaItemPropertyPlaybackDuration] = player.duration
+                info[MPNowPlayingInfoPropertyPlaybackRate] = player.isPlaying ? 1.0 : 0.0
+            }
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        }
     
     // 设置通知观察
     private func setupNotifications() {
@@ -89,11 +142,15 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             break
         }
     }
+    
+    func setHasNext(_ hasNext: Bool) {
+        MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = hasNext
+    }
 
     // MARK: - Public Control Methods
     
     func startPlayback(text: String) {
-        if isPlaybackActive { stop() }
+//        if isPlaybackActive { stop() }
         
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             handleError("文本内容为空，无法播放。")
@@ -228,24 +285,27 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
     
     // NEW: 自然结束时的收尾，不隐藏面板
-    private func finishNaturally() {
-        audioPlayer?.stop()
-        isPlaying = false
-        // 保留 isPlaybackActive = true，以便 UI 继续显示面板和“下一篇”按钮
-        isSynthesizing = false
-        stopDisplayLink()
-        
-        // 可选：将进度归终点
-        if let player = audioPlayer {
-        progress = 1.0
-        currentTimeString = formatTime(player.duration)
-            // NEW: 标记为已播完，速率 0，进度到尾
-            updateNowPlayingInfo(playbackRate: 0.0, elapsed: player.duration, duration: player.duration)
-            // 保持命令启用，允许锁屏上“播放”重启（如果你的设计允许）
-            enableRemoteCommandsForActivePlayback()
+    // 在自然播放结束时：
+        private func finishNaturally() {
+            audioPlayer?.stop()
+            isPlaying = false
+            isSynthesizing = false
+            stopDisplayLink()
+
+            if let player = audioPlayer {
+                progress = 1.0
+                currentTimeString = formatTime(player.duration)
+                updateNowPlayingInfo(playbackRate: 0.0, elapsed: player.duration, duration: player.duration)
+                enableRemoteCommandsForActivePlayback()
+            }
+
+            // 自动连播：触发下一篇
+            if isAutoPlayEnabled {
+                onNextRequested?()
+            }
+
+            onPlaybackFinished?()
         }
-        onPlaybackFinished?()
-    }
     
     func seek(to value: Double) {
         guard let player = audioPlayer else { return }

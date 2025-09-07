@@ -94,14 +94,20 @@ struct ArticleContainerView: View {
                     }
         }
         .onAppear {
-        audioPlayerManager.onPlaybackFinished = {
-        if audioPlayerManager.isAutoPlayEnabled {
-        shouldAutoplayNext = true
-        switchToNextArticle()
-        } else {
-        print("播放自然结束（手动模式），等待用户点击‘播放下一篇’")
-        }
-        }
+            audioPlayerManager.onNextRequested = {
+                // 来自锁屏/耳机“下一首”
+                shouldAutoplayNext = true
+                switchToNextArticle()
+            }
+            
+            audioPlayerManager.onPlaybackFinished = {
+                if audioPlayerManager.isAutoPlayEnabled {
+                    shouldAutoplayNext = true
+                    switchToNextArticle()
+                } else {
+                    print("播放自然结束（手动模式），等待用户点击‘播放下一篇’")
+                }
+            }
         }
         .onDisappear {
             // 当视图消失时，停止音频并清理会话
