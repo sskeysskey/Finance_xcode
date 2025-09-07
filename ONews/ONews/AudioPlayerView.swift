@@ -21,7 +21,12 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     // 在类内添加回调占位（你可以从外部注入）
     var onNextRequested: (() -> Void)?
     var onToggleRepeatRequested: (() -> Void)?
-    @Published var isAutoPlayEnabled = false // NEW: 自动连播开关（默认关闭）
+    @Published var isAutoPlayEnabled = false {
+        didSet {
+            UserDefaults.standard.set(isAutoPlayEnabled, forKey: autoPlayEnabledKey)
+            updateRepeatStateInNowPlaying()
+        }
+    }
 
     // MARK: - Private Properties
     private var speechSynthesizer = AVSpeechSynthesizer()
@@ -30,10 +35,17 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     
     private var temporaryAudioFileURL: URL?
     private var audioFile: AVAudioFile?
+    private let autoPlayEnabledKey = "audio.autoPlayEnabled"
 
     override init() {
         super.init()
         self.speechSynthesizer.delegate = self
+        // 从持久化读取（默认为 false）
+        if UserDefaults.standard.object(forKey: autoPlayEnabledKey) != nil {
+            self.isAutoPlayEnabled = UserDefaults.standard.bool(forKey: autoPlayEnabledKey)
+        } else {
+            self.isAutoPlayEnabled = false
+        }
         setupRemoteTransportControls()
         setupNotifications()
     }
@@ -89,29 +101,20 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         // 不支持上一首
         commandCenter.previousTrackCommand.isEnabled = false
-
-        // 如果你要“借位”一个按钮切换自动连播（可选）：
-        // let bookmarkCmd = commandCenter.bookmarkCommand
-        // bookmarkCmd.isEnabled = true
-        // bookmarkCmd.addTarget(handler: { [weak self] (event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus in
-        //     guard let self = self else { return .commandFailed }
-        //     self.isAutoPlayEnabled.toggle()
-        //     self.onToggleRepeatRequested?()
-        //     self.refreshNowPlayingInfoForStateSync()
-        //     return .success
-        // })
     }
     
     private func updateRepeatStateInNowPlaying() {
-            var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-            info[MPMediaItemPropertyTitle] = info[MPMediaItemPropertyTitle] ?? "正在播放的文章"
-            if let player = audioPlayer {
-                info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime
-                info[MPMediaItemPropertyPlaybackDuration] = player.duration
-                info[MPNowPlayingInfoPropertyPlaybackRate] = player.isPlaying ? 1.0 : 0.0
-            }
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        info[MPMediaItemPropertyTitle] = info[MPMediaItemPropertyTitle] ?? "正在播放的文章"
+        if let player = audioPlayer {
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime
+            info[MPMediaItemPropertyPlaybackDuration] = player.duration
+            info[MPNowPlayingInfoPropertyPlaybackRate] = player.isPlaying ? 1.0 : 0.0
         }
+        // 这里也可以把自动连播状态编码到某个可见字段（可选）
+        info[MPMediaItemPropertyArtist] = isAutoPlayEnabled ? "自动连播" : "单次播放"
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
     
     // 设置通知观察
     private func setupNotifications() {
@@ -463,8 +466,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         processed = processed
         .replacingOccurrences(of: "“", with: "")
         .replacingOccurrences(of: "”", with: "")
-        .replacingOccurrences(of: "「", with: "")
-        .replacingOccurrences(of: "」", with: "")
+        .replacingOccurrences(of: "\"", with: "")
         
         // 先处理连字符的特殊情况
         let hyphenPattern = "(\\d+)-(\\d*)"

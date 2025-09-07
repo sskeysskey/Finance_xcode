@@ -122,9 +122,6 @@ struct ArticleContainerView: View {
             }
         }
         .onChange(of: currentArticle.id) { oldValue, newValue in
-            // 当文章切换时，停止上一篇文章的音频
-            audioPlayerManager.stop()
-            
             let wasArticleUnread = !viewModel.sources.flatMap { $0.articles }.first { $0.id == oldValue }!.isRead
             let isNewToSession = !readArticleIDsInThisSession.contains(oldValue)
 
@@ -146,7 +143,6 @@ struct ArticleContainerView: View {
         .background(Color.viewBackground.ignoresSafeArea())
     }
 
-    // ==================== 最终修复: 调整 switchToNextArticle 逻辑 ====================
         /// 切换到下一篇文章的逻辑
         private func switchToNextArticle() {
             // --- 核心修复点 开始 ---
