@@ -529,109 +529,157 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 }
 
 struct AudioPlayerView: View {
-@ObservedObject var playerManager: AudioPlayerManager
-@State private var sliderValue: Double = 0.0
-@State private var isEditingSlider = false
-// 注入“播放下一篇并自动朗读”
-var playNextAndStart: (() -> Void)?
+    @ObservedObject var playerManager: AudioPlayerManager
+    @State private var sliderValue: Double = 0.0
+    @State private var isEditingSlider = false
+    // 注入“播放下一篇并自动朗读”
+    var playNextAndStart: (() -> Void)?
+    // 新增：切换到最小化
+    var toggleCollapse: (() -> Void)?
 
-private var playPauseIconName: String {
-    playerManager.isPlaying ? "pause.circle.fill" : "play.circle.fill"
-}
-// 自动/单次图标
-private var autoModeIconName: String {
-    playerManager.isAutoPlayEnabled ? "repeat.circle.fill" : "repeat.1.circle.fill"
-}
+    private var playPauseIconName: String {
+        playerManager.isPlaying ? "pause.circle.fill" : "play.circle.fill"
+    }
+    // 自动/单次图标
+    private var autoModeIconName: String {
+        playerManager.isAutoPlayEnabled ? "repeat.circle.fill" : "repeat.1.circle.fill"
+    }
 
-var body: some View {
-    VStack(spacing: 16) {
-        // 进度条和时间
-        HStack(spacing: 12) {
-            Text(playerManager.currentTimeString)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-
-            Slider(value: $sliderValue, in: 0...1, onEditingChanged: { editing in
-                self.isEditingSlider = editing
-                if !editing {
-                    playerManager.seek(to: sliderValue)
-                }
-            })
-            .tint(.white)
-
-            Text(playerManager.durationString)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-        }
-
-        if playerManager.isSynthesizing {
+    var body: some View {
+        VStack(spacing: 16) {
+            // 进度条和时间
             HStack(spacing: 12) {
-                ProgressView()
-                Text("正在合成语音，请稍候...")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                Text(playerManager.currentTimeString)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+
+                Slider(value: $sliderValue, in: 0...1, onEditingChanged: { editing in
+                    self.isEditingSlider = editing
+                    if !editing {
+                        playerManager.seek(to: sliderValue)
+                    }
+                })
+                .tint(.white)
+
+                Text(playerManager.durationString)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
             }
-        } else {
-            // 主控制区：左下自动模式切换，中间大播放/暂停，右下“下一篇”
-            ZStack {
-                // 中间：放大播放/暂停按钮
-                Button(action: { playerManager.playPause() }) {
-                    Image(systemName: playPauseIconName)
-                        .font(.system(size: 54, weight: .regular)) // 放大
-                }
-                .disabled(playerManager.isSynthesizing || !playerManager.isPlaybackActive)
-                .opacity(playerManager.isSynthesizing || !playerManager.isPlaybackActive ? 0.6 : 1.0)
-            }
-            .frame(height: 70) // 给中间按钮一个合理的容器高度
 
-            // 底部左右角控件
-            HStack {
-                Button(action: {
-                    playerManager.isAutoPlayEnabled.toggle()
-                }) {
-                    Image(systemName: playerManager.isAutoPlayEnabled ? "repeat.circle.fill" : "repeat.1.circle.fill")
-                        .font(.system(size: 35, weight: .semibold))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundColor(playerManager.isAutoPlayEnabled ? .white : .white.opacity(0.45)) // 单次更灰
+            if playerManager.isSynthesizing {
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("正在合成语音，请稍候...")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
-                .accessibilityLabel(playerManager.isAutoPlayEnabled ? "自动连播" : "单次播放")
-
-                Spacer()
-
-                // 右下：“下一篇”紧凑按钮（forward.end）
-                Button(action: {
-                    playNextAndStart?()
-                }) {
-                    Image(systemName: "forward.end.fill") // 箭头+竖杠
-                        .font(.system(size: 22, weight: .semibold))
-                        .symbolRenderingMode(.hierarchical)
+            } else {
+                // 主控制区：左下自动模式切换，中间大播放/暂停，右下“下一篇”
+                ZStack {
+                    // 中间：放大播放/暂停按钮
+                    Button(action: { playerManager.playPause() }) {
+                        Image(systemName: playPauseIconName)
+                            .font(.system(size: 54, weight: .regular)) // 放大
+                    }
+                    .disabled(playerManager.isSynthesizing || !playerManager.isPlaybackActive)
+                    .opacity(playerManager.isSynthesizing || !playerManager.isPlaybackActive ? 0.6 : 1.0)
                 }
-                .disabled(!playerManager.isPlaybackActive || playerManager.isSynthesizing)
-                .opacity((!playerManager.isPlaybackActive || playerManager.isSynthesizing) ? 0.6 : 1.0)
+                .frame(height: 70) // 给中间按钮一个合理的容器高度
+
+                // 底部左右角控件
+                HStack {
+                    Button(action: {
+                        playerManager.isAutoPlayEnabled.toggle()
+                    }) {
+                        Image(systemName: playerManager.isAutoPlayEnabled ? "repeat.circle.fill" : "repeat.1.circle.fill")
+                            .font(.system(size: 35, weight: .semibold))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundColor(playerManager.isAutoPlayEnabled ? .white : .white.opacity(0.45)) // 单次更灰
+                    }
+                    .accessibilityLabel(playerManager.isAutoPlayEnabled ? "自动连播" : "单次播放")
+
+                    Spacer()
+
+                    // 右下：“下一篇”紧凑按钮（forward.end）
+                    Button(action: {
+                        playNextAndStart?()
+                    }) {
+                        Image(systemName: "forward.end.fill") // 箭头+竖杠
+                            .font(.system(size: 22, weight: .semibold))
+                            .symbolRenderingMode(.hierarchical)
+                    }
+                    .disabled(!playerManager.isPlaybackActive || playerManager.isSynthesizing)
+                    .opacity((!playerManager.isPlaybackActive || playerManager.isSynthesizing) ? 0.6 : 1.0)
+                }
             }
         }
-    }
-    .foregroundColor(.white)
-    .padding(EdgeInsets(top: 35, leading: 20, bottom: 15, trailing: 20))
-    .background(.black.opacity(0.8))
-    .cornerRadius(20)
-    .overlay(
-        // 关闭按钮
-        Button(action: { playerManager.stop() }) {
-            Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(.black)
-                .padding(6)
-                .background(Color.white.opacity(0.8))
-                .clipShape(Circle())
-        }
-        .padding(8),
-        alignment: .topTrailing
-    )
-    .offset(y: -50)
-    .padding(.horizontal)
-    .onChange(of: playerManager.progress) { _, newValue in
-        if !isEditingSlider {
-            self.sliderValue = newValue
+        .foregroundColor(.white)
+        .padding(EdgeInsets(top: 35, leading: 20, bottom: 15, trailing: 20))
+        .background(.black.opacity(0.8))
+        .cornerRadius(20)
+        .overlay(
+            HStack(spacing: 8) {
+                // 最小化按钮（新的）
+                Button(action: {
+                    toggleCollapse?()
+                }) {
+                    Image(systemName: "minus")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.black)
+                        .padding(6)
+                        .background(Color.white.opacity(0.9))
+                        .clipShape(Circle())
+                        .accessibilityLabel("最小化播放器")
+                }
+
+                // 关闭按钮（已有）
+                Button(action: { playerManager.stop() }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.black)
+                        .padding(6)
+                        .background(Color.white.opacity(0.8))
+                        .clipShape(Circle())
+                }
+                .accessibilityLabel("关闭播放器")
+            }
+            .padding(8),
+            alignment: .topTrailing
+            )
+            .offset(y: -50)
+            .padding(.horizontal)
+            .onChange(of: playerManager.progress) { _, newValue in
+                if !isEditingSlider {
+                    self.sliderValue = newValue
+                }
         }
     }
 }
+
+struct MiniAudioBubbleView: View {
+    @Binding var isCollapsed: Bool
+    let isPlaying: Bool
+
+    var body: some View {
+        VStack {
+            Spacer()
+            Button(action: {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85, blendDuration: 0.1)) {
+                    isCollapsed = false
+                }
+            }) {
+            HStack(spacing: 8) {
+                Image(systemName: isPlaying ? "waveform.circle.fill" : "waveform.circle")
+                    .font(.system(size: 22, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.vertical, 10)
+                .padding(.horizontal, 12)
+                .background(.black.opacity(0.8))
+                .clipShape(Capsule())
+                .shadow(radius: 6)
+            }
+            .padding(.leading, 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        .allowsHitTesting(true)
+    }
 }

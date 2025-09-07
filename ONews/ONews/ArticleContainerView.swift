@@ -20,12 +20,13 @@ struct ArticleContainerView: View {
     @State private var showNoNextToast = false
     // NEW: 控制“自动播放下一篇”的一次性开关
     @State private var shouldAutoplayNext = false
-
+    @State private var isMiniPlayerCollapsed = false
+    
     enum NavigationContext {
         case fromSource(String)
         case fromAllArticles
     }
-
+    
     private var initialUnreadCount: Int {
         switch navigationContext {
         case .fromAllArticles:
@@ -34,7 +35,7 @@ struct ArticleContainerView: View {
             return viewModel.sources.first { $0.name == sourceName }?.unreadCount ?? 0
         }
     }
-
+    
     init(article: Article, sourceName: String, context: NavigationContext, viewModel: NewsViewModel) {
         self.initialArticle = article
         self.navigationContext = context
@@ -52,7 +53,7 @@ struct ArticleContainerView: View {
         }
         self._liveUnreadCount = State(initialValue: baseCount)
     }
-
+    
     var body: some View {
         ZStack(alignment: .bottom) {
             ArticleDetailView(
@@ -76,30 +77,42 @@ struct ArticleContainerView: View {
             if showNoNextToast {
                 ToastView(message: "该分组内已无更多文章")
             }
-            
-            // ==================== 新增修改 3: 显示音频播放器UI ====================
+
             if audioPlayerManager.isPlaybackActive {
-                        AudioPlayerView(
-                            playerManager: audioPlayerManager,
-                            // NEW: 注入“播放下一篇并自动朗读”的闭包
-                            playNextAndStart: {
-                                shouldAutoplayNext = true
-                                switchToNextArticle()
+                if isMiniPlayerCollapsed {
+                    MiniAudioBubbleView(
+                        isCollapsed: $isMiniPlayerCollapsed,
+                        isPlaying: audioPlayerManager.isPlaying
+                    )
+                    .padding(.bottom, 120)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    .zIndex(2)
+                } else {
+                    AudioPlayerView(
+                        playerManager: audioPlayerManager,
+                        playNextAndStart: {
+                            shouldAutoplayNext = true
+                            switchToNextArticle()
+                        },
+                        toggleCollapse: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85, blendDuration: 0.1)) {
+                                isMiniPlayerCollapsed = true
                             }
-                        )
-                        .padding(.horizontal)
-                        .padding(.bottom, 30)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .zIndex(2)
-                    }
+                        }
+                    )
+                    .padding(.horizontal)
+                    .padding(.bottom, 30)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(2)
+                }
+            }
         }
+        // 注意：这些修饰符是挂在 ZStack 上的，不在 if 内部
         .onAppear {
             audioPlayerManager.onNextRequested = {
-                // 来自锁屏/耳机“下一首”
                 shouldAutoplayNext = true
                 switchToNextArticle()
             }
-            
             audioPlayerManager.onPlaybackFinished = {
                 if audioPlayerManager.isAutoPlayEnabled {
                     shouldAutoplayNext = true
@@ -110,13 +123,10 @@ struct ArticleContainerView: View {
             }
         }
         .onDisappear {
-            // 当视图消失时，停止音频并清理会话
             audioPlayerManager.stop()
-            
             if !currentArticle.isRead {
                 readArticleIDsInThisSession.insert(currentArticle.id)
             }
-            
             for articleID in readArticleIDsInThisSession {
                 viewModel.markAsRead(articleID: articleID)
             }
@@ -124,25 +134,23 @@ struct ArticleContainerView: View {
         .onChange(of: currentArticle.id) { oldValue, newValue in
             let wasArticleUnread = !viewModel.sources.flatMap { $0.articles }.first { $0.id == oldValue }!.isRead
             let isNewToSession = !readArticleIDsInThisSession.contains(oldValue)
-
             if wasArticleUnread && isNewToSession {
                 liveUnreadCount -= 1
                 readArticleIDsInThisSession.insert(oldValue)
             }
-            // NEW: 如果是“播放下一篇”触发的切换，自动开始播放
-                    if shouldAutoplayNext {
-                        shouldAutoplayNext = false
-                        // 准备下一篇文本
-                        let paragraphs = self.currentArticle.article
-                            .components(separatedBy: .newlines)
-                            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                        let fullText = paragraphs.joined(separator: "\n\n")
-                        audioPlayerManager.startPlayback(text: fullText)
-                    }
+            if shouldAutoplayNext {
+                shouldAutoplayNext = false
+                let paragraphs = self.currentArticle.article
+                    .components(separatedBy: .newlines)
+                    .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                let fullText = paragraphs.joined(separator: "\n\n")
+                audioPlayerManager.startPlayback(text: fullText)
+            }
         }
         .background(Color.viewBackground.ignoresSafeArea())
-    }
+    } // 这里结束 body
 
+        
         /// 切换到下一篇文章的逻辑
         private func switchToNextArticle() {
             // --- 核心修复点 开始 ---
@@ -151,7 +159,7 @@ struct ArticleContainerView: View {
             // 我们需要确保在检查循环时，当前文章的ID已经被记录下来。
             let wasArticleUnread = !viewModel.sources.flatMap { $0.articles }.first { $0.id == currentArticle.id }!.isRead
             let isNewToSession = !readArticleIDsInThisSession.contains(currentArticle.id)
-
+            
             if wasArticleUnread && isNewToSession {
                 // 将当前文章加入会话已读集合
                 readArticleIDsInThisSession.insert(currentArticle.id)
@@ -163,13 +171,13 @@ struct ArticleContainerView: View {
                 }
             }
             // --- 核心修复点 结束 ---
-
+            
             let sourceNameToSearch: String?
             switch navigationContext {
             case .fromSource(let name): sourceNameToSearch = name
             case .fromAllArticles: sourceNameToSearch = nil
             }
-
+            
             if let next = viewModel.findNextUnread(after: currentArticle.id,
                                                    inSource: sourceNameToSearch) {
                 
@@ -190,29 +198,29 @@ struct ArticleContainerView: View {
                 showToast { shouldShow in self.showNoNextToast = shouldShow }
             }
         }
-    
-    private func showToast(setter: @escaping (Bool) -> Void) {
-        setter(true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            withAnimation {
-                setter(false)
+        
+        private func showToast(setter: @escaping (Bool) -> Void) {
+            setter(true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                withAnimation {
+                    setter(false)
+                }
             }
         }
     }
-}
-
-/// 一个可重用的提示视图
-struct ToastView: View {
-    let message: String
     
-    var body: some View {
-        Text(message)
-            .font(.subheadline)
-            .padding()
-            .background(Color.black.opacity(0.75))
-            .foregroundColor(.white)
-            .cornerRadius(10)
-            .padding(.bottom, 50)
-            .transition(.opacity.animation(.easeInOut))
+    /// 一个可重用的提示视图
+    struct ToastView: View {
+        let message: String
+        
+        var body: some View {
+            Text(message)
+                .font(.subheadline)
+                .padding()
+                .background(Color.black.opacity(0.75))
+                .foregroundColor(.white)
+                .cornerRadius(10)
+                .padding(.bottom, 50)
+                .transition(.opacity.animation(.easeInOut))
+        }
     }
-}
