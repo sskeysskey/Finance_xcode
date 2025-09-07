@@ -23,12 +23,10 @@ struct ArticleDetailView: View {
     let unreadCount: Int
     @ObservedObject var viewModel: NewsViewModel
     
-    // ==================== 新增修改 1: 接收 AudioPlayerManager ====================
+    // 接收 AudioPlayerManager，保持不变
     @ObservedObject var audioPlayerManager: AudioPlayerManager
-    // =========================================================================
 
     var requestNextArticle: () -> Void
-    // ==============================================================================
 
     @State private var isSharePresented = false
 
@@ -104,9 +102,7 @@ struct ArticleDetailView: View {
                         }
                     }
                     
-                    // ==================== 修改点 2: 在文章末尾添加按钮 ====================
                     Button(action: {
-                        // 调用从父视图传递过来的闭包
                         self.requestNextArticle()
                     }) {
                         HStack {
@@ -117,12 +113,11 @@ struct ArticleDetailView: View {
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(Color.blue) // 使用醒目的颜色
+                        .background(Color.blue)
                         .cornerRadius(12)
                     }
-                    .padding(.horizontal, 20) // 与文章内容对齐
-                    .padding(.vertical, 20)   // 增加垂直间距
-                    // ====================================================================
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 20)
                 }
                 .padding(.vertical)
             }
@@ -162,30 +157,12 @@ struct ArticleDetailView: View {
                     .foregroundColor(.secondary)
                 }
             }
-            // ==================== 新增修改 2: 添加音频播放按钮 ====================
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            HStack {
-                                // 音频播放按钮
-                                Button(action: {
-                                    // 如果当前正在播放，则停止；否则开始播放
-                                    if audioPlayerManager.isPlaybackActive {
-                                        audioPlayerManager.stop()
-                                    } else {
-                                        // 将所有段落合并成一个长字符串
-                                        let fullText = paragraphs.joined(separator: "\n\n")
-                                        audioPlayerManager.startPlayback(text: fullText)
-                                    }
-                                }) {
-                                    // 根据状态显示不同图标
-                                    Image(systemName: audioPlayerManager.isPlaybackActive ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                                }
-                                .disabled(audioPlayerManager.isSynthesizing) // 合成时禁用按钮
-                                
-                                // 分享按钮
-                                Button { isSharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
-                            }
-                        }
-                        // ====================================================================
+            // ==================== 主要修改点：移除音频按钮 ====================
+            ToolbarItem(placement: .navigationBarTrailing) {
+                // 只保留分享按钮
+                Button { isSharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
+            }
+            // =============================================================
         }
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isSharePresented) {
@@ -232,22 +209,17 @@ struct ArticleImageView: View {
 
     private let horizontalPadding: CGFloat = 20
     
-    // 新增：计算图片在 Documents 目录中的完整路径
     private var imagePath: String {
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
     }
     
-    // 新增：从路径加载 UIImage
     private func loadImage() -> UIImage? {
-        // UIImage(named:) 只能从 App Bundle 加载
-        // 我们需要从一个绝对路径加载
         return UIImage(contentsOfFile: imagePath)
     }
 
     var body: some View {
             VStack(spacing: 8) {
-                // 使用新的加载方式
                 if let uiImage = loadImage() {
                     Button(action: { self.isShowingZoomView = true }) {
                         Image(uiImage: uiImage)
@@ -263,7 +235,6 @@ struct ArticleImageView: View {
                 } else {
                     VStack(spacing: 8) {
                         Image(systemName: "photo.fill").font(.largeTitle).foregroundColor(.gray)
-                        // 显示我们尝试加载的路径，方便调试
                         Text("图片加载失败: \(imagePath)").font(.caption).foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, minHeight: 150)
@@ -272,7 +243,6 @@ struct ArticleImageView: View {
                 }
             }
             .fullScreenCover(isPresented: $isShowingZoomView) {
-                // ZoomableImageView 也需要修改
                 ZoomableImageView(imageName: imageName, timestamp: timestamp, isPresented: $isShowingZoomView)
             }
             .padding(.vertical, 10)
@@ -287,13 +257,11 @@ struct ZoomableImageView: View {
     @State private var showSaveAlert = false
     @State private var saveAlertMessage = ""
 
-    // 新增：计算图片在 Documents 目录中的完整路径
     private var imagePath: String {
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
     }
     
-    // 新增：从路径加载 UIImage 的辅助函数
     private func loadImage() -> UIImage? {
         return UIImage(contentsOfFile: imagePath)
     }
@@ -302,7 +270,6 @@ struct ZoomableImageView: View {
         ZStack {
             Color.black.edgesIgnoringSafeArea(.all)
             
-            // ZoomableScrollView 已经修改，所以这里不需要改动
             ZoomableScrollView(imageName: imageName, timestamp: timestamp)
             
             VStack {
@@ -333,7 +300,6 @@ struct ZoomableImageView: View {
     }
 
     private func saveImageToPhotoLibrary() {
-        // 不再从 Bundle 加载，而是从 Documents 目录的绝对路径加载
         guard let uiImage = loadImage() else {
             saveAlertMessage = "图片加载失败，无法保存"
             showSaveAlert = true
@@ -344,7 +310,6 @@ struct ZoomableImageView: View {
             saveAlertMessage = "图片转换失败"; showSaveAlert = true; return
         }
         
-        // 权限请求和保存逻辑保持不变
         let requestAuth: (@escaping (PHAuthorizationStatus) -> Void) -> Void = { callback in
             if #available(iOS 14, *) { PHPhotoLibrary.requestAuthorization(for: .addOnly, handler: callback) }
             else { PHPhotoLibrary.requestAuthorization(callback) }
@@ -375,15 +340,10 @@ struct ZoomableScrollView: UIViewRepresentable {
     let timestamp: String
 
     func makeUIView(context: Context) -> UIScrollView {
-        // 1. 获取 Documents 目录
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        
-        // 2. 构建图片的完整文件路径
         let imagePath = documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
         
-        // 3. 从文件路径加载图片，而不是从 Bundle
         guard let image = UIImage(contentsOfFile: imagePath) else {
-            // 如果图片加载失败，返回一个空的滚动视图，防止崩溃
             print("ZoomableScrollView 无法加载图片于: \(imagePath)")
             return UIScrollView()
         }
@@ -421,7 +381,6 @@ struct ZoomableScrollView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    // Coordinator 类本身不需要任何修改
     class Coordinator: NSObject, UIScrollViewDelegate {
         var parent: ZoomableScrollView
         var imageView: UIImageView?

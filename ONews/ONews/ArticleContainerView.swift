@@ -6,9 +6,7 @@ struct ArticleContainerView: View {
     
     @ObservedObject var viewModel: NewsViewModel
     
-    // ==================== 新增修改 1: 创建并持有 AudioPlayerManager ====================
     @StateObject private var audioPlayerManager = AudioPlayerManager()
-    // ==============================================================================
     
     @State private var currentArticle: Article
     @State private var currentSourceName: String
@@ -18,7 +16,6 @@ struct ArticleContainerView: View {
     @State private var readArticleIDsInThisSession: Set<UUID> = []
     
     @State private var showNoNextToast = false
-    // NEW: 控制“自动播放下一篇”的一次性开关
     @State private var shouldAutoplayNext = false
     @State private var isMiniPlayerCollapsed = false
     
@@ -61,9 +58,7 @@ struct ArticleContainerView: View {
                 sourceName: currentSourceName,
                 unreadCount: liveUnreadCount,
                 viewModel: viewModel,
-                // ==================== 新增修改 2: 将 audioPlayerManager 传递给子视图 ====================
                 audioPlayerManager: audioPlayerManager,
-                // ====================================================================================
                 requestNextArticle: {
                     self.switchToNextArticle()
                 }
@@ -78,6 +73,22 @@ struct ArticleContainerView: View {
                 ToastView(message: "该分组内已无更多文章")
             }
 
+            // ==================== 主要修改 1: 添加悬浮播放按钮 ====================
+            // 仅当音频播放未激活时显示此按钮
+            if !audioPlayerManager.isPlaybackActive {
+                FloatingAudioInitiateButton {
+                    // 点击按钮时，执行与旧按钮完全相同的操作
+                    let paragraphs = self.currentArticle.article
+                        .components(separatedBy: .newlines)
+                        .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    let fullText = paragraphs.joined(separator: "\n\n")
+                    audioPlayerManager.startPlayback(text: fullText)
+                }
+                .zIndex(1) // 确保它在 ArticleDetailView 之上
+            }
+            // ====================================================================
+
+            // 当音频播放激活时，显示完整的播放器或最小化气泡
             if audioPlayerManager.isPlaybackActive {
                 if isMiniPlayerCollapsed {
                     MiniAudioBubbleView(
@@ -107,7 +118,6 @@ struct ArticleContainerView: View {
                 }
             }
         }
-        // 注意：这些修饰符是挂在 ZStack 上的，不在 if 内部
         .onAppear {
             audioPlayerManager.onNextRequested = {
                 shouldAutoplayNext = true
@@ -148,79 +158,95 @@ struct ArticleContainerView: View {
             }
         }
         .background(Color.viewBackground.ignoresSafeArea())
-    } // 这里结束 body
+    }
 
+    private func switchToNextArticle() {
+        let wasArticleUnread = !viewModel.sources.flatMap { $0.articles }.first { $0.id == currentArticle.id }!.isRead
+        let isNewToSession = !readArticleIDsInThisSession.contains(currentArticle.id)
         
-        /// 切换到下一篇文章的逻辑
-        private func switchToNextArticle() {
-            // --- 核心修复点 开始 ---
-            // 在寻找下一篇之前，立即将当前文章标记为“本轮会话已读”。
-            // 这是解决“最后一篇文章”问题的关键。
-            // 我们需要确保在检查循环时，当前文章的ID已经被记录下来。
-            let wasArticleUnread = !viewModel.sources.flatMap { $0.articles }.first { $0.id == currentArticle.id }!.isRead
-            let isNewToSession = !readArticleIDsInThisSession.contains(currentArticle.id)
-            
-            if wasArticleUnread && isNewToSession {
-                // 将当前文章加入会话已读集合
-                readArticleIDsInThisSession.insert(currentArticle.id)
-                
-                // 因为我们可能不会切换到新文章（即这是最后一篇），
-                // .onChange 将不会触发。因此，我们需要在这里手动更新UI上的未读计数。
-                if liveUnreadCount > 0 {
-                    liveUnreadCount -= 1
-                }
-            }
-            // --- 核心修复点 结束 ---
-            
-            let sourceNameToSearch: String?
-            switch navigationContext {
-            case .fromSource(let name): sourceNameToSearch = name
-            case .fromAllArticles: sourceNameToSearch = nil
-            }
-            
-            if let next = viewModel.findNextUnread(after: currentArticle.id,
-                                                   inSource: sourceNameToSearch) {
-                
-                // 现在，当 findNextUnread 循环推荐回同一篇文章时，
-                // 下面的检查会因为我们刚刚在上面插入的 ID 而成功。
-                if readArticleIDsInThisSession.contains(next.article.id) {
-                    // 停止跳转，并显示提示。
-                    showToast { shouldShow in self.showNoNextToast = shouldShow }
-                } else {
-                    // 否则，这是一篇真正“新”的未读文章，执行跳转。
-                    withAnimation(.easeInOut(duration: 0.4)) {
-                        self.currentArticle = next.article
-                        self.currentSourceName = next.sourceName
-                    }
-                }
-            } else {
-                // 这个分支处理的是一开始就没有任何未读文章的情况。
-                showToast { shouldShow in self.showNoNextToast = shouldShow }
+        if wasArticleUnread && isNewToSession {
+            readArticleIDsInThisSession.insert(currentArticle.id)
+            if liveUnreadCount > 0 {
+                liveUnreadCount -= 1
             }
         }
         
-        private func showToast(setter: @escaping (Bool) -> Void) {
-            setter(true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                withAnimation {
-                    setter(false)
+        let sourceNameToSearch: String?
+        switch navigationContext {
+        case .fromSource(let name): sourceNameToSearch = name
+        case .fromAllArticles: sourceNameToSearch = nil
+        }
+        
+        if let next = viewModel.findNextUnread(after: currentArticle.id,
+                                               inSource: sourceNameToSearch) {
+            
+            if readArticleIDsInThisSession.contains(next.article.id) {
+                showToast { shouldShow in self.showNoNextToast = shouldShow }
+            } else {
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    self.currentArticle = next.article
+                    self.currentSourceName = next.sourceName
                 }
             }
+        } else {
+            showToast { shouldShow in self.showNoNextToast = shouldShow }
         }
     }
     
-    /// 一个可重用的提示视图
-    struct ToastView: View {
-        let message: String
-        
-        var body: some View {
-            Text(message)
-                .font(.subheadline)
-                .padding()
-                .background(Color.black.opacity(0.75))
-                .foregroundColor(.white)
-                .cornerRadius(10)
-                .padding(.bottom, 50)
-                .transition(.opacity.animation(.easeInOut))
+    private func showToast(setter: @escaping (Bool) -> Void) {
+        setter(true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation {
+                setter(false)
+            }
         }
     }
+}
+
+// ==================== 主要修改 2: 定义新的悬浮按钮视图 ====================
+/// 一个用于发起音频播放的悬浮按钮
+struct FloatingAudioInitiateButton: View {
+    /// 点击时要执行的闭包
+    var action: () -> Void
+
+    var body: some View {
+        VStack {
+            Spacer() // 将按钮推到底部
+            HStack {
+                Button(action: action) {
+                    Image(systemName: "speaker.wave.2.fill") // 开始播放的图标
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(12) // 给予足够的点击区域
+                        .background(Color.black.opacity(0.8))
+                        .clipShape(Circle()) // 使用圆形外观
+                        .shadow(radius: 6)
+                }
+                .padding(.leading, 16) // 距离屏幕左边缘的距离
+                
+                Spacer() // 将按钮推到左侧
+            }
+        }
+        .padding(.bottom, 120) // 按钮的垂直位置，与最小化气泡对齐
+        .transition(.scale.combined(with: .opacity)) // 添加出现/消失动画
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        .allowsHitTesting(true)
+    }
+}
+// ========================================================================
+    
+/// 一个可重用的提示视图
+struct ToastView: View {
+    let message: String
+    
+    var body: some View {
+        Text(message)
+            .font(.subheadline)
+            .padding()
+            .background(Color.black.opacity(0.75))
+            .foregroundColor(.white)
+            .cornerRadius(10)
+            .padding(.bottom, 50)
+            .transition(.opacity.animation(.easeInOut))
+    }
+}
