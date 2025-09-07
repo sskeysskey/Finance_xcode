@@ -522,13 +522,13 @@ var body: some View {
 
             // 底部左右角控件
             HStack {
-                // 左下：自动/单次切换（单个循环图标）
                 Button(action: {
                     playerManager.isAutoPlayEnabled.toggle()
                 }) {
-                    Image(systemName: autoModeIconName)
+                    Image(systemName: playerManager.isAutoPlayEnabled ? "repeat.circle.fill" : "repeat.1.circle.fill")
                         .font(.system(size: 35, weight: .semibold))
                         .symbolRenderingMode(.hierarchical)
+                        .foregroundColor(playerManager.isAutoPlayEnabled ? .white : .white.opacity(0.45)) // 单次更灰
                 }
                 .accessibilityLabel(playerManager.isAutoPlayEnabled ? "自动连播" : "单次播放")
 
