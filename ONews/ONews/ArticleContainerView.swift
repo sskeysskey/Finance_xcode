@@ -122,6 +122,7 @@ struct ArticleContainerView: View {
             }
         }
         .onDisappear {
+            // 离开详情页才彻底停止与反激活会话
             audioPlayerManager.stop()
             NotificationCenter.default.removeObserver(self, name: .onewsAutoPlayRequest, object: nil)
 
@@ -155,8 +156,8 @@ struct ArticleContainerView: View {
     }
 
     private func switchToNextArticle(shouldAutoplayNext: Bool) {
-        // 停止当前音频，清理状态
-        audioPlayerManager.stop()
+        // 关键改动：不要用 stop()，避免反激活 AudioSession
+        audioPlayerManager.prepareForNextTransition()
 
         // 标记已读并更新计数
         if let currentInVM = viewModel.sources.flatMap({ $0.articles }).first(where: { $0.id == currentArticle.id }) {

@@ -74,22 +74,23 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         audioPlayer = nil
         speechSynthesizer.stopSpeaking(at: .immediate)
         speechSynthesizer.delegate = nil
-        // 在主线程失效定时器，避免 actor 冲突
         DispatchQueue.main.async { [weak self] in
             self?.invalidateSynthesisWatchdog()
         }
         // 其余完整清理由外部 stop() 负责
     }
 
-    private func prepareForNext() {
+    // 仅用于“切到下一篇”时的轻量清理：不反激活 AudioSession，不拆 Remote Commands
+    func prepareForNextTransition() {
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
-        stopDisplayLink()
         isPlaying = false
         isSynthesizing = false
+        stopDisplayLink()
         cleanupTemporaryFile()
-        // 在主线程失效定时器
         invalidateSynthesisWatchdog()
+        // 保持 isPlaybackActive = true，让播放器面板维持（如果你想隐藏可自行改）
+        // 保持 AudioSession 活跃，避免后台/锁屏时下一篇激活失败
     }
 
     private func applyPlaybackRate() {
@@ -134,7 +135,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         commandCenter.nextTrackCommand.addTarget { [weak self] _ in
             guard let self = self else { return .commandFailed }
-            self.prepareForNext()
+            self.prepareForNextTransition()
             self.onNextRequested?()
             return .success
         }
@@ -231,14 +232,13 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             return
         }
 
-        // 防止重入：清理旧状态
+        // 清理旧状态（轻量）
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
         audioPlayer?.delegate = nil
         audioPlayer = nil
         stopDisplayLink()
         cleanupTemporaryFile()
-        // 主线程失效看门狗（本类为 @MainActor，直接调用也在主线程）
         invalidateSynthesisWatchdog()
 
         // 更新标题
@@ -252,12 +252,20 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         isSynthesizing = true
         isPlaybackActive = true
 
-        // 在合成前激活音频会话，确保锁屏/后台亦能稳定合成
+        // 确保音频会话处于可用状态：先设置分类，再尝试激活（若已激活则此调用幂等）
         do {
-            try setupAudioSession()
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .spokenAudio)
+            if !session.isOtherAudioPlaying {
+                // 尽量保持激活；若已是 active，再次 setActive(true) 也不会出错
+                try session.setActive(true, options: [])
+            } else {
+                // 即使有其他音频，spokenAudio 也允许 duck；此处不强求抢占
+                try session.setActive(true, options: [])
+            }
         } catch {
-            handleError("在开始合成前激活音频会话失败: \(error)")
-            return
+            // 不要在这里 stop()（那会 teardown），而是给出错误并尝试稍后再试
+            print("激活音频会话警告: \(error.localizedDescription)")
         }
 
         // 合成阶段刷新 NowPlaying
@@ -279,7 +287,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         startSynthesisWatchdog()
 
         speechSynthesizer.write(utterance) { [weak self] (buffer) in
-            // 该回调不保证在主线程，立刻切回主线程以触碰 actor 状态
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
@@ -344,6 +351,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     func stop() {
+        // 彻底停止：用于用户显式停止或页面消失
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
 
@@ -357,6 +365,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
 
+        // 禁用并移除 Remote Commands
         let commandCenter = MPRemoteCommandCenter.shared()
         commandCenter.playCommand.isEnabled = false
         commandCenter.pauseCommand.isEnabled = false
@@ -368,12 +377,13 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         deactivateAudioSession()
         invalidateSynthesisWatchdog()
 
+        // 彻底释放播放器与合成器
         audioPlayer?.delegate = nil
         audioPlayer = nil
         speechSynthesizer.delegate = nil
     }
 
-    // 自然结束时的收尾，不隐藏面板
+    // 自然结束时的收尾，不隐藏面板，不反激活会话
     private func finishNaturally() {
         audioPlayer?.stop()
         isPlaying = false
@@ -413,10 +423,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             handleError("合成结束，但找不到临时文件URL。")
             return
         }
-        // 关闭看门狗（主线程）
         invalidateSynthesisWatchdog()
 
-        // 本类已是 @MainActor，此处仍在主线程
         self.isSynthesizing = false
         self.setupAndPlayAudioPlayer(from: url)
     }
@@ -434,7 +442,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         invalidateSynthesisWatchdog()
         synthesisWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            // 已在主线程
             guard self.isSynthesizing else { self.invalidateSynthesisWatchdog(); return }
             guard let last = self.synthesisLastWriteAt else { return }
             let elapsed = Date().timeIntervalSince(last)
@@ -521,7 +528,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
     private func handleError(_ message: String) {
         print("错误: \(message)")
-        // stop() 会触碰 @Published 和 UI，需保证在主线程执行；本类为 @MainActor，直接调用即在主线程
         self.stop()
     }
 
