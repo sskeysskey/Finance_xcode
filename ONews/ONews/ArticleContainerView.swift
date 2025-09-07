@@ -81,7 +81,8 @@ struct ArticleContainerView: View {
                         isCollapsed: $isMiniPlayerCollapsed,
                         isPlaying: audioPlayerManager.isPlaying
                     )
-                    .padding(.bottom, 120)
+                    // 更贴近底部：由 120 调整为 80
+                    .padding(.bottom, 10)
                     .transition(.move(edge: .leading).combined(with: .opacity))
                     .zIndex(2)
                 } else {
@@ -98,7 +99,8 @@ struct ArticleContainerView: View {
                         }
                     )
                     .padding(.horizontal)
-                    .padding(.bottom, 30)
+                    // 更贴近底部：由 30 调整为 6，并保持对安全区的适配
+                    .padding(.bottom, 6)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(2)
                 }
@@ -133,7 +135,7 @@ struct ArticleContainerView: View {
                 viewModel.markAsRead(articleID: articleID)
             }
         }
-        .onChange(of: currentArticle.id) { oldValue, newValue in
+        .onChange(of: currentArticle.id) { oldValue, _ in
             let oldArticle = viewModel.sources.flatMap { $0.articles }.first { $0.id == oldValue }
             if let oldArticle, !oldArticle.isRead {
                 let isNewToSession = !readArticleIDsInThisSession.contains(oldValue)

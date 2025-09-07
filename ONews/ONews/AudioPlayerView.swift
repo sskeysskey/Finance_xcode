@@ -256,11 +256,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .spokenAudio)
-            if !session.isOtherAudioPlaying {
-                try session.setActive(true, options: [])
-            } else {
-                try session.setActive(true, options: [])
-            }
+            try session.setActive(true, options: [])
         } catch {
             print("激活音频会话警告: \(error.localizedDescription)")
         }
@@ -569,15 +565,12 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 let leftYear = String(text[r1])
                 let rightYear = String(text[r2])
                 let leftDigits = formatYearToPinyinDigits(leftYear)
-                // 替换中间内容（不包含“年”），在原位置上构造替换串
-                let fullRange = match.range
-                if let rFull = Range(fullRange, in: text) {
-                    let replacement = "\(leftDigits)到\(rightYear)"
-                    let start = result.index(result.startIndex, offsetBy: fullRange.location + offset)
-                    let end = result.index(start, offsetBy: fullRange.length)
-                    result.replaceSubrange(start..<end, with: replacement)
-                    offset += replacement.count - fullRange.length
-                }
+                // 直接以 match.range 替换，不创建未使用变量
+                let replacement = "\(leftDigits)到\(rightYear)"
+                let start = result.index(result.startIndex, offsetBy: match.range.location + offset)
+                let end = result.index(start, offsetBy: match.range.length)
+                result.replaceSubrange(start..<end, with: replacement)
+                offset += replacement.count - match.range.length
             }
         }
         return result
@@ -615,7 +608,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         // - 若为 4位-4位（可能是年份范围），保留为“到”但不做通用替换，这部分交给 replaceYearRangesForChinese 处理中文场景；
         // - 一般情形的数字范围（至少左边有数字，右边可为空或数字），替换为“到”
         // 先避免对 4位-4位 直接替换
-        let yearRangePattern = #"(?<!\d)(\d{4})\s*-\s*(\d{4})(?!\d)"#
         // 再处理其它范围（如 3-5, 10- 等）
         let generalRangePattern = #"(?<!\d)(\d+)\s*-\s*(\d*)(?!\d)"#
 
@@ -627,8 +619,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             generalRegex.enumerateMatches(in: processed, options: [], range: nsRange) { match, _, _ in
                 guard let match = match else { return }
                 // 检查是否是 4位-4位；如果是，跳过，交由中文年份函数处理
-                if let fullRange = Range(match.range, in: processed),
-                   let leftRange = Range(match.range(at: 1), in: processed) {
+                if let leftRange = Range(match.range(at: 1), in: processed) {
                     let left = processed[leftRange]
                     var isFourFour = false
                     if match.numberOfRanges >= 3, let rightRange = Range(match.range(at: 2), in: processed) {
@@ -716,9 +707,6 @@ struct AudioPlayerView: View {
     private var playPauseIconName: String {
         playerManager.isPlaying ? "pause.circle.fill" : "play.circle.fill"
     }
-    private var autoModeIconName: String {
-        playerManager.isAutoPlayEnabled ? "repeat.circle.fill" : "repeat.1.circle.fill"
-    }
 
     private func nextRate(from current: Float) -> Float {
         if let idx = rates.firstIndex(of: current) {
@@ -734,8 +722,8 @@ struct AudioPlayerView: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 12) {
+        VStack(spacing: 12) { // 原 16 -> 12，整体更紧凑
+            HStack(spacing: 10) { // 原 12 -> 10
                 Text(playerManager.currentTimeString)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
 
@@ -752,7 +740,7 @@ struct AudioPlayerView: View {
             }
 
             if playerManager.isSynthesizing {
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     ProgressView()
                     Text("正在合成语音，请稍候...")
                         .font(.subheadline)
@@ -762,12 +750,12 @@ struct AudioPlayerView: View {
                 ZStack {
                     Button(action: { playerManager.playPause() }) {
                         Image(systemName: playPauseIconName)
-                            .font(.system(size: 54, weight: .regular))
+                            .font(.system(size: 52, weight: .regular)) // 原 54 -> 52
                     }
                     .disabled(playerManager.isSynthesizing || !playerManager.isPlaybackActive)
                     .opacity(playerManager.isSynthesizing || !playerManager.isPlaybackActive ? 0.6 : 1.0)
                 }
-                .frame(height: 70)
+                .frame(height: 66) // 原 70 -> 66
 
                 HStack {
                     HStack {
@@ -791,10 +779,10 @@ struct AudioPlayerView: View {
                             playerManager.playbackRate = newRate
                         }) {
                             Text(rateLabel)
-                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                .font(.system(size: 13, weight: .semibold, design: .rounded)) // 字号略微缩小
                                 .foregroundColor(.white)
-                                .padding(.vertical, 6)
-                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5) // 原 6 -> 5
+                                .padding(.horizontal, 9) // 原 10 -> 9
                                 .background(Color.white.opacity(0.18))
                                 .clipShape(Capsule())
                         }
@@ -809,7 +797,7 @@ struct AudioPlayerView: View {
                             playNextAndStart?()
                         }) {
                             Image(systemName: "forward.end.fill")
-                                .font(.system(size: 22, weight: .semibold))
+                                .font(.system(size: 21, weight: .semibold)) // 原 22 -> 21
                                 .symbolRenderingMode(.hierarchical)
                         }
                         .disabled(!playerManager.isPlaybackActive || playerManager.isSynthesizing)
@@ -820,37 +808,44 @@ struct AudioPlayerView: View {
             }
         }
         .foregroundColor(.white)
-        .padding(EdgeInsets(top: 35, leading: 20, bottom: 15, trailing: 20))
+        // 顶部和底部 padding 调整，让整体更贴近底部
+        .padding(EdgeInsets(top: 28, leading: 16, bottom: 10, trailing: 16)) // 原 top:35, leading:20, bottom:15, trailing:20
         .background(.black.opacity(0.8))
-        .cornerRadius(20)
+        .cornerRadius(18) // 原 20 -> 18 更贴边
         .overlay(
             Button(action: { toggleCollapse?() }) {
                 Image(systemName: "minus")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: 20, weight: .bold)) // 原 22 -> 20
                     .foregroundColor(.white)
                     .padding(6)
                     .clipShape(Circle())
                     .accessibilityLabel("最小化播放器")
             }
-            .padding(8),
+            .padding(6), // 原 8 -> 6
             alignment: .topLeading
         )
         .overlay(
             Button(action: { playerManager.stop() }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: 11, weight: .bold)) // 原 12 -> 11
                     .foregroundColor(.black)
                     .padding(6)
                     .background(Color.white.opacity(0.8))
                     .clipShape(Circle())
             }
-            .padding(8),
+            .padding(6), // 原 8 -> 6
             alignment: .topTrailing
         )
-        .offset(y: -50)
-        .padding(.horizontal)
+        // 让卡片更靠近屏幕底部：原 offset(y: -50) -> -18
+        .offset(y: -18)
+        // 横向外边距略小，减少占据正文面积
+        .padding(.horizontal, 12) // 原 .padding(.horizontal)
         .onChange(of: playerManager.progress) { _, newValue in
             if !isEditingSlider { self.sliderValue = newValue }
+        }
+        // 贴近屏幕底部时保证不压住 Home 指示条
+        .safeAreaInset(edge: .bottom) {
+            Color.clear.frame(height: 0)
         }
     }
 }
@@ -872,13 +867,14 @@ struct MiniAudioBubbleView: View {
                         .font(.system(size: 22, weight: .semibold))
                 }
                 .foregroundColor(.white)
-                .padding(.vertical, 10)
+                .padding(.vertical, 9) // 稍微收紧
                 .padding(.horizontal, 12)
                 .background(.black.opacity(0.8))
                 .clipShape(Capsule())
                 .shadow(radius: 6)
             }
             .padding(.leading, 8)
+            .padding(.bottom, 4) // 靠近底部一点
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         .allowsHitTesting(true)
