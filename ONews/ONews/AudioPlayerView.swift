@@ -52,6 +52,10 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     // 当前播放项的标题（用于锁屏展示）
     private var nowPlayingTitle: String = "正在播放的文章"
 
+    // 合成阶段看门狗（防止在锁屏后台卡死）
+    private var synthesisWatchdogTimer: Timer?
+    private var synthesisLastWriteAt: Date?
+
     override init() {
         super.init()
         self.speechSynthesizer.delegate = self
@@ -70,6 +74,10 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         audioPlayer = nil
         speechSynthesizer.stopSpeaking(at: .immediate)
         speechSynthesizer.delegate = nil
+        // 在主线程失效定时器，避免 actor 冲突
+        DispatchQueue.main.async { [weak self] in
+            self?.invalidateSynthesisWatchdog()
+        }
         // 其余完整清理由外部 stop() 负责
     }
 
@@ -80,6 +88,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         isPlaying = false
         isSynthesizing = false
         cleanupTemporaryFile()
+        // 在主线程失效定时器
+        invalidateSynthesisWatchdog()
     }
 
     private func applyPlaybackRate() {
@@ -173,7 +183,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
             info[MPNowPlayingInfoPropertyPlaybackRate] = rate
         } else {
-            // 在合成阶段提供占位，便于锁屏显示
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = 0
             info[MPMediaItemPropertyPlaybackDuration] = 0
             info[MPNowPlayingInfoPropertyPlaybackRate] = 0
@@ -216,7 +225,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     // MARK: - Public Control Methods
-    // 新增可选 title 参数，便于 NowPlaying 展示
     func startPlayback(text: String, title: String? = nil) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             handleError("文本内容为空，无法播放。")
@@ -230,6 +238,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         audioPlayer = nil
         stopDisplayLink()
         cleanupTemporaryFile()
+        // 主线程失效看门狗（本类为 @MainActor，直接调用也在主线程）
+        invalidateSynthesisWatchdog()
 
         // 更新标题
         self.nowPlayingTitle = title?.isEmpty == false ? title! : "正在播放的文章"
@@ -242,7 +252,15 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         isSynthesizing = true
         isPlaybackActive = true
 
-        // 合成阶段就先刷新一次 NowPlaying，便于锁屏出现占位
+        // 在合成前激活音频会话，确保锁屏/后台亦能稳定合成
+        do {
+            try setupAudioSession()
+        } catch {
+            handleError("在开始合成前激活音频会话失败: \(error)")
+            return
+        }
+
+        // 合成阶段刷新 NowPlaying
         refreshNowPlayingInfo(playbackRate: 0.0)
 
         let utterance = AVSpeechUtterance(string: processedText)
@@ -256,23 +274,33 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         let fileName = UUID().uuidString + ".caf"
         temporaryAudioFileURL = tempDir.appendingPathComponent(fileName)
 
-        speechSynthesizer.write(utterance) { [weak self] (buffer) in
-            guard let self = self else { return }
-            guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
-                self.handleError("无法获取 PCM 缓冲。"); return
-            }
+        // 启动合成看门狗
+        synthesisLastWriteAt = Date()
+        startSynthesisWatchdog()
 
-            if pcmBuffer.frameLength == 0 {
-                self.synthesisToFileCompleted()
-            } else {
-                if self.audioFile == nil {
-                    do {
-                        self.audioFile = try AVAudioFile(forWriting: self.temporaryAudioFileURL!, settings: pcmBuffer.format.settings)
-                    } catch {
-                        self.handleError("根据音频数据格式创建文件失败: \(error)"); return
-                    }
+        speechSynthesizer.write(utterance) { [weak self] (buffer) in
+            // 该回调不保证在主线程，立刻切回主线程以触碰 actor 状态
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
+                    self.handleError("无法获取 PCM 缓冲。"); return
                 }
-                self.appendBufferToFile(buffer: pcmBuffer)
+
+                // 喂狗
+                self.synthesisLastWriteAt = Date()
+
+                if pcmBuffer.frameLength == 0 {
+                    self.synthesisToFileCompleted()
+                } else {
+                    if self.audioFile == nil {
+                        do {
+                            self.audioFile = try AVAudioFile(forWriting: self.temporaryAudioFileURL!, settings: pcmBuffer.format.settings)
+                        } catch {
+                            self.handleError("根据音频数据格式创建文件失败: \(error)"); return
+                        }
+                    }
+                    self.appendBufferToFile(buffer: pcmBuffer)
+                }
             }
         }
     }
@@ -306,7 +334,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 applyPlaybackRate()
                 isPlaying = true
                 startDisplayLink()
-                // 确保远程指令可用
                 setupRemoteTransportControls()
                 enableRemoteCommandsForActivePlayback()
                 refreshNowPlayingInfo(playbackRate: 1.0)
@@ -317,7 +344,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     func stop() {
-        // 停止一切
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
 
@@ -331,7 +357,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
 
-        // 禁用并移除 Remote Commands
         let commandCenter = MPRemoteCommandCenter.shared()
         commandCenter.playCommand.isEnabled = false
         commandCenter.pauseCommand.isEnabled = false
@@ -341,8 +366,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         stopDisplayLink()
         cleanupTemporaryFile()
         deactivateAudioSession()
+        invalidateSynthesisWatchdog()
 
-        // 彻底释放播放器与合成器，避免旧回调残留
         audioPlayer?.delegate = nil
         audioPlayer = nil
         speechSynthesizer.delegate = nil
@@ -362,7 +387,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             enableRemoteCommandsForActivePlayback()
         }
 
-        // 将“是否需要自动播放下一篇”的决策交给容器
         onNextRequested?()
         onPlaybackFinished?()
     }
@@ -389,10 +413,12 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             handleError("合成结束，但找不到临时文件URL。")
             return
         }
-        DispatchQueue.main.async {
-            self.isSynthesizing = false
-            self.setupAndPlayAudioPlayer(from: url)
-        }
+        // 关闭看门狗（主线程）
+        invalidateSynthesisWatchdog()
+
+        // 本类已是 @MainActor，此处仍在主线程
+        self.isSynthesizing = false
+        self.setupAndPlayAudioPlayer(from: url)
     }
 
     private func cleanupTemporaryFile() {
@@ -401,6 +427,28 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             try? FileManager.default.removeItem(at: url)
             temporaryAudioFileURL = nil
         }
+    }
+
+    // MARK: - Watchdog for synthesis (MainActor)
+    private func startSynthesisWatchdog(timeout: TimeInterval = 15) {
+        invalidateSynthesisWatchdog()
+        synthesisWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            // 已在主线程
+            guard self.isSynthesizing else { self.invalidateSynthesisWatchdog(); return }
+            guard let last = self.synthesisLastWriteAt else { return }
+            let elapsed = Date().timeIntervalSince(last)
+            if elapsed > timeout {
+                self.handleError("语音合成阶段长时间无响应（可能在后台被系统限制）。已中止此次合成。")
+            }
+        }
+        RunLoop.main.add(synthesisWatchdogTimer!, forMode: .common)
+    }
+
+    private func invalidateSynthesisWatchdog() {
+        synthesisWatchdogTimer?.invalidate()
+        synthesisWatchdogTimer = nil
+        synthesisLastWriteAt = nil
     }
 
     // MARK: - AVAudioPlayer Setup and Delegate
@@ -417,7 +465,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             isPlaying = true
             startDisplayLink()
 
-            // 确保锁屏控制中心恢复：重新注册远程控制并刷新 NowPlaying
             setupRemoteTransportControls()
             enableRemoteCommandsForActivePlayback()
             refreshNowPlayingInfo(playbackRate: 1.0)
@@ -474,7 +521,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
     private func handleError(_ message: String) {
         print("错误: \(message)")
-        DispatchQueue.main.async { self.stop() }
+        // stop() 会触碰 @Published 和 UI，需保证在主线程执行；本类为 @MainActor，直接调用即在主线程
+        self.stop()
     }
 
     private func formatTime(_ time: TimeInterval) -> String {
