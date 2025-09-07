@@ -94,13 +94,15 @@ struct ArticleContainerView: View {
                     }
         }
         .onAppear {
-                // FIXED: 不要使用 [weak self]，也不捕获 self（避免 struct weak 报错和未使用警告）
-                audioPlayerManager.onPlaybackFinished = {
-                    // 自然结束时不自动跳转，只显示播放器上的“播放下一篇”按钮
-                    // 如需自动连播，可在此触发 playNextAndStart 逻辑
-                    print("播放自然结束，等待用户点击‘播放下一篇’")
-                }
-            }
+        audioPlayerManager.onPlaybackFinished = {
+        if audioPlayerManager.isAutoPlayEnabled {
+        shouldAutoplayNext = true
+        switchToNextArticle()
+        } else {
+        print("播放自然结束（手动模式），等待用户点击‘播放下一篇’")
+        }
+        }
+        }
         .onDisappear {
             // 当视图消失时，停止音频并清理会话
             audioPlayerManager.stop()

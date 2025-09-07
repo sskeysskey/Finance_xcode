@@ -18,6 +18,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     @Published var durationString: String = "00:00"
     // NEW: 播放自然结束回调（非 stop() 主动停止）
     var onPlaybackFinished: (() -> Void)?
+    @Published var isAutoPlayEnabled = false // NEW: 自动连播开关（默认关闭）
 
     // MARK: - Private Properties
     private var speechSynthesizer = AVSpeechSynthesizer()
@@ -471,9 +472,18 @@ struct AudioPlayerView: View {
     @State private var isEditingSlider = false
     // NEW: 从上层注入“播放下一篇并自动朗读”的动作
     var playNextAndStart: (() -> Void)?
-
+    
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 16) {
+            // NEW: 自动连播开关（默认关闭）
+            HStack {
+                Label("自动连播", systemImage: "repeat")
+                    .font(.subheadline)
+                Spacer()
+                Toggle("", isOn: $playerManager.isAutoPlayEnabled)
+                    .labelsHidden()
+            }
+            
             if playerManager.isSynthesizing {
                 HStack(spacing: 12) {
                     ProgressView()
@@ -490,11 +500,10 @@ struct AudioPlayerView: View {
                     Slider(value: $sliderValue, in: 0...1, onEditingChanged: { editing in
                         self.isEditingSlider = editing
                         if !editing {
-                            // 当用户松手时，更新播放进度
                             playerManager.seek(to: sliderValue)
                         }
                     })
-                    .accentColor(.white)
+                    .tint(.white)
                     
                     Text(playerManager.durationString)
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -511,24 +520,26 @@ struct AudioPlayerView: View {
                     }
                     Spacer()
                 }
-                // NEW: 播放完毕后显示“播放下一篇”按钮
-                if playerManager.isPlaybackActive && !playerManager.isSynthesizing && !playerManager.isPlaying {
-                    Button(action: {
-                        playNextAndStart?()
-                    }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.forward.circle.fill")
-                                .font(.system(size: 20, weight: .semibold))
-                            Text("播放下一篇")
-                                .fontWeight(.bold)
-                        }
-                        .foregroundColor(.black)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.white)
-                        .cornerRadius(12)
-                    }
-                    .padding(.top, 4)
+                
+                // 始终显示“播放下一篇”按钮（不论手动/自动）
+                // 只要面板可见就显示；可根据你喜好决定是否在合成中隐藏
+                if playerManager.isPlaybackActive {
+                Button(action: {
+                playNextAndStart?()
+                }) {
+                HStack(spacing: 8) {
+                Image(systemName: "arrow.forward.circle.fill")
+                .font(.system(size: 20, weight: .semibold))
+                Text("播放下一篇")
+                .fontWeight(.bold)
+                }
+                .foregroundColor(.black)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(Color.white)
+                .cornerRadius(12)
+                }
+                .padding(.top, 4)
                 }
             }
         }
@@ -537,7 +548,6 @@ struct AudioPlayerView: View {
         .background(.black.opacity(0.8))
         .cornerRadius(20)
         .overlay(
-            // 关闭按钮
             Button(action: { playerManager.stop() }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .bold))
@@ -546,13 +556,12 @@ struct AudioPlayerView: View {
                     .background(Color.white.opacity(0.8))
                     .clipShape(Circle())
             }
-            .padding(8),
+                .padding(8),
             alignment: .topTrailing
         )
-        .offset(y: -50) // 向下偏移100点，你可以根据需要调整这个值
-        .padding(.horizontal) // 添加水平内边距确保不会太靠近屏幕边缘
+        .offset(y: -50)
+        .padding(.horizontal)
         .onChange(of: playerManager.progress) { _, newValue in
-            // 只有在用户没有拖动滑块时，才更新滑块位置
             if !isEditingSlider {
                 self.sliderValue = newValue
             }
