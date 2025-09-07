@@ -616,41 +616,32 @@ struct AudioPlayerView: View {
         .background(.black.opacity(0.8))
         .cornerRadius(20)
         .overlay(
-            HStack(spacing: 8) {
-                // 最小化按钮（新的）
-                Button(action: {
-                    toggleCollapse?()
-                }) {
-                    Image(systemName: "minus")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.black)
-                        .padding(6)
-                        .background(Color.white.opacity(0.9))
-                        .clipShape(Circle())
-                        .accessibilityLabel("最小化播放器")
-                }
-
-                // 关闭按钮（已有）
-                Button(action: { playerManager.stop() }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.black)
-                        .padding(6)
-                        .background(Color.white.opacity(0.8))
-                        .clipShape(Circle())
-                }
-                .accessibilityLabel("关闭播放器")
-            }
-            .padding(8),
-            alignment: .topTrailing
-            )
-            .offset(y: -50)
-            .padding(.horizontal)
-            .onChange(of: playerManager.progress) { _, newValue in
-                if !isEditingSlider {
-                    self.sliderValue = newValue
-                }
+        // 左上角：最小化按钮
+        Button(action: { toggleCollapse?() }) {
+        Image(systemName: "minus")
+        .font(.system(size: 22, weight: .bold))
+        .foregroundColor(.white)
+        .padding(6)
+//        .background(Color.white.opacity(0.9))
+        .clipShape(Circle())
+        .accessibilityLabel("最小化播放器")
         }
+        .padding(8),
+        alignment: .topLeading
+        )
+        .overlay(
+        // 右上角：关闭按钮
+        Button(action: { playerManager.stop() }) {
+        Image(systemName: "xmark")
+        .font(.system(size: 12, weight: .bold))
+        .foregroundColor(.black)
+        .padding(6)
+        .background(Color.white.opacity(0.8))
+        .clipShape(Circle())
+        }
+        .padding(8),
+        alignment: .topTrailing
+        )
     }
 }
 
