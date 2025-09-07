@@ -17,7 +17,7 @@ struct ArticleContainerView: View {
     @State private var showNoNextToast = false
     @State private var isMiniPlayerCollapsed = false
 
-    // 用于在 onAppear 时接受外部“自动播放请求”的一次性标志（不再使用通知启动自动播放，保留占位可按需删除）
+    // 保留但当前不依赖通知去启动自动播放
     @State private var pendingAutoPlayRequestID: UUID?
 
     enum NavigationContext {
@@ -105,7 +105,6 @@ struct ArticleContainerView: View {
             }
         }
         .onAppear {
-            // 如确需外部触发自动播放，可保留通知；当前逻辑不依赖通知
             NotificationCenter.default.addObserver(forName: .onewsAutoPlayRequest, object: nil, queue: .main) { notif in
                 guard let targetID = notif.userInfo?["articleID"] as? UUID else { return }
                 if targetID == self.currentArticle.id {
@@ -114,17 +113,15 @@ struct ArticleContainerView: View {
             }
 
             audioPlayerManager.onNextRequested = {
-                // 无论是自然结束还是远程控制“下一首”，都让容器根据开关决定是否自动播放下一篇
+                // 自然结束或远程“下一曲”，容器依据开关决定是否自动播放下一篇
                 let shouldAutoplay = audioPlayerManager.isAutoPlayEnabled
                 switchToNextArticle(shouldAutoplayNext: shouldAutoplay)
             }
             audioPlayerManager.onPlaybackFinished = {
-                // 这里不再二次调用 switchToNextArticle，避免重复跳转
-                // onNextRequested 已处理“自然结束 -> 下一篇”的场景
+                // 不在此触发下一篇，避免重复
             }
         }
         .onDisappear {
-            // 离开详情页，彻底停止并清理音频
             audioPlayerManager.stop()
             NotificationCenter.default.removeObserver(self, name: .onewsAutoPlayRequest, object: nil)
 
@@ -136,7 +133,6 @@ struct ArticleContainerView: View {
             }
         }
         .onChange(of: currentArticle.id) { oldValue, newValue in
-            // 安全解包，避免崩溃
             let oldArticle = viewModel.sources.flatMap { $0.articles }.first { $0.id == oldValue }
             if let oldArticle, !oldArticle.isRead {
                 let isNewToSession = !readArticleIDsInThisSession.contains(oldValue)
@@ -155,15 +151,14 @@ struct ArticleContainerView: View {
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let fullText = paragraphs.joined(separator: "\n\n")
         audioPlayerManager.isAutoPlayEnabled = true
-        audioPlayerManager.startPlayback(text: fullText)
+        audioPlayerManager.startPlayback(text: fullText, title: self.currentArticle.topic)
     }
 
-    /// 切换到下一篇文章
     private func switchToNextArticle(shouldAutoplayNext: Bool) {
-        // 先停止当前音频，清理所有状态，避免旧音频完成时再触发一次跳转
+        // 停止当前音频，清理状态
         audioPlayerManager.stop()
 
-        // 将当前文章纳入“本会话已读”，并更新未读计数
+        // 标记已读并更新计数
         if let currentInVM = viewModel.sources.flatMap({ $0.articles }).first(where: { $0.id == currentArticle.id }) {
             let wasUnread = !currentInVM.isRead
             let isNewToSession = !readArticleIDsInThisSession.contains(currentArticle.id)
@@ -191,14 +186,13 @@ struct ArticleContainerView: View {
                     self.currentArticle = next.article
                     self.currentSourceName = next.sourceName
                 }
-                // 若需要自动播放，则在下一帧启动，确保 UI 状态已切换到新文章
                 if shouldAutoplayNext {
                     DispatchQueue.main.async {
                         let paragraphs = next.article.article
                             .components(separatedBy: .newlines)
                             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                         let fullText = paragraphs.joined(separator: "\n\n")
-                        self.audioPlayerManager.startPlayback(text: fullText)
+                        self.audioPlayerManager.startPlayback(text: fullText, title: next.article.topic)
                     }
                 }
             }

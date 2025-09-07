@@ -11,23 +11,23 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     @Published var isPlaybackActive = false
     @Published var isPlaying = false
     @Published var isSynthesizing = false
-    
+
     @Published var progress: Double = 0.0
     @Published var currentTimeString: String = "00:00"
     @Published var durationString: String = "00:00"
-    
+
     // 回调
     var onPlaybackFinished: (() -> Void)?
     var onNextRequested: (() -> Void)?
     var onToggleRepeatRequested: (() -> Void)?
-    
+
     @Published var isAutoPlayEnabled = false {
         didSet {
             UserDefaults.standard.set(isAutoPlayEnabled, forKey: autoPlayEnabledKey)
             updateRepeatStateInNowPlaying()
         }
     }
-    
+
     @Published var playbackRate: Float = 1.0 {
         didSet {
             if playbackRate < 0.5 { playbackRate = 0.5 }
@@ -41,13 +41,16 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     private var speechSynthesizer = AVSpeechSynthesizer()
     private var audioPlayer: AVAudioPlayer?
     private var displayLink: CADisplayLink?
-    
+
     private var temporaryAudioFileURL: URL?
     private var audioFile: AVAudioFile?
     private let autoPlayEnabledKey = "audio.autoPlayEnabled"
-    
+
     // 防重复注册 Remote Commands 的标志
     private var remoteCommandsRegistered = false
+
+    // 当前播放项的标题（用于锁屏展示）
+    private var nowPlayingTitle: String = "正在播放的文章"
 
     override init() {
         super.init()
@@ -60,23 +63,16 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         setupRemoteTransportControls()
         setupNotifications()
     }
-    
+
     deinit {
-        // 这里只做最小化、同步安全的清理，不触发 actor 隔离冲突
         audioPlayer?.stop()
         audioPlayer?.delegate = nil
         audioPlayer = nil
         speechSynthesizer.stopSpeaking(at: .immediate)
         speechSynthesizer.delegate = nil
-        // 不调用以下这些方法，避免 main-actor 隔离报错：
-        // teardownRemoteTransportControls()
-        // stopDisplayLink()
-        // deactivateAudioSession()
-        // cleanupTemporaryFile()
-        // MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        // 完整清理由外部在 onDisappear -> stop() 里执行
+        // 其余完整清理由外部 stop() 负责
     }
-        
+
     private func prepareForNext() {
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
@@ -91,7 +87,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         player.enableRate = true
         player.rate = playbackRate
     }
-    
+
     // MARK: - Remote Command Center
     private func setupRemoteTransportControls() {
         guard !remoteCommandsRegistered else { return }
@@ -132,10 +128,10 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             self.onNextRequested?()
             return .success
         }
-        
+
         remoteCommandsRegistered = true
     }
-    
+
     private func teardownRemoteTransportControls() {
         let cc = MPRemoteCommandCenter.shared()
         cc.playCommand.removeTarget(nil)
@@ -144,22 +140,23 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         cc.nextTrackCommand.removeTarget(nil)
         remoteCommandsRegistered = false
     }
-    
+
     private func updateRepeatStateInNowPlaying() {
         var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        info[MPMediaItemPropertyTitle] = info[MPMediaItemPropertyTitle] ?? "正在播放的文章"
+        info[MPMediaItemPropertyTitle] = nowPlayingTitle
         if let player = audioPlayer {
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime
             info[MPMediaItemPropertyPlaybackDuration] = player.duration
-            info[MPNowPlayingInfoPropertyPlaybackRate] = player.isPlaying ? 1.0 : 0.0
+            info[MPNowPlayingInfoPropertyPlaybackRate] = player.isPlaying ? Double(playbackRate) : 0.0
         }
         info[MPMediaItemPropertyArtist] = isAutoPlayEnabled ? "自动连播" : "单次播放"
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
-    
+
     private func refreshNowPlayingInfo(playbackRate explicitRate: Double? = nil) {
         var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        info[MPMediaItemPropertyTitle] = "正在播放的文章"
+
+        info[MPMediaItemPropertyTitle] = nowPlayingTitle
 
         let speedText = String(format: "%.2fx", playbackRate).replacingOccurrences(of: ".00", with: "x")
         info[MPMediaItemPropertyArtist] = isAutoPlayEnabled ? "自动连播 • \(speedText)" : "单次播放 • \(speedText)"
@@ -176,6 +173,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
             info[MPNowPlayingInfoPropertyPlaybackRate] = rate
         } else {
+            // 在合成阶段提供占位，便于锁屏显示
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = 0
             info[MPMediaItemPropertyPlaybackDuration] = 0
             info[MPNowPlayingInfoPropertyPlaybackRate] = 0
@@ -183,7 +181,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
-    
+
     // MARK: - Notifications
     private func setupNotifications() {
         NotificationCenter.default.addObserver(self,
@@ -191,14 +189,14 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             name: AVAudioSession.interruptionNotification,
             object: nil)
     }
-    
+
     @objc private func handleInterruption(notification: Notification) {
         guard let userInfo = notification.userInfo,
               let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
             return
         }
-        
+
         switch type {
         case .began:
             if isPlaying { playPause() }
@@ -212,18 +210,19 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             break
         }
     }
-    
+
     func setHasNext(_ hasNext: Bool) {
         MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = hasNext
     }
 
     // MARK: - Public Control Methods
-    func startPlayback(text: String) {
+    // 新增可选 title 参数，便于 NowPlaying 展示
+    func startPlayback(text: String, title: String? = nil) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             handleError("文本内容为空，无法播放。")
             return
         }
-        
+
         // 防止重入：清理旧状态
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
@@ -231,15 +230,21 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         audioPlayer = nil
         stopDisplayLink()
         cleanupTemporaryFile()
-        
+
+        // 更新标题
+        self.nowPlayingTitle = title?.isEmpty == false ? title! : "正在播放的文章"
+
         // 重新绑定 delegate
         self.speechSynthesizer.delegate = self
-        
+
         let processedText = preprocessText(text)
 
         isSynthesizing = true
         isPlaybackActive = true
-        
+
+        // 合成阶段就先刷新一次 NowPlaying，便于锁屏出现占位
+        refreshNowPlayingInfo(playbackRate: 0.0)
+
         let utterance = AVSpeechUtterance(string: processedText)
         utterance.voice = getBestVoice(for: text)
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
@@ -250,13 +255,13 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         let tempDir = FileManager.default.temporaryDirectory
         let fileName = UUID().uuidString + ".caf"
         temporaryAudioFileURL = tempDir.appendingPathComponent(fileName)
-        
+
         speechSynthesizer.write(utterance) { [weak self] (buffer) in
             guard let self = self else { return }
             guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
                 self.handleError("无法获取 PCM 缓冲。"); return
             }
-            
+
             if pcmBuffer.frameLength == 0 {
                 self.synthesisToFileCompleted()
             } else {
@@ -271,7 +276,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
     }
-    
+
     private func getBestVoice(for text: String) -> AVSpeechSynthesisVoice? {
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(text)
@@ -286,7 +291,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         if let v = matches.first { return v }
         return AVSpeechSynthesisVoice(language: languageCode)
     }
-    
+
     func playPause() {
         guard let player = audioPlayer else { return }
         if player.isPlaying {
@@ -301,6 +306,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 applyPlaybackRate()
                 isPlaying = true
                 startDisplayLink()
+                // 确保远程指令可用
+                setupRemoteTransportControls()
                 enableRemoteCommandsForActivePlayback()
                 refreshNowPlayingInfo(playbackRate: 1.0)
             } catch {
@@ -313,35 +320,34 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         // 停止一切
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
-        
+
         isPlaying = false
         isPlaybackActive = false
         isSynthesizing = false
-        
+
         progress = 0.0
         currentTimeString = "00:00"
         durationString = "00:00"
-        
+
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        
+
         // 禁用并移除 Remote Commands
         let commandCenter = MPRemoteCommandCenter.shared()
         commandCenter.playCommand.isEnabled = false
         commandCenter.pauseCommand.isEnabled = false
         commandCenter.stopCommand.isEnabled = false
         teardownRemoteTransportControls()
-        
+
         stopDisplayLink()
         cleanupTemporaryFile()
         deactivateAudioSession()
-        
+
         // 彻底释放播放器与合成器，避免旧回调残留
         audioPlayer?.delegate = nil
         audioPlayer = nil
         speechSynthesizer.delegate = nil
     }
-    
-    // 自然结束时的收尾，不隐藏面板
+
     // 自然结束时的收尾，不隐藏面板
     private func finishNaturally() {
         audioPlayer?.stop()
@@ -356,11 +362,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             enableRemoteCommandsForActivePlayback()
         }
 
-        // 将“是否需要自动播放下一篇”的决策交给容器（通过 isAutoPlayEnabled 决定）
+        // 将“是否需要自动播放下一篇”的决策交给容器
         onNextRequested?()
         onPlaybackFinished?()
     }
-    
+
     func seek(to value: Double) {
         guard let player = audioPlayer else { return }
         let newTime = player.duration * value
@@ -376,7 +382,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             handleError("写入音频文件失败: \(error)")
         }
     }
-    
+
     private func synthesisToFileCompleted() {
         self.audioFile = nil
         guard let url = self.temporaryAudioFileURL else {
@@ -388,7 +394,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             self.setupAndPlayAudioPlayer(from: url)
         }
     }
-    
+
     private func cleanupTemporaryFile() {
         audioFile = nil
         if let url = temporaryAudioFileURL {
@@ -410,13 +416,16 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             audioPlayer?.play()
             isPlaying = true
             startDisplayLink()
+
+            // 确保锁屏控制中心恢复：重新注册远程控制并刷新 NowPlaying
+            setupRemoteTransportControls()
             enableRemoteCommandsForActivePlayback()
             refreshNowPlayingInfo(playbackRate: 1.0)
         } catch {
             handleError("创建或播放 AVAudioPlayer 失败: \(error)")
         }
     }
-    
+
     private func enableRemoteCommandsForActivePlayback() {
         let commandCenter = MPRemoteCommandCenter.shared()
         commandCenter.playCommand.isEnabled = true
@@ -424,11 +433,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         commandCenter.stopCommand.isEnabled = true
         commandCenter.nextTrackCommand.isEnabled = true
     }
-        
+
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         finishNaturally()
     }
-    
+
     // MARK: - Progress Update (CADisplayLink)
     private func startDisplayLink() {
         stopDisplayLink()
@@ -454,7 +463,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         try session.setCategory(.playback, mode: .spokenAudio)
         try session.setActive(true)
     }
-    
+
     private func deactivateAudioSession() {
         do {
             try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -462,18 +471,18 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             print("释放音频会话失败: \(error)")
         }
     }
-    
+
     private func handleError(_ message: String) {
         print("错误: \(message)")
         DispatchQueue.main.async { self.stop() }
     }
-    
+
     private func formatTime(_ time: TimeInterval) -> String {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         return String(format: "%02d:%02d", minutes, seconds)
     }
-    
+
     private func preprocessText(_ text: String) -> String {
         let processedSpecialTerms = processEnglishText(text)
         let pattern = "([\\u4e00-\\u9fa5])(\\s*[a-zA-Z]+\\s*)([\\u4e00-\\u9fa5])"
@@ -490,12 +499,12 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
     private func processEnglishText(_ text: String) -> String {
         var processed = text
-        
+
         processed = processed
             .replacingOccurrences(of: "“", with: "")
             .replacingOccurrences(of: "”", with: "")
             .replacingOccurrences(of: "\"", with: "")
-        
+
         let hyphenPattern = "(\\d+)-(\\d*)"
         let regex = try? NSRegularExpression(pattern: hyphenPattern, options: [])
         let range = NSRange(processed.startIndex..<processed.endIndex, in: processed)
@@ -505,7 +514,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             range: range,
             withTemplate: "$1到$2"
         ) ?? processed
-        
+
         let replacements = [
             "API": "A.P.I",
             "URL": "U.R.L",
@@ -544,11 +553,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "\\": "backslash",
             "/": "每",
         ]
-        
+
         for (key, value) in replacements {
             processed = processed.replacingOccurrences(of: key, with: value)
         }
-        
+
         return processed
     }
 }
@@ -567,7 +576,7 @@ struct AudioPlayerView: View {
     private var autoModeIconName: String {
         playerManager.isAutoPlayEnabled ? "repeat.circle.fill" : "repeat.1.circle.fill"
     }
-    
+
     private func nextRate(from current: Float) -> Float {
         if let idx = rates.firstIndex(of: current) {
             let next = (idx + 1) % rates.count
