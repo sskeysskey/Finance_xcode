@@ -628,19 +628,24 @@ struct AudioPlayerView: View {
 
                 // 底部左右角控件
                 HStack {
-                    Button(action: {
-                        playerManager.isAutoPlayEnabled.toggle()
-                    }) {
-                        Image(systemName: playerManager.isAutoPlayEnabled ? "repeat.circle.fill" : "repeat.1.circle.fill")
-                            .font(.system(size: 35, weight: .semibold))
-                            .symbolRenderingMode(.hierarchical)
-                            .foregroundColor(playerManager.isAutoPlayEnabled ? .white : .white.opacity(0.45)) // 单次更灰
-                    }
-                    .accessibilityLabel(playerManager.isAutoPlayEnabled ? "自动连播" : "单次播放")
+                // 左：自动播放
+                HStack {
+                Button(action: {
+                playerManager.isAutoPlayEnabled.toggle()
+                }) {
+                Image(systemName: playerManager.isAutoPlayEnabled ? "repeat.circle.fill" : "repeat.1.circle.fill")
+                .font(.system(size: 35, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundColor(playerManager.isAutoPlayEnabled ? .white : .white.opacity(0.45))
+                }
+                .accessibilityLabel(playerManager.isAutoPlayEnabled ? "自动连播" : "单次播放")
+                Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity)
 
-                    Spacer()
-                    
-                    // 倍速按钮（新增）
+                // 中：倍速（水平置中）
+                HStack {
+                    Spacer(minLength: 0)
                     Button(action: {
                         let newRate = nextRate(from: playerManager.playbackRate)
                         playerManager.playbackRate = newRate
@@ -654,17 +659,24 @@ struct AudioPlayerView: View {
                             .clipShape(Capsule())
                     }
                     .accessibilityLabel("播放速度 \(rateLabel)")
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity)
 
-                    // 右下：“下一篇”紧凑按钮（forward.end）
+                // 右：下一篇（右对齐）
+                HStack {
+                    Spacer(minLength: 0)
                     Button(action: {
                         playNextAndStart?()
                     }) {
-                        Image(systemName: "forward.end.fill") // 箭头+竖杠
+                        Image(systemName: "forward.end.fill")
                             .font(.system(size: 22, weight: .semibold))
                             .symbolRenderingMode(.hierarchical)
                     }
                     .disabled(!playerManager.isPlaybackActive || playerManager.isSynthesizing)
                     .opacity((!playerManager.isPlaybackActive || playerManager.isSynthesizing) ? 0.6 : 1.0)
+                }
+                .frame(maxWidth: .infinity)
                 }
             }
         }
