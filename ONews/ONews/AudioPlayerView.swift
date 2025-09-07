@@ -514,7 +514,6 @@ var body: some View {
                 Button(action: { playerManager.playPause() }) {
                     Image(systemName: playPauseIconName)
                         .font(.system(size: 54, weight: .regular)) // 放大
-//                        .symbolRenderingMode(.hierarchical)
                 }
                 .disabled(playerManager.isSynthesizing || !playerManager.isPlaybackActive)
                 .opacity(playerManager.isSynthesizing || !playerManager.isPlaybackActive ? 0.6 : 1.0)
