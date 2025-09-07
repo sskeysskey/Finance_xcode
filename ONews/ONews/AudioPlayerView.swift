@@ -342,6 +342,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
     
     // 自然结束时的收尾，不隐藏面板
+    // 自然结束时的收尾，不隐藏面板
     private func finishNaturally() {
         audioPlayer?.stop()
         isPlaying = false
@@ -355,9 +356,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             enableRemoteCommandsForActivePlayback()
         }
 
-        if isAutoPlayEnabled {
-            onNextRequested?()
-        }
+        // 将“是否需要自动播放下一篇”的决策交给容器（通过 isAutoPlayEnabled 决定）
+        onNextRequested?()
         onPlaybackFinished?()
     }
     
