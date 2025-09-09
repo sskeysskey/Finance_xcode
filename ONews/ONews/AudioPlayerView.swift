@@ -711,7 +711,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "^": "caret",
             "|": "vertical bar",
             "\\": "backslash",
-            "/": "每"
+            "/": "每",
+            "DJI": "大疆"
         ]
 
         for (key, value) in replacements {
