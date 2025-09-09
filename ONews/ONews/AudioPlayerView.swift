@@ -576,6 +576,26 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return result
     }
 
+    // 将所有以 "20" 开头的四位数字（如 2024）转为逐位朗读
+    private func replaceModernYearsForChinese(_ text: String) -> String {
+        // 正则表达式：\b 匹配单词边界，确保匹配的是独立的数字
+        // (20\d{2}) 捕获以 "20" 开头，后跟两位数字的四位数
+        let pattern = #"\b(20\d{2})\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
+
+        var result = text
+        // 从后往前替换，避免 range 变化导致错误
+        let matches = regex.matches(in: result, options: [], range: NSRange(result.startIndex..<result.endIndex, in: result)).reversed()
+
+        for match in matches {
+            guard let range = Range(match.range, in: result) else { continue }
+            let yearString = String(result[range])
+            let pinyinDigits = formatYearToPinyinDigits(yearString)
+            result.replaceSubrange(range, with: pinyinDigits)
+        }
+        return result
+    }
+
     private func preprocessText(_ text: String) -> String {
         // 先进行英文及符号的通用处理
         let processedSpecialTerms = processEnglishText(text)
@@ -583,16 +603,22 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         // 特化：处理“1944-1947年”→“一九四四到1947年”
         let withChineseYearRange = replaceYearRangesForChinese(processedSpecialTerms)
 
+        // --- 修改点 ---
+        // 新增：将所有以 "20" 开头的四位数字（如 2024）转为逐位朗读
+        let withModernYears = replaceModernYearsForChinese(withChineseYearRange)
+        // --- 修改点结束 ---
+
         // 中英夹杂在汉字和英文之间加逗号，便于中文 TTS 断句
         let pattern = "([\\u4e00-\\u9fa5])(\\s*[a-zA-Z]+\\s*)([\\u4e00-\\u9fa5])"
         let regex = try? NSRegularExpression(pattern: pattern, options: [])
-        let range = NSRange(withChineseYearRange.startIndex..<withChineseYearRange.endIndex, in: withChineseYearRange)
+        // 使用修改后的 `withModernYears` 变量
+        let range = NSRange(withModernYears.startIndex..<withModernYears.endIndex, in: withModernYears)
         let modifiedText = regex?.stringByReplacingMatches(
-            in: withChineseYearRange,
+            in: withModernYears,
             options: [],
             range: range,
             withTemplate: "$1, $2, $3"
-        ) ?? withChineseYearRange
+        ) ?? withModernYears
         return modifiedText
     }
 
