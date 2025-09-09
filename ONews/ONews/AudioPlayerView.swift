@@ -805,10 +805,10 @@ struct AudioPlayerView: View {
                             playerManager.playbackRate = newRate
                         }) {
                             Text(rateLabel)
-                                .font(.system(size: 13, weight: .semibold, design: .rounded)) // 字号略微缩小
+                                .font(.system(size: 18, weight: .semibold, design: .rounded)) // 字号略微缩小
                                 .foregroundColor(.white)
-                                .padding(.vertical, 5) // 原 6 -> 5
-                                .padding(.horizontal, 9) // 原 10 -> 9
+                                .padding(.vertical, 7) // 原 6 -> 5
+                                .padding(.horizontal, 12) // 原 10 -> 9
                                 .background(Color.white.opacity(0.18))
                                 .clipShape(Capsule())
                         }
