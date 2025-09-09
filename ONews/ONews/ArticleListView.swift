@@ -39,13 +39,25 @@ struct ArticleListView: View {
     
     @State private var filterMode: ArticleFilterMode = .unread
     
+    // MARK: - 1. 修改搜索状态
+    @State private var searchText = ""
+    // 新增状态，用于手动控制搜索界面的呈现
+    @State private var isSearchActive = false
+    
     // 编程式导航用状态（新写法）
     @State private var showFirstTarget = false
     @State private var firstTargetArticle: Article?
     
     private var filteredArticles: [Article] {
-        source.articles.filter { filterMode == .unread ? !$0.isRead : $0.isRead }
+        let articlesByFilterMode = source.articles.filter { filterMode == .unread ? !$0.isRead : $0.isRead }
+        
+        if searchText.isEmpty {
+            return articlesByFilterMode
+        } else {
+            return articlesByFilterMode.filter { $0.topic.localizedCaseInsensitiveContains(searchText) }
+        }
     }
+    
     private var groupedArticles: [String: [Article]] {
         Dictionary(grouping: filteredArticles, by: { $0.timestamp })
     }
@@ -58,6 +70,7 @@ struct ArticleListView: View {
     var body: some View {
         VStack {
             List {
+                // ... 内部代码无变化 ...
                 ForEach(sortedTimestamps, id: \.self) { timestamp in
                     Section(header: Text(formatTimestamp(timestamp))
                                 .font(.headline)
@@ -104,14 +117,26 @@ struct ArticleListView: View {
             .listStyle(PlainListStyle())
             .navigationTitle(source.name.replacingOccurrences(of: "_", with: " "))
             .navigationBarTitleDisplayMode(.inline)
+            // MARK: - 2. 修改工具栏
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        navigateToFirstAndAutoplay(in: filteredArticles, sourceName: source.name)
-                    } label: {
-                        Image(systemName: "speaker.wave.2.fill")
+                    HStack {
+                        // 新增的搜索按钮
+                        Button {
+                            isSearchActive = true
+                        } label: {
+                            Image(systemName: "magnifyingglass")
+                        }
+                        .accessibilityLabel("搜索")
+
+                        // 原有的朗读按钮
+                        Button {
+                            navigateToFirstAndAutoplay(in: filteredArticles, sourceName: source.name)
+                        } label: {
+                            Image(systemName: "speaker.wave.2.fill")
+                        }
+                        .accessibilityLabel("朗读此列表")
                     }
-                    .accessibilityLabel("朗读此列表")
                 }
             }
             
@@ -125,7 +150,6 @@ struct ArticleListView: View {
             .padding([.horizontal, .bottom])
         }
         .background(Color.viewBackground.ignoresSafeArea())
-        // 新导航目的地（替代废弃 API）
         .navigationDestination(isPresented: $showFirstTarget) {
             if let target = firstTargetArticle {
                 ArticleContainerView(
@@ -138,8 +162,12 @@ struct ArticleListView: View {
                 EmptyView()
             }
         }
+        // MARK: - 3. 修改 .searchable 修饰符
+        // 绑定 isPresented 状态，并明确指定 placement
+        .searchable(text: $searchText, isPresented: $isSearchActive, placement: .navigationBarDrawer, prompt: "搜索文章标题")
     }
     
+    // ... formatTimestamp 和 navigateToFirstAndAutoplay 函数无变化 ...
     private func formatTimestamp(_ timestamp: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyMMdd"
@@ -149,14 +177,11 @@ struct ArticleListView: View {
         return formatter.string(from: date)
     }
     
-    // 跳转到列表首篇（优先未读），并请求自动播放
     private func navigateToFirstAndAutoplay(in visibleList: [Article], sourceName: String) {
         guard !visibleList.isEmpty else { return }
-        // 优先第一篇未读，否则就第一篇
         let target = visibleList.first(where: { !$0.isRead }) ?? visibleList.first!
         self.firstTargetArticle = target
         self.showFirstTarget = true
-        // 等待导航入栈后，发送自动播放请求
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             NotificationCenter.default.post(name: .onewsAutoPlayRequest, object: nil, userInfo: ["articleID": target.id])
         }
@@ -168,13 +193,24 @@ struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @State private var filterMode: ArticleFilterMode = .unread
     
+    // MARK: - 1. 修改搜索状态
+    @State private var searchText = ""
+    // 新增状态，用于手动控制搜索界面的呈现
+    @State private var isSearchActive = false
+    
     // 编程式导航用状态（新写法）
     @State private var showFirstTarget = false
     @State private var firstTarget: (article: Article, sourceName: String)?
     
     private var filteredArticles: [(article: Article, sourceName: String)] {
-        viewModel.allArticlesSortedForDisplay.filter { item in
+        let articlesByFilterMode = viewModel.allArticlesSortedForDisplay.filter { item in
             filterMode == .unread ? !item.article.isRead : item.article.isRead
+        }
+        
+        if searchText.isEmpty {
+            return articlesByFilterMode
+        } else {
+            return articlesByFilterMode.filter { $0.article.topic.localizedCaseInsensitiveContains(searchText) }
         }
     }
     
@@ -192,6 +228,7 @@ struct AllArticlesListView: View {
     var body: some View {
         VStack {
             List {
+                // ... 内部代码无变化 ...
                 ForEach(sortedTimestamps, id: \.self) { timestamp in
                     Section(header: Text(formatTimestamp(timestamp))
                                 .font(.headline)
@@ -239,14 +276,26 @@ struct AllArticlesListView: View {
             }
             .listStyle(PlainListStyle())
             .navigationBarTitleDisplayMode(.inline)
+            // MARK: - 2. 修改工具栏
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        navigateToFirstAndAutoplayInAll()
-                    } label: {
-                        Image(systemName: "speaker.wave.2.fill")
+                    HStack {
+                        // 新增的搜索按钮
+                        Button {
+                            isSearchActive = true
+                        } label: {
+                            Image(systemName: "magnifyingglass")
+                        }
+                        .accessibilityLabel("搜索")
+
+                        // 原有的朗读按钮
+                        Button {
+                            navigateToFirstAndAutoplayInAll()
+                        } label: {
+                            Image(systemName: "speaker.wave.2.fill")
+                        }
+                        .accessibilityLabel("朗读此列表")
                     }
-                    .accessibilityLabel("朗读此列表")
                 }
             }
             
@@ -260,7 +309,6 @@ struct AllArticlesListView: View {
             .padding([.horizontal, .bottom])
         }
         .background(Color.viewBackground.ignoresSafeArea())
-        // 新导航目的地（替代废弃 API）
         .navigationDestination(isPresented: $showFirstTarget) {
             if let target = firstTarget {
                 ArticleContainerView(
@@ -273,8 +321,12 @@ struct AllArticlesListView: View {
                 EmptyView()
             }
         }
+        // MARK: - 3. 修改 .searchable 修饰符
+        // 绑定 isPresented 状态，并明确指定 placement
+        .searchable(text: $searchText, isPresented: $isSearchActive, placement: .navigationBarDrawer, prompt: "搜索文章标题")
     }
     
+    // ... formatTimestamp 和 navigateToFirstAndAutoplayInAll 函数无变化 ...
     private func formatTimestamp(_ timestamp: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyMMdd"
@@ -283,8 +335,7 @@ struct AllArticlesListView: View {
         formatter.dateFormat = "yyyy年M月d日, EEEE"
         return formatter.string(from: date)
     }
-    
-    // 跳转到首篇（优先未读），并请求自动播放（All 视图）
+
     private func navigateToFirstAndAutoplayInAll() {
         guard !filteredArticles.isEmpty else { return }
         let target = filteredArticles.first(where: { !$0.article.isRead }) ?? filteredArticles.first!
