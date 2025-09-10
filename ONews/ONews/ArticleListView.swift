@@ -130,12 +130,12 @@ struct ArticleListView: View {
                         .accessibilityLabel("搜索")
 
                         // 原有的朗读按钮
-//                        Button {
-//                            navigateToFirstAndAutoplay(in: filteredArticles, sourceName: source.name)
-//                        } label: {
-//                            Image(systemName: "speaker.wave.2.fill")
-//                        }
-//                        .accessibilityLabel("朗读此列表")
+                        Button {
+                            navigateToFirstAndAutoplay(in: filteredArticles, sourceName: source.name)
+                        } label: {
+                            Image(systemName: "speaker.wave.2.fill")
+                        }
+                        .accessibilityLabel("朗读此列表")
                     }
                 }
             }
@@ -289,12 +289,12 @@ struct AllArticlesListView: View {
                         .accessibilityLabel("搜索")
 
                         // 原有的朗读按钮
-//                        Button {
-//                            navigateToFirstAndAutoplayInAll()
-//                        } label: {
-//                            Image(systemName: "speaker.wave.2.fill")
-//                        }
-//                        .accessibilityLabel("朗读此列表")
+                        Button {
+                            navigateToFirstAndAutoplayInAll()
+                        } label: {
+                            Image(systemName: "speaker.wave.2.fill")
+                        }
+                        .accessibilityLabel("朗读此列表")
                     }
                 }
             }
