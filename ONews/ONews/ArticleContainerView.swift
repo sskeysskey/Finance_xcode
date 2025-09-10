@@ -17,8 +17,8 @@ struct ArticleContainerView: View {
     @State private var showNoNextToast = false
     @State private var isMiniPlayerCollapsed = false
 
-    // MARK: - 移除点 1: 删除了未使用的 pendingAutoPlayRequestID 状态
-    // @State private var pendingAutoPlayRequestID: UUID?
+    // 保留但当前不依赖通知去启动自动播放
+    @State private var pendingAutoPlayRequestID: UUID?
 
     enum NavigationContext {
         case fromSource(String)
@@ -60,6 +60,8 @@ struct ArticleContainerView: View {
                 unreadCount: liveUnreadCount,
                 viewModel: viewModel,
                 audioPlayerManager: audioPlayerManager,
+                // MARK: - 修改点
+                // 将此处的闭包指向新增的、专门用于停止播放并跳转的函数
                 requestNextArticle: {
                     self.switchToNextArticleAndStopAudio()
                 }
@@ -80,6 +82,7 @@ struct ArticleContainerView: View {
                         isCollapsed: $isMiniPlayerCollapsed,
                         isPlaying: audioPlayerManager.isPlaying
                     )
+                    // 更贴近底部：由 120 调整为 80
                     .padding(.bottom, 10)
                     .transition(.move(edge: .leading).combined(with: .opacity))
                     .zIndex(2)
@@ -87,6 +90,7 @@ struct ArticleContainerView: View {
                     AudioPlayerView(
                         playerManager: audioPlayerManager,
                         playNextAndStart: {
+                            // 播放器双箭头：跳转并自动播放（继续使用原函数）
                             switchToNextArticle(shouldAutoplayNext: true)
                         },
                         toggleCollapse: {
@@ -96,15 +100,23 @@ struct ArticleContainerView: View {
                         }
                     )
                     .padding(.horizontal)
+                    // 更贴近底部：由 30 调整为 6，并保持对安全区的适配
                     .padding(.bottom, 6)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(2)
                 }
             }
         }
-        // MARK: - 移除点 2: 删除了 .onAppear 中的通知注册逻辑
         .onAppear {
+            NotificationCenter.default.addObserver(forName: .onewsAutoPlayRequest, object: nil, queue: .main) { notif in
+                guard let targetID = notif.userInfo?["articleID"] as? UUID else { return }
+                if targetID == self.currentArticle.id {
+                    startAutoPlaybackForCurrentArticle()
+                }
+            }
+
             audioPlayerManager.onNextRequested = {
+                // 自然结束或远程“下一曲”，容器依据开关决定是否自动播放下一篇（继续使用原函数）
                 let shouldAutoplay = audioPlayerManager.isAutoPlayEnabled
                 switchToNextArticle(shouldAutoplayNext: shouldAutoplay)
             }
@@ -112,9 +124,10 @@ struct ArticleContainerView: View {
                 // 不在此触发下一篇，避免重复
             }
         }
-        // MARK: - 移除点 3: 删除了 .onDisappear 中的通知移除逻辑
         .onDisappear {
+            // 离开详情页才彻底停止与反激活会话
             audioPlayerManager.stop()
+            NotificationCenter.default.removeObserver(self, name: .onewsAutoPlayRequest, object: nil)
 
             if !currentArticle.isRead {
                 readArticleIDsInThisSession.insert(currentArticle.id)
@@ -136,13 +149,25 @@ struct ArticleContainerView: View {
         .background(Color.viewBackground.ignoresSafeArea())
     }
 
-    // MARK: - 移除点 4: 删除了 startAutoPlaybackForCurrentArticle 函数
-    
+    private func startAutoPlaybackForCurrentArticle() {
+        let paragraphs = self.currentArticle.article
+            .components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let fullText = paragraphs.joined(separator: "\n\n")
+        audioPlayerManager.isAutoPlayEnabled = true
+        audioPlayerManager.startPlayback(text: fullText, title: self.currentArticle.topic)
+    }
+
+    // MARK: - 新增函数
     /// 此函数专门用于处理文章详情页底部的“阅读下一篇”按钮点击事件。
     /// 它会立即、彻底地停止音频播放，并切换到下一篇文章，但不会自动开始播放。
     private func switchToNextArticleAndStopAudio() {
+        // 关键：调用 stop() 彻底终止音频会话，这将导致播放器UI消失。
         audioPlayerManager.stop()
 
+        // --- 以下逻辑与原函数类似，用于查找并切换文章 ---
+
+        // 标记已读并更新计数
         if let currentInVM = viewModel.sources.flatMap({ $0.articles }).first(where: { $0.id == currentArticle.id }) {
             let wasUnread = !currentInVM.isRead
             let isNewToSession = !readArticleIDsInThisSession.contains(currentArticle.id)
@@ -154,12 +179,14 @@ struct ArticleContainerView: View {
             }
         }
 
+        // 搜索范围
         let sourceNameToSearch: String?
         switch navigationContext {
         case .fromSource(let name): sourceNameToSearch = name
         case .fromAllArticles: sourceNameToSearch = nil
         }
 
+        // 查找下一篇未读
         if let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch) {
             if readArticleIDsInThisSession.contains(next.article.id) {
                 showToast { shouldShow in self.showNoNextToast = shouldShow }
@@ -168,6 +195,7 @@ struct ArticleContainerView: View {
                     self.currentArticle = next.article
                     self.currentSourceName = next.sourceName
                 }
+                // 注意：这里没有自动播放的逻辑
             }
         } else {
             showToast { shouldShow in self.showNoNextToast = shouldShow }
@@ -177,8 +205,10 @@ struct ArticleContainerView: View {
     /// 此函数保留，专门用于音频播放器触发的“下一篇”操作（包括手动点击和自动连播）。
     /// 它使用 prepareForNextTransition 实现平滑过渡，并根据参数决定是否自动播放。
     private func switchToNextArticle(shouldAutoplayNext: Bool) {
+        // 关键改动：不要用 stop()，避免反激活 AudioSession
         audioPlayerManager.prepareForNextTransition()
 
+        // 标记已读并更新计数
         if let currentInVM = viewModel.sources.flatMap({ $0.articles }).first(where: { $0.id == currentArticle.id }) {
             let wasUnread = !currentInVM.isRead
             let isNewToSession = !readArticleIDsInThisSession.contains(currentArticle.id)
@@ -190,12 +220,14 @@ struct ArticleContainerView: View {
             }
         }
 
+        // 搜索范围
         let sourceNameToSearch: String?
         switch navigationContext {
         case .fromSource(let name): sourceNameToSearch = name
         case .fromAllArticles: sourceNameToSearch = nil
         }
 
+        // 查找下一篇未读
         if let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch) {
             if readArticleIDsInThisSession.contains(next.article.id) {
                 showToast { shouldShow in self.showNoNextToast = shouldShow }
@@ -244,4 +276,6 @@ struct ToastView: View {
     }
 }
 
-// MARK: - 移除点 5: 删除了 Notification.Name 的扩展
+extension Notification.Name {
+    static let onewsAutoPlayRequest = Notification.Name("ONews.AutoPlayRequest")
+}
