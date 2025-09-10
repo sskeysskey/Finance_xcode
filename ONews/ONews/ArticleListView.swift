@@ -39,14 +39,9 @@ struct ArticleListView: View {
     
     @State private var filterMode: ArticleFilterMode = .unread
     
-    // MARK: - 1. 修改搜索状态
+    // MARK: - 搜索状态
     @State private var searchText = ""
-    // 新增状态，用于手动控制搜索界面的呈现
     @State private var isSearchActive = false
-    
-    // 编程式导航用状态（新写法）
-    @State private var showFirstTarget = false
-    @State private var firstTargetArticle: Article?
     
     private var filteredArticles: [Article] {
         let articlesByFilterMode = source.articles.filter { filterMode == .unread ? !$0.isRead : $0.isRead }
@@ -70,7 +65,6 @@ struct ArticleListView: View {
     var body: some View {
         VStack {
             List {
-                // ... 内部代码无变化 ...
                 ForEach(sortedTimestamps, id: \.self) { timestamp in
                     Section(header: Text(formatTimestamp(timestamp))
                                 .font(.headline)
@@ -117,26 +111,15 @@ struct ArticleListView: View {
             .listStyle(PlainListStyle())
             .navigationTitle(source.name.replacingOccurrences(of: "_", with: " "))
             .navigationBarTitleDisplayMode(.inline)
-            // MARK: - 2. 修改工具栏
+            // MARK: - 修改工具栏：只保留搜索按钮
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack {
-                        // 新增的搜索按钮
-                        Button {
-                            isSearchActive = true
-                        } label: {
-                            Image(systemName: "magnifyingglass")
-                        }
-                        .accessibilityLabel("搜索")
-
-                        // 原有的朗读按钮
-                        Button {
-                            navigateToFirstAndAutoplay(in: filteredArticles, sourceName: source.name)
-                        } label: {
-                            Image(systemName: "speaker.wave.2.fill")
-                        }
-                        .accessibilityLabel("朗读此列表")
+                    Button {
+                        isSearchActive = true
+                    } label: {
+                        Image(systemName: "magnifyingglass")
                     }
+                    .accessibilityLabel("搜索")
                 }
             }
             
@@ -150,24 +133,9 @@ struct ArticleListView: View {
             .padding([.horizontal, .bottom])
         }
         .background(Color.viewBackground.ignoresSafeArea())
-        .navigationDestination(isPresented: $showFirstTarget) {
-            if let target = firstTargetArticle {
-                ArticleContainerView(
-                    article: target,
-                    sourceName: source.name,
-                    context: .fromSource(source.name),
-                    viewModel: viewModel
-                )
-            } else {
-                EmptyView()
-            }
-        }
-        // MARK: - 3. 修改 .searchable 修饰符
-        // 绑定 isPresented 状态，并明确指定 placement
         .searchable(text: $searchText, isPresented: $isSearchActive, placement: .navigationBarDrawer, prompt: "搜索文章标题")
     }
     
-    // ... formatTimestamp 和 navigateToFirstAndAutoplay 函数无变化 ...
     private func formatTimestamp(_ timestamp: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyMMdd"
@@ -176,16 +144,6 @@ struct ArticleListView: View {
         formatter.dateFormat = "yyyy年M月d日, EEEE"
         return formatter.string(from: date)
     }
-    
-    private func navigateToFirstAndAutoplay(in visibleList: [Article], sourceName: String) {
-        guard !visibleList.isEmpty else { return }
-        let target = visibleList.first(where: { !$0.isRead }) ?? visibleList.first!
-        self.firstTargetArticle = target
-        self.showFirstTarget = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            NotificationCenter.default.post(name: .onewsAutoPlayRequest, object: nil, userInfo: ["articleID": target.id])
-        }
-    }
 }
 
 // ==================== 所有文章列表 ====================
@@ -193,14 +151,9 @@ struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @State private var filterMode: ArticleFilterMode = .unread
     
-    // MARK: - 1. 修改搜索状态
+    // MARK: - 搜索状态
     @State private var searchText = ""
-    // 新增状态，用于手动控制搜索界面的呈现
     @State private var isSearchActive = false
-    
-    // 编程式导航用状态（新写法）
-    @State private var showFirstTarget = false
-    @State private var firstTarget: (article: Article, sourceName: String)?
     
     private var filteredArticles: [(article: Article, sourceName: String)] {
         let articlesByFilterMode = viewModel.allArticlesSortedForDisplay.filter { item in
@@ -228,7 +181,6 @@ struct AllArticlesListView: View {
     var body: some View {
         VStack {
             List {
-                // ... 内部代码无变化 ...
                 ForEach(sortedTimestamps, id: \.self) { timestamp in
                     Section(header: Text(formatTimestamp(timestamp))
                                 .font(.headline)
@@ -276,26 +228,15 @@ struct AllArticlesListView: View {
             }
             .listStyle(PlainListStyle())
             .navigationBarTitleDisplayMode(.inline)
-            // MARK: - 2. 修改工具栏
+            // MARK: - 修改工具栏：只保留搜索按钮
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack {
-                        // 新增的搜索按钮
-                        Button {
-                            isSearchActive = true
-                        } label: {
-                            Image(systemName: "magnifyingglass")
-                        }
-                        .accessibilityLabel("搜索")
-
-                        // 原有的朗读按钮
-                        Button {
-                            navigateToFirstAndAutoplayInAll()
-                        } label: {
-                            Image(systemName: "speaker.wave.2.fill")
-                        }
-                        .accessibilityLabel("朗读此列表")
+                    Button {
+                        isSearchActive = true
+                    } label: {
+                        Image(systemName: "magnifyingglass")
                     }
+                    .accessibilityLabel("搜索")
                 }
             }
             
@@ -309,24 +250,9 @@ struct AllArticlesListView: View {
             .padding([.horizontal, .bottom])
         }
         .background(Color.viewBackground.ignoresSafeArea())
-        .navigationDestination(isPresented: $showFirstTarget) {
-            if let target = firstTarget {
-                ArticleContainerView(
-                    article: target.article,
-                    sourceName: target.sourceName,
-                    context: .fromAllArticles,
-                    viewModel: viewModel
-                )
-            } else {
-                EmptyView()
-            }
-        }
-        // MARK: - 3. 修改 .searchable 修饰符
-        // 绑定 isPresented 状态，并明确指定 placement
         .searchable(text: $searchText, isPresented: $isSearchActive, placement: .navigationBarDrawer, prompt: "搜索文章标题")
     }
     
-    // ... formatTimestamp 和 navigateToFirstAndAutoplayInAll 函数无变化 ...
     private func formatTimestamp(_ timestamp: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyMMdd"
@@ -334,15 +260,5 @@ struct AllArticlesListView: View {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy年M月d日, EEEE"
         return formatter.string(from: date)
-    }
-
-    private func navigateToFirstAndAutoplayInAll() {
-        guard !filteredArticles.isEmpty else { return }
-        let target = filteredArticles.first(where: { !$0.article.isRead }) ?? filteredArticles.first!
-        self.firstTarget = target
-        self.showFirstTarget = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            NotificationCenter.default.post(name: .onewsAutoPlayRequest, object: nil, userInfo: ["articleID": target.article.id])
-        }
     }
 }

@@ -108,13 +108,6 @@ struct ArticleContainerView: View {
             }
         }
         .onAppear {
-            NotificationCenter.default.addObserver(forName: .onewsAutoPlayRequest, object: nil, queue: .main) { notif in
-                guard let targetID = notif.userInfo?["articleID"] as? UUID else { return }
-                if targetID == self.currentArticle.id {
-                    startAutoPlaybackForCurrentArticle()
-                }
-            }
-
             audioPlayerManager.onNextRequested = {
                 // 自然结束或远程“下一曲”，容器依据开关决定是否自动播放下一篇（继续使用原函数）
                 let shouldAutoplay = audioPlayerManager.isAutoPlayEnabled
