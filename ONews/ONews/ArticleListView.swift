@@ -53,12 +53,23 @@ struct ArticleListView: View {
         }
     }
     
+    // MARK: - 主要修改点 (ArticleListView)
+    // 在这里根据 filterMode 改变组内文章的排序
     private var groupedArticles: [String: [Article]] {
-        Dictionary(grouping: filteredArticles, by: { $0.timestamp })
+        let initialGrouping = Dictionary(grouping: filteredArticles, by: { $0.timestamp })
+        
+        if filterMode == .read {
+            // 对于“已读”列表，反转每天内部的文章顺序，使最新的文章排在最前面。
+            return initialGrouping.mapValues { articles in
+                Array(articles.reversed())
+            }
+        } else {
+            // 对于“未读”列表，保持默认顺序（通常是时间升序）。
+            return initialGrouping
+        }
     }
     
-    // MARK: - 修改点 (ArticleListView)
-    // 在这里根据 filterMode 改变排序规则
+    // 这个属性负责对日期 Section 进行排序，保持不变
     private var sortedTimestamps: [String] {
         if filterMode == .read {
             // 对于“已读”列表，让最新的日期（更大的字符串）排在前面
@@ -81,6 +92,7 @@ struct ArticleListView: View {
                                 .foregroundColor(.blue.opacity(0.7))
                                 .padding(.vertical, 4)
                     ) {
+                        // ForEach 会使用 groupedArticles 中已经排好序的数组
                         ForEach(groupedArticles[timestamp] ?? []) { article in
                             NavigationLink(destination: ArticleContainerView(
                                 article: article,
@@ -176,12 +188,23 @@ struct AllArticlesListView: View {
         }
     }
     
+    // MARK: - 主要修改点 (AllArticlesListView)
+    // 在这里也根据 filterMode 改变组内文章的排序
     private var groupedArticles: [String: [(article: Article, sourceName: String)]] {
-        Dictionary(grouping: filteredArticles, by: { $0.article.timestamp })
+        let initialGrouping = Dictionary(grouping: filteredArticles, by: { $0.article.timestamp })
+        
+        if filterMode == .read {
+            // 对于“已读”列表，反转每天内部的文章顺序，使最新的文章排在最前面。
+            return initialGrouping.mapValues { items in
+                Array(items.reversed())
+            }
+        } else {
+            // 对于“未读”列表，保持默认顺序。
+            return initialGrouping
+        }
     }
     
-    // MARK: - 修改点 (AllArticlesListView)
-    // 在这里也根据 filterMode 改变排序规则
+    // 这个属性负责对日期 Section 进行排序，保持不变
     private var sortedTimestamps: [String] {
         if filterMode == .read {
             // 对于“已读”列表，让最新的日期（更大的字符串）排在前面
@@ -204,6 +227,7 @@ struct AllArticlesListView: View {
                                 .foregroundColor(.blue.opacity(0.7))
                                 .padding(.vertical, 4)
                     ) {
+                        // ForEach 会使用 groupedArticles 中已经排好序的元组数组
                         ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
                             NavigationLink(destination: ArticleContainerView(
                                 article: item.article,
