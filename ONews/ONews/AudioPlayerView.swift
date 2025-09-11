@@ -684,6 +684,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "CSS": "C.S.S",
             "JS": "J.S",
             "AI": "A.I",
+            "OpenAI": "Open.A.I",
             "SDK": "S.D.K",
             "iOS": "i O S",
             "iPhone": "i Phone",
@@ -706,13 +707,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "+": "加",
             "=": "等于",
             "@": "at",
-            "#": "hash",
-            "~": "tilde",
-            "^": "caret",
-            "|": "vertical bar",
-            "\\": "backslash",
+            "~": "到",
             "/": "每",
-            "DJI": "大疆"
+            "DJI": "大疆",
+            "Insta360": "Insta三六零",
+            "Airbnb": "Air.B.N.B"
         ]
 
         for (key, value) in replacements {
