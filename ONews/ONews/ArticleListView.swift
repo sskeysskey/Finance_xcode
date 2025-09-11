@@ -56,9 +56,19 @@ struct ArticleListView: View {
     private var groupedArticles: [String: [Article]] {
         Dictionary(grouping: filteredArticles, by: { $0.timestamp })
     }
+    
+    // MARK: - 修改点 (ArticleListView)
+    // 在这里根据 filterMode 改变排序规则
     private var sortedTimestamps: [String] {
-        groupedArticles.keys.sorted()
+        if filterMode == .read {
+            // 对于“已读”列表，让最新的日期（更大的字符串）排在前面
+            return groupedArticles.keys.sorted(by: >)
+        } else {
+            // 对于“未读”列表，保持原来的排序，最老的日期在前面
+            return groupedArticles.keys.sorted(by: <)
+        }
     }
+    
     private var unreadCount: Int { source.articles.filter { !$0.isRead }.count }
     private var readCount: Int { source.articles.filter { $0.isRead }.count }
 
@@ -111,7 +121,6 @@ struct ArticleListView: View {
             .listStyle(PlainListStyle())
             .navigationTitle(source.name.replacingOccurrences(of: "_", with: " "))
             .navigationBarTitleDisplayMode(.inline)
-            // MARK: - 修改工具栏：只保留搜索按钮
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
@@ -171,8 +180,16 @@ struct AllArticlesListView: View {
         Dictionary(grouping: filteredArticles, by: { $0.article.timestamp })
     }
     
+    // MARK: - 修改点 (AllArticlesListView)
+    // 在这里也根据 filterMode 改变排序规则
     private var sortedTimestamps: [String] {
-        groupedArticles.keys.sorted()
+        if filterMode == .read {
+            // 对于“已读”列表，让最新的日期（更大的字符串）排在前面
+            return groupedArticles.keys.sorted(by: >)
+        } else {
+            // 对于“未读”列表，保持原来的排序，最老的日期在前面
+            return groupedArticles.keys.sorted(by: <)
+        }
     }
     
     private var totalUnreadCount: Int { viewModel.totalUnreadCount }
@@ -228,7 +245,6 @@ struct AllArticlesListView: View {
             }
             .listStyle(PlainListStyle())
             .navigationBarTitleDisplayMode(.inline)
-            // MARK: - 修改工具栏：只保留搜索按钮
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
