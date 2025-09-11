@@ -141,15 +141,23 @@ var body: some View {
     }
     .toolbar {
         ToolbarItem(placement: .principal) {
-            VStack(spacing: 2) {
+            // 使用 HStack 将所有信息放在一行
+            HStack(spacing: 8) {
                 Text(sourceName.replacingOccurrences(of: "_", with: " "))
                     .font(.headline)
-                HStack(spacing: 8) {
-                    Text("\(unreadCount) unread")
-                    Text(formatMonthDay(from: article.timestamp))
+                    .lineLimit(1) // 确保不会换行
+                    .truncationMode(.tail) // 如果太长，用...结尾
+
+                Text(formatMonthDay(from: article.timestamp))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                // 将未读数放在括号里，更紧凑
+                if unreadCount > 0 {
+                    Text("(\(unreadCount))")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
-                .font(.caption)
-                .foregroundColor(.secondary)
             }
         }
         ToolbarItem(placement: .navigationBarTrailing) {
@@ -185,11 +193,13 @@ private func formatMonthDay(from timestamp: String) -> String {
         return timestamp
     }
     let output = DateFormatter()
-    output.dateFormat = "MMMM d"
+    // 将格式字符串修改为 "M.dd"
+    output.dateFormat = "M.dd"
+    // 对于纯数字格式，locale 不再是必须的，但保留也无妨
     output.locale = Locale(identifier: "en_US_POSIX")
     return output.string(from: date)
 }
-
+    
 private func formatDate(from timestamp: String) -> String {
     let inputFormatter = DateFormatter()
     inputFormatter.dateFormat = "yyMMdd"
