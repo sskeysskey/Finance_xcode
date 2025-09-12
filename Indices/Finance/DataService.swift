@@ -2,6 +2,39 @@ import Foundation
 import Combine
 import SwiftUI
 
+// 桥接壳：对外 API 基本不变，但全部转发给 DataService.shared
+final class DataService1 {
+    static let shared = DataService1()
+    private init() {}
+    
+    // 与原 API 保持相同命名
+    var descriptionData1: DescriptionData1? {
+        DataService.shared.descriptionData1
+    }
+    
+    var tagsWeightConfig: [Double: [String]] {
+        DataService.shared.tagsWeightConfig
+    }
+    
+    var compareData1: [String: String] {
+        // 使用合并后 DataService 中的大写映射
+        DataService.shared.compareDataUppercased
+    }
+    
+    var sectorsData: [String: [String]] {
+        DataService.shared.sectorsData
+    }
+    
+    func loadAllData() {
+        // 统一由 DataService 管理加载生命周期
+        DataService.shared.forceReloadData()
+    }
+    
+    func getCategory(for symbol: String) -> String? {
+        DataService.shared.getCategory(for: symbol)
+    }
+}
+
 // MARK: - 新增：High/Low 数据模型
 struct HighLowItem: Identifiable, Codable {
     var id = UUID()
@@ -82,6 +115,36 @@ enum EarningTrend {
     case insufficientData // 数据不足，无法判断（白色）
 }
 
+// MARK: - b.swift 的轻量模型（并入）
+// 保留与 b.swift 相同的结构，供 SimilarViewModel 等使用
+protocol SymbolItem {
+    var symbol: String { get }
+    var tag: [String] { get }
+}
+
+struct DescriptionData1: Codable {
+    let stocks: [Stock1]
+    let etfs: [ETF1]
+}
+
+struct Stock1: Codable, SymbolItem {
+    let symbol: String
+    let name: String
+    let tag: [String]
+    let description1: String
+    let description2: String
+    let value: String
+}
+
+struct ETF1: Codable, SymbolItem {
+    let symbol: String
+    let name: String
+    let tag: [String]
+    let description1: String
+    let description2: String
+    let value: String
+}
+
 class DataService: ObservableObject {
     // MARK: - Singleton
     static let shared = DataService()
@@ -94,23 +157,28 @@ class DataService: ObservableObject {
     @Published var etfLosers: [ETF] = []
     
     @Published var descriptionData: DescriptionData?
+    // 合并新增：轻量版本（与 b.swift 一致）
+    @Published var descriptionData1: DescriptionData1?
+    
     @Published var marketCapData: [String: MarketCapDataItem] = [:]
     @Published var sectorsData: [String: [String]] = [:]
+    
+    // 原 compareData（你已有的“合并大小写键”的策略）
     @Published var compareData: [String: String] = [:]
+    // 合并新增：仅大写键映射，供 b.swift/Similar 使用
+    @Published var compareDataUppercased: [String: String] = [:]
+    
     @Published var sectorsPanel: SectorsPanel?
     @Published var symbolEarningData: [String: [Date: Double]] = [:]
     
     @Published var earningReleases: [EarningRelease] = []
     
-    // ==================== 修改开始 ====================
-    // 2. 新增一个公开的属性，用于缓存所有已获取的财报趋势
-    //    键是 uppercased 的 symbol，值是对应的趋势
+    // 公开缓存：已获取的财报趋势
     @Published var earningTrends: [String: EarningTrend] = [:]
-    // ==================== 修改结束 ====================
     
     private var isDataLoaded = false
     
-    // 新增：用于存储 High/Low 数据的属性
+    // High/Low
     @Published var highGroups: [HighLowGroup] = []
     @Published var lowGroups: [HighLowGroup] = []
     
@@ -119,6 +187,9 @@ class DataService: ObservableObject {
     @Published var globalTimeMarkers: [Date: String] = [:]
     @Published var symbolTimeMarkers: [String: [Date: String]] = [:]
     
+    // MARK: - 新增：tags 权重（合并自 DataService1）
+    @Published var tagsWeightConfig: [Double: [String]] = [:]
+    
     // MARK: - 新增辅助属性
     /// 检查本地是否已存在数据版本。如果版本号为 nil 或 "0.0"，则认为是首次加载，此时文件不存在是正常情况。
     private var isInitialLoad: Bool {
@@ -126,110 +197,83 @@ class DataService: ObservableObject {
         return localVersion == nil || localVersion == "0.0"
     }
     
-    // MARK: - 修改 2：创建一个新的公共方法，用于强制重新加载数据
-        /// 强制重新加载所有数据。此方法会重置加载状态，通常在手动刷新或数据文件更新后调用。
-        func forceReloadData() {
-            print("DataService: 收到强制刷新请求，将重新加载所有数据。")
-            // 重置加载状态标志
-            self.isDataLoaded = false
-            // 调用原始的加载方法
-            self.loadData()
-        }
+    // MARK: - 公共方法：强制重新加载
+    func forceReloadData() {
+        print("DataService: 收到强制刷新请求，将重新加载所有数据。")
+        self.isDataLoaded = false
+        self.loadData()
+    }
 
     func loadData() {
-        // MARK: - 修改 3：在 loadData 方法的入口处添加“哨兵”检查
-        // 如果数据已经加载过，则直接返回，避免重复执行。
+        // 哨兵
         guard !isDataLoaded else {
             print("DataService: 数据已加载，跳过重复加载。")
             return
         }
-        // 在加载前清除旧的错误信息
         DispatchQueue.main.async {
             self.errorMessage = nil
         }
         
+        // 统一加载
         loadMarketCapData()
-        loadDescriptionData()
+        // description 两套模型统一从同一份文件 data 解析，避免重复 IO
+        loadDescriptionPair()
         loadSectorsData()
-        loadCompareData()
+        loadCompareDataPair()
         loadSectorsPanel()
         loadEarningRelease()
         loadHighLowData()
         loadCompareStock()
+        loadTagsWeight()
         
         isDataLoaded = true
         print("DataService: 所有数据加载完毕。")
     }
     
-    // ==================== 修改开始 ====================
-    // 3. 新增一个公共方法，用于异步获取并缓存一组 symbol 的财报趋势
-    /// 为给定的 symbol 列表异步获取财报趋势，并更新 `earningTrends` 缓存。
-    /// - Parameter symbols: 需要获取趋势的 symbol 字符串数组。
+    // MARK: - 合并：获取一组 symbol 的财报趋势
     public func fetchEarningTrends(for symbols: [String]) {
-        // 使用 DispatchGroup 来跟踪所有异步任务
         let dispatchGroup = DispatchGroup()
 
         for symbol in symbols {
             let upperSymbol = symbol.uppercased()
-            
-            // 如果缓存中已经存在该数据，则跳过，避免重复计算
             if self.earningTrends[upperSymbol] != nil {
                 continue
             }
-            
             dispatchGroup.enter()
-            
-            // 在后台线程执行耗时的数据库查询
             DispatchQueue.global(qos: .userInitiated).async {
                 var trend: EarningTrend = .insufficientData
 
-                // 1. 获取该 symbol 的所有财报数据并按日期降序排序
                 let sortedEarnings = DatabaseManager.shared.fetchEarningData(forSymbol: symbol).sorted { $0.date > $1.date }
-
-                // 2. 必须至少有两条财报数据才能进行比较
                 if sortedEarnings.count >= 2 {
                     let latestEarning = sortedEarnings[0]
                     let previousEarning = sortedEarnings[1]
-
-                    // 3. 获取 symbol 所属的表名，以便查询收盘价
                     if let tableName = self.getCategory(for: symbol) {
-                        // 4. 分别获取两次财报日期的收盘价
                         let latestClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: latestEarning.date, tableName: tableName)
                         let previousClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: previousEarning.date, tableName: tableName)
-
-                        // 5. 如果两次的收盘价都成功获取
                         if let latest = latestClose, let previous = previousClose {
-                            // 根据最新财报是盈利还是亏损，以及股价是上涨还是下跌，来确定最终的趋势
-                            if latestEarning.price > 0 { // 财报为正
+                            if latestEarning.price > 0 {
                                 trend = (latest > previous) ? .positiveAndUp : .positiveAndDown
-                            } else { // 财报为负
+                            } else {
                                 trend = (latest > previous) ? .negativeAndUp : .negativeAndDown
                             }
                         }
                     }
                 }
-
-                // 6. 回到主线程更新 UI 相关的 @Published 属性
                 DispatchQueue.main.async {
                     self.earningTrends[upperSymbol] = trend
                     dispatchGroup.leave()
                 }
             }
         }
-
-        // 你可以添加一个 notify 回调，以便在所有任务完成后执行某些操作（如果需要）
         dispatchGroup.notify(queue: .main) {
-            // print("所有请求的 Earning Trends 都已获取完毕。")
+            // 所有完成后的回调（需要的话）
         }
     }
-    // ==================== 修改结束 ====================
     
     // MARK: - Private methods
     
     private func loadHighLowData() {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "HighLow") else {
-            // MARK: - 修改
-            // 仅在非首次加载时才报告错误
             if !isInitialLoad {
                 DispatchQueue.main.async {
                     self.errorMessage = "HighLow 文件未在 Documents 中找到"
@@ -304,78 +348,52 @@ class DataService: ObservableObject {
         }
     }
         
-    // ==================== 修改开始 ====================
-    // 2. 重写 loadEarningRelease 方法以解析新格式
     private func loadEarningRelease() {
-        // 1. 定义要查找的两个文件前缀
         let filePrefixes = ["Earnings_Release_new", "Earnings_Release_next"]
-        
-        // 2. 获取这两个文件的最新 URL
-        //    使用 compactMap 可以方便地过滤掉未找到的文件（返回 nil 的情况）
         let urlsToProcess = filePrefixes.compactMap { prefix in
             FileManagerHelper.getLatestFileUrl(for: prefix)
         }
-
-        // 3. 检查是否至少找到了一个文件
         guard !urlsToProcess.isEmpty else {
             if !isInitialLoad {
                 DispatchQueue.main.async {
-                    // 更新错误信息，使其更明确
                     self.errorMessage = "Earnings_Release_new 或 Earnings_Release_next 文件未在 Documents 中找到"
                 }
             }
             return
         }
-        
-        // 4. 创建一个数组来存储所有解析出的数据
         var allEarningReleases: [EarningRelease] = []
-        
         do {
-            // 5. 遍历所有找到的 URL
             for url in urlsToProcess {
                 let content = try String(contentsOf: url, encoding: .utf8)
                 let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-                
-                // 内部解析逻辑保持不变
                 for line in lines {
                     let parts = line.split(separator: ":").map { $0.trimmingCharacters(in: .whitespaces) }
-                    
                     guard parts.count == 3 else { continue }
-                    
                     let symbol = String(parts[0])
                     let timing = String(parts[1])
                     let fullDateStr = String(parts[2]) // "YYYY-MM-DD"
                     
                     let dateComponents = fullDateStr.split(separator: "-")
                     guard dateComponents.count == 3 else { continue }
-                    
                     let month = dateComponents[1]
                     let day = dateComponents[2]
                     let displayDate = "\(month)-\(day)"
-                    
                     let release = EarningRelease(symbol: symbol, timing: timing, date: displayDate)
-                    // 将解析结果添加到总数组中
                     allEarningReleases.append(release)
                 }
             }
-            
-            // 6. 所有文件都处理完毕后，在主线程上更新发布的属性
             DispatchQueue.main.async {
                 self.earningReleases = allEarningReleases
             }
-            
         } catch {
             DispatchQueue.main.async {
-                // 更新错误信息
                 self.errorMessage = "加载财报文件失败: \(error.localizedDescription)"
             }
         }
     }
-    // ==================== 修改结束 ====================
 
     private func loadCompareStock() {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "CompareStock") else {
-            // MARK: - 修改
             if !isInitialLoad {
                 DispatchQueue.main.async {
                     self.errorMessage = "CompareStock 文件未在 Documents 中找到"
@@ -383,7 +401,6 @@ class DataService: ObservableObject {
             }
             return
         }
-                
         do {
             let content = try String(contentsOf: url, encoding: .utf8)
             let lines = content.split(separator: "\n")
@@ -407,7 +424,6 @@ class DataService: ObservableObject {
     
     private func loadSectorsPanel() {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "Sectors_panel") else {
-            // MARK: - 修改
             if !isInitialLoad {
                 DispatchQueue.main.async { self.errorMessage = "Sectors_panel 文件未在 Documents 中找到" }
             }
@@ -422,7 +438,8 @@ class DataService: ObservableObject {
         }
     }
 
-    private func loadDescriptionData() {
+    // MARK: - 合并：一次性读取 description 文件 data，解两套模型，减少 IO
+    private func loadDescriptionPair() {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "description") else {
             if !isInitialLoad {
                 DispatchQueue.main.async {
@@ -434,14 +451,16 @@ class DataService: ObservableObject {
         do {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
+            
+            // 解重型（含 description3）
             let loadedDescriptionData = try decoder.decode(DescriptionData.self, from: data)
+            // 解轻量（b.swift 使用）
+            let loadedDescriptionData1 = try decoder.decode(DescriptionData1.self, from: data)
             
             let dateFormatter = DateFormatter()
             dateFormatter.dateFormat = "yyyy-MM-dd"
-            
-            // --- 开始修改 ---
 
-            // 1. 处理全局时间标记 (这部分逻辑是正确的，保持不变)
+            // 1) 全局时间标记
             var newGlobalTimeMarkers: [Date: String] = [:]
             if let global = loadedDescriptionData.global {
                 for (dateString, text) in global {
@@ -451,17 +470,13 @@ class DataService: ObservableObject {
                 }
             }
             
-            // 2. 处理特定股票/ETF的时间标记
+            // 2) 特定股票/ETF的时间标记
             var newSymbolTimeMarkers: [String: [Date: String]] = [:]
-            
-            // 定义一个可重用的闭包来处理包含 description3 的项目
             let processItemsWithDescription3 = { (items: [SearchDescribableItem]) in
                 for item in items {
-                    // 使用可选链和类型转换来获取 description3
                     guard let description3 = (item as? SearchStock)?.description3 ?? (item as? SearchETF)?.description3 else {
                         continue
                     }
-                    
                     var markers: [Date: String] = [:]
                     for markerDict in description3 {
                         for (dateString, text) in markerDict {
@@ -470,27 +485,20 @@ class DataService: ObservableObject {
                             }
                         }
                     }
-                    
                     if !markers.isEmpty {
-                        // 将解析出的标记存入字典，键为大写的 symbol
                         newSymbolTimeMarkers[item.symbol.uppercased()] = markers
                     }
                 }
             }
-            
-            // 3. 显式调用闭包，分别处理 stocks 和 etfs 数组
             processItemsWithDescription3(loadedDescriptionData.stocks)
             processItemsWithDescription3(loadedDescriptionData.etfs)
             
-            // --- 结束修改 ---
-
             DispatchQueue.main.async {
                 self.descriptionData = loadedDescriptionData
+                self.descriptionData1 = loadedDescriptionData1
                 self.globalTimeMarkers = newGlobalTimeMarkers
-                // 现在 newSymbolTimeMarkers 将包含正确解析的数据
                 self.symbolTimeMarkers = newSymbolTimeMarkers
             }
-
         } catch {
             DispatchQueue.main.async {
                 self.errorMessage = "加载 description.json 失败: \(error.localizedDescription)"
@@ -500,7 +508,6 @@ class DataService: ObservableObject {
     
     private func loadSectorsData() {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "Sectors_All") else {
-            // MARK: - 修改
             if !isInitialLoad {
                 DispatchQueue.main.async {
                     self.errorMessage = "Sectors_All 文件未在 Documents 中找到"
@@ -534,7 +541,6 @@ class DataService: ObservableObject {
         let allMarketCapInfo = DatabaseManager.shared.fetchAllMarketCapData(from: "MNSPP")
         
         if allMarketCapInfo.isEmpty {
-            // MARK: - 修改
             if !isInitialLoad {
                 self.errorMessage = "未能从数据库 MNSPP 表加载到市值数据。"
             }
@@ -542,7 +548,6 @@ class DataService: ObservableObject {
         }
         
         var newData: [String: MarketCapDataItem] = [:]
-        
         for info in allMarketCapInfo {
             let item = MarketCapDataItem(
                 marketCap: info.marketCap,
@@ -551,15 +556,14 @@ class DataService: ObservableObject {
             )
             newData[info.symbol.uppercased()] = item
         }
-        
         DispatchQueue.main.async {
             self.marketCapData = newData
         }
     }
     
-    private func loadCompareData() {
+    // MARK: - 合并 Compare_All：同时生成两种映射
+    private func loadCompareDataPair() {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "Compare_All") else {
-            // MARK: - 修改
             if !isInitialLoad {
                 DispatchQueue.main.async {
                     self.errorMessage = "Compare_All 文件未在 Documents 中找到"
@@ -575,7 +579,7 @@ class DataService: ObservableObject {
             var upperCaseMap: [String: String] = [:]
             
             for line in lines {
-                let parts = line.split(separator: ":")
+                let parts = line.split(separator: ":", maxSplits: 1)
                 if parts.count >= 2 {
                     let symbol = String(parts[0].trimmingCharacters(in: .whitespaces))
                     let value = String(parts[1].trimmingCharacters(in: .whitespaces))
@@ -584,12 +588,42 @@ class DataService: ObservableObject {
                 }
             }
             DispatchQueue.main.async {
+                // 维持你已有 compareData 的合并策略
                 self.compareData = upperCaseMap.merging(originalCaseData) { (_, new) in new }
+                // 单独保留一份全大写键映射，供 Similar 使用
+                self.compareDataUppercased = upperCaseMap
             }
         } catch {
             DispatchQueue.main.async {
                 self.errorMessage = "加载 Compare_All.txt 失败: \(error.localizedDescription)"
             }
+        }
+    }
+    
+    // MARK: - 合并：tags_weight
+    private func loadTagsWeight() {
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "tags_weight") else {
+            if !isInitialLoad {
+                print("DataService: tags_weight 文件未在 Documents 中找到")
+            }
+            return
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            let rawData = try JSONSerialization.jsonObject(with: data, options: []) as? [String: [String]]
+            var weightGroups: [Double: [String]] = [:]
+            if let rawData = rawData {
+                for (k, v) in rawData {
+                    if let key = Double(k) {
+                        weightGroups[key] = v
+                    }
+                }
+            }
+            DispatchQueue.main.async {
+                self.tagsWeightConfig = weightGroups
+            }
+        } catch {
+            print("DataService: 解析 tags_weight 文件时出错: \(error)")
         }
     }
     
