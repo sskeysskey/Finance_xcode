@@ -66,11 +66,6 @@ struct ArticleContainerView: View {
                     self.switchToNextArticleAndStopAudio()
                 }
             )
-            .id(currentArticle.id)
-            .transition(.asymmetric(
-                insertion: .move(edge: .bottom).combined(with: .opacity),
-                removal: .move(edge: .top).combined(with: .opacity))
-            )
 
             if showNoNextToast {
                 ToastView(message: "该分组内已无更多文章")

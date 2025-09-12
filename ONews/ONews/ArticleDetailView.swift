@@ -16,175 +16,176 @@ func updateUIViewController(_ uiViewController: UIActivityViewController, contex
 }
 
 struct ArticleDetailView: View {
-let article: Article
-let sourceName: String
-let unreadCount: Int
-@ObservedObject var viewModel: NewsViewModel
+    let article: Article
+    let sourceName: String
+    let unreadCount: Int
+    @ObservedObject var viewModel: NewsViewModel
 
-@ObservedObject var audioPlayerManager: AudioPlayerManager
-var requestNextArticle: () -> Void
+    @ObservedObject var audioPlayerManager: AudioPlayerManager
+    var requestNextArticle: () -> Void
 
-@State private var isSharePresented = false
-@State private var showCopyToast = false
-@State private var toastMessage = ""
+    @State private var isSharePresented = false
+    @State private var showCopyToast = false
+    @State private var toastMessage = ""
 
-var body: some View {
-    let paragraphs = article.article
-        .components(separatedBy: .newlines)
-        .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    
-    let remainingImages = Array(article.images.dropFirst())
-    
-    let distributeEvenly = !remainingImages.isEmpty && remainingImages.count < paragraphs.count
-    let insertionInterval = distributeEvenly
-        ? paragraphs.count / (remainingImages.count + 1)
-        : 1
+    // 新增：顶部锚点常量
+    private let topAnchorID = "top"
 
-    ZStack {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(formatDate(from: article.timestamp))
-                        .font(.caption).foregroundColor(.gray)
-                    
-                    Text(article.topic)
-                        .font(.system(.title, design: .serif)).fontWeight(.bold)
-                    Text(sourceName.replacingOccurrences(of: "_", with: " "))
-                        .font(.subheadline).foregroundColor(.gray)
-                }
-                .padding(.horizontal, 20)
-                
-                if let firstImage = article.images.first {
-                    ArticleImageView(imageName: firstImage, timestamp: article.timestamp)
-                }
+    var body: some View {
+        let paragraphs = article.article
+            .components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
-                ForEach(paragraphs.indices, id: \.self) { pIndex in
-                    Text(paragraphs[pIndex])
-                        .font(.custom("NewYork-Regular", size: 21))
-                        .lineSpacing(15)
-                        .padding(.horizontal, 18)
-                        .gesture(
-                            LongPressGesture()
-                                .onEnded { _ in
-                                    UIPasteboard.general.string = paragraphs[pIndex]
-                                    self.toastMessage = "选中段落已复制"
-                                    withAnimation(.spring()) {
-                                        self.showCopyToast = true
-                                    }
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                        withAnimation(.spring()) {
-                                            self.showCopyToast = false
-                                        }
-                                    }
-                                }
-                        )
+        let remainingImages = Array(article.images.dropFirst())
+        let distributeEvenly = !remainingImages.isEmpty && remainingImages.count < paragraphs.count
+        let insertionInterval = distributeEvenly ? max(1, paragraphs.count / (remainingImages.count + 1)) : 1
 
-                    if (pIndex + 1) % insertionInterval == 0 {
-                        let imageIndexToInsert = (pIndex + 1) / insertionInterval - 1
-                        if imageIndexToInsert < remainingImages.count {
-                            ArticleImageView(
-                                imageName: remainingImages[imageIndexToInsert],
-                                timestamp: article.timestamp
-                            )
+        ZStack {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    // 顶部锚点
+                    Color.clear
+                        .frame(height: 0.1)
+                        .id(topAnchorID)
+
+                    VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(formatDate(from: article.timestamp))
+                                .font(.caption).foregroundColor(.gray)
+
+                            Text(article.topic)
+                                .font(.system(.title, design: .serif)).fontWeight(.bold)
+                            Text(sourceName.replacingOccurrences(of: "_", with: " "))
+                                .font(.subheadline).foregroundColor(.gray)
                         }
-                    }
-                }
+                        .padding(.horizontal, 20)
 
-                if !distributeEvenly && remainingImages.count > paragraphs.count {
-                    let extraImages = remainingImages.dropFirst(paragraphs.count)
-                    ForEach(Array(extraImages), id: \.self) { imageName in
-                        ArticleImageView(imageName: imageName, timestamp: article.timestamp)
+                        if let firstImage = article.images.first {
+                            ArticleImageView(imageName: firstImage, timestamp: article.timestamp)
+                        }
+
+                        ForEach(paragraphs.indices, id: \.self) { pIndex in
+                            Text(paragraphs[pIndex])
+                                .font(.custom("NewYork-Regular", size: 21))
+                                .lineSpacing(15)
+                                .padding(.horizontal, 18)
+                                .gesture(
+                                    LongPressGesture()
+                                        .onEnded { _ in
+                                            UIPasteboard.general.string = paragraphs[pIndex]
+                                            self.toastMessage = "选中段落已复制"
+                                            withAnimation(.spring()) { self.showCopyToast = true }
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                                withAnimation(.spring()) { self.showCopyToast = false }
+                                            }
+                                        }
+                                )
+
+                            if (pIndex + 1) % insertionInterval == 0 {
+                                let imageIndexToInsert = (pIndex + 1) / insertionInterval - 1
+                                if imageIndexToInsert < remainingImages.count {
+                                    ArticleImageView(
+                                        imageName: remainingImages[imageIndexToInsert],
+                                        timestamp: article.timestamp
+                                    )
+                                }
+                            }
+                        }
+
+                        if !distributeEvenly && remainingImages.count > paragraphs.count {
+                            let extraImages = remainingImages.dropFirst(paragraphs.count)
+                            ForEach(Array(extraImages), id: \.self) { imageName in
+                                ArticleImageView(imageName: imageName, timestamp: article.timestamp)
+                            }
+                        }
+
+                        Button(action: {
+                            self.requestNextArticle()
+                        }) {
+                            HStack {
+                                Text("读取下一篇").fontWeight(.bold)
+                                Image(systemName: "arrow.right.circle.fill")
+                            }
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.blue)
+                            .cornerRadius(12)
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 20)
+                    }
+                    .padding(.vertical)
+                }
+                // 当文章切换时，滚动到顶部
+                .onChange(of: article.id) { _, _ in
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        proxy.scrollTo(topAnchorID, anchor: .top)
                     }
                 }
-                
-                Button(action: {
-                    self.requestNextArticle()
-                }) {
+                // 初次出现也确保在顶部
+                .onAppear {
+                    proxy.scrollTo(topAnchorID, anchor: .top)
+                }
+            }
+
+            if showCopyToast {
+                VStack {
                     HStack {
-                        Text("读取下一篇")
-                            .fontWeight(.bold)
-                        Image(systemName: "arrow.right.circle.fill")
+                        Image(systemName: "checkmark.circle.fill").foregroundColor(.white)
+                        Text(toastMessage).foregroundColor(.white).fontWeight(.semibold)
                     }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.blue)
-                    .cornerRadius(12)
+                    .padding(.vertical, 12)
+                    .padding(.horizontal, 20)
+                    .background(Color.black.opacity(0.75))
+                    .clipShape(Capsule())
+                    .shadow(radius: 10)
+
+                    Spacer()
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 20)
+                .padding(.top, 5)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(1)
             }
-            .padding(.vertical)
         }
-        
-        if showCopyToast {
-            VStack {
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.white)
-                    Text(toastMessage)
-                        .foregroundColor(.white)
-                        .fontWeight(.semibold)
-                }
-                .padding(.vertical, 12)
-                .padding(.horizontal, 20)
-                .background(Color.black.opacity(0.75))
-                .clipShape(Capsule())
-                .shadow(radius: 10)
-                
-                Spacer()
-            }
-            .padding(.top, 5)
-            .transition(.move(edge: .top).combined(with: .opacity))
-            .zIndex(1)
-        }
-    }
-    .toolbar {
-        ToolbarItem(placement: .principal) {
-            // 使用 HStack 将所有信息放在一行
-            HStack(spacing: 8) {
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 2) {
                 Text(sourceName.replacingOccurrences(of: "_", with: " "))
                     .font(.headline)
-                    .lineLimit(1) // 确保不会换行
-                    .truncationMode(.tail) // 如果太长，用...结尾
-
-                Text(formatMonthDay(from: article.timestamp))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                // 将未读数放在括号里，更紧凑
-                if unreadCount > 0 {
-                    Text("(\(unreadCount))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                HStack(spacing: 8) {
+                    Text("\(unreadCount) unread")
+                    Text(formatMonthDay(from: article.timestamp))
                 }
+                .font(.caption)
+                .foregroundColor(.secondary)
             }
-        }
-        ToolbarItem(placement: .navigationBarTrailing) {
-            HStack {
-                Button(action: {
-                    if audioPlayerManager.isPlaybackActive {
-                        audioPlayerManager.stop()
-                    } else {
-                        let fullText = paragraphs.joined(separator: "\n\n")
-                        audioPlayerManager.startPlayback(text: fullText)
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                HStack {
+                    Button(action: {
+                        if audioPlayerManager.isPlaybackActive {
+                            audioPlayerManager.stop()
+                        } else {
+                            let fullText = paragraphs.joined(separator: "\n\n")
+                            audioPlayerManager.startPlayback(text: fullText)
+                        }
+                    }) {
+                        Image(systemName: audioPlayerManager.isPlaybackActive ? "speaker.slash.fill" : "speaker.wave.2.fill")
                     }
-                }) {
-                    Image(systemName: audioPlayerManager.isPlaybackActive ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .disabled(audioPlayerManager.isSynthesizing)
+
+                    Button { isSharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
                 }
-                .disabled(audioPlayerManager.isSynthesizing)
-                
-                Button { isSharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
             }
         }
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $isSharePresented) {
+            let shareText = article.topic + "\n\n" + paragraphs.joined(separator: "\n\n")
+            ActivityView(activityItems: [shareText])
+                .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+        }
     }
-    .navigationBarTitleDisplayMode(.inline)
-    .sheet(isPresented: $isSharePresented) {
-        let shareText = article.topic + "\n\n" + paragraphs.joined(separator: "\n\n")
-        ActivityView(activityItems: [shareText])
-            .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
-    }
-}
 
 private func formatMonthDay(from timestamp: String) -> String {
     let input = DateFormatter()
@@ -193,13 +194,11 @@ private func formatMonthDay(from timestamp: String) -> String {
         return timestamp
     }
     let output = DateFormatter()
-    // 将格式字符串修改为 "M.dd"
-    output.dateFormat = "M.dd"
-    // 对于纯数字格式，locale 不再是必须的，但保留也无妨
+    output.dateFormat = "MMMM d"
     output.locale = Locale(identifier: "en_US_POSIX")
     return output.string(from: date)
 }
-    
+
 private func formatDate(from timestamp: String) -> String {
     let inputFormatter = DateFormatter()
     inputFormatter.dateFormat = "yyMMdd"
