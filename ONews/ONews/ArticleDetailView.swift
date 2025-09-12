@@ -242,7 +242,11 @@ private struct ContentBody: View {
                     .font(.caption).foregroundColor(.gray)
 
                 Text(article.topic)
-                    .font(.system(.title, design: .serif)).fontWeight(.bold)
+                .font(.system(.title, design: .serif))
+                .fontWeight(.bold)
+                .lineLimit(nil) // 或 .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
 
                 Text(sourceName.replacingOccurrences(of: "_", with: " "))
                     .font(.subheadline).foregroundColor(.gray)
