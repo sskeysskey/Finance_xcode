@@ -39,10 +39,6 @@ struct ArticleListView: View {
     
     @State private var filterMode: ArticleFilterMode = .unread
     
-    // 编程式导航用状态（新写法）
-    @State private var showFirstTarget = false
-    @State private var firstTargetArticle: Article?
-    
     private var filteredArticles: [Article] {
         source.articles.filter { filterMode == .unread ? !$0.isRead : $0.isRead }
     }
@@ -104,16 +100,6 @@ struct ArticleListView: View {
             .listStyle(PlainListStyle())
             .navigationTitle(source.name.replacingOccurrences(of: "_", with: " "))
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        navigateToFirstAndAutoplay(in: filteredArticles, sourceName: source.name)
-                    } label: {
-                        Image(systemName: "speaker.wave.2.fill")
-                    }
-                    .accessibilityLabel("朗读此列表")
-                }
-            }
             
             Picker("Filter", selection: $filterMode) {
                 ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
@@ -125,19 +111,6 @@ struct ArticleListView: View {
             .padding([.horizontal, .bottom])
         }
         .background(Color.viewBackground.ignoresSafeArea())
-        // 新导航目的地（替代废弃 API）
-        .navigationDestination(isPresented: $showFirstTarget) {
-            if let target = firstTargetArticle {
-                ArticleContainerView(
-                    article: target,
-                    sourceName: source.name,
-                    context: .fromSource(source.name),
-                    viewModel: viewModel
-                )
-            } else {
-                EmptyView()
-            }
-        }
     }
     
     private func formatTimestamp(_ timestamp: String) -> String {
@@ -148,29 +121,12 @@ struct ArticleListView: View {
         formatter.dateFormat = "yyyy年M月d日, EEEE"
         return formatter.string(from: date)
     }
-    
-    // 跳转到列表首篇（优先未读），并请求自动播放
-    private func navigateToFirstAndAutoplay(in visibleList: [Article], sourceName: String) {
-        guard !visibleList.isEmpty else { return }
-        // 优先第一篇未读，否则就第一篇
-        let target = visibleList.first(where: { !$0.isRead }) ?? visibleList.first!
-        self.firstTargetArticle = target
-        self.showFirstTarget = true
-        // 等待导航入栈后，发送自动播放请求
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            NotificationCenter.default.post(name: .onewsAutoPlayRequest, object: nil, userInfo: ["articleID": target.id])
-        }
-    }
 }
 
 // ==================== 所有文章列表 ====================
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @State private var filterMode: ArticleFilterMode = .unread
-    
-    // 编程式导航用状态（新写法）
-    @State private var showFirstTarget = false
-    @State private var firstTarget: (article: Article, sourceName: String)?
     
     private var filteredArticles: [(article: Article, sourceName: String)] {
         viewModel.allArticlesSortedForDisplay.filter { item in
@@ -239,16 +195,6 @@ struct AllArticlesListView: View {
             }
             .listStyle(PlainListStyle())
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        navigateToFirstAndAutoplayInAll()
-                    } label: {
-                        Image(systemName: "speaker.wave.2.fill")
-                    }
-                    .accessibilityLabel("朗读此列表")
-                }
-            }
             
             Picker("Filter", selection: $filterMode) {
                 ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
@@ -260,19 +206,6 @@ struct AllArticlesListView: View {
             .padding([.horizontal, .bottom])
         }
         .background(Color.viewBackground.ignoresSafeArea())
-        // 新导航目的地（替代废弃 API）
-        .navigationDestination(isPresented: $showFirstTarget) {
-            if let target = firstTarget {
-                ArticleContainerView(
-                    article: target.article,
-                    sourceName: target.sourceName,
-                    context: .fromAllArticles,
-                    viewModel: viewModel
-                )
-            } else {
-                EmptyView()
-            }
-        }
     }
     
     private func formatTimestamp(_ timestamp: String) -> String {
@@ -282,16 +215,5 @@ struct AllArticlesListView: View {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy年M月d日, EEEE"
         return formatter.string(from: date)
-    }
-    
-    // 跳转到首篇（优先未读），并请求自动播放（All 视图）
-    private func navigateToFirstAndAutoplayInAll() {
-        guard !filteredArticles.isEmpty else { return }
-        let target = filteredArticles.first(where: { !$0.article.isRead }) ?? filteredArticles.first!
-        self.firstTarget = target
-        self.showFirstTarget = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            NotificationCenter.default.post(name: .onewsAutoPlayRequest, object: nil, userInfo: ["articleID": target.article.id])
-        }
     }
 }

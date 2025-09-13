@@ -17,9 +17,6 @@ struct ArticleContainerView: View {
     @State private var showNoNextToast = false
     @State private var isMiniPlayerCollapsed = false
 
-    // 保留但当前不依赖通知去启动自动播放
-    @State private var pendingAutoPlayRequestID: UUID?
-
     enum NavigationContext {
         case fromSource(String)
         case fromAllArticles
@@ -108,13 +105,6 @@ struct ArticleContainerView: View {
             }
         }
         .onAppear {
-            NotificationCenter.default.addObserver(forName: .onewsAutoPlayRequest, object: nil, queue: .main) { notif in
-                guard let targetID = notif.userInfo?["articleID"] as? UUID else { return }
-                if targetID == self.currentArticle.id {
-                    startAutoPlaybackForCurrentArticle()
-                }
-            }
-
             audioPlayerManager.onNextRequested = {
                 // 自然结束或远程“下一曲”，容器依据开关决定是否自动播放下一篇（继续使用原函数）
                 let shouldAutoplay = audioPlayerManager.isAutoPlayEnabled
@@ -127,7 +117,6 @@ struct ArticleContainerView: View {
         .onDisappear {
             // 离开详情页才彻底停止与反激活会话
             audioPlayerManager.stop()
-            NotificationCenter.default.removeObserver(self, name: .onewsAutoPlayRequest, object: nil)
 
             if !currentArticle.isRead {
                 readArticleIDsInThisSession.insert(currentArticle.id)
@@ -149,23 +138,12 @@ struct ArticleContainerView: View {
         .background(Color.viewBackground.ignoresSafeArea())
     }
 
-    private func startAutoPlaybackForCurrentArticle() {
-        let paragraphs = self.currentArticle.article
-            .components(separatedBy: .newlines)
-            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        let fullText = paragraphs.joined(separator: "\n\n")
-        audioPlayerManager.isAutoPlayEnabled = true
-        audioPlayerManager.startPlayback(text: fullText, title: self.currentArticle.topic)
-    }
-
     // MARK: - 新增函数
     /// 此函数专门用于处理文章详情页底部的“阅读下一篇”按钮点击事件。
     /// 它会立即、彻底地停止音频播放，并切换到下一篇文章，但不会自动开始播放。
     private func switchToNextArticleAndStopAudio() {
         // 关键：调用 stop() 彻底终止音频会话，这将导致播放器UI消失。
         audioPlayerManager.stop()
-
-        // --- 以下逻辑与原函数类似，用于查找并切换文章 ---
 
         // 标记已读并更新计数
         if let currentInVM = viewModel.sources.flatMap({ $0.articles }).first(where: { $0.id == currentArticle.id }) {
@@ -274,8 +252,4 @@ struct ToastView: View {
             .padding(.bottom, 50)
             .transition(.opacity.animation(.easeInOut))
     }
-}
-
-extension Notification.Name {
-    static let onewsAutoPlayRequest = Notification.Name("ONews.AutoPlayRequest")
 }
