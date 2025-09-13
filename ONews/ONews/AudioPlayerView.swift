@@ -538,6 +538,30 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         let seconds = Int(time) % 60
         return String(format: "%02d:%02d", minutes, seconds)
     }
+    
+    // --- 新增函数 ---
+    // 移除数字中的千位分隔符，例如 "1,500" -> "1500"
+    private func removeCommasFromNumbers(_ text: String) -> String {
+        // 正则表达式：查找一个数字，后跟一个逗号，再后跟三位数字
+        // (\d) 是捕获组1，(\d{3}) 是捕获组2
+        // 这个模式会匹配 "1,500" 中的 "1,500"，"1,234,567" 中的 "1,234" 和 "4,567"
+        let pattern = #"(\d),(\d{3})"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return text
+        }
+        
+        var result = text
+        // 循环替换，直到找不到更多匹配项为止
+        // 这对于处理多个分隔符（如 "1,234,567"）是必要的
+        while regex.firstMatch(in: result, range: NSRange(result.startIndex..., in: result)) != nil {
+            result = regex.stringByReplacingMatches(
+                in: result,
+                range: NSRange(result.startIndex..., in: result),
+                withTemplate: "$1$2" // 将 "数字,三位数字" 替换为 "数字三位数字"
+            )
+        }
+        return result
+    }
 
     // 将阿拉伯数字年份转为逐位中文数字：1944 -> 一九四四
     private func formatYearToPinyinDigits(_ year: String) -> String {
@@ -597,21 +621,22 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     private func preprocessText(_ text: String) -> String {
-        // 先进行英文及符号的通用处理
-        let processedSpecialTerms = processEnglishText(text)
+        // --- 修改点 ---
+        // 第一步：移除数字中的千位分隔符，解决 "1,500" 读成 "一，五百" 的问题
+        let textWithoutCommas = removeCommasFromNumbers(text)
+        
+        // 后续处理都基于移除了逗号的文本
+        let processedSpecialTerms = processEnglishText(textWithoutCommas)
 
         // 特化：处理“1944-1947年”→“一九四四到1947年”
         let withChineseYearRange = replaceYearRangesForChinese(processedSpecialTerms)
 
-        // --- 修改点 ---
         // 新增：将所有以 "20" 开头的四位数字（如 2024）转为逐位朗读
         let withModernYears = replaceModernYearsForChinese(withChineseYearRange)
-        // --- 修改点结束 ---
 
         // 中英夹杂在汉字和英文之间加逗号，便于中文 TTS 断句
         let pattern = "([\\u4e00-\\u9fa5])(\\s*[a-zA-Z]+\\s*)([\\u4e00-\\u9fa5])"
         let regex = try? NSRegularExpression(pattern: pattern, options: [])
-        // 使用修改后的 `withModernYears` 变量
         let range = NSRange(withModernYears.startIndex..<withModernYears.endIndex, in: withModernYears)
         let modifiedText = regex?.stringByReplacingMatches(
             in: withModernYears,
@@ -687,6 +712,9 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "OpenAI": "Open.A.I",
             "SDK": "S.D.K",
             "iOS": "i O S",
+            "PSA": "P.S.A",
+            "Jeep": "吉普",
+            "EV": "电动车",
             "iPhone": "i Phone",
             "iPad": "i Pad",
             "macOS": "mac O S",
