@@ -92,7 +92,7 @@ struct ArticleListView: View {
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false   // 表示当前是否显示搜索结果
 
-    // 基础过滤（仅按已读/未读）——用于非搜索态
+    // 基础过滤（仅按已读/未读）----用于非搜索态
     private var baseFilteredArticles: [Article] {
         source.articles.filter { filterMode == .unread ? !$0.isRead : $0.isRead }
     }
@@ -139,14 +139,17 @@ struct ArticleListView: View {
         return source.articles.filter { $0.topic.lowercased().contains(keyword) }
     }
 
-    // 搜索态分组（注意搜索时不按 filterMode 限制，但 Section 顺序仍沿用当前模式习惯：未读升序、已读降序）
+    // 搜索态分组（固定为最新在前）
     private func groupedSearchByTimestamp() -> [String: [Article]] {
-        let initial = Dictionary(grouping: searchResults, by: { $0.timestamp })
-        if filterMode == .read {
-            return initial.mapValues { Array($0.reversed()) }
-        } else {
-            return initial
-        }
+        var initial = Dictionary(grouping: searchResults, by: { $0.timestamp })
+        // 每个分组内也按“最新在前”排序：假设 source.articles 原本按时间升序，这里反转
+        initial = initial.mapValues { Array($0.reversed()) }
+        return initial
+    }
+
+    // 搜索态的时间戳顺序：固定为降序（最新在前）
+    private func sortedSearchTimestamps(for groups: [String: [Article]]) -> [String] {
+        return groups.keys.sorted(by: >)
     }
 
     var body: some View {
@@ -169,9 +172,9 @@ struct ArticleListView: View {
 
             List {
                 if isSearchActive {
-                    // 搜索结果按日期分组显示（合并已读+未读）
+                    // 搜索结果按日期分组显示（固定最新在上）
                     let grouped = groupedSearchByTimestamp()
-                    let timestamps = sortedTimestamps(for: grouped)
+                    let timestamps = sortedSearchTimestamps(for: grouped)
 
                     if searchResults.isEmpty {
                         Section {
@@ -218,24 +221,8 @@ struct ArticleListView: View {
                                         } else {
                                             Button { viewModel.markAsRead(articleID: article.id) }
                                             label: { Label("标记为已读", systemImage: "checkmark.circle") }
-                                            // 搜索态下也提供批量操作（对“搜索可见列表”生效）
-                                            Divider()
-                                            Button {
-                                                viewModel.markAllAboveAsRead(
-                                                    articleID: article.id,
-                                                    inVisibleList: searchResults
-                                                )
-                                            }
-                                            label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
-
-                                            Button {
-                                                viewModel.markAllBelowAsRead(
-                                                    articleID: article.id,
-                                                    inVisibleList: searchResults
-                                                )
-                                            }
-                                            label: { Label("以下全部已读", systemImage: "arrow.down.to.line.compact") }
                                         }
+                                        // 搜索态下不显示“以上/以下全部已读”
                                     }
                                 }
                             }
@@ -343,14 +330,14 @@ struct AllArticlesListView: View {
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
 
-    // 基础过滤（仅按已读/未读）——用于非搜索态
+    // 基础过滤（仅按已读/未读）----用于非搜索态
     private var baseFilteredArticles: [(article: Article, sourceName: String)] {
         viewModel.allArticlesSortedForDisplay.filter { item in
             filterMode == .unread ? !item.article.isRead : item.article.isRead
         }
     }
 
-    // 分组（通用）——用于非搜索态
+    // 分组（通用）----用于非搜索态
     private func groupedByTimestamp(_ items: [(article: Article, sourceName: String)]) -> [String: [(article: Article, sourceName: String)]] {
         let initial = Dictionary(grouping: items, by: { $0.article.timestamp })
         if filterMode == .read {
@@ -391,14 +378,17 @@ struct AllArticlesListView: View {
         return viewModel.allArticlesSortedForDisplay.filter { $0.article.topic.lowercased().contains(keyword) }
     }
 
-    // 搜索态分组（合并已读+未读；顺序仍随当前模式：未读升序、已读降序）
+    // 搜索态分组（固定为最新在前）
     private func groupedSearchByTimestamp() -> [String: [(article: Article, sourceName: String)]] {
-        let initial = Dictionary(grouping: searchResults, by: { $0.article.timestamp })
-        if filterMode == .read {
-            return initial.mapValues { Array($0.reversed()) }
-        } else {
-            return initial
-        }
+        var initial = Dictionary(grouping: searchResults, by: { $0.article.timestamp })
+        // 每个分组内按最新在前
+        initial = initial.mapValues { Array($0.reversed()) }
+        return initial
+    }
+
+    // 搜索态的时间戳顺序：固定为降序（最新在前）
+    private func sortedSearchTimestamps(for groups: [String: [(article: Article, sourceName: String)]]) -> [String] {
+        return groups.keys.sorted(by: >)
     }
 
     var body: some View {
@@ -421,9 +411,9 @@ struct AllArticlesListView: View {
 
             List {
                 if isSearchActive {
-                    // 搜索结果按日期分组显示（合并已读+未读）
+                    // 搜索结果按日期分组显示（固定最新在上）
                     let grouped = groupedSearchByTimestamp()
-                    let timestamps = sortedTimestamps(for: grouped)
+                    let timestamps = sortedSearchTimestamps(for: grouped)
 
                     if searchResults.isEmpty {
                         Section {
@@ -470,20 +460,8 @@ struct AllArticlesListView: View {
                                         } else {
                                             Button { viewModel.markAsRead(articleID: item.article.id) }
                                             label: { Label("标记为已读", systemImage: "checkmark.circle") }
-                                            // 搜索态下也提供批量操作（对“搜索可见列表”生效）
-                                            Divider()
-                                            Button {
-                                                let visibleArticleList = searchResults.map { $0.article }
-                                                viewModel.markAllAboveAsRead(articleID: item.article.id, inVisibleList: visibleArticleList)
-                                            }
-                                            label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
-
-                                            Button {
-                                                let visibleArticleList = searchResults.map { $0.article }
-                                                viewModel.markAllBelowAsRead(articleID: item.article.id, inVisibleList: visibleArticleList)
-                                            }
-                                            label: { Label("以下全部已读", systemImage: "arrow.down.to.line.compact") }
                                         }
+                                        // 搜索态下不显示“以上/以下全部已读”
                                     }
                                 }
                             }
