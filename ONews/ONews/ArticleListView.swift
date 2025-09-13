@@ -54,7 +54,7 @@ struct ArticleRowCardView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            
+
             Text(article.topic)
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(article.isRead ? .secondary : .primary)
@@ -72,7 +72,7 @@ struct ArticleRowCardView: View {
 struct ArticleListView: View {
     let source: NewsSource
     @ObservedObject var viewModel: NewsViewModel
-    
+
     @State private var filterMode: ArticleFilterMode = .unread
 
     // 搜索相关状态
@@ -80,15 +80,40 @@ struct ArticleListView: View {
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false   // 表示当前是否显示搜索结果
 
-    private var filteredArticles: [Article] {
+    // 基础过滤（仅按已读/未读）
+    private var baseFilteredArticles: [Article] {
         source.articles.filter { filterMode == .unread ? !$0.isRead : $0.isRead }
     }
+
+    // 应用于列表展示（非搜索态）的分组和排序
     private var groupedArticles: [String: [Article]] {
-        Dictionary(grouping: filteredArticles, by: { $0.timestamp })
+        // 先按 timestamp 分组
+        let initialGrouping = Dictionary(grouping: baseFilteredArticles, by: { $0.timestamp })
+
+        // 已读模式下，反转每天内部文章顺序（假设原顺序为时间升序）
+        if filterMode == .read {
+            return initialGrouping.mapValues { articles in
+                Array(articles.reversed())
+            }
+        } else {
+            return initialGrouping
+        }
     }
+
+    // Section 的日期顺序：已读时降序，未读时升序
     private var sortedTimestamps: [String] {
-        groupedArticles.keys.sorted()
+        if filterMode == .read {
+            return groupedArticles.keys.sorted(by: >)
+        } else {
+            return groupedArticles.keys.sorted(by: <)
+        }
     }
+
+    // 用于上下文菜单“以上/以下全部已读”的可见列表（非搜索态使用）
+    private var filteredArticles: [Article] {
+        baseFilteredArticles
+    }
+
     private var unreadCount: Int { source.articles.filter { !$0.isRead }.count }
     private var readCount: Int { source.articles.filter { $0.isRead }.count }
 
@@ -98,7 +123,7 @@ struct ArticleListView: View {
             return []
         }
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return filteredArticles.filter { $0.topic.lowercased().contains(keyword) }
+        return baseFilteredArticles.filter { $0.topic.lowercased().contains(keyword) }
     }
 
     var body: some View {
@@ -158,7 +183,7 @@ struct ArticleListView: View {
                                                 viewModel.markAllAboveAsRead(articleID: article.id, inVisibleList: self.filteredArticles)
                                             }
                                             label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
-                                            
+
                                             Button {
                                                 viewModel.markAllBelowAsRead(articleID: article.id, inVisibleList: self.filteredArticles)
                                             }
@@ -201,7 +226,7 @@ struct ArticleListView: View {
                                                 viewModel.markAllAboveAsRead(articleID: article.id, inVisibleList: self.filteredArticles)
                                             }
                                             label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
-                                            
+
                                             Button {
                                                 viewModel.markAllBelowAsRead(articleID: article.id, inVisibleList: self.filteredArticles)
                                             }
@@ -234,7 +259,7 @@ struct ArticleListView: View {
                     .accessibilityLabel("搜索")
                 }
             }
-            
+
             // 仅非搜索结果时显示筛选器
             if !isSearchActive {
                 Picker("Filter", selection: $filterMode) {
@@ -249,7 +274,7 @@ struct ArticleListView: View {
         }
         .background(Color.viewBackground.ignoresSafeArea())
     }
-    
+
     private func formatTimestamp(_ timestamp: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyMMdd"
@@ -270,20 +295,40 @@ struct AllArticlesListView: View {
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
 
-    private var filteredArticles: [(article: Article, sourceName: String)] {
+    // 基础过滤（仅按已读/未读）
+    private var baseFilteredArticles: [(article: Article, sourceName: String)] {
         viewModel.allArticlesSortedForDisplay.filter { item in
             filterMode == .unread ? !item.article.isRead : item.article.isRead
         }
     }
-    
+
+    // 应用于列表展示（非搜索态）的分组和排序
     private var groupedArticles: [String: [(article: Article, sourceName: String)]] {
-        Dictionary(grouping: filteredArticles, by: { $0.article.timestamp })
+        let initialGrouping = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
+
+        if filterMode == .read {
+            return initialGrouping.mapValues { items in
+                Array(items.reversed())
+            }
+        } else {
+            return initialGrouping
+        }
     }
-    
+
+    // Section 的日期顺序：已读时降序，未读时升序
     private var sortedTimestamps: [String] {
-        groupedArticles.keys.sorted()
+        if filterMode == .read {
+            return groupedArticles.keys.sorted(by: >)
+        } else {
+            return groupedArticles.keys.sorted(by: <)
+        }
     }
-    
+
+    // 用于上下文菜单“以上/以下全部已读”的可见列表（非搜索态使用）
+    private var filteredArticles: [(article: Article, sourceName: String)] {
+        baseFilteredArticles
+    }
+
     private var totalUnreadCount: Int { viewModel.totalUnreadCount }
     private var totalReadCount: Int { viewModel.sources.flatMap { $0.articles }.filter { $0.isRead }.count }
 
@@ -293,9 +338,9 @@ struct AllArticlesListView: View {
             return []
         }
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return filteredArticles.filter { $0.article.topic.lowercased().contains(keyword) }
+        return baseFilteredArticles.filter { $0.article.topic.lowercased().contains(keyword) }
     }
-    
+
     var body: some View {
         VStack(spacing: 0) {
             if isSearching {
@@ -354,7 +399,7 @@ struct AllArticlesListView: View {
                                                 viewModel.markAllAboveAsRead(articleID: item.article.id, inVisibleList: visibleArticleList)
                                             }
                                             label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
-                                            
+
                                             Button {
                                                 let visibleArticleList = self.filteredArticles.map { $0.article }
                                                 viewModel.markAllBelowAsRead(articleID: item.article.id, inVisibleList: visibleArticleList)
@@ -399,7 +444,7 @@ struct AllArticlesListView: View {
                                                 viewModel.markAllAboveAsRead(articleID: item.article.id, inVisibleList: visibleArticleList)
                                             }
                                             label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
-                                            
+
                                             Button {
                                                 let visibleArticleList = self.filteredArticles.map { $0.article }
                                                 viewModel.markAllBelowAsRead(articleID: item.article.id, inVisibleList: visibleArticleList)
@@ -431,7 +476,7 @@ struct AllArticlesListView: View {
                     .accessibilityLabel("搜索")
                 }
             }
-            
+
             if !isSearchActive {
                 Picker("Filter", selection: $filterMode) {
                     ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
@@ -445,7 +490,7 @@ struct AllArticlesListView: View {
         }
         .background(Color.viewBackground.ignoresSafeArea())
     }
-    
+
     private func formatTimestamp(_ timestamp: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyMMdd"
