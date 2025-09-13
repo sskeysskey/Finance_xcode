@@ -39,47 +39,19 @@ struct ArticleListView: View {
     
     @State private var filterMode: ArticleFilterMode = .unread
     
-    // MARK: - 搜索状态
-    @State private var searchText = ""
-    @State private var isSearchActive = false
+    // 编程式导航用状态（新写法）
+    @State private var showFirstTarget = false
+    @State private var firstTargetArticle: Article?
     
     private var filteredArticles: [Article] {
-        let articlesByFilterMode = source.articles.filter { filterMode == .unread ? !$0.isRead : $0.isRead }
-        
-        if searchText.isEmpty {
-            return articlesByFilterMode
-        } else {
-            return articlesByFilterMode.filter { $0.topic.localizedCaseInsensitiveContains(searchText) }
-        }
+        source.articles.filter { filterMode == .unread ? !$0.isRead : $0.isRead }
     }
-    
-    // MARK: - 主要修改点 (ArticleListView)
-    // 在这里根据 filterMode 改变组内文章的排序
     private var groupedArticles: [String: [Article]] {
-        let initialGrouping = Dictionary(grouping: filteredArticles, by: { $0.timestamp })
-        
-        if filterMode == .read {
-            // 对于“已读”列表，反转每天内部的文章顺序，使最新的文章排在最前面。
-            return initialGrouping.mapValues { articles in
-                Array(articles.reversed())
-            }
-        } else {
-            // 对于“未读”列表，保持默认顺序（通常是时间升序）。
-            return initialGrouping
-        }
+        Dictionary(grouping: filteredArticles, by: { $0.timestamp })
     }
-    
-    // 这个属性负责对日期 Section 进行排序，保持不变
     private var sortedTimestamps: [String] {
-        if filterMode == .read {
-            // 对于“已读”列表，让最新的日期（更大的字符串）排在前面
-            return groupedArticles.keys.sorted(by: >)
-        } else {
-            // 对于“未读”列表，保持原来的排序，最老的日期在前面
-            return groupedArticles.keys.sorted(by: <)
-        }
+        groupedArticles.keys.sorted()
     }
-    
     private var unreadCount: Int { source.articles.filter { !$0.isRead }.count }
     private var readCount: Int { source.articles.filter { $0.isRead }.count }
 
@@ -92,7 +64,6 @@ struct ArticleListView: View {
                                 .foregroundColor(.blue.opacity(0.7))
                                 .padding(.vertical, 4)
                     ) {
-                        // ForEach 会使用 groupedArticles 中已经排好序的数组
                         ForEach(groupedArticles[timestamp] ?? []) { article in
                             NavigationLink(destination: ArticleContainerView(
                                 article: article,
@@ -136,11 +107,11 @@ struct ArticleListView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
-                        isSearchActive = true
+                        navigateToFirstAndAutoplay(in: filteredArticles, sourceName: source.name)
                     } label: {
-                        Image(systemName: "magnifyingglass")
+                        Image(systemName: "speaker.wave.2.fill")
                     }
-                    .accessibilityLabel("搜索")
+                    .accessibilityLabel("朗读此列表")
                 }
             }
             
@@ -154,7 +125,19 @@ struct ArticleListView: View {
             .padding([.horizontal, .bottom])
         }
         .background(Color.viewBackground.ignoresSafeArea())
-        .searchable(text: $searchText, isPresented: $isSearchActive, placement: .navigationBarDrawer, prompt: "搜索文章标题")
+        // 新导航目的地（替代废弃 API）
+        .navigationDestination(isPresented: $showFirstTarget) {
+            if let target = firstTargetArticle {
+                ArticleContainerView(
+                    article: target,
+                    sourceName: source.name,
+                    context: .fromSource(source.name),
+                    viewModel: viewModel
+                )
+            } else {
+                EmptyView()
+            }
+        }
     }
     
     private func formatTimestamp(_ timestamp: String) -> String {
@@ -165,6 +148,19 @@ struct ArticleListView: View {
         formatter.dateFormat = "yyyy年M月d日, EEEE"
         return formatter.string(from: date)
     }
+    
+    // 跳转到列表首篇（优先未读），并请求自动播放
+    private func navigateToFirstAndAutoplay(in visibleList: [Article], sourceName: String) {
+        guard !visibleList.isEmpty else { return }
+        // 优先第一篇未读，否则就第一篇
+        let target = visibleList.first(where: { !$0.isRead }) ?? visibleList.first!
+        self.firstTargetArticle = target
+        self.showFirstTarget = true
+        // 等待导航入栈后，发送自动播放请求
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            NotificationCenter.default.post(name: .onewsAutoPlayRequest, object: nil, userInfo: ["articleID": target.id])
+        }
+    }
 }
 
 // ==================== 所有文章列表 ====================
@@ -172,47 +168,22 @@ struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @State private var filterMode: ArticleFilterMode = .unread
     
-    // MARK: - 搜索状态
-    @State private var searchText = ""
-    @State private var isSearchActive = false
+    // 编程式导航用状态（新写法）
+    @State private var showFirstTarget = false
+    @State private var firstTarget: (article: Article, sourceName: String)?
     
     private var filteredArticles: [(article: Article, sourceName: String)] {
-        let articlesByFilterMode = viewModel.allArticlesSortedForDisplay.filter { item in
+        viewModel.allArticlesSortedForDisplay.filter { item in
             filterMode == .unread ? !item.article.isRead : item.article.isRead
         }
-        
-        if searchText.isEmpty {
-            return articlesByFilterMode
-        } else {
-            return articlesByFilterMode.filter { $0.article.topic.localizedCaseInsensitiveContains(searchText) }
-        }
     }
     
-    // MARK: - 主要修改点 (AllArticlesListView)
-    // 在这里也根据 filterMode 改变组内文章的排序
     private var groupedArticles: [String: [(article: Article, sourceName: String)]] {
-        let initialGrouping = Dictionary(grouping: filteredArticles, by: { $0.article.timestamp })
-        
-        if filterMode == .read {
-            // 对于“已读”列表，反转每天内部的文章顺序，使最新的文章排在最前面。
-            return initialGrouping.mapValues { items in
-                Array(items.reversed())
-            }
-        } else {
-            // 对于“未读”列表，保持默认顺序。
-            return initialGrouping
-        }
+        Dictionary(grouping: filteredArticles, by: { $0.article.timestamp })
     }
     
-    // 这个属性负责对日期 Section 进行排序，保持不变
     private var sortedTimestamps: [String] {
-        if filterMode == .read {
-            // 对于“已读”列表，让最新的日期（更大的字符串）排在前面
-            return groupedArticles.keys.sorted(by: >)
-        } else {
-            // 对于“未读”列表，保持原来的排序，最老的日期在前面
-            return groupedArticles.keys.sorted(by: <)
-        }
+        groupedArticles.keys.sorted()
     }
     
     private var totalUnreadCount: Int { viewModel.totalUnreadCount }
@@ -227,7 +198,6 @@ struct AllArticlesListView: View {
                                 .foregroundColor(.blue.opacity(0.7))
                                 .padding(.vertical, 4)
                     ) {
-                        // ForEach 会使用 groupedArticles 中已经排好序的元组数组
                         ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
                             NavigationLink(destination: ArticleContainerView(
                                 article: item.article,
@@ -272,11 +242,11 @@ struct AllArticlesListView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
-                        isSearchActive = true
+                        navigateToFirstAndAutoplayInAll()
                     } label: {
-                        Image(systemName: "magnifyingglass")
+                        Image(systemName: "speaker.wave.2.fill")
                     }
-                    .accessibilityLabel("搜索")
+                    .accessibilityLabel("朗读此列表")
                 }
             }
             
@@ -290,7 +260,19 @@ struct AllArticlesListView: View {
             .padding([.horizontal, .bottom])
         }
         .background(Color.viewBackground.ignoresSafeArea())
-        .searchable(text: $searchText, isPresented: $isSearchActive, placement: .navigationBarDrawer, prompt: "搜索文章标题")
+        // 新导航目的地（替代废弃 API）
+        .navigationDestination(isPresented: $showFirstTarget) {
+            if let target = firstTarget {
+                ArticleContainerView(
+                    article: target.article,
+                    sourceName: target.sourceName,
+                    context: .fromAllArticles,
+                    viewModel: viewModel
+                )
+            } else {
+                EmptyView()
+            }
+        }
     }
     
     private func formatTimestamp(_ timestamp: String) -> String {
@@ -300,5 +282,16 @@ struct AllArticlesListView: View {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy年M月d日, EEEE"
         return formatter.string(from: date)
+    }
+    
+    // 跳转到首篇（优先未读），并请求自动播放（All 视图）
+    private func navigateToFirstAndAutoplayInAll() {
+        guard !filteredArticles.isEmpty else { return }
+        let target = filteredArticles.first(where: { !$0.article.isRead }) ?? filteredArticles.first!
+        self.firstTarget = target
+        self.showFirstTarget = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            NotificationCenter.default.post(name: .onewsAutoPlayRequest, object: nil, userInfo: ["articleID": target.article.id])
+        }
     }
 }
