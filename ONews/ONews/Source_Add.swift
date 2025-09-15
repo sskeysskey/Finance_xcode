@@ -81,10 +81,10 @@ struct AddSourceView: View {
                 .ignoresSafeArea()
                 .overlay(Color.black.opacity(0.4).ignoresSafeArea())
 
-            VStack {
+            // 主内容：当加载或出错时，展示覆盖层；正常时展示列表
+            Group {
                 if isLoading {
                     ProgressView("正在加载新闻源...")
-                        .frame(maxHeight: .infinity)
                         .tint(.white)
                         .foregroundColor(.white)
                 } else if let error = errorMessage {
@@ -97,85 +97,94 @@ struct AddSourceView: View {
                             .padding()
                             .foregroundColor(.white)
                     }
-                    .frame(maxHeight: .infinity)
                 } else {
-                    List(allAvailableSources, id: \.self) { sourceName in
-                        HStack {
-                            Text(sourceName)
-                                .fontWeight(.medium)
-                                .foregroundColor(.white)
+                    // 使用 List 承载所有行，并把“确定”按钮放到列表底部的 Section 页脚
+                    List {
+                        ForEach(allAvailableSources, id: \.self) { sourceName in
+                            HStack {
+                                Text(sourceName)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.white)
 
-                            Spacer()
-                            
-                            if subscriptionManager.isSubscribed(to: sourceName) {
-                                Text("已添加")
-                                    .font(.caption)
-                                    .foregroundColor(.white.opacity(0.8))
-                                    .padding(.trailing, 8)
+                                Spacer()
                                 
-                                Button(action: {
-                                    subscriptionManager.removeSubscription(sourceName)
-                                }) {
-                                    Image(systemName: "minus.circle.fill")
-                                        .foregroundColor(.red)
-                                        .font(.title2)
-                                }
-                                .buttonStyle(BorderlessButtonStyle())
+                                if subscriptionManager.isSubscribed(to: sourceName) {
+                                    Text("已添加")
+                                        .font(.caption)
+                                        .foregroundColor(.white.opacity(0.8))
+                                        .padding(.trailing, 8)
+                                    
+                                    Button(action: {
+                                        subscriptionManager.removeSubscription(sourceName)
+                                    }) {
+                                        Image(systemName: "minus.circle.fill")
+                                            .foregroundColor(.red)
+                                            .font(.title2)
+                                    }
+                                    .buttonStyle(BorderlessButtonStyle())
 
-                            } else {
-                                Button(action: {
-                                    subscriptionManager.addSubscription(sourceName)
-                                }) {
-                                    Image(systemName: "plus.circle.fill")
-                                        .foregroundColor(.blue)
-                                        .font(.title2)
+                                } else {
+                                    Button(action: {
+                                        subscriptionManager.addSubscription(sourceName)
+                                    }) {
+                                        Image(systemName: "plus.circle.fill")
+                                            .foregroundColor(.blue)
+                                            .font(.title2)
+                                    }
+                                    .buttonStyle(BorderlessButtonStyle())
                                 }
-                                .buttonStyle(BorderlessButtonStyle())
                             }
+                            .padding(.vertical, 8)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                         }
-                        .padding(.vertical, 8)
+                        
+                        // 底部确定按钮：放在列表末尾
+                        Section(footer:
+                            VStack {
+                                Button(action: {
+                                    handleConfirm()
+                                }) {
+                                    Text("确定")
+                                        .font(.headline)
+                                        .foregroundColor(.white)
+                                        .frame(height: 50)
+                                        .frame(maxWidth: .infinity)
+                                        .background(subscriptionManager.subscribedSources.isEmpty ? Color.gray : Color.blue)
+                                        .cornerRadius(10)
+                                }
+                                .disabled(subscriptionManager.subscribedSources.isEmpty)
+                                .padding(.top, 8)
+                            }
+                            .padding(.vertical, 16)
+                        ) {
+                            EmptyView()
+                        }
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
                 }
-
-                // 确定按钮：两种场景的处理
-                Button(action: {
-                    if isFirstTimeSetup {
-                        // 首次设置：进入下一步
-                        onComplete?()
-                    } else {
-                        // 非首次：调用 onConfirm（如果未提供则默认关闭当前页面）
-                        if let onConfirm {
-                            onConfirm()
-                        } else {
-                            presentationMode.wrappedValue.dismiss()
-                        }
-                    }
-                }) {
-                    Text("确定")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(height: 50)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.blue)
-                        .cornerRadius(10)
-                        .padding()
-                }
-                .disabled(subscriptionManager.subscribedSources.isEmpty)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle("添加新闻源")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            // 非首次设置：不再显示“完成”，使用系统返回按钮，保持一致的返回体验
-            if isFirstTimeSetup {
-                // 首次设置不显示返回或完成按钮，由欢迎页的导航控制
+        // 移除右上角“完成”按钮，保留默认返回按钮
+        .onAppear(perform: loadAvailableSources)
+    }
+    
+    private func handleConfirm() {
+        if isFirstTimeSetup {
+            onComplete?()
+        } else {
+            if let onConfirm {
+                onConfirm()
+            } else {
+                presentationMode.wrappedValue.dismiss()
             }
         }
-        .onAppear(perform: loadAvailableSources)
     }
 
     /// 从 Documents 中所有 onews_*.json 文件合并所有分组名（去重、排序）
