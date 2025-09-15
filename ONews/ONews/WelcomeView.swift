@@ -30,25 +30,12 @@ var body: some View {
                         .foregroundColor(.white)
                         .padding(.bottom, 20)
 
-                    Text("点击下方按钮，开始添加您感兴趣的新闻源")
+                    Text("点击右下方按钮\n开始添加您感兴趣的新闻源")
                         .font(.headline)
                         .foregroundColor(.white.opacity(0.8))
 
                     Spacer()
                     
-                    VStack(spacing: 8) {
-                        Text("点击这里开始")
-                            .font(.caption)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.blue)
-                            .cornerRadius(8)
-                        
-                        Image(systemName: "arrow.down")
-                            .font(.title2)
-                            .foregroundColor(.white)
-                    }
                     .offset(y: -20)
                     
                     Button(action: {
