@@ -37,15 +37,15 @@ class ResourceManager: ObservableObject {
         return URLSession(configuration: configuration)
     }()
 
-    // MARK: - 新增：轻量级同步函数 (供 WelcomeView 使用)
+    // MARK: - 修改：轻量级同步函数，下载服务器上所有 onews_*.json 清单
     
-    /// 检查并仅下载最新的新闻清单文件（`onews_*.json`）。
-    /// 此函数为新用户首次启动设计，不下载任何图片资源，以保证快速完成。
-    func checkAndDownloadLatestNewsManifest() async throws {
+    /// 检查并下载服务器端所有的新闻清单文件（`onews_*.json`），按需对比 MD5 决定是否下载。
+    /// 该方法不下载任何图片资源，仅下载所有 JSON。
+    func checkAndDownloadAllNewsManifests() async throws {
         // 1. 初始化状态
         self.isSyncing = true
-        self.isDownloading = false // 此方法不涉及下载阶段的进度条
-        self.syncMessage = "正在获取新闻源列表..."
+        self.isDownloading = false // 此方法不显示文件级进度条
+        self.syncMessage = "正在获取新闻清单列表..."
         self.progressText = ""
         self.downloadProgress = 0.0
         
@@ -53,64 +53,77 @@ class ResourceManager: ObservableObject {
             // 2. 获取服务器版本信息
             let serverVersion = try await getServerVersion()
             
-            // 3. 从服务器文件列表中找到最新的一个 onews_*.json 文件
-            guard let latestJsonInfo = serverVersion.files
-                    .filter({ $0.type == "json" && $0.name.starts(with: "onews_") })
-                    .sorted(by: { $0.name > $1.name }) // 按名称降序排序，第一个就是最新的
-                    .first
-            else {
+            // 3. 过滤出所有 onews_*.json
+            let allJsonInfos = serverVersion.files
+                .filter { $0.type == "json" && $0.name.starts(with: "onews_") }
+                .sorted { $0.name < $1.name } // 仅用于有序处理，顺序无硬性要求
+            
+            if allJsonInfos.isEmpty {
                 print("服务器上未找到任何 'onews_*.json' 文件。")
-                // 即使没找到，也结束同步状态
                 self.isSyncing = false
                 return
             }
             
-            print("找到最新的新闻清单文件: \(latestJsonInfo.name)")
-
-            // 4. 决策：是否需要下载这个最新的JSON文件
-            let localFileURL = documentsDirectory.appendingPathComponent(latestJsonInfo.name)
-            var shouldDownload = false
-
-            if fileManager.fileExists(atPath: localFileURL.path) {
-                // 文件存在，检查MD5是否匹配
-                guard let serverMD5 = latestJsonInfo.md5, let localMD5 = calculateMD5(for: localFileURL) else {
-                    print("警告: 无法获取 \(latestJsonInfo.name) 的 MD5，将强制重新下载。")
+            // 4. 按需下载
+            var tasksToDownload: [FileInfo] = []
+            for jsonInfo in allJsonInfos {
+                let localURL = documentsDirectory.appendingPathComponent(jsonInfo.name)
+                var shouldDownload = false
+                
+                if fileManager.fileExists(atPath: localURL.path) {
+                    if let serverMD5 = jsonInfo.md5, let localMD5 = calculateMD5(for: localURL) {
+                        if serverMD5 != localMD5 {
+                            print("MD5不匹配，需要更新: \(jsonInfo.name)")
+                            shouldDownload = true
+                        } else {
+                            print("已是最新: \(jsonInfo.name)")
+                        }
+                    } else {
+                        print("缺少MD5，强制重新下载: \(jsonInfo.name)")
+                        shouldDownload = true
+                    }
+                } else {
+                    print("本地不存在，准备下载: \(jsonInfo.name)")
                     shouldDownload = true
-                    return
                 }
                 
-                if serverMD5 != localMD5 {
-                    print("MD5不匹配: \(latestJsonInfo.name) (服务器: \(serverMD5), 本地: \(localMD5))。计划更新。")
-                    shouldDownload = true
-                } else {
-                    print("MD5匹配: \(latestJsonInfo.name) 已是最新。")
+                if shouldDownload {
+                    tasksToDownload.append(jsonInfo)
                 }
-            } else {
-                // 文件不存在，直接下载
-                print("新文件: \(latestJsonInfo.name)。计划下载。")
-                shouldDownload = true
             }
             
-            // 5. 执行下载（如果需要）
-            if shouldDownload {
-                self.syncMessage = "正在下载: \(latestJsonInfo.name)..."
-                try await downloadSingleFile(named: latestJsonInfo.name)
-                print("✅ 成功下载了 \(latestJsonInfo.name)")
+            if tasksToDownload.isEmpty {
+                self.syncMessage = "新闻清单已是最新。"
+                try await Task.sleep(nanoseconds: 500_000_000)
+                self.isSyncing = false
+                return
             }
             
-            // 6. 同步完成
-            self.syncMessage = "更新完毕！"
-            try await Task.sleep(nanoseconds: 500_000_000) // 短暂显示完成信息
+            // 5. 执行下载（顺序下载，保持简单）
+            self.isDownloading = true
+            let total = tasksToDownload.count
+            for (index, info) in tasksToDownload.enumerated() {
+                self.progressText = "\(index + 1)/\(total)"
+                self.downloadProgress = Double(index + 1) / Double(total)
+                self.syncMessage = "正在下载: \(info.name)..."
+                try await downloadSingleFile(named: info.name)
+            }
+            
+            // 6. 完成
+            self.isDownloading = false
+            self.syncMessage = "清单更新完成！"
+            self.progressText = ""
+            try await Task.sleep(nanoseconds: 500_000_000)
             self.isSyncing = false
             
         } catch {
-            // 7. 错误处理
             self.isSyncing = false
+            self.isDownloading = false
             throw error
         }
     }
 
-    // MARK: - Main Sync Logic (供 SourceListView 使用，保持不变)
+    // MARK: - Main Sync Logic (供 SourceListView 使用，保持不变 + 新增目录存在性校验)
     
     func checkAndDownloadUpdates() async throws {
         // 1. 初始化状态
@@ -148,7 +161,9 @@ class ResourceManager: ObservableObject {
             var downloadTasks: [(fileInfo: FileInfo, isIncremental: Bool)] = []
             
             let jsonFilesFromServer = serverVersion.files.filter { $0.type == "json" }
+            let imageDirsFromServer = serverVersion.files.filter { $0.type == "images" }
 
+            // 4.1 针对 JSON 的原有规则：MD5 不同则下载 JSON，并处理对应图片目录（新增/增量）
             for jsonInfo in jsonFilesFromServer {
                 let localFileURL = documentsDirectory.appendingPathComponent(jsonInfo.name)
                 let correspondingImageDirName = "news_images_" + jsonInfo.name.components(separatedBy: "_").last!.replacingOccurrences(of: ".json", with: "")
@@ -174,6 +189,21 @@ class ResourceManager: ObservableObject {
                     downloadTasks.append((fileInfo: jsonInfo, isIncremental: false))
                     if let imageDirInfo = serverVersion.files.first(where: { $0.name == correspondingImageDirName }) {
                         downloadTasks.append((fileInfo: imageDirInfo, isIncremental: false))
+                    }
+                }
+            }
+            
+            // 4.2 新增：目录存在性校验。对于服务器上列出的每一个 images 目录，如果本地缺失，则补下载该目录（全量）。
+            for dirInfo in imageDirsFromServer {
+                let localDirURL = documentsDirectory.appendingPathComponent(dirInfo.name)
+                var isDir: ObjCBool = false
+                let exists = fileManager.fileExists(atPath: localDirURL.path, isDirectory: &isDir)
+                if !(exists && isDir.boolValue) {
+                    print("缺失图片目录，准备补齐下载: \(dirInfo.name)")
+                    // 为避免重复添加同一目录任务，这里仅在未被 JSON 规则添加时再追加。
+                    let alreadyQueued = downloadTasks.contains(where: { $0.fileInfo.name == dirInfo.name })
+                    if !alreadyQueued {
+                        downloadTasks.append((fileInfo: dirInfo, isIncremental: false))
                     }
                 }
             }

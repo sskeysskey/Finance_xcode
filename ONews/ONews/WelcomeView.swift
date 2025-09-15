@@ -141,7 +141,7 @@ struct WelcomeView: View {
 
     private func syncInitialResources() async {
         do {
-            try await resourceManager.checkAndDownloadLatestNewsManifest()
+            try await resourceManager.checkAndDownloadAllNewsManifests()
         } catch {
             self.errorMessage = "下载新闻数据失败，请点击左下角刷新↻按钮。"
             self.showErrorAlert = true

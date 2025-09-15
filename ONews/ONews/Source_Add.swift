@@ -178,7 +178,7 @@ struct AddSourceView: View {
         .onAppear(perform: loadAvailableSources)
     }
 
-    /// 从最新的 onews_*.json 文件中加载所有可用的新闻源名称
+    /// 从 Documents 中所有 onews_*.json 文件合并所有分组名（去重、排序）
     private func loadAvailableSources() {
         isLoading = true
         errorMessage = nil
@@ -188,20 +188,31 @@ struct AddSourceView: View {
                 let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                 let allFiles = try FileManager.default.contentsOfDirectory(at: documentsDirectory, includingPropertiesForKeys: nil)
 
-                // 找到所有 onews_*.json 文件并按名称排序，最新的在最后
+                // 找到所有 onews_*.json 文件
                 let newsJSONURLs = allFiles
                     .filter { $0.lastPathComponent.starts(with: "onews_") && $0.pathExtension == "json" }
-                    .sorted { $0.lastPathComponent < $1.lastPathComponent }
-
-                guard let latestNewsURL = newsJSONURLs.last else {
+                
+                guard !newsJSONURLs.isEmpty else {
                     throw NSError(domain: "AppError", code: 1, userInfo: [NSLocalizedDescriptionKey: "在 Documents 目录中没有找到任何 'onews_*.json' 文件。\n请先返回主页同步资源。"])
                 }
 
-                let data = try Data(contentsOf: latestNewsURL)
-                // 我们只需要JSON的键，所以解码为 [String: [Article]]
-                let decoded = try JSONDecoder().decode([String: [Article]].self, from: data)
+                var union = Set<String>()
+                let decoder = JSONDecoder()
                 
-                let sources = decoded.keys.sorted()
+                for url in newsJSONURLs {
+                    do {
+                        let data = try Data(contentsOf: url)
+                        // 只需要键，解码为 [String: [Article]]；若无 Article 类型，请替换为通用结构
+                        let decoded = try decoder.decode([String: [Article]].self, from: data)
+                        union.formUnion(decoded.keys)
+                    } catch {
+                        // 某个文件坏了不应影响整体，记录日志后继续
+                        print("解析 \(url.lastPathComponent) 失败: \(error.localizedDescription)")
+                        continue
+                    }
+                }
+
+                let sources = union.sorted()
 
                 DispatchQueue.main.async {
                     self.allAvailableSources = sources
