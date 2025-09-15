@@ -9,94 +9,168 @@ struct WelcomeView: View {
     // 当用户完成操作后，调用此闭包通知父视图
     var onComplete: () -> Void
     
+    // ==================== 核心修改: 引入状态和管理器 ====================
+    @StateObject private var resourceManager = ResourceManager()
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
+    // ===============================================================
+    
     @State private var showAddSourceView = false
     @State private var ripple = false
 
     var body: some View {
-        NavigationView {
-            ZStack {
-                // 背景图 - 您可以替换为您自己的图片
-                // 注意: 请将您的背景图文件（例如 "welcome_background.jpg"）添加到 Xcode 项目的 Assets.xcassets 中。
-                Image("welcome_background") // 替换为你的图片资源名
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .edgesIgnoringSafeArea(.all)
-                    .overlay(Color.black.opacity(0.4)) // 添加一层蒙版让文字更清晰
+        // ==================== 核心修改: 添加顶层 ZStack 以便显示覆盖层 ====================
+        ZStack {
+            NavigationView {
+                ZStack {
+                    // 背景图
+                    Image("welcome_background")
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .edgesIgnoringSafeArea(.all)
+                        .overlay(Color.black.opacity(0.4))
 
-                VStack {
-                    Spacer()
-                    
-                    Text("欢迎使用 ONews")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .foregroundColor(.white)
-                        .padding(.bottom, 20)
-
-                    Text("点击下方按钮，开始添加您感兴趣的新闻源")
-                        .font(.headline)
-                        .foregroundColor(.white.opacity(0.8))
-
-                    Spacer()
-                    
-                    // 指向按钮的新手引导提示
-                    VStack(spacing: 8) {
-                        Text("点击这里开始")
-                            .font(.caption)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.blue)
-                            .cornerRadius(8)
+                    VStack {
+                        Spacer()
                         
-                        Image(systemName: "arrow.down")
-                            .font(.title2)
+                        Text("欢迎使用 ONews")
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
                             .foregroundColor(.white)
-                    }
-                    .offset(y: -20)
-                    
-                    // 带动画效果的添加按钮
-                    Button(action: {
-                        showAddSourceView = true
-                    }) {
-                        ZStack {
-                            // 涟漪效果
-                            Circle()
-                                .stroke(Color.white.opacity(ripple ? 0 : 0.8), lineWidth: 2)
-                                .scaleEffect(ripple ? 1.8 : 1.0)
-                                .opacity(ripple ? 0 : 1)
-                            
-                            // 主按钮
-                            Image(systemName: "plus")
-                                .font(.system(size: 44, weight: .light))
+                            .padding(.bottom, 20)
+
+                        Text("点击下方按钮，开始添加您感兴趣的新闻源")
+                            .font(.headline)
+                            .foregroundColor(.white.opacity(0.8))
+
+                        Spacer()
+                        
+                        VStack(spacing: 8) {
+                            Text("点击这里开始")
+                                .font(.caption)
                                 .foregroundColor(.white)
-                                .padding(30)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
                                 .background(Color.blue)
-                                .clipShape(Circle())
-                                .shadow(radius: 10)
+                                .cornerRadius(8)
+                            
+                            Image(systemName: "arrow.down")
+                                .font(.title2)
+                                .foregroundColor(.white)
                         }
-                    }
-                    .onAppear {
-                        // 创建一个无限循环的涟漪动画
-                        withAnimation(Animation.easeInOut(duration: 1.5).repeatForever(autoreverses: false)) {
-                            ripple.toggle()
+                        .offset(y: -20)
+                        
+                        Button(action: {
+                            showAddSourceView = true
+                        }) {
+                            ZStack {
+                                Circle()
+                                    .stroke(Color.white.opacity(ripple ? 0 : 0.8), lineWidth: 2)
+                                    .scaleEffect(ripple ? 1.8 : 1.0)
+                                    .opacity(ripple ? 0 : 1)
+                                
+                                Image(systemName: "plus")
+                                    .font(.system(size: 44, weight: .light))
+                                    .foregroundColor(.white)
+                                    .padding(30)
+                                    .background(Color.blue)
+                                    .clipShape(Circle())
+                                    .shadow(radius: 10)
+                            }
                         }
+                        .onAppear {
+                            withAnimation(Animation.easeInOut(duration: 1.5).repeatForever(autoreverses: false)) {
+                                ripple.toggle()
+                            }
+                        }
+                        .padding(.bottom, 60)
                     }
-                    .padding(.bottom, 60)
+                    
+                    NavigationLink(
+                        destination: AddSourceView(isFirstTimeSetup: true, onComplete: onComplete),
+                        isActive: $showAddSourceView
+                    ) {
+                        EmptyView()
+                    }
                 }
-                
-                // 导航到 AddSourceView
-                NavigationLink(
-                    destination: AddSourceView(isFirstTimeSetup: true, onComplete: onComplete),
-                    isActive: $showAddSourceView
-                ) {
-                    EmptyView()
+                .navigationBarHidden(true)
+            }
+            .accentColor(.white)
+            .onAppear {
+                // ==================== 核心修改: 自动触发轻量级同步 ====================
+                Task {
+                    await syncInitialResources()
+                }
+                // =====================================================================
+            }
+            .alert("", isPresented: $showErrorAlert, actions: {
+                Button("好的", role: .cancel) { }
+            }, message: {
+                Text(errorMessage)
+            })
+
+            // ==================== 核心修改: 添加手动刷新按钮 ====================
+            if !resourceManager.isSyncing && !showAddSourceView {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            Task {
+                                await syncInitialResources()
+                            }
+                        }) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.title2)
+                                .foregroundColor(.white)
+                                .padding(12)
+                                .background(Color.black.opacity(0.3))
+                                .clipShape(Circle())
+                        }
+                        .padding(.top, 50)
+                        .padding(.trailing, 20)
+                    }
+                    Spacer()
                 }
             }
-            .navigationBarHidden(true) // 隐藏此页面的导航栏
+            // =====================================================================
+
+            // ==================== 核心修改: 添加同步加载覆盖层 ====================
+            if resourceManager.isSyncing {
+                VStack(spacing: 15) {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        .scaleEffect(1.5)
+                    
+                    Text(resourceManager.syncMessage)
+                        .padding(.top, 10)
+                        .foregroundColor(.white)
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black.opacity(0.7))
+                .edgesIgnoringSafeArea(.all)
+                .contentShape(Rectangle()) // 阻止底层交互
+            }
+            // =====================================================================
         }
-        .accentColor(.white) // 让导航返回按钮在下一页显示为白色
     }
+    
+    // ==================== 核心修改: 封装同步逻辑 ====================
+    private func syncInitialResources() async {
+        do {
+            // 调用我们新增的轻量级同步方法
+            try await resourceManager.checkAndDownloadLatestNewsManifest()
+        } catch {
+            // 处理网络错误等，并显示弹窗
+            self.errorMessage = "下载新闻数据失败，请点击右上角刷新↻按钮。"
+//            self.errorMessage = "下载新闻数据失败，请点击右上角刷新↻按钮\n(\(error.localizedDescription))"
+            self.showErrorAlert = true
+            print("WelcomeView 同步失败: \(error)")
+        }
+    }
+    // ===============================================================
 }
+
 
 extension Color {
     static let viewBackground = Color(red: 28/255, green: 28/255, blue: 30/255)
@@ -112,31 +186,22 @@ struct NewsReaderAppApp: App {
 }
 
 struct MainAppView: View {
-    // 使用 @AppStorage 来持久化存储用户是否完成了首次设置
     @AppStorage("hasCompletedInitialSetup") private var hasCompletedInitialSetup = false
     
-    @State private var isAuthenticated = false // 您的认证逻辑保持不变
+    @State private var isAuthenticated = false
 
     var body: some View {
-        // ==================== 核心修改: 启动逻辑 ====================
         if hasCompletedInitialSetup {
-            // 如果用户已完成设置，显示标准的主应用视图
             if isAuthenticated {
                 SourceListView(isAuthenticated: $isAuthenticated)
             } else {
-                // 这里我假设您的登录页是 SourceListView 的一部分或由它管理
-                // 如果您有单独的登录页，请替换
                  SourceListView(isAuthenticated: $isAuthenticated)
             }
         } else {
-            // 如果是首次启动，显示欢迎页
             WelcomeView {
-                // 当 WelcomeView 调用 onComplete 时，
-                // 将 hasCompletedInitialSetup 设为 true 并永久保存
                 self.hasCompletedInitialSetup = true
             }
         }
-        // ==========================================================
     }
 }
 
@@ -144,7 +209,6 @@ struct MainAppView: View {
 class NewsViewModel: ObservableObject {
     @Published var sources: [NewsSource] = []
 
-    // 订阅管理器
     private let subscriptionManager = SubscriptionManager.shared
     
     private let readKey = "readTopics"
@@ -193,7 +257,6 @@ class NewsViewModel: ObservableObject {
     }
 
     func loadNews() {
-        // ==================== 核心修改: 只加载已订阅的新闻源 ====================
         let subscribed = subscriptionManager.subscribedSources
         if subscribed.isEmpty {
             print("没有订阅任何新闻源。列表将为空。")
@@ -203,7 +266,6 @@ class NewsViewModel: ObservableObject {
             return
         }
         print("开始加载新闻，订阅源为: \(subscribed)")
-        // =====================================================================
         
         guard let allFileURLs = try? FileManager.default.contentsOfDirectory(at: documentsDirectory, includingPropertiesForKeys: nil) else {
             print("无法读取 Documents 目录。")
@@ -237,10 +299,7 @@ class NewsViewModel: ObservableObject {
             }
             
             for (sourceName, articles) in decoded {
-                // ==================== 核心修改: 过滤 ====================
-                // 只处理在订阅列表中的源
                 guard subscribed.contains(sourceName) else { continue }
-                // =======================================================
                 
                 let articlesWithTimestamp = articles.map { article -> Article in
                     var mutableArticle = article
@@ -277,7 +336,6 @@ class NewsViewModel: ObservableObject {
         }
     }
 
-    // ... (markAsRead, markAsUnread, 和其他辅助函数保持不变) ...
     func markAsRead(articleID: UUID) {
         DispatchQueue.main.async {
             for i in self.sources.indices {
@@ -387,7 +445,6 @@ class NewsViewModel: ObservableObject {
 }
 
 
-// ... (NewsSource, Article, AppBadgeManager 结构体和类保持不变) ...
 struct NewsSource: Identifiable {
     let id = UUID()
     let name: String
