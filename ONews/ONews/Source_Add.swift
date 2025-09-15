@@ -1,9 +1,8 @@
 import SwiftUI
 import Foundation
 
-// 文件名: AddSourceView.swift
+// 文件名: Source_Add.swift
 // 职责: 提供一个列表，让用户能够添加或移除新闻源订阅（已取消搜索功能）。
-// 文件名: SubscriptionManager.swift
 // 职责: 集中管理用户的新闻源订阅列表，使用 UserDefaults 进行持久化存储。
 
 class SubscriptionManager: ObservableObject {
