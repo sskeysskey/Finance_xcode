@@ -1,7 +1,8 @@
 import SwiftUI
 
+// 文件名: SourceListView.swift
+
 struct SourceListView: View {
-    // ==================== 视图模型和服务 (无变化) ====================
     @StateObject private var viewModel = NewsViewModel()
     @StateObject private var resourceManager = ResourceManager()
     private let badgeManager = AppBadgeManager()
@@ -11,58 +12,77 @@ struct SourceListView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
+    // ==================== 核心修改: 添加 Sheet 状态 ====================
+    @State private var showAddSourceSheet = false
+    // ===============================================================
+    
     @Environment(\.scenePhase) private var scenePhase
     
-    // ==================== 核心修改: 添加一个计算属性来过滤来源 ====================
-    /// 这个计算属性只返回那些未读文章数大于 0 的新闻来源。
+    // 这个计算属性现在依然有效，因为它操作的是 viewModel.sources，
+    // 而 viewModel.sources 已经被过滤为只包含订阅的源了。
     private var sourcesWithUnread: [NewsSource] {
         viewModel.sources.filter { $0.unreadCount > 0 }
     }
-    // ==========================================================================
     
     var body: some View {
         ZStack {
             NavigationView {
-                List {
-                    ZStack {
-                        HStack {
-                            Text("ALL")
-                                .font(.system(size: 28, weight: .bold))
-                                .foregroundColor(.primary)
-                            Spacer()
-                            Text("\(viewModel.totalUnreadCount)")
-                                .font(.system(size: 28, weight: .bold))
-                                .foregroundColor(.gray)
-                        }
-                        .padding()
-                        NavigationLink(destination: AllArticlesListView(viewModel: viewModel)) {
-                            EmptyView()
-                        }.opacity(0)
-                    }
-                    .listRowSeparator(.hidden)
-                    
-                    // ==================== 核心修改: 使用过滤后的来源列表 ====================
-                    // 将 ForEach 的数据源从 viewModel.sources 改为 sourcesWithUnread
-                    ForEach(sourcesWithUnread) { source in
-                    // ==========================================================================
-                        ZStack {
-                            HStack {
-                                Text(source.name)
-                                    .fontWeight(.semibold)
-                                Spacer()
-                                Text("\(source.unreadCount)")
-                                    .foregroundColor(.gray)
+                // ==================== 核心修改: 空状态处理 ====================
+                Group {
+                    if viewModel.sources.isEmpty && !resourceManager.isSyncing {
+                        VStack(spacing: 20) {
+                            Text("您还没有订阅任何新闻源")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                            Button(action: { showAddSourceSheet = true }) {
+                                Label("点击这里添加", systemImage: "plus.circle.fill")
+                                    .font(.title2)
                             }
-                            .padding(.vertical, 8)
-                            
-                            NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel)) {
-                                EmptyView()
-                            }.opacity(0)
+                            .buttonStyle(.bordered)
                         }
-                        .listRowSeparator(.hidden)
+                    } else {
+                        List {
+                            // "ALL" 链接
+                            ZStack {
+                                HStack {
+                                    Text("ALL")
+                                        .font(.system(size: 28, weight: .bold))
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    Text("\(viewModel.totalUnreadCount)")
+                                        .font(.system(size: 28, weight: .bold))
+                                        .foregroundColor(.gray)
+                                }
+                                .padding()
+                                NavigationLink(destination: AllArticlesListView(viewModel: viewModel)) {
+                                    EmptyView()
+                                }.opacity(0)
+                            }
+                            .listRowSeparator(.hidden)
+                            
+                            // 订阅源列表
+                            ForEach(sourcesWithUnread) { source in
+                                ZStack {
+                                    HStack {
+                                        Text(source.name)
+                                            .fontWeight(.semibold)
+                                        Spacer()
+                                        Text("\(source.unreadCount)")
+                                            .foregroundColor(.gray)
+                                    }
+                                    .padding(.vertical, 8)
+                                    
+                                    NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel)) {
+                                        EmptyView()
+                                    }.opacity(0)
+                                }
+                                .listRowSeparator(.hidden)
+                            }
+                        }
+                        .listStyle(.plain)
                     }
                 }
-                .listStyle(.plain)
+                // ===============================================================
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
@@ -73,6 +93,17 @@ struct SourceListView: View {
                             Text("登出")
                         }
                     }
+                    
+                    // ==================== 核心修改: 添加“添加源”按钮 ====================
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(action: {
+                            showAddSourceSheet = true
+                        }) {
+                            Image(systemName: "plus")
+                        }
+                    }
+                    // =================================================================
+                    
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(action: {
                             Task {
@@ -102,6 +133,19 @@ struct SourceListView: View {
                     print("应用从前台切换到后台，强制更新角标为: \(viewModel.totalUnreadCount)")
                 }
             }
+            // ==================== 核心修改: 弹出添加源页面 ====================
+            .sheet(isPresented: $showAddSourceSheet, onDismiss: {
+                // 当 sheet 关闭时，重新加载新闻以反映订阅变化
+                print("AddSourceView 已关闭，重新加载新闻...")
+                viewModel.loadNews()
+            }) {
+                // 将 AddSourceView 包装在 NavigationView 中，使其拥有自己的导航栏
+                NavigationView {
+                    AddSourceView(isFirstTimeSetup: false)
+                }
+                .preferredColorScheme(.dark)
+            }
+            // ===============================================================
             
             // 加载/进度覆盖层 (无变化)
             if resourceManager.isSyncing {
@@ -160,7 +204,7 @@ struct SourceListView: View {
                 
             default:
                 print("同步失败 (客户端或其他问题): \(error)")
-                self.errorMessage = "网络异常\n\n请点击右上角刷新↻按钮重试"
+                self.errorMessage = "网络异常\n\nPlease click the refresh button ↻ in the upper right corner to try again"
                 self.showErrorAlert = true
             }
         }
