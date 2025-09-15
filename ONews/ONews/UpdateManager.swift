@@ -99,7 +99,7 @@ class ResourceManager: ObservableObject {
             }
             
             // 6. 同步完成
-            self.syncMessage = "完成！"
+            self.syncMessage = "更新完毕！"
             try await Task.sleep(nanoseconds: 500_000_000) // 短暂显示完成信息
             self.isSyncing = false
             
@@ -113,7 +113,6 @@ class ResourceManager: ObservableObject {
     // MARK: - Main Sync Logic (供 SourceListView 使用，保持不变)
     
     func checkAndDownloadUpdates() async throws {
-        // ... 此函数内部逻辑保持不变 ...
         // 1. 初始化状态
         self.isSyncing = true
         self.isDownloading = false
