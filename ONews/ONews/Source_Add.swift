@@ -2,7 +2,7 @@ import SwiftUI
 import Foundation
 
 // 文件名: AddSourceView.swift
-// 职责: 提供一个可搜索的列表，让用户能够添加或移除新闻源订阅。
+// 职责: 提供一个列表，让用户能够添加或移除新闻源订阅（已取消搜索功能）。
 // 文件名: SubscriptionManager.swift
 // 职责: 集中管理用户的新闻源订阅列表，使用 UserDefaults 进行持久化存储。
 
@@ -59,12 +59,8 @@ class SubscriptionManager: ObservableObject {
 struct AddSourceView: View {
     // 状态
     @State private var allAvailableSources: [String] = []
-    @State private var searchText = ""
     @State private var isLoading = true
     @State private var errorMessage: String?
-
-    // 新增：控制是否显示搜索框
-    @State private var showSearchBar = false
 
     // 订阅管理器
     @ObservedObject private var subscriptionManager = SubscriptionManager.shared
@@ -72,18 +68,9 @@ struct AddSourceView: View {
     // 用于判断显示逻辑（首次设置 vs. 后续添加）
     let isFirstTimeSetup: Bool
     var onComplete: (() -> Void)? // 仅在首次设置时使用
+    var onConfirm: (() -> Void)?  // 非首次场景点击“确定”的回调（默认关闭页面）
 
     @Environment(\.presentationMode) var presentationMode
-
-    // 计算属性，用于显示过滤后的列表
-    private var filteredSources: [String] {
-        let base = allAvailableSources
-        if showSearchBar && !searchText.isEmpty {
-            return base.filter { $0.lowercased().contains(searchText.lowercased()) }
-        } else {
-            return base
-        }
-    }
 
     var body: some View {
         ZStack {
@@ -112,9 +99,7 @@ struct AddSourceView: View {
                     }
                     .frame(maxHeight: .infinity)
                 } else {
-                    // 为了去掉分隔线，使用 .listRowSeparator(.hidden)
-                    // 同时让列表背景透明，文本颜色适配深色背景
-                    let list = List(filteredSources, id: \.self) { sourceName in
+                    List(allAvailableSources, id: \.self) { sourceName in
                         HStack {
                             Text(sourceName)
                                 .fontWeight(.medium)
@@ -149,65 +134,45 @@ struct AddSourceView: View {
                             }
                         }
                         .padding(.vertical, 8)
-                        .listRowBackground(Color.clear)              // 行背景透明
-                        .listRowSeparator(.hidden)                   // 隐藏分隔线
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                     }
                     .listStyle(.plain)
-                    .scrollContentBackground(.hidden)               // 列表整体背景透明
+                    .scrollContentBackground(.hidden)
+                }
 
-                    // 仅在 showSearchBar == true 时附加 .searchable
-                    Group {
-                        if showSearchBar {
-                            list
-                                .searchable(text: $searchText, prompt: "搜索新闻源")
+                // 确定按钮：两种场景的处理
+                Button(action: {
+                    if isFirstTimeSetup {
+                        // 首次设置：进入下一步
+                        onComplete?()
+                    } else {
+                        // 非首次：调用 onConfirm（如果未提供则默认关闭当前页面）
+                        if let onConfirm {
+                            onConfirm()
                         } else {
-                            list
+                            presentationMode.wrappedValue.dismiss()
                         }
                     }
+                }) {
+                    Text("确定")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(height: 50)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.blue)
+                        .cornerRadius(10)
+                        .padding()
                 }
-                // 仅在首次设置流程中显示“确定”按钮
-                    Button(action: {
-                        // 调用闭包，通知父视图完成设置
-                        onComplete?()
-                    }) {
-                        Text("确定")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .frame(height: 50)
-                            .frame(maxWidth: .infinity)
-                            .background(Color.blue)
-                            .cornerRadius(10)
-                            .padding()
-                    }
-                    .disabled(subscriptionManager.subscribedSources.isEmpty) // 如果一个都没选，则禁用按钮
+                .disabled(subscriptionManager.subscribedSources.isEmpty)
             }
         }
         .navigationTitle("添加新闻源")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if !isFirstTimeSetup {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("完成") {
-                        presentationMode.wrappedValue.dismiss()
-                    }
-                    .foregroundColor(.white)
-                }
-            }
-            // 新增：导航栏右侧放大镜按钮
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showSearchBar.toggle()
-                        if !showSearchBar {
-                            // 收起时清空搜索
-                            searchText = ""
-                        }
-                    }
-                } label: {
-                    Image(systemName: showSearchBar ? "magnifyingglass.circle.fill" : "magnifyingglass")
-                        .foregroundColor(.white)
-                }
-                .accessibilityLabel("搜索")
+            // 非首次设置：不再显示“完成”，使用系统返回按钮，保持一致的返回体验
+            if isFirstTimeSetup {
+                // 首次设置不显示返回或完成按钮，由欢迎页的导航控制
             }
         }
         .onAppear(perform: loadAvailableSources)

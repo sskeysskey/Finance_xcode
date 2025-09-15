@@ -8,14 +8,12 @@ struct SourceListView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
-    // ==================== 核心修改: 添加 Sheet 状态 ====================
+    // ==================== 添加源的 Sheet 状态 ====================
     @State private var showAddSourceSheet = false
     // ===============================================================
     
     @Environment(\.scenePhase) private var scenePhase
     
-    // 这个计算属性现在依然有效，因为它操作的是 viewModel.sources，
-    // 而 viewModel.sources 已经被过滤为只包含订阅的源了。
     private var sourcesWithUnread: [NewsSource] {
         viewModel.sources.filter { $0.unreadCount > 0 }
     }
@@ -23,7 +21,6 @@ struct SourceListView: View {
     var body: some View {
         ZStack {
             NavigationView {
-                // ==================== 核心修改: 空状态处理 ====================
                 Group {
                     if viewModel.sources.isEmpty && !resourceManager.isSyncing {
                         VStack(spacing: 20) {
@@ -78,10 +75,9 @@ struct SourceListView: View {
                         .listStyle(.plain)
                     }
                 }
-                // ===============================================================
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    // ==================== 移除“登出”按钮后，右侧保留：添加源、刷新 ====================
+                    // 右侧：添加源、刷新
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(action: {
                             showAddSourceSheet = true
@@ -119,21 +115,28 @@ struct SourceListView: View {
                     print("应用从前台切换到后台，强制更新角标为: \(viewModel.totalUnreadCount)")
                 }
             }
-            // ==================== 核心修改: 弹出添加源页面 ====================
+            // ==================== 弹出添加源页面 ====================
             .sheet(isPresented: $showAddSourceSheet, onDismiss: {
                 // 当 sheet 关闭时，重新加载新闻以反映订阅变化
                 print("AddSourceView 已关闭，重新加载新闻...")
                 viewModel.loadNews()
             }) {
-                // 将 AddSourceView 包装在 NavigationView 中，使其拥有自己的导航栏
+                // 用 NavigationView 包装，show back 按钮，去掉自定义“完成”。
                 NavigationView {
-                    AddSourceView(isFirstTimeSetup: false)
+                    AddSourceView(
+                        isFirstTimeSetup: false,
+                        onConfirm: {
+                            // 确定按钮在非首配场景：关闭 sheet
+                            print("AddSourceView 确定：关闭并刷新")
+                            showAddSourceSheet = false
+                        }
+                    )
                 }
                 .preferredColorScheme(.dark)
             }
             // ===============================================================
             
-            // 加载/进度覆盖层 (无变化)
+            // 加载/进度覆盖层
             if resourceManager.isSyncing {
                 VStack(spacing: 15) {
                     if resourceManager.isDownloading {
@@ -172,7 +175,6 @@ struct SourceListView: View {
         })
     }
     
-    // syncResources 函数 (无变化)
     private func syncResources() async {
         do {
             try await resourceManager.checkAndDownloadUpdates()
@@ -181,13 +183,10 @@ struct SourceListView: View {
             switch error {
             case is DecodingError:
                 print("同步失败 (服务器返回数据格式错误，已静默处理): \(error)")
-                
             case let urlError as URLError where
                 urlError.code == .cannotConnectToHost ||
                 urlError.code == .timedOut:
-                
                 print("同步失败 (无法连接或超时，已静默处理): \(error.localizedDescription)")
-                
             default:
                 print("同步失败 (客户端或其他问题): \(error)")
                 self.errorMessage = "网络异常\n\nPlease click the refresh button ↻ in the upper right corner to try again"
