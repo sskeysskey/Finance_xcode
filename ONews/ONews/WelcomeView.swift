@@ -25,10 +25,13 @@ struct WelcomeView: View {
                         .edgesIgnoringSafeArea(.all)
                         .overlay(Color.black.opacity(0.4))
 
+                    // 调整文字块：靠上放置，X 轴保持不变
                     VStack {
+                        // 将顶部留白改为固定较小的空间，使文字整体偏上
                         Spacer()
+                            .frame(height: 80)
 
-                        Text("欢迎使用 ONews")
+                        Text("欢迎来到 ONews")
                             .font(.largeTitle)
                             .fontWeight(.bold)
                             .foregroundColor(.white)
@@ -38,8 +41,7 @@ struct WelcomeView: View {
                             .font(.headline)
                             .foregroundColor(.white.opacity(0.8))
 
-                        Spacer()
-                            .offset(y: -20)
+                        Spacer() // 其余空间放在下面
                     }
                 }
                 .navigationBarHidden(true)
@@ -80,7 +82,7 @@ struct WelcomeView: View {
                 }
             }
 
-            // 右下角添加按钮 + 光韵动画（缩小并匹配半径范围）
+            // 右下角添加按钮 + 光韵动画（去除未使用的 radius 变量）
             if !showAddSourceView {
                 VStack {
                     Spacer()
@@ -90,14 +92,13 @@ struct WelcomeView: View {
                             showAddSourceView = true
                         }) {
                             ZStack {
-                                // 光韵：从按钮半径开始到约1.4倍半径
-                                let radius = fabSize / 2
+                                // 光韵：从按钮本体开始到约1.4倍
                                 Circle()
                                     .stroke(Color.white.opacity(ripple ? 0 : 0.8), lineWidth: 2)
                                     .frame(width: fabSize, height: fabSize)
                                     .scaleEffect(ripple ? 1.4 : 1.0)
                                     .opacity(ripple ? 0 : 1)
-                                
+
                                 Image(systemName: "plus")
                                     .font(.system(size: fabIconSize, weight: .light))
                                     .foregroundColor(.white)
