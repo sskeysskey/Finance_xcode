@@ -56,7 +56,6 @@ class SubscriptionManager: ObservableObject {
     }
 }
 
-
 struct AddSourceView: View {
     // 状态
     @State private var allAvailableSources: [String] = []
@@ -87,86 +86,100 @@ struct AddSourceView: View {
     }
 
     var body: some View {
-        VStack {
-            if isLoading {
-                ProgressView("正在加载新闻源...")
-                    .frame(maxHeight: .infinity)
-            } else if let error = errorMessage {
-                VStack(spacing: 20) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.largeTitle)
-                        .foregroundColor(.red)
-                    Text(error)
-                        .multilineTextAlignment(.center)
-                        .padding()
-                }
-                .frame(maxHeight: .infinity)
-            } else {
-                // 列表本身不变
-                let list = List(filteredSources, id: \.self) { sourceName in
-                    HStack {
-                        Text(sourceName)
-                            .fontWeight(.medium)
-                        
-                        Spacer()
-                        
-                        if subscriptionManager.isSubscribed(to: sourceName) {
-                            Text("已添加")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .padding(.trailing, 8)
-                            
-                            Button(action: {
-                                subscriptionManager.removeSubscription(sourceName)
-                            }) {
-                                Image(systemName: "minus.circle.fill")
-                                    .foregroundColor(.red)
-                                    .font(.title2)
-                            }
-                            .buttonStyle(BorderlessButtonStyle())
+        ZStack {
+            // 背景图与遮罩，和 WelcomeView 风格一致
+            Image("welcome_background")
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .ignoresSafeArea()
+                .overlay(Color.black.opacity(0.4).ignoresSafeArea())
 
-                        } else {
-                            Button(action: {
-                                subscriptionManager.addSubscription(sourceName)
-                            }) {
-                                Image(systemName: "plus.circle.fill")
-                                    .foregroundColor(.blue)
-                                    .font(.title2)
+            VStack {
+                if isLoading {
+                    ProgressView("正在加载新闻源...")
+                        .frame(maxHeight: .infinity)
+                        .tint(.white)
+                        .foregroundColor(.white)
+                } else if let error = errorMessage {
+                    VStack(spacing: 20) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.largeTitle)
+                            .foregroundColor(.red)
+                        Text(error)
+                            .multilineTextAlignment(.center)
+                            .padding()
+                            .foregroundColor(.white)
+                    }
+                    .frame(maxHeight: .infinity)
+                } else {
+                    // 为了去掉分隔线，使用 .listRowSeparator(.hidden)
+                    // 同时让列表背景透明，文本颜色适配深色背景
+                    let list = List(filteredSources, id: \.self) { sourceName in
+                        HStack {
+                            Text(sourceName)
+                                .fontWeight(.medium)
+                                .foregroundColor(.white)
+
+                            Spacer()
+                            
+                            if subscriptionManager.isSubscribed(to: sourceName) {
+                                Text("已添加")
+                                    .font(.caption)
+                                    .foregroundColor(.white.opacity(0.8))
+                                    .padding(.trailing, 8)
+                                
+                                Button(action: {
+                                    subscriptionManager.removeSubscription(sourceName)
+                                }) {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundColor(.red)
+                                        .font(.title2)
+                                }
+                                .buttonStyle(BorderlessButtonStyle())
+
+                            } else {
+                                Button(action: {
+                                    subscriptionManager.addSubscription(sourceName)
+                                }) {
+                                    Image(systemName: "plus.circle.fill")
+                                        .foregroundColor(.blue)
+                                        .font(.title2)
+                                }
+                                .buttonStyle(BorderlessButtonStyle())
                             }
-                            .buttonStyle(BorderlessButtonStyle())
+                        }
+                        .padding(.vertical, 8)
+                        .listRowBackground(Color.clear)              // 行背景透明
+                        .listRowSeparator(.hidden)                   // 隐藏分隔线
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)               // 列表整体背景透明
+
+                    // 仅在 showSearchBar == true 时附加 .searchable
+                    Group {
+                        if showSearchBar {
+                            list
+                                .searchable(text: $searchText, prompt: "搜索新闻源")
+                        } else {
+                            list
                         }
                     }
-                    .padding(.vertical, 8)
                 }
-                .listStyle(.plain)
-
-                // 仅在 showSearchBar == true 时附加 .searchable
-                Group {
-                    if showSearchBar {
-                        list
-                            .searchable(text: $searchText, prompt: "搜索新闻源")
-                    } else {
-                        list
+                // 仅在首次设置流程中显示“确定”按钮
+                    Button(action: {
+                        // 调用闭包，通知父视图完成设置
+                        onComplete?()
+                    }) {
+                        Text("确定")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(height: 50)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.blue)
+                            .cornerRadius(10)
+                            .padding()
                     }
-                }
-            }
-
-            // 仅在首次设置流程中显示“确定”按钮
-            if isFirstTimeSetup {
-                Button(action: {
-                    // 调用闭包，通知父视图完成设置
-                    onComplete?()
-                }) {
-                    Text("确定")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(height: 50)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.blue)
-                        .cornerRadius(10)
-                        .padding()
-                }
-                .disabled(subscriptionManager.subscribedSources.isEmpty) // 如果一个都没选，则禁用按钮
+                    .disabled(subscriptionManager.subscribedSources.isEmpty) // 如果一个都没选，则禁用按钮
             }
         }
         .navigationTitle("添加新闻源")
@@ -177,6 +190,7 @@ struct AddSourceView: View {
                     Button("完成") {
                         presentationMode.wrappedValue.dismiss()
                     }
+                    .foregroundColor(.white)
                 }
             }
             // 新增：导航栏右侧放大镜按钮
@@ -191,6 +205,7 @@ struct AddSourceView: View {
                     }
                 } label: {
                     Image(systemName: showSearchBar ? "magnifyingglass.circle.fill" : "magnifyingglass")
+                        .foregroundColor(.white)
                 }
                 .accessibilityLabel("搜索")
             }
