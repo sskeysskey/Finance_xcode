@@ -1,7 +1,5 @@
 import SwiftUI
 
-// 文件名: SourceListView.swift
-
 struct SourceListView: View {
     @StateObject private var viewModel = NewsViewModel()
     @StateObject private var resourceManager = ResourceManager()
