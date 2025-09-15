@@ -64,6 +64,9 @@ struct AddSourceView: View {
     @State private var isLoading = true
     @State private var errorMessage: String?
 
+    // 新增：控制是否显示搜索框
+    @State private var showSearchBar = false
+
     // 订阅管理器
     @ObservedObject private var subscriptionManager = SubscriptionManager.shared
     
@@ -75,10 +78,11 @@ struct AddSourceView: View {
 
     // 计算属性，用于显示过滤后的列表
     private var filteredSources: [String] {
-        if searchText.isEmpty {
-            return allAvailableSources
+        let base = allAvailableSources
+        if showSearchBar && !searchText.isEmpty {
+            return base.filter { $0.lowercased().contains(searchText.lowercased()) }
         } else {
-            return allAvailableSources.filter { $0.lowercased().contains(searchText.lowercased()) }
+            return base
         }
     }
 
@@ -98,7 +102,8 @@ struct AddSourceView: View {
                 }
                 .frame(maxHeight: .infinity)
             } else {
-                List(filteredSources, id: \.self) { sourceName in
+                // 列表本身不变
+                let list = List(filteredSources, id: \.self) { sourceName in
                     HStack {
                         Text(sourceName)
                             .fontWeight(.medium)
@@ -134,7 +139,16 @@ struct AddSourceView: View {
                     .padding(.vertical, 8)
                 }
                 .listStyle(.plain)
-                .searchable(text: $searchText, prompt: "搜索新闻源")
+
+                // 仅在 showSearchBar == true 时附加 .searchable
+                Group {
+                    if showSearchBar {
+                        list
+                            .searchable(text: $searchText, prompt: "搜索新闻源")
+                    } else {
+                        list
+                    }
+                }
             }
 
             // 仅在首次设置流程中显示“确定”按钮
@@ -164,6 +178,21 @@ struct AddSourceView: View {
                         presentationMode.wrappedValue.dismiss()
                     }
                 }
+            }
+            // 新增：导航栏右侧放大镜按钮
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showSearchBar.toggle()
+                        if !showSearchBar {
+                            // 收起时清空搜索
+                            searchText = ""
+                        }
+                    }
+                } label: {
+                    Image(systemName: showSearchBar ? "magnifyingglass.circle.fill" : "magnifyingglass")
+                }
+                .accessibilityLabel("搜索")
             }
         }
         .onAppear(perform: loadAvailableSources)
