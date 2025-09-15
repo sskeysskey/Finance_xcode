@@ -5,8 +5,6 @@ struct SourceListView: View {
     @StateObject private var resourceManager = ResourceManager()
     private let badgeManager = AppBadgeManager()
     
-    @Binding var isAuthenticated: Bool
-    
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
@@ -83,16 +81,7 @@ struct SourceListView: View {
                 // ===============================================================
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button(action: {
-                            isAuthenticated = false
-                        }) {
-                            Image(systemName: "chevron.backward")
-                            Text("登出")
-                        }
-                    }
-                    
-                    // ==================== 核心修改: 添加“添加源”按钮 ====================
+                    // ==================== 移除“登出”按钮后，右侧保留：添加源、刷新 ====================
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(action: {
                             showAddSourceSheet = true
@@ -100,7 +89,6 @@ struct SourceListView: View {
                             Image(systemName: "plus")
                         }
                     }
-                    // =================================================================
                     
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(action: {

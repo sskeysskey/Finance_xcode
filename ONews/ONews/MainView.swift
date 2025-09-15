@@ -17,16 +17,10 @@ struct NewsReaderAppApp: App {
 
 struct MainAppView: View {
     @AppStorage("hasCompletedInitialSetup") private var hasCompletedInitialSetup = false
-    
-    @State private var isAuthenticated = false
 
     var body: some View {
         if hasCompletedInitialSetup {
-            if isAuthenticated {
-                SourceListView(isAuthenticated: $isAuthenticated)
-            } else {
-                 SourceListView(isAuthenticated: $isAuthenticated)
-            }
+            SourceListView()
         } else {
             WelcomeView {
                 self.hasCompletedInitialSetup = true
