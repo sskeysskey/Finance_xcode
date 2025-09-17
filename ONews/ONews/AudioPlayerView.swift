@@ -58,7 +58,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         if UserDefaults.standard.object(forKey: autoPlayEnabledKey) != nil {
             self.isAutoPlayEnabled = UserDefaults.standard.bool(forKey: autoPlayEnabledKey)
         } else {
-            self.isAutoPlayEnabled = false
+            self.isAutoPlayEnabled = true
         }
         setupRemoteTransportControls()
         setupNotifications()
@@ -517,7 +517,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return String(format: "%02d:%02d", minutes, seconds)
     }
     
-    // --- 新增函数 ---
+    // --- 新增/修复：数字与年份处理 ---
     private func removeCommasFromNumbers(_ text: String) -> String {
         let pattern = #"(\d),(\d{3})"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
@@ -535,69 +535,87 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return result
     }
 
-    private func formatYearToPinyinDigits(_ year: String) -> String {
+    private func formatDigitsToChinesePerChar(_ digits: String) -> String {
         let map: [Character: String] = [
             "0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
             "5": "五", "6": "六", "7": "七", "8": "八", "9": "九"
         ]
-        return year.compactMap { map[$0] }.joined()
+        return digits.compactMap { map[$0] }.joined()
     }
 
-    private func replaceYearRangesForChinese(_ text: String) -> String {
-        let pattern = #"(?<!\d)(\d{4})\s*-\s*(\d{4})(?=\s*年)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
-        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+    // 统一将出现的年份与年份范围转换为逐字中文读法，避免“二千零二十二年”的数值读法
+    private func replaceYearMentionsForChinese(_ text: String) -> String {
         var result = text
-        var offset = 0
 
-        regex.enumerateMatches(in: text, options: [], range: nsRange) { match, _, _ in
-            guard let match = match, match.numberOfRanges >= 3 else { return }
-            if let r1 = Range(match.range(at: 1), in: text),
-               let r2 = Range(match.range(at: 2), in: text) {
-                let leftYear = String(text[r1])
-                let rightYear = String(text[r2])
-                let leftDigits = formatYearToPinyinDigits(leftYear)
-                let replacement = "\(leftDigits)到\(rightYear)"
-                let start = result.index(result.startIndex, offsetBy: match.range.location + offset)
-                let end = result.index(start, offsetBy: match.range.length)
-                result.replaceSubrange(start..<end, with: replacement)
-                offset += replacement.count - match.range.length
+        // 1) 范围：YYYY(-|—|–)YYYY年 -> 二零一七到二零二零年
+        let rangePattern = #"(?<!\d)(\d{4})\s*[-—–]\s*(\d{4})(?=\s*年)"#
+        if let regex = try? NSRegularExpression(pattern: rangePattern, options: []) {
+            let nsRange = NSRange(result.startIndex..<result.endIndex, in: result)
+            var replacements: [(NSRange, String)] = []
+            regex.enumerateMatches(in: result, options: [], range: nsRange) { match, _, _ in
+                guard let match = match, match.numberOfRanges >= 3 else { return }
+                if let r1 = Range(match.range(at: 1), in: result),
+                   let r2 = Range(match.range(at: 2), in: result) {
+                    let leftYear = String(result[r1])
+                    let rightYear = String(result[r2])
+                    let leftDigits = formatDigitsToChinesePerChar(leftYear)
+                    let rightDigits = formatDigitsToChinesePerChar(rightYear)
+                    let replacement = "\(leftDigits)到\(rightDigits)"
+                    replacements.append((match.range, replacement))
+                }
+            }
+            // 从后往前替换
+            for (range, rep) in replacements.reversed() {
+                if let r = Range(range, in: result) {
+                    result.replaceSubrange(r, with: rep)
+                }
             }
         }
-        return result
-    }
 
-    private func replaceModernYearsForChinese(_ text: String) -> String {
-        let pattern = #"\b(20\d{2})\b"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
-
-        var result = text
-        let matches = regex.matches(in: result, options: [], range: NSRange(result.startIndex..<result.endIndex, in: result)).reversed()
-
-        for match in matches {
-            guard let range = Range(match.range, in: result) else { continue }
-            let yearString = String(result[range])
-            let pinyinDigits = formatYearToPinyinDigits(yearString)
-            result.replaceSubrange(range, with: pinyinDigits)
+        // 2) 单个年份：YYYY年 -> 二零二二年
+        let singleYearPattern = #"(?<!\d)(\d{4})(?=\s*年)"#
+        if let regex = try? NSRegularExpression(pattern: singleYearPattern, options: []) {
+            let nsRange = NSRange(result.startIndex..<result.endIndex, in: result)
+            var replacements: [(NSRange, String)] = []
+            regex.enumerateMatches(in: result, options: [], range: nsRange) { match, _, _ in
+                guard let match = match, match.numberOfRanges >= 2 else { return }
+                if let r1 = Range(match.range(at: 1), in: result) {
+                    let year = String(result[r1])
+                    let yearZh = formatDigitsToChinesePerChar(year)
+                    replacements.append((match.range(at: 1), yearZh))
+                }
+            }
+            for (range, rep) in replacements.reversed() {
+                if let r = Range(range, in: result) {
+                    result.replaceSubrange(r, with: rep)
+                }
+            }
         }
+
         return result
     }
 
     private func preprocessText(_ text: String) -> String {
+        // 先去掉数字中的逗号
         let textWithoutCommas = removeCommasFromNumbers(text)
+        // 英文与特殊缩写替换
         let processedSpecialTerms = processEnglishText(textWithoutCommas)
-        let withChineseYearRange = replaceYearRangesForChinese(processedSpecialTerms)
-        let withModernYears = replaceModernYearsForChinese(withChineseYearRange)
+        // 统一替换年份/年份范围（核心修复）
+        let withYearFixed = replaceYearMentionsForChinese(processedSpecialTerms)
 
-        let pattern = "([\\u4e00-\\u9fa5])(\\s*[a-zA-Z]+\\s*)([\\u4e00-\\u9fa5])"
+        // 中英夹杂时仅在“中文 英文 中文”之间加停顿，但避免在“年”附近插入英文逗号
+        // 原模式: ([\u4e00-\u9fa5])(\s*[a-zA-Z]+\s*)([\u4e00-\u9fa5])
+        // 新增约束：前后不是“年”
+        let pattern = #"(?<!年)([\u4e00-\u9fa5])(\s*[A-Za-z]+\s*)([\u4e00-\u9fa5])(?!年)"#
         let regex = try? NSRegularExpression(pattern: pattern, options: [])
-        let range = NSRange(withModernYears.startIndex..<withModernYears.endIndex, in: withModernYears)
+        let range = NSRange(withYearFixed.startIndex..<withYearFixed.endIndex, in: withYearFixed)
         let modifiedText = regex?.stringByReplacingMatches(
-            in: withModernYears,
+            in: withYearFixed,
             options: [],
             range: range,
             withTemplate: "$1, $2, $3"
-        ) ?? withModernYears
+        ) ?? withYearFixed
+
         return modifiedText
     }
 
@@ -609,34 +627,20 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             .replacingOccurrences(of: "”", with: "")
             .replacingOccurrences(of: "\"", with: "")
 
-        let generalRangePattern = #"(?<!\d)(\d+)\s*-\s*(\d*)(?!\d)"#
-
+        // 一般数值范围 X-Y -> X到Y，但避免 4-4 年份被这里拦截（年份范围已由 replaceYearMentionsForChinese 处理）
+        let generalRangePattern = #"(?<!\d)(\d{1,3})\s*-\s*(\d{1,3})(?!\d)"#
         if let generalRegex = try? NSRegularExpression(pattern: generalRangePattern, options: []) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
             var result = processed
             var delta = 0
             generalRegex.enumerateMatches(in: processed, options: [], range: nsRange) { match, _, _ in
                 guard let match = match else { return }
-                if let leftRange = Range(match.range(at: 1), in: processed) {
-                    let left = processed[leftRange]
-                    var isFourFour = false
-                    if match.numberOfRanges >= 3, let rightRange = Range(match.range(at: 2), in: processed) {
-                        let right = processed[rightRange]
-                        if left.count == 4, right.count == 4 {
-                            isFourFour = true
-                        }
-                    }
-                    if isFourFour {
-                        return
-                    }
-                    let leftStr = String(left)
-                    let rightStr: String
-                    if match.numberOfRanges >= 3, let rRange = Range(match.range(at: 2), in: processed) {
-                        rightStr = String(processed[rRange])
-                    } else {
-                        rightStr = ""
-                    }
-                    let replacement = "\(leftStr)到\(rightStr)"
+                // 小于4位的纯数字范围才在这里替换
+                if let leftRange = Range(match.range(at: 1), in: processed),
+                   let rightRange = Range(match.range(at: 2), in: processed) {
+                    let left = String(processed[leftRange])
+                    let right = String(processed[rightRange])
+                    let replacement = "\(left)到\(right)"
                     let start = result.index(result.startIndex, offsetBy: match.range.location + delta)
                     let end = result.index(start, offsetBy: match.range.length)
                     result.replaceSubrange(start..<end, with: replacement)
@@ -646,6 +650,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             processed = result
         }
 
+        // 术语替换
         let replacements = [
             "API": "A.P.I",
             "URL": "U.R.L",
