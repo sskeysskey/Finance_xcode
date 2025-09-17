@@ -125,9 +125,9 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             return .success
         }
 
+        // 修复点：不要在这里清理播放器状态；仅把“下一曲”意图传回 UI 层处理
         commandCenter.nextTrackCommand.addTarget { [weak self] _ in
             guard let self = self else { return .commandFailed }
-            self.prepareForNextTransition()
             self.onNextRequested?()
             return .success
         }

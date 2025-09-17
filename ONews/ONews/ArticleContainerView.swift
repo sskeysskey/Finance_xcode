@@ -102,20 +102,14 @@ struct ArticleContainerView: View {
             }
         }
         .onAppear {
-            // 远程“下一曲”或自然结束时的处理
-            audioPlayerManager.onNextRequested = { [weak audioPlayerManager] in
-                guard let apm = audioPlayerManager else { return }
-                // 仅当开启自动连播时，才自动跳转到下一篇；
-                // 单次播放时什么都不做（保持在当前文章）。
-                if apm.isAutoPlayEnabled {
-                    // 自动连播：跳转并根据设置自动播放
-                    switchToNextArticle(shouldAutoplayNext: true)
-                } else {
-                    // 单次播放：不跳转
-                }
+            // 远程“下一曲”（锁屏/控制中心）或耳机上的下一曲按钮
+            audioPlayerManager.onNextRequested = {
+                // 用户主动请求下一曲：无条件跳转并自动播放
+                self.switchToNextArticle(shouldAutoplayNext: true)
             }
+            // 自然结束：行为在 AudioPlayerManager.finishNaturally 内部已根据 isAutoPlayEnabled 处理
             audioPlayerManager.onPlaybackFinished = {
-                // 已由 onNextRequested 内根据 isAutoPlayEnabled 决定是否跳转，避免重复
+                // 已在 manager 内处理，无需重复
             }
         }
         .onDisappear {
@@ -177,7 +171,7 @@ struct ArticleContainerView: View {
             showToast { shouldShow in self.showNoNextToast = shouldShow }
         }
     }
-    
+
     private func switchToNextArticle(shouldAutoplayNext: Bool) {
         audioPlayerManager.prepareForNextTransition()
 
