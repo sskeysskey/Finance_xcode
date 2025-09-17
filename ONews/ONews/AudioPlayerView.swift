@@ -543,13 +543,102 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return digits.compactMap { map[$0] }.joined()
     }
 
-    // 统一将出现的年份与年份范围转换为逐字中文读法，避免“二千零二十二年”的数值读法
+    // 将各种连字符统一为普通连字符，便于后续正则匹配
+    private func normalizeDash(_ text: String) -> String {
+        // 包含常见的连字符/破折号/波浪号等
+        let dashes = ["—", "–", "―", "–", "－", "‑", "‒", "〜", "~", "—", "——"]
+        var t = text
+        for d in dashes {
+            t = t.replacingOccurrences(of: d, with: "-")
+        }
+        // 连续多个破折号合并为单个-
+        while t.contains("--") {
+            t = t.replacingOccurrences(of: "--", with: "-")
+        }
+        return t
+    }
+
+    // 用于将阿拉伯数字按中文数值读法（非逐字年份）读出，例如：2000 -> 两千；5000 -> 五千；21 -> 二十一
+    private func readChineseNumber(_ n: Int) -> String {
+        // 仅覆盖到万级，满足 2000-5000 此类需求，避免引入复杂度
+        let digits = ["零","一","二","三","四","五","六","七","八","九"]
+        if n < 10 { return digits[n] }
+        if n < 20 {
+            if n == 10 { return "十" }
+            return "十" + digits[n % 10]
+        }
+        if n < 100 {
+            let tens = n / 10
+            let ones = n % 10
+            return digits[tens] + "十" + (ones == 0 ? "" : digits[ones])
+        }
+        if n < 1000 {
+            let hundreds = n / 100
+            let rest = n % 100
+            let hundredPart = digits[hundreds] + "百"
+            if rest == 0 { return hundredPart }
+            if rest < 10 { return hundredPart + "零" + digits[rest] }
+            if rest < 20 { return hundredPart + "一十" + (rest % 10 == 0 ? "" : digits[rest % 10]) }
+            let tens = (rest / 10)
+            let ones = rest % 10
+            return hundredPart + digits[tens] + "十" + (ones == 0 ? "" : digits[ones])
+        }
+        if n < 10000 {
+            let thousands = n / 1000
+            let rest = n % 1000
+            // 按中文习惯：2千通常读作“两千”
+            let thousandHead = (thousands == 2 ? "两" : digits[thousands]) + "千"
+            if rest == 0 { return thousandHead }
+            if rest < 100 {
+                // 2001 -> 两千零一； 2010 -> 两千零一十
+                if rest < 10 { return thousandHead + "零" + digits[rest] }
+                // 介于 10~99
+                if rest < 20 {
+                    if rest == 10 { return thousandHead + "零十" }
+                    return thousandHead + "零十" + digits[rest % 10]
+                } else {
+                    let tens = rest / 10
+                    let ones = rest % 10
+                    return thousandHead + digits[tens] + "十" + (ones == 0 ? "" : digits[ones])
+                }
+            } else {
+                // 余数 >= 100
+                let hundreds = rest / 100
+                let rest2 = rest % 100
+                var res = thousandHead + digits[hundreds] + "百"
+                if rest2 == 0 { return res }
+                if rest2 < 10 { return res + "零" + digits[rest2] }
+                if rest2 < 20 {
+                    if rest2 == 10 { return res + "一十" }
+                    return res + "一十" + digits[rest2 % 10]
+                } else {
+                    let tens = rest2 / 10
+                    let ones = rest2 % 10
+                    res += digits[tens] + "十" + (ones == 0 ? "" : digits[ones])
+                    return res
+                }
+            }
+        }
+        // 简化：>=10000 时粗略读法（满足一般单位场景）
+        if n < 100000 {
+            let wan = n / 10000
+            let rest = n % 10000
+            let head = (wan == 2 ? "两" : digits[wan]) + "万"
+            if rest == 0 { return head }
+            // 递归处理余数
+            return head + readChineseNumber(rest)
+        }
+        // 超过本需求范围，退化为逐字
+        return String(n).map { String($0) }.joined(separator: "")
+    }
+
+    // 修正：仅在“明确存在‘年’字”的上下文中替换年份，且不处理“范围内的四位数”
     private func replaceYearMentionsForChinese(_ text: String) -> String {
         var result = text
-
-        // 1) 范围：YYYY(-|—|–)YYYY年 -> 二零一七到二零二零年
-        let rangePattern = #"(?<!\d)(\d{4})\s*[-—–]\s*(\d{4})(?=\s*年)"#
-        if let regex = try? NSRegularExpression(pattern: rangePattern, options: []) {
+        // 1) 范围中包含“年”的情形：如 2017-2020年 或 2017年-2020年 -> 二零一七到二零二零年
+        // 仅当右侧（或两端）紧跟“年”才视为年份范围
+        let rangeWithYearPattern = #"(?<!\d)(\d{4})(?:\s*年)?\s*-\s*(\d{4})(?=\s*年)"#
+        if let regex = try? NSRegularExpression(pattern: rangeWithYearPattern, options: []) {
             let nsRange = NSRange(result.startIndex..<result.endIndex, in: result)
             var replacements: [(NSRange, String)] = []
             regex.enumerateMatches(in: result, options: [], range: nsRange) { match, _, _ in
@@ -564,7 +653,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                     replacements.append((match.range, replacement))
                 }
             }
-            // 从后往前替换
             for (range, rep) in replacements.reversed() {
                 if let r = Range(range, in: result) {
                     result.replaceSubrange(r, with: rep)
@@ -572,7 +660,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
-        // 2) 单个年份：YYYY年 -> 二零二二年
+        // 2) 单个年份：仅当紧随“年”时才逐字读
         let singleYearPattern = #"(?<!\d)(\d{4})(?=\s*年)"#
         if let regex = try? NSRegularExpression(pattern: singleYearPattern, options: []) {
             let nsRange = NSRange(result.startIndex..<result.endIndex, in: result)
@@ -595,17 +683,18 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return result
     }
 
+    // 调整调用顺序：先去逗号 -> 统一破折号 -> 英文/范围/单位处理 -> 年份逐字化 -> 中英间停顿
     private func preprocessText(_ text: String) -> String {
-        // 先去掉数字中的逗号
+        // 去掉数字中的逗号
         let textWithoutCommas = removeCommasFromNumbers(text)
-        // 英文与特殊缩写替换
-        let processedSpecialTerms = processEnglishText(textWithoutCommas)
-        // 统一替换年份/年份范围（核心修复）
+        // 统一破折号等
+        let normalized = normalizeDash(textWithoutCommas)
+        // 先处理英文与数字范围、单位（核心修复）
+        let processedSpecialTerms = processEnglishText(normalized)
+        // 仅对带“年”的位置做年份逐字化
         let withYearFixed = replaceYearMentionsForChinese(processedSpecialTerms)
 
-        // 中英夹杂时仅在“中文 英文 中文”之间加停顿，但避免在“年”附近插入英文逗号
-        // 原模式: ([\u4e00-\u9fa5])(\s*[a-zA-Z]+\s*)([\u4e00-\u9fa5])
-        // 新增约束：前后不是“年”
+        // 中英夹杂时加停顿，但避免在“年”附近插入英文逗号（保留你原先的约束）
         let pattern = #"(?<!年)([\u4e00-\u9fa5])(\s*[A-Za-z]+\s*)([\u4e00-\u9fa5])(?!年)"#
         let regex = try? NSRegularExpression(pattern: pattern, options: [])
         let range = NSRange(withYearFixed.startIndex..<withYearFixed.endIndex, in: withYearFixed)
@@ -619,23 +708,59 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return modifiedText
     }
 
-    private func processEnglishText(_ text: String) -> String {
-        var processed = text
-
-        processed = processed
+    // 修正与增强：
+    // - 先做单位范围（数字-数字 + 量词）的中文数值读法，例如 2000-5000人 -> 两千到五千人
+    // - 再做一般纯数字范围（不带单位）的 X-Y -> X到Y，避免覆盖四位数被当作年份
+    // - 其余英文缩写替换维持不变
+    private func processEnglishText(_ input: String) -> String {
+        var processed = input
             .replacingOccurrences(of: "“", with: "")
             .replacingOccurrences(of: "”", with: "")
             .replacingOccurrences(of: "\"", with: "")
 
-        // 一般数值范围 X-Y -> X到Y，但避免 4-4 年份被这里拦截（年份范围已由 replaceYearMentionsForChinese 处理）
-        let generalRangePattern = #"(?<!\d)(\d{1,3})\s*-\s*(\d{1,3})(?!\d)"#
+        // 统一处理破折号
+        processed = normalizeDash(processed)
+
+        // 先处理“数字范围 + 量词”的读法（关键修复点）
+        // 例如：2000-5000人 / 3-5名 / 10-20个 等
+        // 支持的常见量词集合（可按需扩展）
+        _ = "[人名位个只辆架件次年条份所家台篇场例天月周小时分钟秒]"
+        let numberRangeWithUnitPattern = #"(?<!\d)(\d{1,6})\s*-\s*(\d{1,6})\s*(" + units + #")"#
+        if let regex = try? NSRegularExpression(pattern: numberRangeWithUnitPattern, options: []) {
+            let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
+            var replacements: [(NSRange, String)] = []
+            regex.enumerateMatches(in: processed, options: [], range: nsRange) { match, _, _ in
+                guard let match = match, match.numberOfRanges >= 4 else { return }
+                if let r1 = Range(match.range(at: 1), in: processed),
+                   let r2 = Range(match.range(at: 2), in: processed),
+                   let r3 = Range(match.range(at: 3), in: processed) {
+                    let left = String(processed[r1])
+                    let right = String(processed[r2])
+                    let unit = String(processed[r3])
+                    if let l = Int(left), let r = Int(right) {
+                        let leftZh = readChineseNumber(l)
+                        let rightZh = readChineseNumber(r)
+                        let replacement = "\(leftZh)到\(rightZh)\(unit)"
+                        replacements.append((match.range, replacement))
+                    }
+                }
+            }
+            for (range, rep) in replacements.reversed() {
+                if let r = Range(range, in: processed) {
+                    processed.replaceSubrange(r, with: rep)
+                }
+            }
+        }
+
+        // 一般数值范围 X-Y -> X到Y（不带单位；不碰到“年”的逐字规则）
+        let generalRangePattern = #"(?<!\d)(\d{1,6})\s*-\s*(\d{1,6})(?!\d)"#
         if let generalRegex = try? NSRegularExpression(pattern: generalRangePattern, options: []) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
             var result = processed
             var delta = 0
             generalRegex.enumerateMatches(in: processed, options: [], range: nsRange) { match, _, _ in
                 guard let match = match else { return }
-                // 小于4位的纯数字范围才在这里替换
+                // 只做直接替换“到”，不进行中文数值读法，以免误读四位数为年份
                 if let leftRange = Range(match.range(at: 1), in: processed),
                    let rightRange = Range(match.range(at: 2), in: processed) {
                     let left = String(processed[leftRange])
@@ -650,7 +775,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             processed = result
         }
 
-        // 术语替换
+        // 术语替换（保持原有映射）
         let replacements = [
             "API": "A.P.I",
             "URL": "U.R.L",
@@ -690,7 +815,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "/": "每",
             "DJI": "大疆",
             "Insta360": "Insta三六零",
-            "Airbnb": "Air.B.N.B"
+            "Airbnb": "Air.B.N.B",
+            "参加": "餐加"
         ]
 
         for (key, value) in replacements {
