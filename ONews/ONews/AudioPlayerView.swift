@@ -46,13 +46,9 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     private var audioFile: AVAudioFile?
     private let autoPlayEnabledKey = "audio.autoPlayEnabled"
 
-    // 防重复注册 Remote Commands 的标志
     private var remoteCommandsRegistered = false
-
-    // 当前播放项的标题（用于锁屏展示）
     private var nowPlayingTitle: String = "正在播放的文章"
 
-    // 合成阶段看门狗（防止在锁屏后台卡死）
     private var synthesisWatchdogTimer: Timer?
     private var synthesisLastWriteAt: Date?
 
@@ -77,10 +73,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         Task { @MainActor [weak self] in
             self?.invalidateSynthesisWatchdog()
         }
-        // 其余完整清理由外部 stop() 负责
     }
 
-    // 仅用于“切到下一篇”时的轻量清理：不反激活 AudioSession，不拆 Remote Commands
     func prepareForNextTransition() {
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
@@ -89,8 +83,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         stopDisplayLink()
         cleanupTemporaryFile()
         invalidateSynthesisWatchdog()
-        // 保持 isPlaybackActive = true，让播放器面板维持（如果你想隐藏可自行改）
-        // 保持 AudioSession 活跃，避免后台/锁屏时下一篇激活失败
     }
 
     private func applyPlaybackRate() {
@@ -232,7 +224,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             return
         }
 
-        // 清理旧状态（轻量）
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
         audioPlayer?.delegate = nil
@@ -241,10 +232,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         cleanupTemporaryFile()
         invalidateSynthesisWatchdog()
 
-        // 更新标题
         self.nowPlayingTitle = title?.isEmpty == false ? title! : "正在播放的文章"
-
-        // 重新绑定 delegate
         self.speechSynthesizer.delegate = self
 
         let processedText = preprocessText(text)
@@ -252,7 +240,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         isSynthesizing = true
         isPlaybackActive = true
 
-        // 确保音频会话处于可用状态：先设置分类，再尝试激活（若已激活则此调用幂等）
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .spokenAudio)
@@ -261,7 +248,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             print("激活音频会话警告: \(error.localizedDescription)")
         }
 
-        // 合成阶段刷新 NowPlaying
         refreshNowPlayingInfo(playbackRate: 0.0)
 
         let utterance = AVSpeechUtterance(string: processedText)
@@ -275,11 +261,9 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         let fileName = UUID().uuidString + ".caf"
         temporaryAudioFileURL = tempDir.appendingPathComponent(fileName)
 
-        // 启动合成看门狗
         synthesisLastWriteAt = Date()
         startSynthesisWatchdog()
 
-        // AVSpeechSynthesizer.write 的闭包是 Sendable 语境，切回主 actor 访问/更新状态
         speechSynthesizer.write(utterance) { [weak self] buffer in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -288,7 +272,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                     return
                 }
 
-                // 喂狗
                 self.synthesisLastWriteAt = Date()
 
                 if pcmBuffer.frameLength == 0 {
@@ -351,7 +334,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     func stop() {
-        // 彻底停止：用于用户显式停止或页面消失
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
 
@@ -365,7 +347,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
 
-        // 禁用并移除 Remote Commands
         let commandCenter = MPRemoteCommandCenter.shared()
         commandCenter.playCommand.isEnabled = false
         commandCenter.pauseCommand.isEnabled = false
@@ -377,13 +358,12 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         deactivateAudioSession()
         invalidateSynthesisWatchdog()
 
-        // 彻底释放播放器与合成器
         audioPlayer?.delegate = nil
         audioPlayer = nil
         speechSynthesizer.delegate = nil
     }
 
-    // 自然结束时的收尾，不隐藏面板，不反激活会话
+    // 自然结束：仅在“自动连播开启”时请求下一篇；单次播放时不跳转
     private func finishNaturally() {
         audioPlayer?.stop()
         isPlaying = false
@@ -397,7 +377,10 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             enableRemoteCommandsForActivePlayback()
         }
 
-        onNextRequested?()
+        // 仅当自动连播时才触发下一篇
+        if isAutoPlayEnabled {
+            onNextRequested?()
+        }
         onPlaybackFinished?()
     }
 
@@ -408,7 +391,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         updateProgress()
     }
 
-    // MARK: - Synthesis and File Handling
     private func appendBufferToFile(buffer: AVAudioPCMBuffer) {
         do {
             try self.audioFile?.write(from: buffer)
@@ -437,7 +419,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         }
     }
 
-    // MARK: - Watchdog for synthesis (MainActor)
     private func startSynthesisWatchdog(timeout: TimeInterval = 15) {
         invalidateSynthesisWatchdog()
         synthesisWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
@@ -460,7 +441,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         synthesisLastWriteAt = nil
     }
 
-    // MARK: - AVAudioPlayer Setup and Delegate
     private func setupAndPlayAudioPlayer(from url: URL) {
         do {
             try setupAudioSession()
@@ -494,7 +474,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         finishNaturally()
     }
 
-    // MARK: - Progress Update (CADisplayLink)
     private func startDisplayLink() {
         stopDisplayLink()
         displayLink = CADisplayLink(target: self, selector: #selector(updateProgress))
@@ -513,7 +492,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         refreshNowPlayingInfo()
     }
 
-    // MARK: - Audio Session and Error Handling
     private func setupAudioSession() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .spokenAudio)
@@ -540,30 +518,23 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
     
     // --- 新增函数 ---
-    // 移除数字中的千位分隔符，例如 "1,500" -> "1500"
     private func removeCommasFromNumbers(_ text: String) -> String {
-        // 正则表达式：查找一个数字，后跟一个逗号，再后跟三位数字
-        // (\d) 是捕获组1，(\d{3}) 是捕获组2
-        // 这个模式会匹配 "1,500" 中的 "1,500"，"1,234,567" 中的 "1,234" 和 "4,567"
         let pattern = #"(\d),(\d{3})"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return text
         }
         
         var result = text
-        // 循环替换，直到找不到更多匹配项为止
-        // 这对于处理多个分隔符（如 "1,234,567"）是必要的
         while regex.firstMatch(in: result, range: NSRange(result.startIndex..., in: result)) != nil {
             result = regex.stringByReplacingMatches(
                 in: result,
                 range: NSRange(result.startIndex..., in: result),
-                withTemplate: "$1$2" // 将 "数字,三位数字" 替换为 "数字三位数字"
+                withTemplate: "$1$2"
             )
         }
         return result
     }
 
-    // 将阿拉伯数字年份转为逐位中文数字：1944 -> 一九四四
     private func formatYearToPinyinDigits(_ year: String) -> String {
         let map: [Character: String] = [
             "0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
@@ -572,10 +543,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return year.compactMap { map[$0] }.joined()
     }
 
-    // 将“1944-1947年”替换为“一九四四到1947年”
     private func replaceYearRangesForChinese(_ text: String) -> String {
-        // 匹配 4位-4位 后紧跟 年（可有空格）
-        // 捕获组：1=左年份 2=右年份
         let pattern = #"(?<!\d)(\d{4})\s*-\s*(\d{4})(?=\s*年)"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
         let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
@@ -589,7 +557,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 let leftYear = String(text[r1])
                 let rightYear = String(text[r2])
                 let leftDigits = formatYearToPinyinDigits(leftYear)
-                // 直接以 match.range 替换，不创建未使用变量
                 let replacement = "\(leftDigits)到\(rightYear)"
                 let start = result.index(result.startIndex, offsetBy: match.range.location + offset)
                 let end = result.index(start, offsetBy: match.range.length)
@@ -600,15 +567,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return result
     }
 
-    // 将所有以 "20" 开头的四位数字（如 2024）转为逐位朗读
     private func replaceModernYearsForChinese(_ text: String) -> String {
-        // 正则表达式：\b 匹配单词边界，确保匹配的是独立的数字
-        // (20\d{2}) 捕获以 "20" 开头，后跟两位数字的四位数
         let pattern = #"\b(20\d{2})\b"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
 
         var result = text
-        // 从后往前替换，避免 range 变化导致错误
         let matches = regex.matches(in: result, options: [], range: NSRange(result.startIndex..<result.endIndex, in: result)).reversed()
 
         for match in matches {
@@ -621,20 +584,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     private func preprocessText(_ text: String) -> String {
-        // --- 修改点 ---
-        // 第一步：移除数字中的千位分隔符，解决 "1,500" 读成 "一，五百" 的问题
         let textWithoutCommas = removeCommasFromNumbers(text)
-        
-        // 后续处理都基于移除了逗号的文本
         let processedSpecialTerms = processEnglishText(textWithoutCommas)
-
-        // 特化：处理“1944-1947年”→“一九四四到1947年”
         let withChineseYearRange = replaceYearRangesForChinese(processedSpecialTerms)
-
-        // 新增：将所有以 "20" 开头的四位数字（如 2024）转为逐位朗读
         let withModernYears = replaceModernYearsForChinese(withChineseYearRange)
 
-        // 中英夹杂在汉字和英文之间加逗号，便于中文 TTS 断句
         let pattern = "([\\u4e00-\\u9fa5])(\\s*[a-zA-Z]+\\s*)([\\u4e00-\\u9fa5])"
         let regex = try? NSRegularExpression(pattern: pattern, options: [])
         let range = NSRange(withModernYears.startIndex..<withModernYears.endIndex, in: withModernYears)
@@ -655,21 +609,14 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             .replacingOccurrences(of: "”", with: "")
             .replacingOccurrences(of: "\"", with: "")
 
-        // 连字符数字范围：
-        // - 若为 4位-4位（可能是年份范围），保留为“到”但不做通用替换，这部分交给 replaceYearRangesForChinese 处理中文场景；
-        // - 一般情形的数字范围（至少左边有数字，右边可为空或数字），替换为“到”
-        // 先避免对 4位-4位 直接替换
-        // 再处理其它范围（如 3-5, 10- 等）
         let generalRangePattern = #"(?<!\d)(\d+)\s*-\s*(\d*)(?!\d)"#
 
         if let generalRegex = try? NSRegularExpression(pattern: generalRangePattern, options: []) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
-            // 用一个回调式替换，跳过 4位-4位 的匹配
             var result = processed
             var delta = 0
             generalRegex.enumerateMatches(in: processed, options: [], range: nsRange) { match, _, _ in
                 guard let match = match else { return }
-                // 检查是否是 4位-4位；如果是，跳过，交由中文年份函数处理
                 if let leftRange = Range(match.range(at: 1), in: processed) {
                     let left = processed[leftRange]
                     var isFourFour = false
@@ -682,7 +629,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                     if isFourFour {
                         return
                     }
-                    // 不是 4位-4位：正常替换为 “左到右”
                     let leftStr = String(left)
                     let rightStr: String
                     if match.numberOfRanges >= 3, let rRange = Range(match.range(at: 2), in: processed) {
@@ -776,8 +722,8 @@ struct AudioPlayerView: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) { // 原 16 -> 12，整体更紧凑
-            HStack(spacing: 10) { // 原 12 -> 10
+        VStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Text(playerManager.currentTimeString)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
 
@@ -804,12 +750,12 @@ struct AudioPlayerView: View {
                 ZStack {
                     Button(action: { playerManager.playPause() }) {
                         Image(systemName: playPauseIconName)
-                            .font(.system(size: 52, weight: .regular)) // 原 54 -> 52
+                            .font(.system(size: 52, weight: .regular))
                     }
                     .disabled(playerManager.isSynthesizing || !playerManager.isPlaybackActive)
                     .opacity(playerManager.isSynthesizing || !playerManager.isPlaybackActive ? 0.6 : 1.0)
                 }
-                .frame(height: 66) // 原 70 -> 66
+                .frame(height: 66)
 
                 HStack {
                     HStack {
@@ -833,10 +779,10 @@ struct AudioPlayerView: View {
                             playerManager.playbackRate = newRate
                         }) {
                             Text(rateLabel)
-                                .font(.system(size: 18, weight: .semibold, design: .rounded)) // 字号略微缩小
+                                .font(.system(size: 18, weight: .semibold, design: .rounded))
                                 .foregroundColor(.white)
-                                .padding(.vertical, 7) // 原 6 -> 5
-                                .padding(.horizontal, 12) // 原 10 -> 9
+                                .padding(.vertical, 7)
+                                .padding(.horizontal, 12)
                                 .background(Color.white.opacity(0.18))
                                 .clipShape(Capsule())
                         }
@@ -851,7 +797,7 @@ struct AudioPlayerView: View {
                             playNextAndStart?()
                         }) {
                             Image(systemName: "forward.end.fill")
-                                .font(.system(size: 21, weight: .semibold)) // 原 22 -> 21
+                                .font(.system(size: 21, weight: .semibold))
                                 .symbolRenderingMode(.hierarchical)
                         }
                         .disabled(!playerManager.isPlaybackActive || playerManager.isSynthesizing)
@@ -862,42 +808,38 @@ struct AudioPlayerView: View {
             }
         }
         .foregroundColor(.white)
-        // 顶部和底部 padding 调整，让整体更贴近底部
-        .padding(EdgeInsets(top: 28, leading: 16, bottom: 10, trailing: 16)) // 原 top:35, leading:20, bottom:15, trailing:20
+        .padding(EdgeInsets(top: 28, leading: 16, bottom: 10, trailing: 16))
         .background(.black.opacity(0.8))
-        .cornerRadius(18) // 原 20 -> 18 更贴边
+        .cornerRadius(18)
         .overlay(
             Button(action: { toggleCollapse?() }) {
                 Image(systemName: "minus")
-                    .font(.system(size: 20, weight: .bold)) // 原 22 -> 20
+                    .font(.system(size: 20, weight: .bold))
                     .foregroundColor(.white)
                     .padding(6)
                     .clipShape(Circle())
                     .accessibilityLabel("最小化播放器")
             }
-            .padding(6), // 原 8 -> 6
+            .padding(6),
             alignment: .topLeading
         )
         .overlay(
             Button(action: { playerManager.stop() }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold)) // 原 12 -> 11
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundColor(.black)
                     .padding(6)
                     .background(Color.white.opacity(0.8))
                     .clipShape(Circle())
             }
-            .padding(6), // 原 8 -> 6
+            .padding(6),
             alignment: .topTrailing
         )
-        // 让卡片更靠近屏幕底部：原 offset(y: -50) -> -18
         .offset(y: -18)
-        // 横向外边距略小，减少占据正文面积
-        .padding(.horizontal, 12) // 原 .padding(.horizontal)
+        .padding(.horizontal, 12)
         .onChange(of: playerManager.progress) { _, newValue in
             if !isEditingSlider { self.sliderValue = newValue }
         }
-        // 贴近屏幕底部时保证不压住 Home 指示条
         .safeAreaInset(edge: .bottom) {
             Color.clear.frame(height: 0)
         }
@@ -921,14 +863,14 @@ struct MiniAudioBubbleView: View {
                         .font(.system(size: 22, weight: .semibold))
                 }
                 .foregroundColor(.white)
-                .padding(.vertical, 9) // 稍微收紧
+                .padding(.vertical, 9)
                 .padding(.horizontal, 12)
                 .background(.black.opacity(0.8))
                 .clipShape(Capsule())
                 .shadow(radius: 6)
             }
             .padding(.leading, 8)
-            .padding(.bottom, 4) // 靠近底部一点
+            .padding(.bottom, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         .allowsHitTesting(true)
