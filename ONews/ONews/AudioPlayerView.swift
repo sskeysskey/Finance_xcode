@@ -752,7 +752,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             // 例如：2000-5000人 / 3-5名 / 10-20个 等
             // 支持的常见量词集合（可按需扩展）
             // 修复：移除 `_ =`，正确为 `units` 变量赋值
-            let units = "[人名位个只辆架件次年条份所家台篇场例天月周小时分钟秒]"
+            _ = "[人名位个只辆架件次年条份所家台篇场例天月周小时分钟秒]"
             let numberRangeWithUnitPattern = #"(?<!\d)(\d{1,6})\s*-\s*(\d{1,6})\s*(" + units + #")"#
             if let regex = try? NSRegularExpression(pattern: numberRangeWithUnitPattern, options: []) {
                 let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
