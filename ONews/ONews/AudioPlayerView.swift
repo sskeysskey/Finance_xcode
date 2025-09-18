@@ -689,8 +689,12 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         let textWithoutCommas = removeCommasFromNumbers(text)
         // 统一破折号等
         let normalized = normalizeDash(textWithoutCommas)
+        // 先在“百分点/百分比/百分点”前的带小数数字插入“点”，
+        // 例如：0.5个百分点 -> 0点5个百分点（TTS 读作“零点五个百分点”）
+        let decimalBeforePercentWordFixed = insertDotForDecimalBeforePercentageWords(normalized)
+
         // 先处理英文与数字范围、单位（核心修复）
-        let processedSpecialTerms = processEnglishText(normalized)
+        let processedSpecialTerms = processEnglishText(decimalBeforePercentWordFixed)
         // 仅对带“年”的位置做年份逐字化
         let withYearFixed = replaceYearMentionsForChinese(processedSpecialTerms)
 
@@ -706,6 +710,39 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         ) ?? withYearFixed
 
         return modifiedText
+    }
+    
+    private func insertDotForDecimalBeforePercentageWords(_ text: String) -> String {
+    var result = text
+    // 匹配小数紧跟“个百分点/百分比/百分点”
+    // 示例：0.5个百分点 -> 0.5点个百分点（随后 TTS 会把“点”读出来，整体为“零点五个百分点”）
+    // 为了兼容空格：允许小数与量词之间有可选空白
+    let pattern = #"(?<!\d)(\d+).(\d+)\s*(个百分点|百分比|百分点)"#
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return result }
+
+    let nsRange = NSRange(result.startIndex..<result.endIndex, in: result)
+    var replacements: [(NSRange, String)] = []
+
+    regex.enumerateMatches(in: result, options: [], range: nsRange) { match, _, _ in
+        guard let match = match, match.numberOfRanges >= 4 else { return }
+        if let r1 = Range(match.range(at: 1), in: result),
+           let r2 = Range(match.range(at: 2), in: result),
+           let r3 = Range(match.range(at: 3), in: result) {
+            let intPart = String(result[r1])   // "0"
+            let fracPart = String(result[r2])  // "5"
+            let unit = String(result[r3])      // "个百分点"/"百分比"/"百分点"
+            // 构造插入“点”的读法提示：0.5 -> 0点5
+            let replacement = "\(intPart)点\(fracPart)\(unit)"
+            replacements.append((match.range, replacement))
+        }
+    }
+
+    for (range, rep) in replacements.reversed() {
+        if let r = Range(range, in: result) {
+            result.replaceSubrange(r, with: rep)
+        }
+    }
+    return result
     }
 
     // 修正与增强：
