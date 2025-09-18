@@ -12,9 +12,9 @@ struct SourceListView: View {
     
     @Environment(\.scenePhase) private var scenePhase
     
-    private var sourcesWithUnread: [NewsSource] {
-        viewModel.sources.filter { $0.unreadCount > 0 }
-    }
+//    private var sourcesWithUnread: [NewsSource] {
+//        viewModel.sources.filter { $0.unreadCount > 0 }
+//    }
     
     var body: some View {
         NavigationView {
@@ -59,8 +59,8 @@ struct SourceListView: View {
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                             
-                            // 订阅源列表
-                            ForEach(sourcesWithUnread) { source in
+                            // 订阅源列表（显示所有来源，未读为 0 也显示）
+                            ForEach(viewModel.sources) { source in
                                 ZStack {
                                     HStack {
                                         Text(source.name)

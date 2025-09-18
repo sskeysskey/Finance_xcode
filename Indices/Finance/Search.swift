@@ -374,7 +374,19 @@ struct SearchView: View {
                         )
                     )) {
                         if !(collapsedGroups[groupedResult.category] ?? false) {
-                            ForEach(groupedResult.results.sorted { $0.score > $1.score }, id: \.result.id) { result, score in
+//                            ForEach(groupedResult.results.sorted { $0.score > $1.score }, id: \.result.id) { result, score in
+                            // 修改点：在渲染时，先按 score 降序，其次按 marketCap 数值降序
+                               ForEach(
+                                   groupedResult.results.sorted(by: { lhs, rhs in
+                                       if lhs.score != rhs.score {
+                                           return lhs.score > rhs.score
+                                       }
+                                       let lmc = parseMarketCap(lhs.result.marketCap)
+                                       let rmc = parseMarketCap(rhs.result.marketCap)
+                                       return lmc > rmc
+                                   }),
+                                   id: \.result.id
+                               ) { result, score in
                                 SearchResultRow(result: result, score: score)
                                     .contentShape(Rectangle())  // 添加这一行
                                     .onTapGesture {           // 改用 onTapGesture
@@ -489,6 +501,28 @@ struct SearchView: View {
             }
         }
     }
+}
+
+// 解析市值字符串，返回可比较的数值（单位统一为美元）
+private func parseMarketCap(_ text: String?) -> Double {
+    guard let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return 0 }
+    // 常见格式示例： "1.23T", "456.7B", "89.0M" 或纯数字字符串
+    let upper = t.uppercased()
+    let multipliers: [Character: Double] = [
+        "T": 1_000_000_000_000,
+        "B": 1_000_000_000,
+        "M": 1_000_000,
+        "K": 1_000
+    ]
+    if let last = upper.last, let mul = multipliers[last] {
+        let numberPart = String(upper.dropLast())
+        if let v = Double(numberPart.replacingOccurrences(of: ",", with: "")) {
+            return v * mul
+        }
+    }
+    // 无单位，尝试直接解析
+    let plain = upper.replacingOccurrences(of: ",", with: "")
+    return Double(plain) ?? 0
 }
 
 // MARK: - 搜索结果行
@@ -808,7 +842,14 @@ class SearchViewModel: ObservableObject {
             }
         }
         
-        return scoredResults.sorted { $0.1 > $1.1 }
+//        return scoredResults.sorted { $0.1 > $1.1 }
+        // 修改点：组内排序先按分数降序，再按 marketCap 数值降序
+       return scoredResults.sorted { lhs, rhs in
+           if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
+           let lmc = parseMarketCap(lhs.0.marketCap)
+           let rmc = parseMarketCap(rhs.0.marketCap)
+           return lmc > rmc
+       }
     }
     
     // 计算某个 item 与一组关键词在指定分类下的匹配分数

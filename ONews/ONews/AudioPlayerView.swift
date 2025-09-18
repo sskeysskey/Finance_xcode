@@ -816,7 +816,9 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "DJI": "大疆",
             "Insta360": "Insta三六零",
             "Airbnb": "Air.B.N.B",
-            "参加": "餐加"
+            "参加": "餐加",
+            "K-12": "K十二",
+            "K12": "K十二"
         ]
 
         for (key, value) in replacements {
