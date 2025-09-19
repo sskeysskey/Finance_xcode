@@ -864,7 +864,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             // 先处理“数字范围 + 量词”的读法（关键修复点）
             // 例如：2000-5000人 / 3-5名 / 10-20个 等
             // 支持的常见量词集合（可按需扩展）
-            // 修复：将 `_ =` 修正为 `let units =`
             _ = "[人名位个只辆架件次年条份所家台篇场例天月周小时分钟秒]"
             let numberRangeWithUnitPattern = #"(?<!\d)(\d{1,6})\s*-\s*(\d{1,6})\s*(" + units + #")"#
             if let regex = try? NSRegularExpression(pattern: numberRangeWithUnitPattern, options: []) {
