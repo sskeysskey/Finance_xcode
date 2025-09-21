@@ -3,8 +3,8 @@ import UIKit
 import Photos
 
 struct ActivityView: UIViewControllerRepresentable {
-let activityItems: [Any]
-let applicationActivities: [UIActivity]? = nil
+    let activityItems: [Any]
+    let applicationActivities: [UIActivity]? = nil
 
 func makeUIViewController(context: Context) -> UIActivityViewController {
     let vc = UIActivityViewController(activityItems: activityItems, applicationActivities: applicationActivities)
@@ -250,7 +250,7 @@ var body: some View {
         ZoomableImageView(imageName: imageName, timestamp: timestamp, isPresented: $isShowingZoomView)
     }
     .padding(.vertical, 10)
-}
+    }
 }
 
 struct ZoomableImageView: View {
