@@ -198,7 +198,9 @@ struct ArticleListView: View {
                                             Text("搜索结果")
                                                 .font(.subheadline)
                                                 .foregroundColor(.blue.opacity(0.7))
-                                            Text(formatTimestamp(timestamp))
+                                            // ==================== 修改点 1/4 ====================
+                                            // 在搜索结果的日期右侧添加文章数量
+                                            Text("\(formatTimestamp(timestamp)) \(grouped[timestamp]?.count ?? 0)")
                                                 .font(.headline)
                                                 .foregroundColor(.blue.opacity(0.85))
                                         }
@@ -274,7 +276,9 @@ struct ArticleListView: View {
                         } header: {
                             // 修改：将Header转换为可点击的HStack，并添加折叠图标
                             HStack {
-                                Text(formatTimestamp(timestamp))
+                                // ==================== 修改点 2/4 ====================
+                                // 在非搜索模式的日期右侧添加文章数量
+                                Text("\(formatTimestamp(timestamp)) \(groupedArticles[timestamp]?.count ?? 0)")
                                     .font(.headline)
                                     .foregroundColor(.blue.opacity(0.7))
                                 Spacer()
@@ -458,7 +462,9 @@ struct AllArticlesListView: View {
                                             Text("搜索结果")
                                                 .font(.subheadline)
                                                 .foregroundColor(.blue.opacity(0.7))
-                                            Text(formatTimestamp(timestamp))
+                                            // ==================== 修改点 3/4 ====================
+                                            // 在搜索结果的日期右侧添加文章数量
+                                            Text("\(formatTimestamp(timestamp)) \(grouped[timestamp]?.count ?? 0)")
                                                 .font(.headline)
                                                 .foregroundColor(.blue.opacity(0.85))
                                         }
@@ -536,7 +542,9 @@ struct AllArticlesListView: View {
                             }
                         } header: {
                             HStack {
-                                Text(formatTimestamp(timestamp))
+                                // ==================== 修改点 4/4 ====================
+                                // 在非搜索模式的日期右侧添加文章数量
+                                Text("\(formatTimestamp(timestamp)) \(groupedArticles[timestamp]?.count ?? 0)")
                                     .font(.headline)
                                     .foregroundColor(.blue.opacity(0.7))
                                 Spacer()
