@@ -959,8 +959,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 "参加": "餐加",
                 "K-12": "K十二",
                 "K12": "K十二",
-                "Covid-19": "新冠肺炎",
-                "Covid": "新冠肺炎"
+                "Covid-19": "新冠肺炎"
             ]
 
             for (key, value) in replacements {
