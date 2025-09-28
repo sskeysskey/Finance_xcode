@@ -12,7 +12,7 @@ struct ArticleContainerView: View {
     @State private var currentSourceName: String
 
     @State private var liveUnreadCount: Int
-    @State private var readArticleIDsInThisSession: Set<UUID> = []
+    // 已移除: @State private var readArticleIDsInThisSession: Set<UUID> = []
 
     @State private var showNoNextToast = false
     @State private var isMiniPlayerCollapsed = false
@@ -57,7 +57,6 @@ struct ArticleContainerView: View {
                 unreadCount: liveUnreadCount,
                 viewModel: viewModel,
                 audioPlayerManager: audioPlayerManager,
-                // “读取下一篇”按钮：停止并跳转（不自动播放）
                 requestNextArticle: {
                     self.switchToNextArticleAndStopAudio()
                 }
@@ -85,7 +84,6 @@ struct ArticleContainerView: View {
                     AudioPlayerView(
                         playerManager: audioPlayerManager,
                         playNextAndStart: {
-                            // 播放器“双箭头”：跳转并自动播放
                             switchToNextArticle(shouldAutoplayNext: true)
                         },
                         toggleCollapse: {
@@ -102,87 +100,42 @@ struct ArticleContainerView: View {
             }
         }
         .onAppear {
-            // 远程“下一曲”（锁屏/控制中心）或耳机上的下一曲按钮
             audioPlayerManager.onNextRequested = {
-                // 用户主动请求下一曲：无条件跳转并自动播放
                 self.switchToNextArticle(shouldAutoplayNext: true)
             }
-            // 自然结束：行为在 AudioPlayerManager.finishNaturally 内部已根据 isAutoPlayEnabled 处理
             audioPlayerManager.onPlaybackFinished = {
-                // 已在 manager 内处理，无需重复
+                // 行为已在 AudioPlayerManager 内部处理
             }
         }
         .onDisappear {
-            // 离开详情页才彻底停止与反激活会话
+            // 离开详情页，停止播放并提交所有在这个会话中阅读过的文章
             audioPlayerManager.stop()
-
-            if !currentArticle.isRead {
-                readArticleIDsInThisSession.insert(currentArticle.id)
-            }
-            for articleID in readArticleIDsInThisSession {
-                viewModel.markAsRead(articleID: articleID)
-            }
+            
+            // 将当前正在看的、但还未切换走的文章也暂存起来
+            _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
+            
+            // 统一提交
+            viewModel.commitPendingReads()
         }
-        .onChange(of: currentArticle.id) { oldValue, _ in
-            let oldArticle = viewModel.sources.flatMap { $0.articles }.first { $0.id == oldValue }
-            if let oldArticle, !oldArticle.isRead {
-                let isNewToSession = !readArticleIDsInThisSession.contains(oldValue)
-                if isNewToSession {
-                    liveUnreadCount = max(0, liveUnreadCount - 1)
-                    readArticleIDsInThisSession.insert(oldValue)
-                }
-            }
-        }
+        // 已移除 .onChange(of: currentArticle.id) 修饰符，逻辑已合并
         .background(Color.viewBackground.ignoresSafeArea())
     }
 
-    // MARK: - 新增函数
+    // MARK: - 修改后的函数
     private func switchToNextArticleAndStopAudio() {
         audioPlayerManager.stop()
-
-        if let currentInVM = viewModel.sources.flatMap({ $0.articles }).first(where: { $0.id == currentArticle.id }) {
-            let wasUnread = !currentInVM.isRead
-            let isNewToSession = !readArticleIDsInThisSession.contains(currentArticle.id)
-            if wasUnread && isNewToSession {
-                readArticleIDsInThisSession.insert(currentArticle.id)
-                if liveUnreadCount > 0 {
-                    liveUnreadCount -= 1
-                }
-            }
-        }
-
-        let sourceNameToSearch: String?
-        switch navigationContext {
-        case .fromSource(let name): sourceNameToSearch = name
-        case .fromAllArticles: sourceNameToSearch = nil
-        }
-
-        if let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch) {
-            if readArticleIDsInThisSession.contains(next.article.id) {
-                showToast { shouldShow in self.showNoNextToast = shouldShow }
-            } else {
-                withAnimation(.easeInOut(duration: 0.4)) {
-                    self.currentArticle = next.article
-                    self.currentSourceName = next.sourceName
-                }
-                // 不自动播放
-            }
-        } else {
-            showToast { shouldShow in self.showNoNextToast = shouldShow }
-        }
+        switchToNextArticle(shouldAutoplayNext: false)
     }
 
     private func switchToNextArticle(shouldAutoplayNext: Bool) {
-        audioPlayerManager.prepareForNextTransition()
+        if shouldAutoplayNext {
+            audioPlayerManager.prepareForNextTransition()
+        }
 
-        if let currentInVM = viewModel.sources.flatMap({ $0.articles }).first(where: { $0.id == currentArticle.id }) {
-            let wasUnread = !currentInVM.isRead
-            let isNewToSession = !readArticleIDsInThisSession.contains(currentArticle.id)
-            if wasUnread && isNewToSession {
-                readArticleIDsInThisSession.insert(currentArticle.id)
-                if liveUnreadCount > 0 {
-                    liveUnreadCount -= 1
-                }
+        // 在切换前，将当前文章暂存为待读。如果暂存成功（即首次阅读），则更新UI上的未读计数器。
+        if viewModel.stageArticleAsRead(articleID: currentArticle.id) {
+            if liveUnreadCount > 0 {
+                liveUnreadCount -= 1
             }
         }
 
@@ -193,8 +146,10 @@ struct ArticleContainerView: View {
         }
 
         if let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch) {
-            if readArticleIDsInThisSession.contains(next.article.id) {
+            // 检查下一篇文章是否已在本会话中阅读过（即在待提交列表里）。如果是，说明已经循环了一圈。
+            if viewModel.isArticlePendingRead(articleID: next.article.id) {
                 showToast { shouldShow in self.showNoNextToast = shouldShow }
+                audioPlayerManager.stop() // 如果没有下一篇了，也停止播放器
             } else {
                 withAnimation(.easeInOut(duration: 0.4)) {
                     self.currentArticle = next.article
@@ -212,6 +167,7 @@ struct ArticleContainerView: View {
             }
         } else {
             showToast { shouldShow in self.showNoNextToast = shouldShow }
+            audioPlayerManager.stop() // 如果没有下一篇了，也停止播放器
         }
     }
 
@@ -225,6 +181,7 @@ struct ArticleContainerView: View {
     }
 }
 
+// ToastView 保持不变
 struct ToastView: View {
     let message: String
 

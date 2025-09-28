@@ -12,14 +12,9 @@ struct SourceListView: View {
     
     @Environment(\.scenePhase) private var scenePhase
     
-//    private var sourcesWithUnread: [NewsSource] {
-//        viewModel.sources.filter { $0.unreadCount > 0 }
-//    }
-    
     var body: some View {
         NavigationView {
             ZStack {
-                // 背景图放在 NavigationView 内部，确保不被其根背景遮挡
                 Image("welcome_background")
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -40,7 +35,6 @@ struct SourceListView: View {
                         }
                     } else {
                         List {
-                            // "ALL" 链接
                             ZStack {
                                 HStack {
                                     Text("ALL")
@@ -59,7 +53,6 @@ struct SourceListView: View {
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                             
-                            // 订阅源列表（显示所有来源，未读为 0 也显示）
                             ForEach(viewModel.sources) { source in
                                 ZStack {
                                     HStack {
@@ -81,8 +74,8 @@ struct SourceListView: View {
                             }
                         }
                         .listStyle(.plain)
-                        .scrollContentBackground(.hidden) // iOS 16+
-                        .background(Color.clear)          // 兜底
+                        .scrollContentBackground(.hidden)
+                        .background(Color.clear)
                     }
                 }
             }
@@ -113,7 +106,6 @@ struct SourceListView: View {
         .accentColor(.white)
         .preferredColorScheme(.dark)
         .onAppear {
-            // iOS 15 兜底：强制 UITableView 背景透明
             let tv = UITableView.appearance()
             tv.backgroundColor = .clear
             tv.separatorStyle = .none
@@ -127,15 +119,19 @@ struct SourceListView: View {
             }
         }
         .onDisappear {
-            // 可选：恢复全局外观，避免影响其他页面（如果有需要恢复）
-            // let tv = UITableView.appearance()
-            // tv.backgroundColor = nil
-            // tv.separatorStyle = .singleLine
+            // 可选恢复
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
+            // 当应用从前台切换到后台或非激活状态时
             if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
-                badgeManager.updateBadge(count: viewModel.totalUnreadCount)
-                print("应用从前台切换到后台，强制更新角标为: \(viewModel.totalUnreadCount)")
+                // 使用“静默提交”：只更新持久化与角标，不刷新 sources，避免导航栈被重建
+                viewModel.commitPendingReadsSilently()
+                
+                // 用静默计算得到的未读数更新角标（也可依赖 viewModel.badgeUpdater 内部逻辑）
+                let unread = viewModel.totalUnreadCount // 此处使用当前内存态，不触发刷新
+                badgeManager.updateBadge(count: unread)
+                
+                print("应用进入后台，已静默提交暂存的已读文章并更新角标为: \(unread)")
             }
         }
         .sheet(isPresented: $showAddSourceSheet, onDismiss: {
@@ -153,7 +149,6 @@ struct SourceListView: View {
             }
             .preferredColorScheme(.dark)
         }
-        // 加载/进度覆盖层
         .overlay(
             Group {
                 if resourceManager.isSyncing {
