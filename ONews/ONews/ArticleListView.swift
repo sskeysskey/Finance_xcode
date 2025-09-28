@@ -274,14 +274,21 @@ struct ArticleListView: View {
                                 }
                             }
                         } header: {
-                            // 修改：将Header转换为可点击的HStack，并添加折叠图标
-                            HStack {
-                                // ==================== 修改点 2/4 ====================
-                                // 在非搜索模式的日期右侧添加文章数量
-                                Text("\(formatTimestamp(timestamp)) \(groupedArticles[timestamp]?.count ?? 0)")
+                            // 修改后的 Header：日期在左，数量靠右、箭头最右
+                            HStack(spacing: 8) {
+                                // 左侧日期
+                                Text(formatTimestamp(timestamp))
                                     .font(.headline)
                                     .foregroundColor(.blue.opacity(0.7))
-                                Spacer()
+
+                                Spacer(minLength: 8)
+
+                                // 数量在箭头左侧
+                                Text("\(groupedArticles[timestamp]?.count ?? 0)")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+
+                                // 折叠指示箭头
                                 Image(systemName: expandedTimestamps.contains(timestamp) ? "chevron.down" : "chevron.right")
                                     .foregroundColor(.secondary)
                                     .font(.footnote.weight(.semibold))
@@ -541,13 +548,21 @@ struct AllArticlesListView: View {
                                 }
                             }
                         } header: {
-                            HStack {
-                                // ==================== 修改点 4/4 ====================
-                                // 在非搜索模式的日期右侧添加文章数量
-                                Text("\(formatTimestamp(timestamp)) \(groupedArticles[timestamp]?.count ?? 0)")
+                            // 修改后的 Header：日期在左，数量靠右、箭头最右
+                            HStack(spacing: 8) {
+                                // 左侧日期
+                                Text(formatTimestamp(timestamp))
                                     .font(.headline)
                                     .foregroundColor(.blue.opacity(0.7))
-                                Spacer()
+
+                                Spacer(minLength: 8)
+
+                                // 数量在箭头左侧
+                                Text("\(groupedArticles[timestamp]?.count ?? 0)")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+
+                                // 折叠指示箭头
                                 Image(systemName: expandedTimestamps.contains(timestamp) ? "chevron.down" : "chevron.right")
                                     .foregroundColor(.secondary)
                                     .font(.footnote.weight(.semibold))
