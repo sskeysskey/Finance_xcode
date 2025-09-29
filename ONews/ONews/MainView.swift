@@ -41,7 +41,7 @@ class NewsViewModel: ObservableObject {
     var badgeUpdater: ((Int) -> Void)?
     private var cancellables = Set<AnyCancellable>()
 
-    // 新增：用于暂存会话中已读但尚未提交的文章ID
+    // ✅ 核心机制：用于暂存会话中已读但尚未提交的文章ID。这是融合两种逻辑的基础。
     private var pendingReadArticleIDs: Set<UUID> = []
 
     private var documentsDirectory: URL {
@@ -84,6 +84,7 @@ class NewsViewModel: ObservableObject {
     }
 
     func loadNews() {
+        // ... (这部分代码没有变化，保持原样)
         let subscribed = subscriptionManager.subscribedSources
         if subscribed.isEmpty {
             print("没有订阅任何新闻源。列表将为空。")
@@ -163,15 +164,13 @@ class NewsViewModel: ObservableObject {
         }
     }
 
-    // MARK: - 新增和修改的函数
+    // MARK: - 暂存与提交逻辑
 
     /// 将文章ID暂存到待提交列表。如果该文章是首次在本会话中被标记，则返回 true。
     func stageArticleAsRead(articleID: UUID) -> Bool {
-        // 检查文章是否已经是“已读”状态
         if let article = sources.flatMap({ $0.articles }).first(where: { $0.id == articleID }), article.isRead {
             return false
         }
-        // 检查文章是否已在“待提交”列表
         if pendingReadArticleIDs.contains(articleID) {
             return false
         }
@@ -185,52 +184,52 @@ class NewsViewModel: ObservableObject {
         return pendingReadArticleIDs.contains(articleID)
     }
 
-    /// 提交所有暂存的已读文章，并清空列表。提交后同步刷新 UI（会触发 @Published sources 变化）。
+    /// ✅ 场景1: 返回列表页时调用。
+    /// 提交所有暂存的已读文章，并清空列表。此操作会修改 `sources`，从而刷新UI。
     func commitPendingReads() {
         let idsToCommit = pendingReadArticleIDs
         guard !idsToCommit.isEmpty else { return }
 
-        print("正在提交 \(idsToCommit.count) 篇暂存的已读文章...")
+        print("【完整提交】正在提交 \(idsToCommit.count) 篇暂存的已读文章（将刷新 UI）...")
         pendingReadArticleIDs.removeAll()
 
         DispatchQueue.main.async {
             for articleID in idsToCommit {
-                self.markAsRead(articleID: articleID)
+                self.markAsRead(articleID: articleID) // markAsRead 会修改 self.sources
             }
-            print("提交完成。")
+            print("【完整提交】完成。")
         }
     }
 
-    /// 新增：静默提交已读文章，仅更新持久化记录和角标，不改变 sources（避免触发导航重建）。
+    /// ✅ 场景2: 应用退到后台时调用。
+    /// 静默提交已读文章，仅更新持久化记录和角标，不改变 `sources`。
     func commitPendingReadsSilently() {
         let idsToCommit = pendingReadArticleIDs
         guard !idsToCommit.isEmpty else { return }
 
-        print("静默提交 \(idsToCommit.count) 篇暂存的已读文章（不刷新 UI）...")
+        print("【静默提交】正在提交 \(idsToCommit.count) 篇暂存的已读文章（不刷新 UI）...")
         pendingReadArticleIDs.removeAll()
 
-        // 仅更新 readRecords 和持久化，不去触发 sources 的 @Published 写入
         for articleID in idsToCommit {
             if let (sourceIndex, articleIndex) = indexPathOfArticle(id: articleID) {
                 let topic = sources[sourceIndex].articles[articleIndex].topic
-                // 如果之前未读，这里只更新持久化记录
-                readRecords[topic] = Date()
+                if readRecords[topic] == nil {
+                     readRecords[topic] = Date()
+                }
             }
         }
         saveReadRecords()
 
-        // 主线程更新角标（通过 badgeUpdater），不依赖 sources 的重新计算
-        let newUnread = calculateUnreadCountWithoutTouchingSources()
+        let newUnread = calculateUnreadCountAfterSilentCommit()
         DispatchQueue.main.async { [weak self] in
             self?.badgeUpdater?(newUnread)
         }
 
-        print("静默提交完成。")
+        print("【静默提交】完成。角标将更新为 \(newUnread)。")
     }
 
-    /// 仅用于静默场景的未读数计算，基于 sources + readRecords 推导，不修改 sources。
-    private func calculateUnreadCountWithoutTouchingSources() -> Int {
-        // 依据当前内存中的 sources，按 readRecords 判断是否已读
+    /// 用于静默提交后计算最新的未读数。
+    private func calculateUnreadCountAfterSilentCommit() -> Int {
         var count = 0
         for source in sources {
             for article in source.articles {
@@ -252,34 +251,30 @@ class NewsViewModel: ObservableObject {
         return nil
     }
 
-    // `markAsRead` 函数本身无需修改，因为它只负责最终的标记和持久化逻辑。
+    // MARK: - 底层标记函数 (保持不变)
+
     func markAsRead(articleID: UUID) {
         DispatchQueue.main.async {
-            for i in self.sources.indices {
-                if let j = self.sources[i].articles.firstIndex(where: { $0.id == articleID }) {
-                    if !self.sources[i].articles[j].isRead {
-                        self.sources[i].articles[j].isRead = true
-                        let topic = self.sources[i].articles[j].topic
-                        self.readRecords[topic] = Date()
-                        self.saveReadRecords()
-                    }
-                    return
+            if let (i, j) = self.indexPathOfArticle(id: articleID) {
+                if !self.sources[i].articles[j].isRead {
+                    self.sources[i].articles[j].isRead = true
+                    let topic = self.sources[i].articles[j].topic
+                    self.readRecords[topic] = Date()
+                    self.saveReadRecords()
                 }
             }
         }
     }
-
+    
+    // ... (其他如 markAsUnread, findNextUnread 等函数保持不变)
     func markAsUnread(articleID: UUID) {
         DispatchQueue.main.async {
-            for i in self.sources.indices {
-                if let j = self.sources[i].articles.firstIndex(where: { $0.id == articleID }) {
-                    if self.sources[i].articles[j].isRead {
-                        self.sources[i].articles[j].isRead = false
-                        let topic = self.sources[i].articles[j].topic
-                        self.readRecords.removeValue(forKey: topic)
-                        self.saveReadRecords()
-                    }
-                    return
+            if let (i, j) = self.indexPathOfArticle(id: articleID) {
+                if self.sources[i].articles[j].isRead {
+                    self.sources[i].articles[j].isRead = false
+                    let topic = self.sources[i].articles[j].topic
+                    self.readRecords.removeValue(forKey: topic)
+                    self.saveReadRecords()
                 }
             }
         }
@@ -307,65 +302,41 @@ class NewsViewModel: ObservableObject {
         }
     }
 
-    private func getArticleList(for sourceName: String?) -> [Article] {
-        if let name = sourceName, let source = self.sources.first(where: { $0.name == name }) {
-            return source.articles
-        } else {
-            return self.allArticlesSortedForDisplay.map { $0.article }
-        }
-    }
-
     var totalUnreadCount: Int {
         sources.flatMap { $0.articles }.filter { !$0.isRead }.count
     }
 
-    func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
-        let list: [(article: Article, sourceName: String)]
-        
-        if let name = sourceName, let source = self.sources.first(where: { $0.name == name }) {
-            list = source.articles
-                .filter { !$0.isRead }
-                .map { (article: $0, sourceName: name) }
-        } else {
-            list = self.allArticlesSortedForDisplay.filter { !$0.article.isRead }
-        }
-        
-        guard !list.isEmpty else { return nil }
-        
-        guard let currentIndex = list.firstIndex(where: { $0.article.id == id }) else {
-            // 如果当前文章已读，则从列表的第一个未读文章开始
-            return list.first
-        }
-        
-        // 如果当前文章是列表里最后一个，则没有下一篇
-        if currentIndex == list.count - 1 {
-            return nil
-        }
-        
-        return list[currentIndex + 1]
-    }
+    // ==================== BUG修复的核心 ====================
+        /// 寻找下一篇未读文章。
+        /// 这个新版本会严格按照列表的显示顺序来寻找下一篇。
+        func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
+            // 1. 获取与列表视图排序完全一致的完整文章列表
+            let baseList: [(article: Article, sourceName: String)]
+            if let name = sourceName, let source = self.sources.first(where: { $0.name == name }) {
+                baseList = source.articles.map { (article: $0, sourceName: name) }
+            } else {
+                baseList = self.allArticlesSortedForDisplay
+            }
 
-    func findPreviousUnread(before id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
-        let list: [(article: Article, sourceName: String)]
-        
-        if let name = sourceName, let source = sources.first(where: { $0.name == name }) {
-            list = source.articles
-                .filter { !$0.isRead }
-                .map { (article: $0, sourceName: name) }
-        } else {
-            list = self.allArticlesSortedForDisplay.filter { !$0.article.isRead }
+            // 2. 在这个完整列表中找到当前文章的索引
+            guard let currentIndex = baseList.firstIndex(where: { $0.article.id == id }) else {
+                // 如果当前文章不在列表中（理论上不应发生），则无法确定“下一篇”，返回nil
+                return nil
+            }
+
+            // 3. 从当前文章的下一个位置开始，向后查找
+            let subsequentItems = baseList.suffix(from: currentIndex + 1)
+
+            // 4. 在后续文章中，找到第一个“真正未读”的（既未提交也未暂存）
+            let nextUnreadItem = subsequentItems.first { item in
+                !item.article.isRead && !isArticlePendingRead(articleID: item.article.id)
+            }
+
+            return nextUnreadItem
         }
-        
-        guard !list.isEmpty else { return nil }
-        
-        if let currentIndex = list.firstIndex(where: { $0.article.id == id }), currentIndex > 0 {
-            return list[currentIndex - 1]
-        }
-        
-        return nil
-    }
+    
+    // ... (其他结构体 NewsSource, Article, AppBadgeManager 保持不变)
 }
-
 
 struct NewsSource: Identifiable {
     let id = UUID()
@@ -377,7 +348,7 @@ struct NewsSource: Identifiable {
     }
 }
 
-struct Article: Identifiable, Codable {
+struct Article: Identifiable, Codable, Hashable {
     var id = UUID()
     let topic: String
     let article: String
@@ -388,6 +359,15 @@ struct Article: Identifiable, Codable {
 
     enum CodingKeys: String, CodingKey {
         case topic, article, images
+    }
+    
+    // 实现 Hashable
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: Article, rhs: Article) -> Bool {
+        lhs.id == rhs.id
     }
 }
 
