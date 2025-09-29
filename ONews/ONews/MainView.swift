@@ -41,7 +41,7 @@ class NewsViewModel: ObservableObject {
     var badgeUpdater: ((Int) -> Void)?
     private var cancellables = Set<AnyCancellable>()
 
-    // ✅ 核心机制：用于暂存会话中已读但尚未提交的文章ID。这是融合两种逻辑的基础。
+    // ✅ 会话中暂存的“已读但未提交”的文章ID
     private var pendingReadArticleIDs: Set<UUID> = []
 
     private var documentsDirectory: URL {
@@ -84,7 +84,6 @@ class NewsViewModel: ObservableObject {
     }
 
     func loadNews() {
-        // ... (这部分代码没有变化，保持原样)
         let subscribed = subscriptionManager.subscribedSources
         if subscribed.isEmpty {
             print("没有订阅任何新闻源。列表将为空。")
@@ -184,6 +183,20 @@ class NewsViewModel: ObservableObject {
         return pendingReadArticleIDs.contains(articleID)
     }
 
+    /// 统一判断：这篇文章是否“有效地”被视作已读（已持久 isRead 或在本会话暂存 pending）
+    func isEffectivelyRead(articleID: UUID) -> Bool {
+        if isArticlePendingRead(articleID: articleID) { return true }
+        if let (i, j) = indexPathOfArticle(id: articleID) {
+            return sources[i].articles[j].isRead
+        }
+        return false
+    }
+    
+    /// View 侧便捷方法
+    func isArticleEffectivelyRead(_ article: Article) -> Bool {
+        return isEffectivelyRead(articleID: article.id)
+    }
+
     /// ✅ 场景1: 返回列表页时调用。
     /// 提交所有暂存的已读文章，并清空列表。此操作会修改 `sources`，从而刷新UI。
     func commitPendingReads() {
@@ -251,7 +264,7 @@ class NewsViewModel: ObservableObject {
         return nil
     }
 
-    // MARK: - 底层标记函数 (保持不变)
+    // MARK: - 底层标记函数
 
     func markAsRead(articleID: UUID) {
         DispatchQueue.main.async {
@@ -266,7 +279,6 @@ class NewsViewModel: ObservableObject {
         }
     }
     
-    // ... (其他如 markAsUnread, findNextUnread 等函数保持不变)
     func markAsUnread(articleID: UUID) {
         DispatchQueue.main.async {
             if let (i, j) = self.indexPathOfArticle(id: articleID) {
@@ -306,36 +318,28 @@ class NewsViewModel: ObservableObject {
         sources.flatMap { $0.articles }.filter { !$0.isRead }.count
     }
 
-    // ==================== BUG修复的核心 ====================
-        /// 寻找下一篇未读文章。
-        /// 这个新版本会严格按照列表的显示顺序来寻找下一篇。
-        func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
-            // 1. 获取与列表视图排序完全一致的完整文章列表
-            let baseList: [(article: Article, sourceName: String)]
-            if let name = sourceName, let source = self.sources.first(where: { $0.name == name }) {
-                baseList = source.articles.map { (article: $0, sourceName: name) }
-            } else {
-                baseList = self.allArticlesSortedForDisplay
-            }
-
-            // 2. 在这个完整列表中找到当前文章的索引
-            guard let currentIndex = baseList.firstIndex(where: { $0.article.id == id }) else {
-                // 如果当前文章不在列表中（理论上不应发生），则无法确定“下一篇”，返回nil
-                return nil
-            }
-
-            // 3. 从当前文章的下一个位置开始，向后查找
-            let subsequentItems = baseList.suffix(from: currentIndex + 1)
-
-            // 4. 在后续文章中，找到第一个“真正未读”的（既未提交也未暂存）
-            let nextUnreadItem = subsequentItems.first { item in
-                !item.article.isRead && !isArticlePendingRead(articleID: item.article.id)
-            }
-
-            return nextUnreadItem
+    /// 按显示顺序寻找下一篇未读：跳过已读和“已暂存为已读”的文章
+    func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
+        let baseList: [(article: Article, sourceName: String)]
+        if let name = sourceName, let source = self.sources.first(where: { $0.name == name }) {
+            baseList = source.articles.map { (article: $0, sourceName: name) }
+        } else {
+            baseList = self.allArticlesSortedForDisplay
         }
-    
-    // ... (其他结构体 NewsSource, Article, AppBadgeManager 保持不变)
+
+        guard let currentIndex = baseList.firstIndex(where: { $0.article.id == id }) else {
+            return nil
+        }
+
+        let subsequentItems = baseList.suffix(from: currentIndex + 1)
+
+        let nextUnreadItem = subsequentItems.first { item in
+            let isPending = isArticlePendingRead(articleID: item.article.id)
+            return !item.article.isRead && !isPending
+        }
+
+        return nextUnreadItem
+    }
 }
 
 struct NewsSource: Identifiable {
@@ -361,7 +365,6 @@ struct Article: Identifiable, Codable, Hashable {
         case topic, article, images
     }
     
-    // 实现 Hashable
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
