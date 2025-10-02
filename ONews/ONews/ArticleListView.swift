@@ -32,7 +32,6 @@ private struct SearchBarInline: View {
 
             if !text.isEmpty {
                 Button("搜索") { onCommit() }
-                    .buttonStyle(.borderedProminent)
             }
 
             Button("取消") {
