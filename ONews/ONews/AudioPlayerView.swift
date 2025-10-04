@@ -942,6 +942,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 "JPEG": "J.PEG",
                 "PNG": "P.N.G",
                 "PDF": "P.D.F",
+                "STEM": "S.T.E.M",
                 "ID": "I.D",
                 "vs": "对阵",
                 "etc": "等等",
@@ -959,7 +960,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 "参加": "餐加",
                 "K-12": "K十二",
                 "K12": "K十二",
-                "Covid-19": "新冠肺炎"
+                "Covid-19": "新冠肺炎",
+                "上调": "上条",
+                "回调": "回条",
+                "GW": "千兆瓦",
+                "Labubu": "喇布布"
             ]
 
             for (key, value) in replacements {
