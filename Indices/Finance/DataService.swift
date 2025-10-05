@@ -115,7 +115,6 @@ enum EarningTrend {
     case insufficientData // 数据不足，无法判断（白色）
 }
 
-// MARK: - b.swift 的轻量模型（并入）
 // 保留与 b.swift 相同的结构，供 SimilarViewModel 等使用
 protocol SymbolItem {
     var symbol: String { get }
@@ -216,7 +215,6 @@ class DataService: ObservableObject {
         
         // 统一加载
         loadMarketCapData()
-        // description 两套模型统一从同一份文件 data 解析，避免重复 IO
         loadDescriptionPair()
         loadSectorsData()
         loadCompareDataPair()
