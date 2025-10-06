@@ -343,42 +343,6 @@ func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: A
 
     return nextUnreadItem
 }
-
-// MARK: - 动态计数函数
-
-/// 计算指定日期分组内的有效未读文章数
-func getUnreadCountForDateGroup(timestamp: String, inSource sourceName: String?) -> Int {
-    var count = 0
-    
-    if let name = sourceName {
-        if let source = sources.first(where: { $0.name == name }) {
-            let articlesForDate = source.articles.filter { $0.timestamp == timestamp }
-            count = articlesForDate.filter { !isArticleEffectivelyRead($0) }.count
-        }
-    } else {
-        for source in sources {
-            let articlesForDate = source.articles.filter { $0.timestamp == timestamp }
-            count += articlesForDate.filter { !isArticleEffectivelyRead($0) }.count
-        }
-    }
-    
-    return count
-}
-
-/// **(新增)** 计算指定上下文（单个源或全部）中的有效总未读数
-func getEffectiveUnreadCount(inSource sourceName: String?) -> Int {
-    let articlesToScan: [Article]
-    if let name = sourceName, let source = sources.first(where: { $0.name == name }) {
-        // 情况一：从特定新闻源进入，扫描该源的所有文章
-        articlesToScan = source.articles
-    } else {
-        // 情况二：从 "ALL" 进入，扫描所有来源的所有文章
-        articlesToScan = sources.flatMap { $0.articles }
-    }
-    
-    // 使用 isArticleEffectivelyRead 进行过滤，以获得实时准确的未读数
-    return articlesToScan.filter { !isArticleEffectivelyRead($0) }.count
-}
 }
 
 struct NewsSource: Identifiable {
