@@ -148,7 +148,7 @@ var body: some View {
                     .font(.headline)
                 HStack(spacing: 8) {
                     // MARK: - 修改点：更新文本显示格式
-                    Text("\(unreadCountForGroup) / \(totalUnreadCount) unread")
+                    Text("\(unreadCountForGroup) | \(totalUnreadCount) unread")
                     Text(formatMonthDay(from: article.timestamp))
                 }
                 .font(.caption)
