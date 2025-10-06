@@ -22,20 +22,29 @@ enum NavigationContext {
     case fromAllArticles
 }
 
-// MARK: - 新增的计算属性，用于获取当前日期分组的未读数
-private var unreadCountForCurrentDateGroup: Int {
-    let sourceNameToUse: String?
+// MARK: - 动态计算属性
+
+/// 获取当前导航上下文对应的 sourceName (nil 代表 "ALL")
+private var sourceNameForContext: String? {
     switch navigationContext {
     case .fromSource(let name):
-        sourceNameToUse = name
+        return name
     case .fromAllArticles:
-        sourceNameToUse = nil
+        return nil
     }
-    // 调用 ViewModel 中的新方法进行计算
-    return viewModel.getUnreadCountForDateGroup(
+}
+
+/// 计算当前日期分组的未读数
+private var unreadCountForGroup: Int {
+    viewModel.getUnreadCountForDateGroup(
         timestamp: currentArticle.timestamp,
-        inSource: sourceNameToUse
+        inSource: sourceNameForContext
     )
+}
+
+/// 计算当前上下文（Source 或 ALL）的总有效未读数
+private var totalUnreadCountForContext: Int {
+    viewModel.getEffectiveUnreadCount(inSource: sourceNameForContext)
 }
 
 init(article: Article, sourceName: String, context: NavigationContext, viewModel: NewsViewModel) {
@@ -45,8 +54,6 @@ init(article: Article, sourceName: String, context: NavigationContext, viewModel
     
     self._currentArticle = State(initialValue: article)
     self._currentSourceName = State(initialValue: sourceName)
-    
-    // 旧的 liveUnreadCount 初始化逻辑已移除
 }
 
 var body: some View {
@@ -54,8 +61,9 @@ var body: some View {
         ArticleDetailView(
             article: currentArticle,
             sourceName: currentSourceName,
-            // 使用新的计算属性
-            unreadCount: unreadCountForCurrentDateGroup,
+            // 传递两个计数值
+            unreadCountForGroup: unreadCountForGroup,
+            totalUnreadCount: totalUnreadCountForContext,
             viewModel: viewModel,
             audioPlayerManager: audioPlayerManager,
             requestNextArticle: {
@@ -138,8 +146,6 @@ private func switchToNextArticle(shouldAutoplayNext: Bool) {
     
     // 在切换前，将当前文章暂存为待读。
     _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
-    
-    // 移除了 liveUnreadCount -= 1，因为未读数现在是动态计算的
     
     let sourceNameToSearch: String?
     switch navigationContext {
