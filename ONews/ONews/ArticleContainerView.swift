@@ -11,8 +11,6 @@ let navigationContext: NavigationContext
 @State private var currentArticle: Article
 @State private var currentSourceName: String
 
-@State private var liveUnreadCount: Int
-
 @State private var showNoNextToast = false
 @State private var isMiniPlayerCollapsed = false
 
@@ -24,13 +22,20 @@ enum NavigationContext {
     case fromAllArticles
 }
 
-private var initialUnreadCount: Int {
+// MARK: - 新增的计算属性，用于获取当前日期分组的未读数
+private var unreadCountForCurrentDateGroup: Int {
+    let sourceNameToUse: String?
     switch navigationContext {
+    case .fromSource(let name):
+        sourceNameToUse = name
     case .fromAllArticles:
-        return viewModel.totalUnreadCount
-    case .fromSource(let sourceName):
-        return viewModel.sources.first { $0.name == sourceName }?.unreadCount ?? 0
+        sourceNameToUse = nil
     }
+    // 调用 ViewModel 中的新方法进行计算
+    return viewModel.getUnreadCountForDateGroup(
+        timestamp: currentArticle.timestamp,
+        inSource: sourceNameToUse
+    )
 }
 
 init(article: Article, sourceName: String, context: NavigationContext, viewModel: NewsViewModel) {
@@ -41,14 +46,7 @@ init(article: Article, sourceName: String, context: NavigationContext, viewModel
     self._currentArticle = State(initialValue: article)
     self._currentSourceName = State(initialValue: sourceName)
     
-    let baseCount: Int
-    switch context {
-    case .fromAllArticles:
-        baseCount = viewModel.totalUnreadCount
-    case .fromSource(let name):
-        baseCount = viewModel.sources.first { $0.name == name }?.unreadCount ?? 0
-    }
-    self._liveUnreadCount = State(initialValue: baseCount)
+    // 旧的 liveUnreadCount 初始化逻辑已移除
 }
 
 var body: some View {
@@ -56,7 +54,8 @@ var body: some View {
         ArticleDetailView(
             article: currentArticle,
             sourceName: currentSourceName,
-            unreadCount: liveUnreadCount,
+            // 使用新的计算属性
+            unreadCount: unreadCountForCurrentDateGroup,
             viewModel: viewModel,
             audioPlayerManager: audioPlayerManager,
             requestNextArticle: {
@@ -127,7 +126,6 @@ var body: some View {
     .background(Color.viewBackground.ignoresSafeArea())
 }
 
-// MARK: - 修改后的函数
 private func switchToNextArticleAndStopAudio() {
     audioPlayerManager.stop()
     switchToNextArticle(shouldAutoplayNext: false)
@@ -138,12 +136,10 @@ private func switchToNextArticle(shouldAutoplayNext: Bool) {
         audioPlayerManager.prepareForNextTransition()
     }
     
-    // 在切换前，将当前文章暂存为待读。如果暂存成功（即首次阅读），则更新UI上的未读计数器。
-    if viewModel.stageArticleAsRead(articleID: currentArticle.id) {
-        if liveUnreadCount > 0 {
-            liveUnreadCount -= 1
-        }
-    }
+    // 在切换前，将当前文章暂存为待读。
+    _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
+    
+    // 移除了 liveUnreadCount -= 1，因为未读数现在是动态计算的
     
     let sourceNameToSearch: String?
     switch navigationContext {
