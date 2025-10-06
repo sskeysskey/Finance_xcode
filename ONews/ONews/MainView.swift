@@ -247,6 +247,28 @@ func commitPendingReadsSilently() {
     print("【静默提交】完成。角标将更新为 \(newUnread)。")
 }
 
+// MARK: - 新增的同步方法
+/// 将持久化存储的已读状态同步到内存中的 `sources` 数组。
+/// 这个方法比 `loadNews()` 更轻量，只更新 `isRead` 状态。
+func syncReadStatusFromPersistence() {
+    DispatchQueue.main.async {
+        var didChange = false
+        for i in self.sources.indices {
+            for j in self.sources[i].articles.indices {
+                let article = self.sources[i].articles[j]
+                // 如果文章在内存中是未读，但在持久化记录中是已读
+                if !article.isRead && self.readRecords.keys.contains(article.topic) {
+                    self.sources[i].articles[j].isRead = true
+                    didChange = true
+                }
+            }
+        }
+        if didChange {
+            print("状态同步：已将持久化的已读状态同步到内存中的 `sources`。")
+        }
+    }
+}
+
 private func calculateUnreadCountAfterSilentCommit() -> Int {
     var count = 0
     for source in sources {
@@ -342,6 +364,42 @@ func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: A
     }
 
     return nextUnreadItem
+}
+
+// MARK: - 动态计数函数
+
+/// 计算指定日期分组内的有效未读文章数
+func getUnreadCountForDateGroup(timestamp: String, inSource sourceName: String?) -> Int {
+    var count = 0
+    
+    if let name = sourceName {
+        if let source = sources.first(where: { $0.name == name }) {
+            let articlesForDate = source.articles.filter { $0.timestamp == timestamp }
+            count = articlesForDate.filter { !isArticleEffectivelyRead($0) }.count
+        }
+    } else {
+        for source in sources {
+            let articlesForDate = source.articles.filter { $0.timestamp == timestamp }
+            count += articlesForDate.filter { !isArticleEffectivelyRead($0) }.count
+        }
+    }
+    
+    return count
+}
+
+/// (新增) 计算指定上下文（单个源或全部）中的有效总未读数
+func getEffectiveUnreadCount(inSource sourceName: String?) -> Int {
+    let articlesToScan: [Article]
+    if let name = sourceName, let source = sources.first(where: { $0.name == name }) {
+        // 情况一：从特定新闻源进入，扫描该源的所有文章
+        articlesToScan = source.articles
+    } else {
+        // 情况二：从 "ALL" 进入，扫描所有来源的所有文章
+        articlesToScan = sources.flatMap { $0.articles }
+    }
+    
+    // 使用 isArticleEffectivelyRead 进行过滤，以获得实时准确的未读数
+    return articlesToScan.filter { !isArticleEffectivelyRead($0) }.count
 }
 }
 

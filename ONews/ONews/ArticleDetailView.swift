@@ -18,7 +18,9 @@ func updateUIViewController(_ uiViewController: UIActivityViewController, contex
 struct ArticleDetailView: View {
 let article: Article
 let sourceName: String
-let unreadCount: Int
+// MARK: - 修改点：接收两个计数值
+let unreadCountForGroup: Int
+let totalUnreadCount: Int
 @ObservedObject var viewModel: NewsViewModel
 
 @ObservedObject var audioPlayerManager: AudioPlayerManager
@@ -145,7 +147,8 @@ var body: some View {
                 Text(sourceName.replacingOccurrences(of: "_", with: " "))
                     .font(.headline)
                 HStack(spacing: 8) {
-                    Text("\(unreadCount) unread")
+                    // MARK: - 修改点：更新文本显示格式
+                    Text("\(unreadCountForGroup) / \(totalUnreadCount) unread")
                     Text(formatMonthDay(from: article.timestamp))
                 }
                 .font(.caption)

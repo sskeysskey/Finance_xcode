@@ -123,10 +123,15 @@ struct SourceListView: View {
             }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
-            // ✅ 需求2的实现入口：当应用从前台切换到后台或非激活状态时
+            // 当应用从前台切换到后台或非激活状态时
             if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
-                // 调用静默提交方法，它只处理数据持久化和角标更新，不影响UI
+                // 调用静默提交方法
                 viewModel.commitPendingReadsSilently()
+            }
+            // MARK: - 解决方案：当应用从后台或非激活状态返回前台时
+            else if newPhase == .active && (oldPhase == .inactive || oldPhase == .background) {
+                // 调用轻量级同步方法，以确保内存状态与持久化状态一致
+                viewModel.syncReadStatusFromPersistence()
             }
         }
         .sheet(isPresented: $showAddSourceSheet, onDismiss: {
