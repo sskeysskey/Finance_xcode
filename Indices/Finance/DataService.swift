@@ -348,7 +348,7 @@ class DataService: ObservableObject {
         
     private func loadEarningRelease() {
         // --- 修改点 1: 在数组中添加新的文件前缀 ---
-        let filePrefixes = ["Earnings_Release_new", "Earnings_Release_next", "Earnings_Release_third"]
+        let filePrefixes = ["Earnings_Release_new", "Earnings_Release_next", "Earnings_Release_third", "Earnings_Release_fourth", "Earnings_Release_fifth"]
         let urlsToProcess = filePrefixes.compactMap { prefix in
             FileManagerHelper.getLatestFileUrl(for: prefix)
         }
@@ -356,7 +356,7 @@ class DataService: ObservableObject {
             if !isInitialLoad {
                 DispatchQueue.main.async {
                     // --- 修改点 2: 更新错误提示信息 ---
-                    self.errorMessage = "Earnings_Release_new, Earnings_Release_next 或 Earnings_Release_third 文件未在 Documents 中找到"
+                    self.errorMessage = "Earnings_Release_new, Earnings_Release_next, Earnings_Release_third, Earnings_Release_fourth 或 Earnings_Release_fifth 文件未在 Documents 中找到"
                 }
             }
             return
