@@ -554,10 +554,15 @@ struct SymbolItemView: View {
             ?? fallbackGroupName
     }
     
+    private struct ParsedValue {
+        let prefix: String?
+        let percentage: String?
+        let suffix: String?
+    }
+    
     var body: some View {
         NavigationLink(destination: ChartView(symbol: symbol.symbol, groupName: groupName)) {
             VStack(alignment: .leading, spacing: 8) {
-                // 只显示 symbol
                 HStack {
                     // 应用财报趋势颜色
                     Text(symbol.symbol)
@@ -566,10 +571,8 @@ struct SymbolItemView: View {
                     
                     Spacer()
                     
-                    // 应用 compare_all 数据的颜色
-                    Text(symbol.value)
-                        .foregroundColor(colorForCompareValue(symbol.value))
-                        .fontWeight(.semibold)
+                    // MARK: - 修改点：使用新的视图来显示分段颜色的值
+                    compareValueView
                 }
                 
                 // 保持 tags 显示
@@ -598,7 +601,101 @@ struct SymbolItemView: View {
         }
     }
     
-    // 辅助函数：根据 EarningTrend 返回颜色 (从 SearchResultRow 移植)
+    // MARK: - 新增视图构建器，用于渲染 compare_all 的值
+    @ViewBuilder
+    private var compareValueView: some View {
+        let parsed = parseCompareValue(symbol.value)
+        
+        // 优先处理 "N/A" 的简单情况
+        if parsed.prefix == nil && parsed.percentage == "N/A" && parsed.suffix == nil {
+            Text("N/A")
+                .foregroundColor(.gray)
+                .fontWeight(.semibold)
+        } else {
+            // 使用 HStack 来组合三个文本部分
+            HStack(spacing: 1) { // 使用较小的间距
+                // 第一部分：前缀
+                if let prefix = parsed.prefix {
+                    Text(prefix)
+                        .foregroundColor(.orange)
+                }
+                
+                // 第二部分：百分比
+                if let percentage = parsed.percentage {
+                    Text(percentage)
+                        .foregroundColor(colorForPercentage(percentage))
+                }
+                
+                // 第三部分：后缀
+                if let suffix = parsed.suffix, !suffix.isEmpty {
+                    Text(suffix)
+                        .foregroundColor(.gray)
+                }
+            }
+            .fontWeight(.semibold)
+        }
+    }
+    
+    // MARK: - 新增的辅助函数
+    
+    /// 解析 compare_all 字符串 ("22后0.53%++") 为三部分
+    private func parseCompareValue(_ value: String) -> ParsedValue {
+        // 首先处理特殊值 "N/A"
+        if value == "N/A" {
+            return ParsedValue(prefix: nil, percentage: "N/A", suffix: nil)
+        }
+
+        // 正则表达式，用于匹配 "22后0.53%++" 或 "1.09%*+" 这样的格式
+        // 捕获组 1: (\d+[前后未])?   - 可选的前缀，如 "22后"
+        // 捕获组 2: (-?\d+\.?\d*%) - 百分比部分，如 "-1.05%"
+        // 捕获组 3: (\S*)          - 可选的后缀，如 "++"
+        let pattern = #"^(\d+[前后未])?(-?\d+\.?\d*%)(\S*)$"#
+        
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            let range = NSRange(value.startIndex..<value.endIndex, in: value)
+            if let match = regex.firstMatch(in: value, options: [], range: range) {
+                
+                // 提取第一部分（前缀）
+                let prefixRange = match.range(at: 1)
+                let prefix = prefixRange.location != NSNotFound ? (value as NSString).substring(with: prefixRange) : nil
+                
+                // 提取第二部分（百分比）
+                let percentageRange = match.range(at: 2)
+                let percentage = percentageRange.location != NSNotFound ? (value as NSString).substring(with: percentageRange) : nil
+                
+                // 提取第三部分（后缀）
+                let suffixRange = match.range(at: 3)
+                let suffix = suffixRange.location != NSNotFound ? (value as NSString).substring(with: suffixRange) : nil
+
+                return ParsedValue(prefix: prefix, percentage: percentage, suffix: suffix)
+            }
+        }
+        
+        // 如果正则表达式不匹配，则将整个字符串作为 "percentage" 部分返回，以保证内容能够显示
+        return ParsedValue(prefix: nil, percentage: value, suffix: nil)
+    }
+
+    /// 根据百分比字符串返回对应颜色
+    private func colorForPercentage(_ percentageString: String?) -> Color {
+        guard let percentageString = percentageString else { return .white }
+        
+        // 移除 '%' 符号并尝试转换为数字
+        let numericString = percentageString.replacingOccurrences(of: "%", with: "")
+        guard let number = Double(numericString) else {
+            // 如果无法解析为数字（例如在正则不匹配的回退情况下），使用默认白色
+            return .white
+        }
+        
+        if number > 0 {
+            return .red   // 正数：红色
+        } else if number < 0 {
+            return .green // 负数：绿色
+        } else { // number is 0
+            return .gray  // 零：灰色
+        }
+    }
+    
+    /// 根据 EarningTrend 返回颜色 (此函数保持不变)
     private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
         switch trend {
         case .positiveAndUp:
@@ -614,15 +711,6 @@ struct SymbolItemView: View {
         }
     }
     
-    // 辅助函数：根据 compare_all 内容返回颜色 (从 SearchResultRow 移植)
-    private func colorForCompareValue(_ value: String) -> Color {
-        if value.contains("前") || value.contains("后") || value.contains("未") {
-            return .orange
-        } else if value == "N/A" {
-            return .gray
-        } else {
-            return .white
-        }
-    }
+    // 注意：旧的 colorForCompareValue 函数已被移除，不再需要
 }
 // ==================== 修改结束 ====================
