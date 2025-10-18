@@ -760,7 +760,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         // 统一处理破折号
         processed = normalizeDash(processed)
         
-        // --- 新增修复：优先处理百分比范围，例如 20-25% -> 百分之20到25 ---
+        // --- 新增修复：优先处理百分比范围，例如 20-25% -> 百分之二十到二十五 ---
+        // 【修改点 1】: 将数字直接转换为中文读法，避免TTS引擎误读“20”为“两十”
         let percentRangePattern = #"(?<!\d)(\d+)\s*-\s*(\d+)\s*%"#
         if let regex = try? NSRegularExpression(pattern: percentRangePattern) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
@@ -768,11 +769,13 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             regex.enumerateMatches(in: processed, options: [], range: nsRange) { match, _, _ in
                 guard let match = match, match.numberOfRanges >= 3 else { return }
                 if let r1 = Range(match.range(at: 1), in: processed),
-                   let r2 = Range(match.range(at: 2), in: processed) {
-                    let leftNum = String(processed[r1])
-                    let rightNum = String(processed[r2])
-                    // 构造为 "百分之[数字]到[数字]" 格式，让TTS正确朗读
-                    let replacement = "百分之\(leftNum)到\(rightNum)"
+                   let r2 = Range(match.range(at: 2), in: processed),
+                   let leftNum = Int(processed[r1]),
+                   let rightNum = Int(processed[r2]) {
+                    // 直接调用 readChineseNumber 将数字转为 "二十", "二十五" 等
+                    let leftZh = self.readChineseNumber(leftNum)
+                    let rightZh = self.readChineseNumber(rightNum)
+                    let replacement = "百分之\(leftZh)到\(rightZh)"
                     replacements.append((match.range, replacement))
                 }
             }
@@ -888,7 +891,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         // 例如：2000-5000人 / 3-5名 / 10-20个 等
         // 支持的常见量词集合（可按需扩展）
         // --- 核心修复：从量词列表中移除 '年'，以避免与年份范围规则冲突 ---
-        let units = "[人名位个只辆架件次年条份所家台篇场例天月周小时分钟秒]"
+        let units = "[人名位个只辆架件次条份所家台篇场例天月周小时分钟秒]"
         let numberRangeWithUnitPattern = #"(?<!\d)(\d{1,6})\s*-\s*(\d{1,6})\s*(" + units + #")"#
         if let regex = try? NSRegularExpression(pattern: numberRangeWithUnitPattern, options: []) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
@@ -917,7 +920,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         }
 
         // 一般数值范围 X-Y -> X到Y（不带单位；不碰到“年”的逐字规则）
-        let generalRangePattern = #"(?<!\d)(\d{1,6})\s*-\s*(\d{1,6})(?!\d)"#
+        // 【修改点 2】: 增加负向先行断言 (?!\s*(?:年|年代))，防止此规则错误地匹配年份范围
+        let generalRangePattern = #"(?<!\d)(\d{1,6})\s*-\s*(\d{1,6})(?!\d)(?!\s*(?:年|年代))"#
         if let generalRegex = try? NSRegularExpression(pattern: generalRangePattern, options: []) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
             var result = processed
