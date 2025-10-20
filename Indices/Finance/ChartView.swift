@@ -951,8 +951,8 @@ struct ChartView: View {
                 dateFormatter.dateFormat = "MM-dd"
                 let dateStr = dateFormatter.string(from: earning.date)
                 
-                // 构建显示文本
-                let text = "\(dateStr) \(String(format: "%+.2f%%", priceChangePercent))\n\(String(format: "%.2f%%", earning.price))"
+                let text = "\(dateStr) \(String(format: "%.2f%%", earning.price))\n\(String(format: "%+.2f%%", priceChangePercent))"
+                // ==================== 修改点 1 结束 ====================
                 
                 markers.append(BubbleMarker(
                     text: text,
@@ -977,7 +977,8 @@ struct ChartView: View {
                 dateFormatter.dateFormat = "MM-dd"
                 let dateStr = dateFormatter.string(from: earning.date) // 使用原始财报日期
                 
-                let text = "\(dateStr) \(String(format: "%+.2f%%", priceChangePercent))\n\(String(format: "%.2f%%", earning.price))"
+                let text = "\(dateStr) \(String(format: "%.2f%%", earning.price))\n\(String(format: "%+.2f%%", priceChangePercent))"
+                // ==================== 修改点 2 结束 ====================
                 
                 markers.append(BubbleMarker(
                     text: text,

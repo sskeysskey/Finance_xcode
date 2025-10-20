@@ -87,6 +87,7 @@ struct ArticleListView: View {
 
     @State private var filterMode: ArticleFilterMode = .unread
     
+    // 【修改】此状态现在由 onAppear 和 onChange 动态设置
     @State private var expandedTimestamps: Set<String> = []
 
     @State private var isSearching: Bool = false
@@ -167,12 +168,15 @@ struct ArticleListView: View {
                             isSearchActive = false
                             searchText = ""
                         }
+                        // 【新增】当取消搜索时，重置折叠状态以匹配当前列表
+                        resetExpandedState()
                     }
                 )
             }
 
             List {
                 if isSearchActive {
+                    // ... 搜索部分代码保持不变
                     let grouped = groupedSearchByTimestamp()
                     let timestamps = sortedSearchTimestamps(for: grouped)
 
@@ -234,7 +238,8 @@ struct ArticleListView: View {
                     let timestamps = sortedTimestamps(for: groupedArticles)
                     ForEach(timestamps, id: \.self) { timestamp in
                         Section {
-                            if !expandedTimestamps.contains(timestamp) {
+                            // 【重要修改】修正显示逻辑：当分组被展开时（即 timestamp 在 expandedTimestamps 集合中），才显示内容
+                            if expandedTimestamps.contains(timestamp) {
                                 ForEach(groupedArticles[timestamp] ?? []) { article in
                                     NavigationLink(destination: ArticleContainerView(
                                         article: article,
@@ -286,6 +291,7 @@ struct ArticleListView: View {
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
 
+                                // 【重要修改】修正图标逻辑：展开时（contains）显示 "chevron.down"
                                 Image(systemName: expandedTimestamps.contains(timestamp) ? "chevron.down" : "chevron.right")
                                     .foregroundColor(.secondary)
                                     .font(.footnote.weight(.semibold))
@@ -306,6 +312,11 @@ struct ArticleListView: View {
                 }
             }
             .listStyle(PlainListStyle())
+            // 【新增】添加 onAppear 和 onChange 修饰符来控制默认折叠状态
+            .onAppear(perform: resetExpandedState)
+            .onChange(of: filterMode) { _, _ in
+                resetExpandedState()
+            }
             .navigationTitle(source.name.replacingOccurrences(of: "_", with: " "))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -339,6 +350,18 @@ struct ArticleListView: View {
         .background(Color.viewBackground.ignoresSafeArea())
     }
 
+    // 【新增】此函数根据当前分组数量设置默认的折叠/展开状态
+    private func resetExpandedState() {
+        let timestamps = sortedTimestamps(for: groupedArticles)
+        if timestamps.count == 1 {
+            // 如果只有一个日期组，默认展开它
+            self.expandedTimestamps = Set(timestamps)
+        } else {
+            // 如果有多个或零个日期组，默认全部折叠
+            self.expandedTimestamps = []
+        }
+    }
+
     private func formatTimestamp(_ timestamp: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyMMdd"
@@ -358,6 +381,7 @@ struct AllArticlesListView: View {
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
 
+    // 【修改】此状态现在由 onAppear 和 onChange 动态设置
     @State private var expandedTimestamps: Set<String> = []
 
     private var baseFilteredArticles: [(article: Article, sourceName: String)] {
@@ -427,12 +451,15 @@ struct AllArticlesListView: View {
                             isSearchActive = false
                             searchText = ""
                         }
+                        // 【新增】当取消搜索时，重置折叠状态以匹配当前列表
+                        resetExpandedState()
                     }
                 )
             }
 
             List {
                 if isSearchActive {
+                    // ... 搜索部分代码保持不变
                     let grouped = groupedSearchByTimestamp()
                     let timestamps = sortedSearchTimestamps(for: grouped)
 
@@ -494,7 +521,8 @@ struct AllArticlesListView: View {
                     let timestamps = sortedTimestamps(for: groupedArticles)
                     ForEach(timestamps, id: \.self) { timestamp in
                         Section {
-                            if !expandedTimestamps.contains(timestamp) {
+                            // 【重要修改】修正显示逻辑：当分组被展开时（即 timestamp 在 expandedTimestamps 集合中），才显示内容
+                            if expandedTimestamps.contains(timestamp) {
                                 ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
                                     NavigationLink(destination: ArticleContainerView(
                                         article: item.article,
@@ -548,6 +576,7 @@ struct AllArticlesListView: View {
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
 
+                                // 【重要修改】修正图标逻辑：展开时（contains）显示 "chevron.down"
                                 Image(systemName: expandedTimestamps.contains(timestamp) ? "chevron.down" : "chevron.right")
                                     .foregroundColor(.secondary)
                                     .font(.footnote.weight(.semibold))
@@ -568,6 +597,11 @@ struct AllArticlesListView: View {
                 }
             }
             .listStyle(PlainListStyle())
+            // 【新增】添加 onAppear 和 onChange 修饰符来控制默认折叠状态
+            .onAppear(perform: resetExpandedState)
+            .onChange(of: filterMode) { _, _ in
+                resetExpandedState()
+            }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -598,6 +632,18 @@ struct AllArticlesListView: View {
             }
         }
         .background(Color.viewBackground.ignoresSafeArea())
+    }
+
+    // 【新增】此函数根据当前分组数量设置默认的折叠/展开状态
+    private func resetExpandedState() {
+        let timestamps = sortedTimestamps(for: groupedArticles)
+        if timestamps.count == 1 {
+            // 如果只有一个日期组，默认展开它
+            self.expandedTimestamps = Set(timestamps)
+        } else {
+            // 如果有多个或零个日期组，默认全部折叠
+            self.expandedTimestamps = []
+        }
     }
 
     private func formatTimestamp(_ timestamp: String) -> String {
