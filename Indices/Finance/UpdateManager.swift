@@ -138,7 +138,8 @@ class UpdateManager: ObservableObject {
     
     @Published var updateState: UpdateState = .idle
     
-    private let serverBaseURL = "http://192.168.50.148:5001/api/Finance"
+    private let serverBaseURL = "http://106.15.183.158:5001/api/Finance"
+    
     private let localVersionKey = "FinanceAppLocalDataVersion"
     private let lastSyncIdKey = "FinanceLastSyncID" // 新增: 用于数据库同步
     

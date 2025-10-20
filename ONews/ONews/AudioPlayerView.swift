@@ -892,7 +892,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         // 支持的常见量词集合（可按需扩展）
         // --- 核心修复：从量词列表中移除 '年'，以避免与年份范围规则冲突 ---
         let units = "[人名位个只辆架件次条份所家台篇场例天月周小时分钟秒]"
-        let numberRangeWithUnitPattern = #"(?<!\d)(\d{1,6})\s*-\s*(\d{1,6})\s*(" + units + #")"#
+        let numberRangeWithUnitPattern = #"(?<!\d)(\d{1,6})\s*-\s*(\d{1,6})\s*(\#(units))"#
         if let regex = try? NSRegularExpression(pattern: numberRangeWithUnitPattern, options: []) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
             var replacements: [(NSRange, String)] = []

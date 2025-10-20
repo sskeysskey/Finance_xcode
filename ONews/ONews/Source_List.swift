@@ -96,7 +96,8 @@ struct SourceListView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
                         Task {
-                            await syncResources()
+                            // 【修改】调用 syncResources 时，明确指出是手动触发
+                            await syncResources(isManual: true)
                         }
                     }) {
                         Image(systemName: "arrow.clockwise")
@@ -119,6 +120,7 @@ struct SourceListView: View {
             
             viewModel.loadNews()
             Task {
+                // 【修改】调用 syncResources 时，使用默认的 isManual: false
                 await syncResources()
             }
         }
@@ -154,7 +156,18 @@ struct SourceListView: View {
             Group {
                 if resourceManager.isSyncing {
                     VStack(spacing: 15) {
-                        if resourceManager.isDownloading {
+                        // 【新增】判断是否是“已是最新”的提示状态
+                        if resourceManager.syncMessage == "当前已是最新" || resourceManager.syncMessage == "新闻清单已是最新。" {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.largeTitle)
+                                .foregroundColor(.white)
+                            
+                            Text(resourceManager.syncMessage)
+                                .font(.headline)
+                                .foregroundColor(.white)
+                        }
+                        // 【修改】将原来的下载中逻辑放入 else if
+                        else if resourceManager.isDownloading {
                             Text(resourceManager.syncMessage)
                                 .font(.headline)
                                 .foregroundColor(.white)
@@ -191,22 +204,33 @@ struct SourceListView: View {
         })
     }
     
-    private func syncResources() async {
+    // 【修改】函数签名，增加 isManual 参数
+    private func syncResources(isManual: Bool = false) async {
         do {
-            try await resourceManager.checkAndDownloadUpdates()
+            // 【修改】将 isManual 参数传递给 resourceManager
+            try await resourceManager.checkAndDownloadUpdates(isManual: isManual)
             viewModel.loadNews()
         } catch {
-            switch error {
-            case is DecodingError:
-                print("同步失败 (服务器返回数据格式错误，已静默处理): \(error)")
-            case let urlError as URLError where
-                urlError.code == .cannotConnectToHost ||
-                urlError.code == .timedOut:
-                print("同步失败 (无法连接或超时，已静默处理): \(urlError.localizedDescription)")
-            default:
-                print("同步失败 (客户端或其他问题): \(error)")
-                self.errorMessage = "网络异常\n\nPlease click the refresh button ↻ in the upper right corner to try again"
-                self.showErrorAlert = true
+            // 【新增】只在手动刷新时才显示网络错误弹窗
+            if isManual {
+                switch error {
+                case is DecodingError:
+                    self.errorMessage = "数据解析失败，请稍后重试。"
+                    self.showErrorAlert = true
+                case let urlError as URLError where
+                    urlError.code == .cannotConnectToHost ||
+                    urlError.code == .timedOut ||
+                    urlError.code == .notConnectedToInternet:
+                    self.errorMessage = "网络连接失败，请检查网络设置或稍后重试。"
+                    self.showErrorAlert = true
+                default:
+                    self.errorMessage = "发生未知错误，请稍后重试。"
+                    self.showErrorAlert = true
+                }
+                print("手动同步失败: \(error)")
+            } else {
+                // 自动同步失败时，在控制台打印日志，不打扰用户
+                print("自动同步静默失败: \(error)")
             }
         }
     }

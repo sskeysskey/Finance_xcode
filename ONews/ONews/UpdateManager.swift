@@ -24,7 +24,8 @@ class ResourceManager: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var progressText = ""
     
-    private let serverBaseURL = "http://192.168.50.148:5001/api/ONews"
+    private let serverBaseURL = "http://106.15.183.158:5001/api/ONews"
+    
     private let fileManager = FileManager.default
     private var documentsDirectory: URL {
         fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -41,7 +42,8 @@ class ResourceManager: ObservableObject {
     
     /// 检查并下载服务器端所有的新闻清单文件（`onews_*.json`），按需对比 MD5 决定是否下载。
     /// 该方法不下载任何图片资源，仅下载所有 JSON。
-    func checkAndDownloadAllNewsManifests() async throws {
+    // 【修改】新增 isManual 参数
+    func checkAndDownloadAllNewsManifests(isManual: Bool = false) async throws {
         // 1. 初始化状态
         self.isSyncing = true
         self.isDownloading = false // 此方法不显示文件级进度条
@@ -92,10 +94,14 @@ class ResourceManager: ObservableObject {
                 }
             }
             
+            // 【修改】核心逻辑：处理“已是最新”的情况
             if tasksToDownload.isEmpty {
-                self.syncMessage = "新闻清单已是最新。"
-                try await Task.sleep(nanoseconds: 500_000_000)
-                self.isSyncing = false
+                if isManual {
+                    self.syncMessage = "新闻清单已是最新。"
+                    resetStateAfterDelay() // 使用延迟重置
+                } else {
+                    self.isSyncing = false // 自动检查，静默退出
+                }
                 return
             }
             
@@ -113,8 +119,7 @@ class ResourceManager: ObservableObject {
             self.isDownloading = false
             self.syncMessage = "清单更新完成！"
             self.progressText = ""
-            try await Task.sleep(nanoseconds: 500_000_000)
-            self.isSyncing = false
+            resetStateAfterDelay() // 使用延迟重置
             
         } catch {
             self.isSyncing = false
@@ -125,7 +130,8 @@ class ResourceManager: ObservableObject {
 
     // MARK: - Main Sync Logic (供 SourceListView 使用，保持不变 + 新增目录存在性校验)
     
-    func checkAndDownloadUpdates() async throws {
+    // 【修改】新增 isManual 参数
+    func checkAndDownloadUpdates(isManual: Bool = false) async throws {
         // 1. 初始化状态
         self.isSyncing = true
         self.isDownloading = false
@@ -138,7 +144,7 @@ class ResourceManager: ObservableObject {
             let serverVersion = try await getServerVersion()
             let localFiles = try getLocalFiles()
             
-            // 2. 清理过时的本地文件和目录
+            // 3. 清理过时的本地文件和目录
             self.syncMessage = "正在清理旧资源..."
             let validServerFiles = Set(serverVersion.files.map { $0.name })
             let filesToDelete = localFiles.subtracting(validServerFiles)
@@ -175,7 +181,7 @@ class ResourceManager: ObservableObject {
                     }
                     
                     if serverMD5 != localMD5 {
-                        print("MD5不匹配: \(jsonInfo.name) (服务器: \(serverMD5), 本地: \(localMD5))。计划更新。")
+                        print("MD5不匹配: \(jsonInfo.name)。计划更新。")
                         downloadTasks.append((fileInfo: jsonInfo, isIncremental: false))
                         if let imageDirInfo = serverVersion.files.first(where: { $0.name == correspondingImageDirName }) {
                              downloadTasks.append((fileInfo: imageDirInfo, isIncremental: true))
@@ -209,10 +215,14 @@ class ResourceManager: ObservableObject {
             }
             
             // 5. 执行下载任务
+            // 【修改】核心逻辑：处理“已是最新”的情况
             if downloadTasks.isEmpty {
-                syncMessage = "正在更新..."
-                try await Task.sleep(nanoseconds: 1_000_000_000)
-                self.isSyncing = false
+                if isManual {
+                    self.syncMessage = "当前已是最新"
+                    resetStateAfterDelay() // 调用延迟重置函数
+                } else {
+                    self.isSyncing = false // 自动检查，静默退出
+                }
                 return
             }
             
@@ -248,8 +258,7 @@ class ResourceManager: ObservableObject {
             self.isDownloading = false
             self.syncMessage = "更新完成！"
             self.progressText = ""
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-            self.isSyncing = false
+            resetStateAfterDelay() // 调用延迟重置函数
             
         } catch {
             // 7. 错误处理
@@ -259,7 +268,21 @@ class ResourceManager: ObservableObject {
         }
     }
     
-    // MARK: - Helper Functions (无变化)
+    // MARK: - Helper Functions
+    
+    // 【新增】从 a.swift 移植并适配的状态重置函数
+    private func resetStateAfterDelay(seconds: TimeInterval = 2) {
+        Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            await MainActor.run {
+                self.isSyncing = false
+                self.syncMessage = "" // 可以选择清空消息
+                self.progressText = ""
+            }
+        }
+    }
+    
+    // --- 以下的 Helper Functions 均无修改 ---
     
     private func calculateMD5(for fileURL: URL) -> String? {
         var hasher = Insecure.MD5()
