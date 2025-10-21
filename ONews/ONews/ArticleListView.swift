@@ -6,87 +6,10 @@ enum ArticleFilterMode: String, CaseIterable {
     case read = "Read"
 }
 
-// 公共：搜索输入视图（在导航栏下方显示）
-private struct SearchBarInline: View {
-    @Binding var text: String
-    var onCommit: () -> Void
-    var onCancel: () -> Void
-
-    // 焦点绑定
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("搜索标题关键字", text: $text, onCommit: onCommit)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled(true)
-                    .submitLabel(.search)
-                    .focused($isFocused)
-            }
-            .padding(10)
-            .background(Color(.secondarySystemBackground))
-            .cornerRadius(10)
-
-            if !text.isEmpty {
-                Button("搜索") { onCommit() }
-                    .buttonStyle(.bordered) // 【修改】将 .buttonStyle(.bordered) 从取消按钮移到这里
-            }
-
-            Button("取消") {
-                onCancel()
-                // 取消时顺便收起键盘
-                isFocused = false
-            }
-            // 【修改】移除这里的 .buttonStyle(.bordered)
-            // .buttonStyle(.bordered)
-        }
-        .padding(.horizontal)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
-        .onAppear {
-            // 出现时自动聚焦
-            DispatchQueue.main.async {
-                self.isFocused = true
-            }
-        }
-    }
-}
-
-// ==================== 文章卡片视图 ====================
-struct ArticleRowCardView: View {
-    let article: Article
-    let sourceName: String?
-    let isReadEffective: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let name = sourceName {
-                Text(name.replacingOccurrences(of: "_", with: " "))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            Text(article.topic)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(isReadEffective ? .secondary : .primary)
-                .lineLimit(3)
-        }
-        .padding(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.viewBackground)
-        .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
-    }
-}
-
 // ==================== 单一来源列表 ====================
 struct ArticleListView: View {
     let source: NewsSource
     @ObservedObject var viewModel: NewsViewModel
-    // 【新增】接收从 SourceListView 传递过来的 resourceManager
     @ObservedObject var resourceManager: ResourceManager
 
     @State private var filterMode: ArticleFilterMode = .unread
@@ -97,7 +20,6 @@ struct ArticleListView: View {
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
     
-    // 【新增】用于显示错误弹窗的状态
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
 
@@ -163,6 +85,7 @@ struct ArticleListView: View {
     var body: some View {
         VStack(spacing: 0) {
             if isSearching {
+                // 调用共享的 SearchBarInline 视图
                 SearchBarInline(
                     text: $searchText,
                     onCommit: {
@@ -179,177 +102,13 @@ struct ArticleListView: View {
                 )
             }
 
-            List {
-                if isSearchActive {
-                    // ... 搜索部分代码保持不变
-                    let grouped = groupedSearchByTimestamp()
-                    let timestamps = sortedSearchTimestamps(for: grouped)
-
-                    if searchResults.isEmpty {
-                        Section {
-                            Text("未找到匹配的文章")
-                                .foregroundColor(.secondary)
-                                .padding(.vertical, 12)
-                                .listRowBackground(Color.clear)
-                        } header: {
-                            Text("搜索结果")
-                                .font(.headline)
-                                .foregroundColor(.blue.opacity(0.7))
-                                .padding(.vertical, 4)
-                        }
-                    } else {
-                        ForEach(timestamps, id: \.self) { timestamp in
-                            Section(header:
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("搜索结果")
-                                                .font(.subheadline)
-                                                .foregroundColor(.blue.opacity(0.7))
-                                            Text("\(formatTimestamp(timestamp)) \(grouped[timestamp]?.count ?? 0)")
-                                                .font(.headline)
-                                                .foregroundColor(.blue.opacity(0.85))
-                                        }
-                                        .padding(.vertical, 4)
-                            ) {
-                                ForEach(grouped[timestamp] ?? []) { article in
-                                    NavigationLink(destination: ArticleContainerView(
-                                        article: article,
-                                        sourceName: source.name,
-                                        context: .fromSource(source.name),
-                                        viewModel: viewModel
-                                    )) {
-                                        ArticleRowCardView(
-                                            article: article,
-                                            sourceName: nil,
-                                            isReadEffective: viewModel.isArticleEffectivelyRead(article)
-                                        )
-                                    }
-                                    .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
-                                    .contextMenu {
-                                        if article.isRead {
-                                            Button { viewModel.markAsUnread(articleID: article.id) }
-                                            label: { Label("标记为未读", systemImage: "circle") }
-                                        } else {
-                                            Button { viewModel.markAsRead(articleID: article.id) }
-                                            label: { Label("标记为已读", systemImage: "checkmark.circle") }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    let timestamps = sortedTimestamps(for: groupedArticles)
-                    ForEach(timestamps, id: \.self) { timestamp in
-                        Section {
-                            if expandedTimestamps.contains(timestamp) {
-                                ForEach(groupedArticles[timestamp] ?? []) { article in
-                                    NavigationLink(destination: ArticleContainerView(
-                                        article: article,
-                                        sourceName: source.name,
-                                        context: .fromSource(source.name),
-                                        viewModel: viewModel
-                                    )) {
-                                        ArticleRowCardView(
-                                            article: article,
-                                            sourceName: nil,
-                                            isReadEffective: viewModel.isArticleEffectivelyRead(article)
-                                        )
-                                    }
-                                    .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
-                                    .contextMenu {
-                                        if article.isRead {
-                                            Button { viewModel.markAsUnread(articleID: article.id) }
-                                            label: { Label("标记为未读", systemImage: "circle") }
-                                        } else {
-                                            Button { viewModel.markAsRead(articleID: article.id) }
-                                            label: { Label("标记为已读", systemImage: "checkmark.circle") }
-                                            if filterMode == .unread {
-                                                Divider()
-                                                Button {
-                                                    viewModel.markAllAboveAsRead(articleID: article.id, inVisibleList: self.filteredArticles)
-                                                }
-                                                label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
-
-                                                Button {
-                                                    viewModel.markAllBelowAsRead(articleID: article.id, inVisibleList: self.filteredArticles)
-                                                }
-                                                label: { Label("以下全部已读", systemImage: "arrow.down.to.line.compact") }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } header: {
-                            HStack(spacing: 8) {
-                                Text(formatTimestamp(timestamp))
-                                    .font(.headline)
-                                    .foregroundColor(.blue.opacity(0.7))
-
-                                Spacer(minLength: 8)
-
-                                Text("\(groupedArticles[timestamp]?.count ?? 0)")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-
-                                Image(systemName: expandedTimestamps.contains(timestamp) ? "chevron.down" : "chevron.right")
-                                    .foregroundColor(.secondary)
-                                    .font(.footnote.weight(.semibold))
-                            }
-                            .padding(.vertical, 4)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    if expandedTimestamps.contains(timestamp) {
-                                        expandedTimestamps.remove(timestamp)
-                                    } else {
-                                        expandedTimestamps.insert(timestamp)
-                                    }
-                                }
-                            }
-                        }
-                    }
+            // 【修改】将 List 提取到子视图中
+            listContent
+                .listStyle(PlainListStyle())
+                .onAppear(perform: resetExpandedState)
+                .onChange(of: filterMode) { _, _ in
+                    resetExpandedState()
                 }
-            }
-            .listStyle(PlainListStyle())
-            .onAppear(perform: resetExpandedState)
-            .onChange(of: filterMode) { _, _ in
-                resetExpandedState()
-            }
-            .navigationTitle(source.name.replacingOccurrences(of: "_", with: " "))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                // 【新增】刷新按钮
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        Task {
-                            await syncResources(isManual: true)
-                        }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .disabled(resourceManager.isSyncing)
-                    .accessibilityLabel("刷新")
-                }
-                
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        withAnimation {
-                            isSearching.toggle()
-                            if !isSearching {
-                                isSearchActive = false
-                                searchText = ""
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "magnifyingglass")
-                    }
-                    .accessibilityLabel("搜索")
-                }
-            }
 
             if !isSearchActive {
                 Picker("Filter", selection: $filterMode) {
@@ -363,12 +122,192 @@ struct ArticleListView: View {
             }
         }
         .background(Color.viewBackground.ignoresSafeArea())
-        // 【新增】错误提示弹窗
+        .navigationTitle(source.name.replacingOccurrences(of: "_", with: " "))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task {
+                        await syncResources(isManual: true)
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(resourceManager.isSyncing)
+                .accessibilityLabel("刷新")
+            }
+            
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    withAnimation {
+                        isSearching.toggle()
+                        if !isSearching {
+                            isSearchActive = false
+                            searchText = ""
+                        }
+                    }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .accessibilityLabel("搜索")
+            }
+        }
         .alert("", isPresented: $showErrorAlert, actions: {
             Button("好的", role: .cancel) { }
         }, message: {
             Text(errorMessage)
         })
+    }
+    
+    // 【新增】提取出的列表内容子视图
+    @ViewBuilder
+    private var listContent: some View {
+        List {
+            if isSearchActive {
+                searchResultsList
+            } else {
+                articlesList
+            }
+        }
+    }
+    
+    // 【新增】提取出的搜索结果列表部分
+    @ViewBuilder
+    private var searchResultsList: some View {
+        let grouped = groupedSearchByTimestamp()
+        let timestamps = sortedSearchTimestamps(for: grouped)
+
+        if searchResults.isEmpty {
+            Section {
+                Text("未找到匹配的文章")
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 12)
+                    .listRowBackground(Color.clear)
+            } header: {
+                Text("搜索结果")
+                    .font(.headline)
+                    .foregroundColor(.blue.opacity(0.7))
+                    .padding(.vertical, 4)
+            }
+        } else {
+            ForEach(timestamps, id: \.self) { timestamp in
+                Section(header:
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("搜索结果")
+                                    .font(.subheadline)
+                                    .foregroundColor(.blue.opacity(0.7))
+                                Text("\(formatTimestamp(timestamp)) \(grouped[timestamp]?.count ?? 0)")
+                                    .font(.headline)
+                                    .foregroundColor(.blue.opacity(0.85))
+                            }
+                            .padding(.vertical, 4)
+                ) {
+                    ForEach(grouped[timestamp] ?? []) { article in
+                        NavigationLink(destination: ArticleContainerView(
+                            article: article,
+                            sourceName: source.name,
+                            context: .fromSource(source.name),
+                            viewModel: viewModel
+                        )) {
+                            ArticleRowCardView(
+                                article: article,
+                                sourceName: nil,
+                                isReadEffective: viewModel.isArticleEffectivelyRead(article)
+                            )
+                        }
+                        .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .contextMenu {
+                            if article.isRead {
+                                Button { viewModel.markAsUnread(articleID: article.id) }
+                                label: { Label("标记为未读", systemImage: "circle") }
+                            } else {
+                                Button { viewModel.markAsRead(articleID: article.id) }
+                                label: { Label("标记为已读", systemImage: "checkmark.circle") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // 【新增】提取出的常规文章列表部分
+    @ViewBuilder
+    private var articlesList: some View {
+        let timestamps = sortedTimestamps(for: groupedArticles)
+        ForEach(timestamps, id: \.self) { timestamp in
+            Section {
+                if expandedTimestamps.contains(timestamp) {
+                    ForEach(groupedArticles[timestamp] ?? []) { article in
+                        NavigationLink(destination: ArticleContainerView(
+                            article: article,
+                            sourceName: source.name,
+                            context: .fromSource(source.name),
+                            viewModel: viewModel
+                        )) {
+                            ArticleRowCardView(
+                                article: article,
+                                sourceName: nil,
+                                isReadEffective: viewModel.isArticleEffectivelyRead(article)
+                            )
+                        }
+                        .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .contextMenu {
+                            if article.isRead {
+                                Button { viewModel.markAsUnread(articleID: article.id) }
+                                label: { Label("标记为未读", systemImage: "circle") }
+                            } else {
+                                Button { viewModel.markAsRead(articleID: article.id) }
+                                label: { Label("标记为已读", systemImage: "checkmark.circle") }
+                                if filterMode == .unread {
+                                    Divider()
+                                    Button {
+                                        viewModel.markAllAboveAsRead(articleID: article.id, inVisibleList: self.filteredArticles)
+                                    }
+                                    label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
+
+                                    Button {
+                                        viewModel.markAllBelowAsRead(articleID: article.id, inVisibleList: self.filteredArticles)
+                                    }
+                                    label: { Label("以下全部已读", systemImage: "arrow.down.to.line.compact") }
+                                }
+                            }
+                        }
+                    }
+                }
+            } header: {
+                HStack(spacing: 8) {
+                    Text(formatTimestamp(timestamp))
+                        .font(.headline)
+                        .foregroundColor(.blue.opacity(0.7))
+
+                    Spacer(minLength: 8)
+
+                    Text("\(groupedArticles[timestamp]?.count ?? 0)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+
+                    Image(systemName: expandedTimestamps.contains(timestamp) ? "chevron.down" : "chevron.right")
+                        .foregroundColor(.secondary)
+                        .font(.footnote.weight(.semibold))
+                }
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if expandedTimestamps.contains(timestamp) {
+                            expandedTimestamps.remove(timestamp)
+                        } else {
+                            expandedTimestamps.insert(timestamp)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func resetExpandedState() {
@@ -389,7 +328,6 @@ struct ArticleListView: View {
         return formatter.string(from: date)
     }
     
-    // 【新增】从 SourceListView 复制过来的刷新函数
     private func syncResources(isManual: Bool = false) async {
         do {
             try await resourceManager.checkAndDownloadUpdates(isManual: isManual)
@@ -421,7 +359,6 @@ struct ArticleListView: View {
 // ==================== 所有文章列表 ====================
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
-    // 【新增】接收从 SourceListView 传递过来的 resourceManager
     @ObservedObject var resourceManager: ResourceManager
 
     @State private var filterMode: ArticleFilterMode = .unread
@@ -432,7 +369,6 @@ struct AllArticlesListView: View {
 
     @State private var expandedTimestamps: Set<String> = []
     
-    // 【新增】用于显示错误弹窗的状态
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
 
@@ -492,6 +428,7 @@ struct AllArticlesListView: View {
     var body: some View {
         VStack(spacing: 0) {
             if isSearching {
+                // 调用共享的 SearchBarInline 视图
                 SearchBarInline(
                     text: $searchText,
                     onCommit: {
@@ -508,178 +445,13 @@ struct AllArticlesListView: View {
                 )
             }
 
-            List {
-                if isSearchActive {
-                    // ... 搜索部分代码保持不变
-                    let grouped = groupedSearchByTimestamp()
-                    let timestamps = sortedSearchTimestamps(for: grouped)
-
-                    if searchResults.isEmpty {
-                        Section {
-                            Text("未找到匹配的文章")
-                                .foregroundColor(.secondary)
-                                .padding(.vertical, 12)
-                                .listRowBackground(Color.clear)
-                        } header: {
-                            Text("搜索结果")
-                                .font(.headline)
-                                .foregroundColor(.blue.opacity(0.7))
-                                .padding(.vertical, 4)
-                        }
-                    } else {
-                        ForEach(timestamps, id: \.self) { timestamp in
-                            Section(header:
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("搜索结果")
-                                                .font(.subheadline)
-                                                .foregroundColor(.blue.opacity(0.7))
-                                            Text("\(formatTimestamp(timestamp)) \(grouped[timestamp]?.count ?? 0)")
-                                                .font(.headline)
-                                                .foregroundColor(.blue.opacity(0.85))
-                                        }
-                                        .padding(.vertical, 4)
-                            ) {
-                                ForEach(grouped[timestamp] ?? [], id: \.article.id) { item in
-                                    NavigationLink(destination: ArticleContainerView(
-                                        article: item.article,
-                                        sourceName: item.sourceName,
-                                        context: .fromAllArticles,
-                                        viewModel: viewModel
-                                    )) {
-                                        ArticleRowCardView(
-                                            article: item.article,
-                                            sourceName: item.sourceName,
-                                            isReadEffective: viewModel.isArticleEffectivelyRead(item.article)
-                                        )
-                                    }
-                                    .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
-                                    .contextMenu {
-                                        if item.article.isRead {
-                                            Button { viewModel.markAsUnread(articleID: item.article.id) }
-                                            label: { Label("标记为未读", systemImage: "circle") }
-                                        } else {
-                                            Button { viewModel.markAsRead(articleID: item.article.id) }
-                                            label: { Label("标记为已读", systemImage: "checkmark.circle") }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    let timestamps = sortedTimestamps(for: groupedArticles)
-                    ForEach(timestamps, id: \.self) { timestamp in
-                        Section {
-                            if expandedTimestamps.contains(timestamp) {
-                                ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
-                                    NavigationLink(destination: ArticleContainerView(
-                                        article: item.article,
-                                        sourceName: item.sourceName,
-                                        context: .fromAllArticles,
-                                        viewModel: viewModel
-                                    )) {
-                                        ArticleRowCardView(
-                                            article: item.article,
-                                            sourceName: item.sourceName,
-                                            isReadEffective: viewModel.isArticleEffectivelyRead(item.article)
-                                        )
-                                    }
-                                    .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
-                                    .contextMenu {
-                                        if item.article.isRead {
-                                            Button { viewModel.markAsUnread(articleID: item.article.id) }
-                                            label: { Label("标记为未读", systemImage: "circle") }
-                                        } else {
-                                            Button { viewModel.markAsRead(articleID: item.article.id) }
-                                            label: { Label("标记为已读", systemImage: "checkmark.circle") }
-                                            if filterMode == .unread {
-                                                Divider()
-                                                Button {
-                                                    let visibleArticleList = self.filteredArticles.map { $0.article }
-                                                    viewModel.markAllAboveAsRead(articleID: item.article.id, inVisibleList: visibleArticleList)
-                                                }
-                                                label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
-
-                                                Button {
-                                                    let visibleArticleList = self.filteredArticles.map { $0.article }
-                                                    viewModel.markAllBelowAsRead(articleID: item.article.id, inVisibleList: visibleArticleList)
-                                                }
-                                                label: { Label("以下全部已读", systemImage: "arrow.down.to.line.compact") }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } header: {
-                            HStack(spacing: 8) {
-                                Text(formatTimestamp(timestamp))
-                                    .font(.headline)
-                                    .foregroundColor(.blue.opacity(0.7))
-
-                                Spacer(minLength: 8)
-
-                                Text("\(groupedArticles[timestamp]?.count ?? 0)")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-
-                                Image(systemName: expandedTimestamps.contains(timestamp) ? "chevron.down" : "chevron.right")
-                                    .foregroundColor(.secondary)
-                                    .font(.footnote.weight(.semibold))
-                            }
-                            .padding(.vertical, 4)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    if expandedTimestamps.contains(timestamp) {
-                                        expandedTimestamps.remove(timestamp)
-                                    } else {
-                                        expandedTimestamps.insert(timestamp)
-                                    }
-                                }
-                            }
-                        }
-                    }
+            // 【修改】将 List 提取到子视图中
+            listContent
+                .listStyle(PlainListStyle())
+                .onAppear(perform: resetExpandedState)
+                .onChange(of: filterMode) { _, _ in
+                    resetExpandedState()
                 }
-            }
-            .listStyle(PlainListStyle())
-            .onAppear(perform: resetExpandedState)
-            .onChange(of: filterMode) { _, _ in
-                resetExpandedState()
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                // 【新增】刷新按钮
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        Task {
-                            await syncResources(isManual: true)
-                        }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .disabled(resourceManager.isSyncing)
-                    .accessibilityLabel("刷新")
-                }
-                
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        withAnimation {
-                            isSearching.toggle()
-                            if !isSearching {
-                                isSearchActive = false
-                                searchText = ""
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "magnifyingglass")
-                    }
-                    .accessibilityLabel("搜索")
-                }
-            }
 
             if !isSearchActive {
                 Picker("Filter", selection: $filterMode) {
@@ -693,12 +465,193 @@ struct AllArticlesListView: View {
             }
         }
         .background(Color.viewBackground.ignoresSafeArea())
-        // 【新增】错误提示弹窗
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task {
+                        await syncResources(isManual: true)
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(resourceManager.isSyncing)
+                .accessibilityLabel("刷新")
+            }
+            
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    withAnimation {
+                        isSearching.toggle()
+                        if !isSearching {
+                            isSearchActive = false
+                            searchText = ""
+                        }
+                    }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .accessibilityLabel("搜索")
+            }
+        }
         .alert("", isPresented: $showErrorAlert, actions: {
             Button("好的", role: .cancel) { }
         }, message: {
             Text(errorMessage)
         })
+    }
+    
+    // 【新增】提取出的列表内容子视图
+    @ViewBuilder
+    private var listContent: some View {
+        List {
+            if isSearchActive {
+                searchResultsList
+            } else {
+                articlesList
+            }
+        }
+    }
+    
+    // 【新增】提取出的搜索结果列表部分
+    @ViewBuilder
+    private var searchResultsList: some View {
+        let grouped = groupedSearchByTimestamp()
+        let timestamps = sortedSearchTimestamps(for: grouped)
+
+        if searchResults.isEmpty {
+            Section {
+                Text("未找到匹配的文章")
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 12)
+                    .listRowBackground(Color.clear)
+            } header: {
+                Text("搜索结果")
+                    .font(.headline)
+                    .foregroundColor(.blue.opacity(0.7))
+                    .padding(.vertical, 4)
+            }
+        } else {
+            ForEach(timestamps, id: \.self) { timestamp in
+                Section(header:
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("搜索结果")
+                                    .font(.subheadline)
+                                    .foregroundColor(.blue.opacity(0.7))
+                                Text("\(formatTimestamp(timestamp)) \(grouped[timestamp]?.count ?? 0)")
+                                    .font(.headline)
+                                    .foregroundColor(.blue.opacity(0.85))
+                            }
+                            .padding(.vertical, 4)
+                ) {
+                    ForEach(grouped[timestamp] ?? [], id: \.article.id) { item in
+                        NavigationLink(destination: ArticleContainerView(
+                            article: item.article,
+                            sourceName: item.sourceName,
+                            context: .fromAllArticles,
+                            viewModel: viewModel
+                        )) {
+                            ArticleRowCardView(
+                                article: item.article,
+                                sourceName: item.sourceName,
+                                isReadEffective: viewModel.isArticleEffectivelyRead(item.article)
+                            )
+                        }
+                        .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .contextMenu {
+                            if item.article.isRead {
+                                Button { viewModel.markAsUnread(articleID: item.article.id) }
+                                label: { Label("标记为未读", systemImage: "circle") }
+                            } else {
+                                Button { viewModel.markAsRead(articleID: item.article.id) }
+                                label: { Label("标记为已读", systemImage: "checkmark.circle") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // 【新增】提取出的常规文章列表部分
+    @ViewBuilder
+    private var articlesList: some View {
+        let timestamps = sortedTimestamps(for: groupedArticles)
+        ForEach(timestamps, id: \.self) { timestamp in
+            Section {
+                if expandedTimestamps.contains(timestamp) {
+                    ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
+                        NavigationLink(destination: ArticleContainerView(
+                            article: item.article,
+                            sourceName: item.sourceName,
+                            context: .fromAllArticles,
+                            viewModel: viewModel
+                        )) {
+                            ArticleRowCardView(
+                                article: item.article,
+                                sourceName: item.sourceName,
+                                isReadEffective: viewModel.isArticleEffectivelyRead(item.article)
+                            )
+                        }
+                        .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .contextMenu {
+                            if item.article.isRead {
+                                Button { viewModel.markAsUnread(articleID: item.article.id) }
+                                label: { Label("标记为未读", systemImage: "circle") }
+                            } else {
+                                Button { viewModel.markAsRead(articleID: item.article.id) }
+                                label: { Label("标记为已读", systemImage: "checkmark.circle") }
+                                if filterMode == .unread {
+                                    Divider()
+                                    Button {
+                                        let visibleArticleList = self.filteredArticles.map { $0.article }
+                                        viewModel.markAllAboveAsRead(articleID: item.article.id, inVisibleList: visibleArticleList)
+                                    }
+                                    label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
+
+                                    Button {
+                                        let visibleArticleList = self.filteredArticles.map { $0.article }
+                                        viewModel.markAllBelowAsRead(articleID: item.article.id, inVisibleList: visibleArticleList)
+                                    }
+                                    label: { Label("以下全部已读", systemImage: "arrow.down.to.line.compact") }
+                                }
+                            }
+                        }
+                    }
+                }
+            } header: {
+                HStack(spacing: 8) {
+                    Text(formatTimestamp(timestamp))
+                        .font(.headline)
+                        .foregroundColor(.blue.opacity(0.7))
+
+                    Spacer(minLength: 8)
+
+                    Text("\(groupedArticles[timestamp]?.count ?? 0)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+
+                    Image(systemName: expandedTimestamps.contains(timestamp) ? "chevron.down" : "chevron.right")
+                        .foregroundColor(.secondary)
+                        .font(.footnote.weight(.semibold))
+                }
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if expandedTimestamps.contains(timestamp) {
+                            expandedTimestamps.remove(timestamp)
+                        } else {
+                            expandedTimestamps.insert(timestamp)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func resetExpandedState() {
@@ -719,7 +672,6 @@ struct AllArticlesListView: View {
         return formatter.string(from: date)
     }
     
-    // 【新增】从 SourceListView 复制过来的刷新函数
     private func syncResources(isManual: Bool = false) async {
         do {
             try await resourceManager.checkAndDownloadUpdates(isManual: isManual)

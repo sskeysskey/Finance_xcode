@@ -2,9 +2,6 @@ import SwiftUI
 import UserNotifications
 import Combine
 
-extension Color {
-static let viewBackground = Color(red: 28/255, green: 28/255, blue: 30/255)
-}
 
 @main
 struct NewsReaderAppApp: App {
@@ -29,6 +26,94 @@ var body: some View {
     }
 }
 }
+
+// ==================== 共享颜色扩展 ====================
+// 将此扩展移至共享文件，以便所有共享视图都能访问
+extension Color {
+    static let viewBackground = Color(red: 28/255, green: 28/255, blue: 30/255)
+}
+
+
+// ==================== 共享视图组件 ====================
+
+/// 公共：搜索输入视图（在导航栏下方显示）
+/// 已从各个视图文件中提取至此，以供全局复用。
+struct SearchBarInline: View {
+    @Binding var text: String
+    var placeholder: String = "搜索标题关键字" // 【新增】允许自定义 placeholder
+    var onCommit: () -> Void
+    var onCancel: () -> Void
+
+    // 焦点绑定
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                TextField(placeholder, text: $text, onCommit: onCommit)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .submitLabel(.search)
+                    .focused($isFocused)
+            }
+            .padding(10)
+            .background(Color(.secondarySystemBackground))
+            .cornerRadius(10)
+
+            if !text.isEmpty {
+                Button("搜索") { onCommit() }
+                    .buttonStyle(.bordered)
+            }
+
+            Button("取消") {
+                onCancel()
+                // 取消时顺便收起键盘
+                isFocused = false
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .background(.ultraThinMaterial) // 使用材质背景以适应不同上下文
+        .onAppear {
+            // 出现时自动聚焦
+            DispatchQueue.main.async {
+                self.isFocused = true
+            }
+        }
+    }
+}
+
+/// 公共：文章卡片视图
+/// 已从各个视图文件中提取至此，以供全局复用。
+struct ArticleRowCardView: View {
+    let article: Article
+    let sourceName: String?
+    let isReadEffective: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let name = sourceName {
+                Text(name.replacingOccurrences(of: "_", with: " "))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Text(article.topic)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(isReadEffective ? .secondary : .primary)
+                .lineLimit(3)
+        }
+        .padding(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.viewBackground)
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
+    }
+}
+
 
 class NewsViewModel: ObservableObject {
 @Published var sources: [NewsSource] = []

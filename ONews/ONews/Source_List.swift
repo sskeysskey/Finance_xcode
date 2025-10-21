@@ -1,5 +1,7 @@
 import SwiftUI
 
+// ==================== 主视图：SourceListView ====================
+
 struct SourceListView: View {
     @StateObject private var viewModel = NewsViewModel()
     @StateObject private var resourceManager = ResourceManager()
@@ -10,82 +12,85 @@ struct SourceListView: View {
     
     @State private var showAddSourceSheet = false
     
+    @State private var isSearching: Bool = false
+    @State private var searchText: String = ""
+    @State private var isSearchActive: Bool = false
+    
     @Environment(\.scenePhase) private var scenePhase
+    
+    private var searchResults: [(article: Article, sourceName: String)] {
+        guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return []
+        }
+        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return viewModel.allArticlesSortedForDisplay.filter { $0.article.topic.lowercased().contains(keyword) }
+    }
+
+    private func groupedSearchByTimestamp() -> [String: [(article: Article, sourceName: String)]] {
+        var initial = Dictionary(grouping: searchResults, by: { $0.article.timestamp })
+        initial = initial.mapValues { Array($0.reversed()) }
+        return initial
+    }
+
+    private func sortedSearchTimestamps(for groups: [String: [(article: Article, sourceName: String)]]) -> [String] {
+        return groups.keys.sorted(by: >)
+    }
     
     var body: some View {
         NavigationView {
-            ZStack {
-                // 背景图放在 NavigationView 内部，确保不被其根背景遮挡
+            VStack(spacing: 0) {
+                if isSearching {
+                    // 调用共享的 SearchBarInline 视图
+                    SearchBarInline(
+                        text: $searchText,
+                        placeholder: "搜索所有文章的标题关键字",
+                        onCommit: {
+                            isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        },
+                        onCancel: {
+                            withAnimation {
+                                isSearching = false
+                                isSearchActive = false
+                                searchText = ""
+                            }
+                        }
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                
+                // 【修改】将 if/else 的内容提取到下面的子视图中，解决编译器超时问题
+                if isSearchActive {
+                    searchResultsView
+                } else {
+                    sourceAndAllArticlesView
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
                 Image("welcome_background")
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .ignoresSafeArea()
                     .overlay(Color.black.opacity(0.4).ignoresSafeArea())
-                
-                Group {
-                    if viewModel.sources.isEmpty && !resourceManager.isSyncing {
-                        VStack(spacing: 20) {
-                            Text("您还没有订阅任何新闻源")
-                                .font(.headline)
-                                .foregroundColor(.white.opacity(0.9))
-                            Button(action: { showAddSourceSheet = true }) {
-                                Label("点击这里添加", systemImage: "plus.circle.fill")
-                                    .font(.title2)
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    } else {
-                        List {
-                            // "ALL" 链接
-                            ZStack {
-                                HStack {
-                                    Text("ALL")
-                                        .font(.system(size: 28, weight: .bold))
-                                        .foregroundColor(.white)
-                                    Spacer()
-                                    Text("\(viewModel.totalUnreadCount)")
-                                        .font(.system(size: 28, weight: .bold))
-                                        .foregroundColor(.white.opacity(0.7))
-                                }
-                                .padding()
-                                // 【修改】将 resourceManager 传递给 AllArticlesListView
-                                NavigationLink(destination: AllArticlesListView(viewModel: viewModel, resourceManager: resourceManager)) {
-                                    EmptyView()
-                                }.opacity(0)
-                            }
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            
-                            // 订阅源列表（显示所有来源，未读为 0 也显示）
-                            ForEach(viewModel.sources) { source in
-                                ZStack {
-                                    HStack {
-                                        Text(source.name)
-                                            .fontWeight(.semibold)
-                                            .foregroundColor(.white)
-                                        Spacer()
-                                        Text("\(source.unreadCount)")
-                                            .foregroundColor(.white.opacity(0.7))
-                                    }
-                                    .padding(.vertical, 8)
-                                    
-                                    // 【修改】将 resourceManager 传递给 ArticleListView
-                                    NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel, resourceManager: resourceManager)) {
-                                        EmptyView()
-                                    }.opacity(0)
-                                }
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                            }
-                        }
-                        .listStyle(.plain)
-                        .scrollContentBackground(.hidden) // iOS 16+
-                        .background(Color.clear)          // 兜底
-                    }
-                }
-            }
+            )
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {
+                        withAnimation {
+                            isSearching.toggle()
+                            if !isSearching {
+                                isSearchActive = false
+                                searchText = ""
+                            }
+                        }
+                    }) {
+                        Image(systemName: isSearching ? "xmark.circle.fill" : "magnifyingglass")
+                            .foregroundColor(.white)
+                    }
+                    .accessibilityLabel("搜索")
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
                         showAddSourceSheet = true
@@ -107,11 +112,11 @@ struct SourceListView: View {
                     .disabled(resourceManager.isSyncing)
                 }
             }
+            .navigationBarTitle(isSearching ? "" : "", displayMode: .inline)
         }
         .accentColor(.white)
         .preferredColorScheme(.dark)
         .onAppear {
-            // iOS 15 兜底：强制 UITableView 背景透明
             let tv = UITableView.appearance()
             tv.backgroundColor = .clear
             tv.separatorStyle = .none
@@ -125,14 +130,10 @@ struct SourceListView: View {
             }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
-            // 当应用从前台切换到后台或非激活状态时
             if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
-                // 调用静默提交方法
                 viewModel.commitPendingReadsSilently()
             }
-            // MARK: - 解决方案：当应用从后台或非激活状态返回前台时
             else if newPhase == .active && (oldPhase == .inactive || oldPhase == .background) {
-                // 调用轻量级同步方法，以确保内存状态与持久化状态一致
                 viewModel.syncReadStatusFromPersistence()
             }
         }
@@ -151,7 +152,6 @@ struct SourceListView: View {
             }
             .preferredColorScheme(.dark)
         }
-        // 加载/进度覆盖层
         .overlay(
             Group {
                 if resourceManager.isSyncing {
@@ -202,6 +202,141 @@ struct SourceListView: View {
         })
     }
     
+    // 【新增】提取出的搜索结果子视图
+    private var searchResultsView: some View {
+        List {
+            let grouped = groupedSearchByTimestamp()
+            let timestamps = sortedSearchTimestamps(for: grouped)
+
+            if searchResults.isEmpty {
+                Section {
+                    Text("未找到匹配的文章")
+                        .foregroundColor(.white.opacity(0.8))
+                        .padding(.vertical, 12)
+                        .listRowBackground(Color.clear)
+                } header: {
+                    Text("搜索结果")
+                        .font(.headline)
+                        .foregroundColor(.blue.opacity(0.7))
+                        .padding(.vertical, 4)
+                }
+            } else {
+                ForEach(timestamps, id: \.self) { timestamp in
+                    Section(header:
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("搜索结果")
+                                .font(.subheadline)
+                                .foregroundColor(.blue.opacity(0.7))
+                            Text("\(formatTimestamp(timestamp)) (\(grouped[timestamp]?.count ?? 0))")
+                                .font(.headline)
+                                .foregroundColor(.blue.opacity(0.85))
+                        }
+                        .padding(.vertical, 4)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                    ) {
+                        ForEach(grouped[timestamp] ?? [], id: \.article.id) { item in
+                            NavigationLink(destination: ArticleContainerView(
+                                article: item.article,
+                                sourceName: item.sourceName,
+                                context: .fromAllArticles,
+                                viewModel: viewModel
+                            )) {
+                                // 调用共享的 ArticleRowCardView
+                                ArticleRowCardView(
+                                    article: item.article,
+                                    sourceName: item.sourceName,
+                                    isReadEffective: viewModel.isArticleEffectivelyRead(item.article)
+                                )
+                                .colorScheme(.dark)
+                            }
+                            .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .contextMenu {
+                                if item.article.isRead {
+                                    Button { viewModel.markAsUnread(articleID: item.article.id) }
+                                    label: { Label("标记为未读", systemImage: "circle") }
+                                } else {
+                                    Button { viewModel.markAsRead(articleID: item.article.id) }
+                                    label: { Label("标记为已读", systemImage: "checkmark.circle") }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color.clear)
+        .transition(.opacity.animation(.easeInOut))
+    }
+    
+    // 【新增】提取出的新闻源列表子视图
+    private var sourceAndAllArticlesView: some View {
+        Group {
+            if viewModel.sources.isEmpty && !resourceManager.isSyncing {
+                VStack(spacing: 20) {
+                    Text("您还没有订阅任何新闻源")
+                        .font(.headline)
+                        .foregroundColor(.white.opacity(0.9))
+                    Button(action: { showAddSourceSheet = true }) {
+                        Label("点击这里添加", systemImage: "plus.circle.fill")
+                            .font(.title2)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .frame(maxHeight: .infinity)
+            } else {
+                List {
+                    // "ALL" 链接
+                    ZStack {
+                        HStack {
+                            Text("ALL")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundColor(.white)
+                            Spacer()
+                            Text("\(viewModel.totalUnreadCount)")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                        .padding()
+                        NavigationLink(destination: AllArticlesListView(viewModel: viewModel, resourceManager: resourceManager)) {
+                            EmptyView()
+                        }.opacity(0)
+                    }
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    
+                    // 订阅源列表
+                    ForEach(viewModel.sources) { source in
+                        ZStack {
+                            HStack {
+                                Text(source.name)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                                Spacer()
+                                Text("\(source.unreadCount)")
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
+                            .padding(.vertical, 8)
+                            
+                            NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel, resourceManager: resourceManager)) {
+                                EmptyView()
+                            }.opacity(0)
+                        }
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
+            }
+        }
+        .transition(.opacity.animation(.easeInOut))
+    }
+    
     private func syncResources(isManual: Bool = false) async {
         do {
             try await resourceManager.checkAndDownloadUpdates(isManual: isManual)
@@ -227,5 +362,14 @@ struct SourceListView: View {
                 print("自动同步静默失败: \(error)")
             }
         }
+    }
+    
+    private func formatTimestamp(_ timestamp: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyMMdd"
+        guard let date = formatter.date(from: timestamp) else { return timestamp }
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日, EEEE"
+        return formatter.string(from: date)
     }
 }
