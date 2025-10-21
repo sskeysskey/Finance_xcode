@@ -383,76 +383,77 @@ struct ChartView: View {
                 ZStack {
                     GeometryReader { geometry in
                         // 使用 Canvas 替代 Path 提高性能
-                        // 在 Canvas { context, size in 的绘制代码中，添加遮罩背板绘制
                         Canvas { context, size in
                             let effectiveHeight = size.height - (verticalPadding * 2)
-                            
                             let priceToY: (Double) -> CGFloat = { price in
                                 let normalizedY = CGFloat((price - minPrice) / priceRange)
                                 return size.height - verticalPadding - (normalizedY * effectiveHeight)
                             }
-                            
-                            // ===== 新增：绘制财报遮罩背板 =====
+
                             let width = size.width
                             let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
-                            
-                            // 检查数据范围与遮罩范围是否有重叠
-                            if !sampledChartData.isEmpty,
-                               let displayStart = sampledChartData.first?.date,
-                               let displayEnd = sampledChartData.last?.date {
-                                
-                                // 绘制紫色遮罩（三周前）
-                                if let threeWeeks = threeWeeksBeforeRange {
-                                    let hasOverlap = !(threeWeeks.end < displayStart || threeWeeks.start > displayEnd)
-                                    
-                                    if hasOverlap {
-                                        // 找到遮罩区间在数据中的起始和结束索引
-                                        let startIndex = sampledChartData.firstIndex(where: { $0.date >= threeWeeks.start }) ?? 0
-                                        let endIndex = sampledChartData.lastIndex(where: { $0.date <= threeWeeks.end }) ?? (sampledChartData.count - 1)
-                                        
-                                        let x1 = CGFloat(startIndex) * horizontalStep
-                                        let x2 = CGFloat(endIndex) * horizontalStep
-                                        
-                                        let shadeRect = CGRect(
-                                            x: x1,
-                                            y: verticalPadding,
-                                            width: x2 - x1,
-                                            height: size.height - verticalPadding * 2
-                                        )
-                                        
-                                        context.fill(
-                                            Path(shadeRect),
-                                            with: .color(Color.purple.opacity(0.15))
-                                        )
-                                    }
-                                }
-                                
-                                // 绘制蓝色遮罩（一周前）
-                                if let oneWeek = oneWeekBeforeRange {
-                                    let hasOverlap = !(oneWeek.end < displayStart || oneWeek.start > displayEnd)
-                                    
-                                    if hasOverlap {
-                                        let startIndex = sampledChartData.firstIndex(where: { $0.date >= oneWeek.start }) ?? 0
-                                        let endIndex = sampledChartData.lastIndex(where: { $0.date <= oneWeek.end }) ?? (sampledChartData.count - 1)
-                                        
-                                        let x1 = CGFloat(startIndex) * horizontalStep
-                                        let x2 = CGFloat(endIndex) * horizontalStep
-                                        
-                                        let shadeRect = CGRect(
-                                            x: x1,
-                                            y: verticalPadding,
-                                            width: x2 - x1,
-                                            height: size.height - verticalPadding * 2
-                                        )
-                                        
-                                        context.fill(
-                                            Path(shadeRect),
-                                            with: .color(Color.blue.opacity(0.15))
-                                        )
-                                    }
-                                }
+                            let halfStep = horizontalStep / 2
+
+                            guard
+                                let displayStart = sampledChartData.first?.date,
+                                let displayEnd = sampledChartData.last?.date
+                            else {
+                                return
                             }
-                            // ===== 遮罩背板绘制结束 =====
+
+                            /// 计算遮罩的横向范围：把起止日期裁剪到当前展示范围后，
+                            /// 映射到第一个 ≥start、最后一个 ≤end 的数据点，并各自拓展半个步长
+                            func xBounds(from rawStart: Date, to rawEnd: Date) -> (CGFloat, CGFloat)? {
+                                let start = max(rawStart, displayStart)
+                                let end = min(rawEnd, displayEnd)
+                                guard start <= end else { return nil }
+
+                                guard
+                                    let startIndex = sampledChartData.firstIndex(where: { $0.date >= start }),
+                                    let endIndex   = sampledChartData.lastIndex(where: { $0.date <= end }),
+                                    startIndex <= endIndex
+                                else {
+                                    return nil
+                                }
+
+                                var x1 = CGFloat(startIndex) * horizontalStep - halfStep
+                                var x2 = CGFloat(endIndex)   * horizontalStep + halfStep
+
+                                if startIndex == 0 {
+                                    x1 = 0
+                                } else {
+                                    x1 = max(0, x1)
+                                }
+
+                                if endIndex == sampledChartData.count - 1 {
+                                    x2 = width
+                                } else {
+                                    x2 = min(width, x2)
+                                }
+
+                                if x2 <= x1 {
+                                    x2 = x1 + max(horizontalStep, 2)
+                                }
+                                return (x1, x2)
+                            }
+
+                            func drawRange(_ range: (start: Date, end: Date), tint: Color) {
+                                guard let (x1, x2) = xBounds(from: range.start, to: range.end) else { return }
+                                let shadeRect = CGRect(
+                                    x: x1,
+                                    y: verticalPadding,
+                                    width: x2 - x1,
+                                    height: size.height - verticalPadding * 2
+                                )
+                                context.fill(Path(shadeRect), with: .color(tint.opacity(0.15)))
+                            }
+
+                            if let threeWeeks = threeWeeksBeforeRange {
+                                drawRange(threeWeeks, tint: .purple)
+                            }
+                            if let oneWeek = oneWeekBeforeRange {
+                                drawRange(oneWeek, tint: .blue)
+                            }
                             
                             // 原有的价格线绘制代码
                             if !renderedPoints.isEmpty {
