@@ -32,6 +32,7 @@ private struct SearchBarInline: View {
 
             if !text.isEmpty {
                 Button("搜索") { onCommit() }
+                    .buttonStyle(.bordered) // 【修改】将 .buttonStyle(.bordered) 从取消按钮移到这里
             }
 
             Button("取消") {
@@ -39,7 +40,8 @@ private struct SearchBarInline: View {
                 // 取消时顺便收起键盘
                 isFocused = false
             }
-            .buttonStyle(.bordered)
+            // 【修改】移除这里的 .buttonStyle(.bordered)
+            // .buttonStyle(.bordered)
         }
         .padding(.horizontal)
         .padding(.top, 8)
@@ -84,15 +86,20 @@ struct ArticleRowCardView: View {
 struct ArticleListView: View {
     let source: NewsSource
     @ObservedObject var viewModel: NewsViewModel
+    // 【新增】接收从 SourceListView 传递过来的 resourceManager
+    @ObservedObject var resourceManager: ResourceManager
 
     @State private var filterMode: ArticleFilterMode = .unread
     
-    // 【修改】此状态现在由 onAppear 和 onChange 动态设置
     @State private var expandedTimestamps: Set<String> = []
 
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
+    
+    // 【新增】用于显示错误弹窗的状态
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
 
     // 基础过滤（仅按已读/未读）----用于非搜索态
     private var baseFilteredArticles: [Article] {
@@ -128,7 +135,6 @@ struct ArticleListView: View {
     }
 
     private var unreadCount: Int {
-        // 未读数量仍基于持久 isRead（与你的角标一致）
         source.articles.filter { !$0.isRead }.count
     }
     private var readCount: Int {
@@ -168,7 +174,6 @@ struct ArticleListView: View {
                             isSearchActive = false
                             searchText = ""
                         }
-                        // 【新增】当取消搜索时，重置折叠状态以匹配当前列表
                         resetExpandedState()
                     }
                 )
@@ -238,7 +243,6 @@ struct ArticleListView: View {
                     let timestamps = sortedTimestamps(for: groupedArticles)
                     ForEach(timestamps, id: \.self) { timestamp in
                         Section {
-                            // 【重要修改】修正显示逻辑：当分组被展开时（即 timestamp 在 expandedTimestamps 集合中），才显示内容
                             if expandedTimestamps.contains(timestamp) {
                                 ForEach(groupedArticles[timestamp] ?? []) { article in
                                     NavigationLink(destination: ArticleContainerView(
@@ -291,7 +295,6 @@ struct ArticleListView: View {
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
 
-                                // 【重要修改】修正图标逻辑：展开时（contains）显示 "chevron.down"
                                 Image(systemName: expandedTimestamps.contains(timestamp) ? "chevron.down" : "chevron.right")
                                     .foregroundColor(.secondary)
                                     .font(.footnote.weight(.semibold))
@@ -312,7 +315,6 @@ struct ArticleListView: View {
                 }
             }
             .listStyle(PlainListStyle())
-            // 【新增】添加 onAppear 和 onChange 修饰符来控制默认折叠状态
             .onAppear(perform: resetExpandedState)
             .onChange(of: filterMode) { _, _ in
                 resetExpandedState()
@@ -320,6 +322,19 @@ struct ArticleListView: View {
             .navigationTitle(source.name.replacingOccurrences(of: "_", with: " "))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // 【新增】刷新按钮
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task {
+                            await syncResources(isManual: true)
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(resourceManager.isSyncing)
+                    .accessibilityLabel("刷新")
+                }
+                
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         withAnimation {
@@ -348,16 +363,19 @@ struct ArticleListView: View {
             }
         }
         .background(Color.viewBackground.ignoresSafeArea())
+        // 【新增】错误提示弹窗
+        .alert("", isPresented: $showErrorAlert, actions: {
+            Button("好的", role: .cancel) { }
+        }, message: {
+            Text(errorMessage)
+        })
     }
 
-    // 【新增】此函数根据当前分组数量设置默认的折叠/展开状态
     private func resetExpandedState() {
         let timestamps = sortedTimestamps(for: groupedArticles)
         if timestamps.count == 1 {
-            // 如果只有一个日期组，默认展开它
             self.expandedTimestamps = Set(timestamps)
         } else {
-            // 如果有多个或零个日期组，默认全部折叠
             self.expandedTimestamps = []
         }
     }
@@ -370,19 +388,53 @@ struct ArticleListView: View {
         formatter.dateFormat = "yyyy年M月d日, EEEE"
         return formatter.string(from: date)
     }
+    
+    // 【新增】从 SourceListView 复制过来的刷新函数
+    private func syncResources(isManual: Bool = false) async {
+        do {
+            try await resourceManager.checkAndDownloadUpdates(isManual: isManual)
+            viewModel.loadNews()
+        } catch {
+            if isManual {
+                switch error {
+                case is DecodingError:
+                    self.errorMessage = "数据解析失败，请稍后重试。"
+                    self.showErrorAlert = true
+                case let urlError as URLError where
+                    urlError.code == .cannotConnectToHost ||
+                    urlError.code == .timedOut ||
+                    urlError.code == .notConnectedToInternet:
+                    self.errorMessage = "网络连接失败，请检查网络设置或稍后重试。"
+                    self.showErrorAlert = true
+                default:
+                    self.errorMessage = "发生未知错误，请稍后重试。"
+                    self.showErrorAlert = true
+                }
+                print("手动同步失败: \(error)")
+            } else {
+                print("自动同步静默失败: \(error)")
+            }
+        }
+    }
 }
 
 // ==================== 所有文章列表 ====================
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
+    // 【新增】接收从 SourceListView 传递过来的 resourceManager
+    @ObservedObject var resourceManager: ResourceManager
+
     @State private var filterMode: ArticleFilterMode = .unread
 
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
 
-    // 【修改】此状态现在由 onAppear 和 onChange 动态设置
     @State private var expandedTimestamps: Set<String> = []
+    
+    // 【新增】用于显示错误弹窗的状态
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
 
     private var baseFilteredArticles: [(article: Article, sourceName: String)] {
         viewModel.allArticlesSortedForDisplay.filter { item in
@@ -451,7 +503,6 @@ struct AllArticlesListView: View {
                             isSearchActive = false
                             searchText = ""
                         }
-                        // 【新增】当取消搜索时，重置折叠状态以匹配当前列表
                         resetExpandedState()
                     }
                 )
@@ -521,7 +572,6 @@ struct AllArticlesListView: View {
                     let timestamps = sortedTimestamps(for: groupedArticles)
                     ForEach(timestamps, id: \.self) { timestamp in
                         Section {
-                            // 【重要修改】修正显示逻辑：当分组被展开时（即 timestamp 在 expandedTimestamps 集合中），才显示内容
                             if expandedTimestamps.contains(timestamp) {
                                 ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
                                     NavigationLink(destination: ArticleContainerView(
@@ -576,7 +626,6 @@ struct AllArticlesListView: View {
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
 
-                                // 【重要修改】修正图标逻辑：展开时（contains）显示 "chevron.down"
                                 Image(systemName: expandedTimestamps.contains(timestamp) ? "chevron.down" : "chevron.right")
                                     .foregroundColor(.secondary)
                                     .font(.footnote.weight(.semibold))
@@ -597,13 +646,25 @@ struct AllArticlesListView: View {
                 }
             }
             .listStyle(PlainListStyle())
-            // 【新增】添加 onAppear 和 onChange 修饰符来控制默认折叠状态
             .onAppear(perform: resetExpandedState)
             .onChange(of: filterMode) { _, _ in
                 resetExpandedState()
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // 【新增】刷新按钮
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task {
+                            await syncResources(isManual: true)
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(resourceManager.isSyncing)
+                    .accessibilityLabel("刷新")
+                }
+                
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         withAnimation {
@@ -632,16 +693,19 @@ struct AllArticlesListView: View {
             }
         }
         .background(Color.viewBackground.ignoresSafeArea())
+        // 【新增】错误提示弹窗
+        .alert("", isPresented: $showErrorAlert, actions: {
+            Button("好的", role: .cancel) { }
+        }, message: {
+            Text(errorMessage)
+        })
     }
 
-    // 【新增】此函数根据当前分组数量设置默认的折叠/展开状态
     private func resetExpandedState() {
         let timestamps = sortedTimestamps(for: groupedArticles)
         if timestamps.count == 1 {
-            // 如果只有一个日期组，默认展开它
             self.expandedTimestamps = Set(timestamps)
         } else {
-            // 如果有多个或零个日期组，默认全部折叠
             self.expandedTimestamps = []
         }
     }
@@ -653,5 +717,33 @@ struct AllArticlesListView: View {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy年M月d日, EEEE"
         return formatter.string(from: date)
+    }
+    
+    // 【新增】从 SourceListView 复制过来的刷新函数
+    private func syncResources(isManual: Bool = false) async {
+        do {
+            try await resourceManager.checkAndDownloadUpdates(isManual: isManual)
+            viewModel.loadNews()
+        } catch {
+            if isManual {
+                switch error {
+                case is DecodingError:
+                    self.errorMessage = "数据解析失败，请稍后重试。"
+                    self.showErrorAlert = true
+                case let urlError as URLError where
+                    urlError.code == .cannotConnectToHost ||
+                    urlError.code == .timedOut ||
+                    urlError.code == .notConnectedToInternet:
+                    self.errorMessage = "网络连接失败，请检查网络设置或稍后重试。"
+                    self.showErrorAlert = true
+                default:
+                    self.errorMessage = "发生未知错误，请稍后重试。"
+                    self.showErrorAlert = true
+                }
+                print("手动同步失败: \(error)")
+            } else {
+                print("自动同步静默失败: \(error)")
+            }
+        }
     }
 }

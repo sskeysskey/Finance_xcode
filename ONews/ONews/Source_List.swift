@@ -48,7 +48,8 @@ struct SourceListView: View {
                                         .foregroundColor(.white.opacity(0.7))
                                 }
                                 .padding()
-                                NavigationLink(destination: AllArticlesListView(viewModel: viewModel)) {
+                                // 【修改】将 resourceManager 传递给 AllArticlesListView
+                                NavigationLink(destination: AllArticlesListView(viewModel: viewModel, resourceManager: resourceManager)) {
                                     EmptyView()
                                 }.opacity(0)
                             }
@@ -68,7 +69,8 @@ struct SourceListView: View {
                                     }
                                     .padding(.vertical, 8)
                                     
-                                    NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel)) {
+                                    // 【修改】将 resourceManager 传递给 ArticleListView
+                                    NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel, resourceManager: resourceManager)) {
                                         EmptyView()
                                     }.opacity(0)
                                 }
@@ -96,7 +98,6 @@ struct SourceListView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
                         Task {
-                            // 【修改】调用 syncResources 时，明确指出是手动触发
                             await syncResources(isManual: true)
                         }
                     }) {
@@ -120,7 +121,6 @@ struct SourceListView: View {
             
             viewModel.loadNews()
             Task {
-                // 【修改】调用 syncResources 时，使用默认的 isManual: false
                 await syncResources()
             }
         }
@@ -156,7 +156,6 @@ struct SourceListView: View {
             Group {
                 if resourceManager.isSyncing {
                     VStack(spacing: 15) {
-                        // 【新增】判断是否是“已是最新”的提示状态
                         if resourceManager.syncMessage == "当前已是最新" || resourceManager.syncMessage == "新闻清单已是最新。" {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.largeTitle)
@@ -166,7 +165,6 @@ struct SourceListView: View {
                                 .font(.headline)
                                 .foregroundColor(.white)
                         }
-                        // 【修改】将原来的下载中逻辑放入 else if
                         else if resourceManager.isDownloading {
                             Text(resourceManager.syncMessage)
                                 .font(.headline)
@@ -204,14 +202,11 @@ struct SourceListView: View {
         })
     }
     
-    // 【修改】函数签名，增加 isManual 参数
     private func syncResources(isManual: Bool = false) async {
         do {
-            // 【修改】将 isManual 参数传递给 resourceManager
             try await resourceManager.checkAndDownloadUpdates(isManual: isManual)
             viewModel.loadNews()
         } catch {
-            // 【新增】只在手动刷新时才显示网络错误弹窗
             if isManual {
                 switch error {
                 case is DecodingError:
@@ -229,7 +224,6 @@ struct SourceListView: View {
                 }
                 print("手动同步失败: \(error)")
             } else {
-                // 自动同步失败时，在控制台打印日志，不打扰用户
                 print("自动同步静默失败: \(error)")
             }
         }
