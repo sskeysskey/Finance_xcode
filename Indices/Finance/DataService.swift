@@ -104,6 +104,7 @@ struct EarningRelease: Identifiable {
     let symbol: String
     let timing: String // BMO, AMC, TNS
     let date: String   // 存储 "MM-dd" 格式的日期
+    let fullDate: Date // 新增：存储完整的日期对象（用于计算）
 }
 
 // 【新增】: 定义一个枚举来表示财报和股价的组合趋势
@@ -347,7 +348,6 @@ class DataService: ObservableObject {
     }
         
     private func loadEarningRelease() {
-        // --- 修改点 1: 在数组中添加新的文件前缀 ---
         let filePrefixes = ["Earnings_Release_new", "Earnings_Release_next", "Earnings_Release_third", "Earnings_Release_fourth", "Earnings_Release_fifth"]
         let urlsToProcess = filePrefixes.compactMap { prefix in
             FileManagerHelper.getLatestFileUrl(for: prefix)
@@ -355,13 +355,15 @@ class DataService: ObservableObject {
         guard !urlsToProcess.isEmpty else {
             if !isInitialLoad {
                 DispatchQueue.main.async {
-                    // --- 修改点 2: 更新错误提示信息 ---
-                    self.errorMessage = "Earnings_Release_new, Earnings_Release_next, Earnings_Release_third, Earnings_Release_fourth 或 Earnings_Release_fifth 文件未在 Documents 中找到"
+                    self.errorMessage = "Earnings_Release 文件未在 Documents 中找到"
                 }
             }
             return
         }
         var allEarningReleases: [EarningRelease] = []
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
         do {
             for url in urlsToProcess {
                 let content = try String(contentsOf: url, encoding: .utf8)
@@ -373,12 +375,21 @@ class DataService: ObservableObject {
                     let timing = String(parts[1])
                     let fullDateStr = String(parts[2]) // "YYYY-MM-DD"
                     
+                    // 解析完整日期
+                    guard let fullDate = dateFormatter.date(from: fullDateStr) else { continue }
+                    
                     let dateComponents = fullDateStr.split(separator: "-")
                     guard dateComponents.count == 3 else { continue }
                     let month = dateComponents[1]
                     let day = dateComponents[2]
                     let displayDate = "\(month)-\(day)"
-                    let release = EarningRelease(symbol: symbol, timing: timing, date: displayDate)
+                    
+                    let release = EarningRelease(
+                        symbol: symbol,
+                        timing: timing,
+                        date: displayDate,
+                        fullDate: fullDate
+                    )
                     allEarningReleases.append(release)
                 }
             }

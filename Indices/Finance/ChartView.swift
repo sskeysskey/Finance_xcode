@@ -185,6 +185,11 @@ struct ChartView: View {
     @State private var shouldUpdateBubbles: Bool = true
     @State private var showBubbles: Bool = false  // 浮窗显示开关
     
+    // 新增：财报遮罩背板相关状态
+    @State private var earningReleaseDate: Date? = nil
+    @State private var threeWeeksBeforeRange: (start: Date, end: Date)? = nil
+    @State private var oneWeekBeforeRange: (start: Date, end: Date)? = nil
+    
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.presentationMode) var presentationMode
     @EnvironmentObject var dataService: DataService
@@ -378,20 +383,78 @@ struct ChartView: View {
                 ZStack {
                     GeometryReader { geometry in
                         // 使用 Canvas 替代 Path 提高性能
+                        // 在 Canvas { context, size in 的绘制代码中，添加遮罩背板绘制
                         Canvas { context, size in
-                            // 考虑边距后的实际绘制高度
                             let effectiveHeight = size.height - (verticalPadding * 2)
                             
-                            // 修改所有 y 坐标计算，加入边距因素
                             let priceToY: (Double) -> CGFloat = { price in
                                 let normalizedY = CGFloat((price - minPrice) / priceRange)
                                 return size.height - verticalPadding - (normalizedY * effectiveHeight)
                             }
                             
-                            // 绘制价格线
+                            // ===== 新增：绘制财报遮罩背板 =====
                             let width = size.width
                             let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
                             
+                            // 检查数据范围与遮罩范围是否有重叠
+                            if !sampledChartData.isEmpty,
+                               let displayStart = sampledChartData.first?.date,
+                               let displayEnd = sampledChartData.last?.date {
+                                
+                                // 绘制紫色遮罩（三周前）
+                                if let threeWeeks = threeWeeksBeforeRange {
+                                    let hasOverlap = !(threeWeeks.end < displayStart || threeWeeks.start > displayEnd)
+                                    
+                                    if hasOverlap {
+                                        // 找到遮罩区间在数据中的起始和结束索引
+                                        let startIndex = sampledChartData.firstIndex(where: { $0.date >= threeWeeks.start }) ?? 0
+                                        let endIndex = sampledChartData.lastIndex(where: { $0.date <= threeWeeks.end }) ?? (sampledChartData.count - 1)
+                                        
+                                        let x1 = CGFloat(startIndex) * horizontalStep
+                                        let x2 = CGFloat(endIndex) * horizontalStep
+                                        
+                                        let shadeRect = CGRect(
+                                            x: x1,
+                                            y: verticalPadding,
+                                            width: x2 - x1,
+                                            height: size.height - verticalPadding * 2
+                                        )
+                                        
+                                        context.fill(
+                                            Path(shadeRect),
+                                            with: .color(Color.purple.opacity(0.15))
+                                        )
+                                    }
+                                }
+                                
+                                // 绘制蓝色遮罩（一周前）
+                                if let oneWeek = oneWeekBeforeRange {
+                                    let hasOverlap = !(oneWeek.end < displayStart || oneWeek.start > displayEnd)
+                                    
+                                    if hasOverlap {
+                                        let startIndex = sampledChartData.firstIndex(where: { $0.date >= oneWeek.start }) ?? 0
+                                        let endIndex = sampledChartData.lastIndex(where: { $0.date <= oneWeek.end }) ?? (sampledChartData.count - 1)
+                                        
+                                        let x1 = CGFloat(startIndex) * horizontalStep
+                                        let x2 = CGFloat(endIndex) * horizontalStep
+                                        
+                                        let shadeRect = CGRect(
+                                            x: x1,
+                                            y: verticalPadding,
+                                            width: x2 - x1,
+                                            height: size.height - verticalPadding * 2
+                                        )
+                                        
+                                        context.fill(
+                                            Path(shadeRect),
+                                            with: .color(Color.blue.opacity(0.15))
+                                        )
+                                    }
+                                }
+                            }
+                            // ===== 遮罩背板绘制结束 =====
+                            
+                            // 原有的价格线绘制代码
                             if !renderedPoints.isEmpty {
                                 var pricePath = Path()
                                 pricePath.move(to: CGPoint(x: renderedPoints[0].x, y: renderedPoints[0].y))
@@ -399,11 +462,10 @@ struct ChartView: View {
                                 for i in 1..<renderedPoints.count {
                                     pricePath.addLine(to: CGPoint(x: renderedPoints[i].x, y: renderedPoints[i].y))
                                 }
-                                // 绘制价格线
                                 context.stroke(pricePath, with: .color(chartColor), lineWidth: 2)
-                                // —— 在这里加上小黑点 ——
+                                
+                                // 小黑点绘制
                                 if [.oneMonth, .threeMonths, .sixMonths].contains(selectedTimeRange) {
-                                    // renderedPoints 里每个点就是我们事先计算好的 (x,y)
                                     for pt in renderedPoints {
                                         let dotRect = CGRect(x: pt.x - 2, y: pt.y - 2, width: 3, height: 3)
                                         context.fill(Path(ellipseIn: dotRect), with: .color(.black))
@@ -733,6 +795,51 @@ struct ChartView: View {
         }
     }
     
+    // 在 ChartView 中添加以下辅助方法
+
+    // 计算某个日期往前推指定周数的那一周的周一到周五
+    private func calculateWeekRange(from targetDate: Date, weeksBack: Int) -> (start: Date, end: Date)? {
+        let calendar = Calendar.current
+        
+        // 往前推指定周数
+        guard let weeksBefore = calendar.date(byAdding: .weekOfYear, value: -weeksBack, to: targetDate) else {
+            return nil
+        }
+        
+        // 获取这一天是周几（1=周日, 2=周一, ..., 7=周六）
+        let weekday = calendar.component(.weekday, from: weeksBefore)
+        
+        // 计算到周一的偏移量（周一 = 2）
+        let daysToMonday = weekday == 1 ? -6 : 2 - weekday
+        
+        // 计算这一周的周一
+        guard let weekStart = calendar.date(byAdding: .day, value: daysToMonday, to: weeksBefore) else {
+            return nil
+        }
+        
+        // 周五是周一后的第4天
+        guard let weekEnd = calendar.date(byAdding: .day, value: 4, to: weekStart) else {
+            return nil
+        }
+        
+        return (start: weekStart, end: weekEnd)
+    }
+
+    // 查找当前symbol的财报日期
+    private func findEarningReleaseDate() -> Date? {
+        guard let release = dataService.earningReleases.first(where: {
+            $0.symbol.uppercased() == symbol.uppercased()
+        }) else {
+            return nil
+        }
+        return release.fullDate
+    }
+
+    // 检查某个日期是否在指定范围内
+    private func isDateInRange(_ date: Date, start: Date, end: Date) -> Bool {
+        return date >= start && date <= end
+    }
+    
     // ==================== 修改开始：添加颜色辅助函数 ====================
     // 4. 添加两个标准的颜色辅助函数
     private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
@@ -826,6 +933,27 @@ struct ChartView: View {
     
     private func loadChartData() {
         isLoading = true
+        
+        // 查找财报日期并计算周区间
+        earningReleaseDate = findEarningReleaseDate()
+        if let releaseDate = earningReleaseDate {
+            threeWeeksBeforeRange = calculateWeekRange(from: releaseDate, weeksBack: 3)
+            oneWeekBeforeRange = calculateWeekRange(from: releaseDate, weeksBack: 1)
+            
+            print("找到 \(symbol) 的 earning release 日期: \(releaseDate)")
+            if let threeWeeks = threeWeeksBeforeRange {
+                print("三周前的周区间: \(threeWeeks.start) 到 \(threeWeeks.end)")
+            }
+            if let oneWeek = oneWeekBeforeRange {
+                print("一周前的周区间: \(oneWeek.start) 到 \(oneWeek.end)")
+            }
+        } else {
+            print("未找到 \(symbol) 的 earning release 日期")
+            threeWeeksBeforeRange = nil
+            oneWeekBeforeRange = nil
+        }
+        
+        // 原有的数据加载逻辑
         DispatchQueue.global(qos: .userInitiated).async {
             print("开始数据库查询...")
             let newData = DatabaseManager.shared.fetchHistoricalData(
@@ -835,11 +963,9 @@ struct ChartView: View {
             )
             print("查询完成，获取到 \(newData.count) 条数据")
             
-            // 获取财报数据
             let earnings = DatabaseManager.shared.fetchEarningData(forSymbol: symbol)
             print("获取到 \(earnings.count) 条财报数据")
             
-            // 对长期数据进行采样，提高性能
             let sampledData = sampleData(newData, rate: selectedTimeRange.samplingRate())
             print("采样后数据点数: \(sampledData.count)")
 
@@ -848,10 +974,8 @@ struct ChartView: View {
                 sampledChartData = sampledData
                 earningData = earnings
                 isLoading = false
-                updateRenderedPoints() // 添加这一行
-                // 重置触摸状态
+                updateRenderedPoints()
                 resetTouchStates()
-                // 添加调用更新气泡
                 updateBubbleMarkers()
                 print("数据已更新到UI")
             }
