@@ -37,7 +37,20 @@ class ResourceManager: ObservableObject {
 
     // MARK: - 新增：按需下载单篇文章的图片
     func downloadImagesForArticle(timestamp: String, imageNames: [String]) async throws {
-        guard !imageNames.isEmpty else { return }
+        let sanitizedNames = imageNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        
+        var uniqueNames: [String] = []
+        var seen = Set<String>()
+        for name in sanitizedNames {
+            if !seen.contains(name) {
+                uniqueNames.append(name)
+                seen.insert(name)
+            }
+        }
+        
+        guard !uniqueNames.isEmpty else { return }
         
         let directoryName = "news_images_\(timestamp)"
         let localDirectoryURL = documentsDirectory.appendingPathComponent(directoryName)
@@ -47,7 +60,7 @@ class ResourceManager: ObservableObject {
         
         // 检查哪些图片需要下载
         var imagesToDownload: [String] = []
-        for imageName in imageNames {
+        for imageName in uniqueNames {
             let localImageURL = localDirectoryURL.appendingPathComponent(imageName)
             if !fileManager.fileExists(atPath: localImageURL.path) {
                 imagesToDownload.append(imageName)
@@ -186,7 +199,7 @@ class ResourceManager: ObservableObject {
             }
 
             if !oldNewsItemsToDelete.isEmpty {
-                print("发现需要清理的过时资源: \(oldNewsItemsToDelete)")
+                print("发现需要清理的过时资源: {oldNewsItemsToDelete}")
                 for itemName in oldNewsItemsToDelete {
                     let itemURL = documentsDirectory.appendingPathComponent(itemName)
                     try? fileManager.removeItem(at: itemURL)
@@ -306,8 +319,6 @@ class ResourceManager: ObservableObject {
         }
     }
 
-    // 移除 downloadDirectoryIncrementally 和 downloadDirectory 方法
-    
     private func getServerVersion() async throws -> ServerVersion {
         guard let url = URL(string: "\(serverBaseURL)/check_version") else { throw URLError(.badURL) }
         let (data, _) = try await urlSession.data(from: url)

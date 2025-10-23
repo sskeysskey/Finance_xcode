@@ -18,13 +18,12 @@ struct ActivityView: UIViewControllerRepresentable {
 struct ArticleDetailView: View {
     let article: Article
     let sourceName: String
-    // MARK: - 修改点：接收两个计数值
     let unreadCountForGroup: Int
     let totalUnreadCount: Int
     @ObservedObject var viewModel: NewsViewModel
 
     @ObservedObject var audioPlayerManager: AudioPlayerManager
-    var requestNextArticle: () -> Void
+    var requestNextArticle: () async -> Void  // 修改:改为异步闭包
 
     @State private var isSharePresented = false
     @State private var showCopyToast = false
@@ -100,7 +99,9 @@ struct ArticleDetailView: View {
                     }
                     
                     Button(action: {
-                        self.requestNextArticle()
+                        Task {
+                            await self.requestNextArticle()  // 修改:使用 await
+                        }
                     }) {
                         HStack {
                             Text("读取下一篇")
@@ -147,7 +148,6 @@ struct ArticleDetailView: View {
                     Text(sourceName.replacingOccurrences(of: "_", with: " "))
                         .font(.headline)
                     HStack(spacing: 8) {
-                        // MARK: - 修改点：当两个未读值相等时仅显示一个，否则显示两个
                         if unreadCountForGroup == totalUnreadCount {
                             Text("\(totalUnreadCount) unread")
                         } else {

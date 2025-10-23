@@ -22,9 +22,13 @@ struct ArticleListView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
-    // 新增：图片下载状态
+    // 新增:图片下载状态
     @State private var isDownloadingImages = false
     @State private var downloadingMessage = ""
+    
+    // 新增:导航控制
+    @State private var selectedArticle: Article?
+    @State private var isNavigationActive = false
 
     private var baseFilteredArticles: [Article] {
         source.articles.filter { article in
@@ -84,43 +88,61 @@ struct ArticleListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if isSearching {
-                SearchBarInline(
-                    text: $searchText,
-                    onCommit: {
-                        isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    },
-                    onCancel: {
-                        withAnimation {
-                            isSearching = false
-                            isSearchActive = false
-                            searchText = ""
+        ZStack {
+            VStack(spacing: 0) {
+                if isSearching {
+                    SearchBarInline(
+                        text: $searchText,
+                        onCommit: {
+                            isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        },
+                        onCancel: {
+                            withAnimation {
+                                isSearching = false
+                                isSearchActive = false
+                                searchText = ""
+                            }
+                            resetExpandedState()
                         }
+                    )
+                }
+
+                listContent
+                    .listStyle(PlainListStyle())
+                    .onAppear(perform: resetExpandedState)
+                    .onChange(of: filterMode) { _, _ in
                         resetExpandedState()
                     }
-                )
-            }
 
-            listContent
-                .listStyle(PlainListStyle())
-                .onAppear(perform: resetExpandedState)
-                .onChange(of: filterMode) { _, _ in
-                    resetExpandedState()
-                }
-
-            if !isSearchActive {
-                Picker("Filter", selection: $filterMode) {
-                    ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                        let count = (mode == .unread) ? unreadCount : readCount
-                        Text("\(mode.rawValue) (\(count))").tag(mode)
+                if !isSearchActive {
+                    Picker("Filter", selection: $filterMode) {
+                        ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
+                            let count = (mode == .unread) ? unreadCount : readCount
+                            Text("\(mode.rawValue) (\(count))").tag(mode)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .padding([.horizontal, .bottom])
                 }
-                .pickerStyle(.segmented)
-                .padding([.horizontal, .bottom])
+            }
+            .background(Color.viewBackground.ignoresSafeArea())
+            
+            // 隐藏的NavigationLink
+            if let article = selectedArticle {
+                NavigationLink(
+                    destination: ArticleContainerView(
+                        article: article,
+                        sourceName: source.name,
+                        context: .fromSource(source.name),
+                        viewModel: viewModel
+                    ),
+                    isActive: $isNavigationActive
+                ) {
+                    EmptyView()
+                }
+                .hidden()
             }
         }
-        .background(Color.viewBackground.ignoresSafeArea())
         .navigationTitle(source.name.replacingOccurrences(of: "_", with: " "))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -218,25 +240,18 @@ struct ArticleListView: View {
                             .padding(.vertical, 4)
                 ) {
                     ForEach(grouped[timestamp] ?? []) { article in
-                        NavigationLink(destination:
-                            ArticleContainerView(
-                                article: article,
-                                sourceName: source.name,
-                                context: .fromSource(source.name),
-                                viewModel: viewModel
-                            )
-                        ) {
+                        Button(action: {
+                            Task {
+                                await handleArticleTap(article)
+                            }
+                        }) {
                             ArticleRowCardView(
                                 article: article,
                                 sourceName: nil,
                                 isReadEffective: viewModel.isArticleEffectivelyRead(article)
                             )
                         }
-                        .simultaneousGesture(TapGesture().onEnded {
-                            Task {
-                                await downloadImagesIfNeeded(for: article)
-                            }
-                        })
+                        .buttonStyle(PlainButtonStyle())
                         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -262,25 +277,18 @@ struct ArticleListView: View {
             Section {
                 if expandedTimestamps.contains(timestamp) {
                     ForEach(groupedArticles[timestamp] ?? []) { article in
-                        NavigationLink(destination:
-                            ArticleContainerView(
-                                article: article,
-                                sourceName: source.name,
-                                context: .fromSource(source.name),
-                                viewModel: viewModel
-                            )
-                        ) {
+                        Button(action: {
+                            Task {
+                                await handleArticleTap(article)
+                            }
+                        }) {
                             ArticleRowCardView(
                                 article: article,
                                 sourceName: nil,
                                 isReadEffective: viewModel.isArticleEffectivelyRead(article)
                             )
                         }
-                        .simultaneousGesture(TapGesture().onEnded {
-                            Task {
-                                await downloadImagesIfNeeded(for: article)
-                            }
-                        })
+                        .buttonStyle(PlainButtonStyle())
                         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -338,9 +346,14 @@ struct ArticleListView: View {
         }
     }
 
-    // 新增：下载图片的辅助方法
-    private func downloadImagesIfNeeded(for article: Article) async {
-        guard !article.images.isEmpty else { return }
+    // 新增:处理文章点击的统一方法
+    private func handleArticleTap(_ article: Article) async {
+        guard !article.images.isEmpty else {
+            // 没有图片,直接导航
+            selectedArticle = article
+            isNavigationActive = true
+            return
+        }
         
         await MainActor.run {
             isDownloadingImages = true
@@ -352,15 +365,18 @@ struct ArticleListView: View {
                 timestamp: article.timestamp,
                 imageNames: article.images
             )
+            
+            await MainActor.run {
+                isDownloadingImages = false
+                selectedArticle = article
+                isNavigationActive = true
+            }
         } catch {
             await MainActor.run {
+                isDownloadingImages = false
                 errorMessage = "图片下载失败: \(error.localizedDescription)"
                 showErrorAlert = true
             }
-        }
-        
-        await MainActor.run {
-            isDownloadingImages = false
         }
     }
 
@@ -426,9 +442,13 @@ struct AllArticlesListView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
-    // 新增：图片下载状态
+    // 新增:图片下载状态
     @State private var isDownloadingImages = false
     @State private var downloadingMessage = ""
+    
+    // 新增:导航控制
+    @State private var selectedArticleItem: (article: Article, sourceName: String)?
+    @State private var isNavigationActive = false
 
     private var baseFilteredArticles: [(article: Article, sourceName: String)] {
         viewModel.allArticlesSortedForDisplay.filter { item in
@@ -484,43 +504,61 @@ struct AllArticlesListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if isSearching {
-                SearchBarInline(
-                    text: $searchText,
-                    onCommit: {
-                        isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    },
-                    onCancel: {
-                        withAnimation {
-                            isSearching = false
-                            isSearchActive = false
-                            searchText = ""
+        ZStack {
+            VStack(spacing: 0) {
+                if isSearching {
+                    SearchBarInline(
+                        text: $searchText,
+                        onCommit: {
+                            isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        },
+                        onCancel: {
+                            withAnimation {
+                                isSearching = false
+                                isSearchActive = false
+                                searchText = ""
+                            }
+                            resetExpandedState()
                         }
+                    )
+                }
+
+                listContent
+                    .listStyle(PlainListStyle())
+                    .onAppear(perform: resetExpandedState)
+                    .onChange(of: filterMode) { _, _ in
                         resetExpandedState()
                     }
-                )
-            }
 
-            listContent
-                .listStyle(PlainListStyle())
-                .onAppear(perform: resetExpandedState)
-                .onChange(of: filterMode) { _, _ in
-                    resetExpandedState()
-                }
-
-            if !isSearchActive {
-                Picker("Filter", selection: $filterMode) {
-                    ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                        let count = (mode == .unread) ? totalUnreadCount : totalReadCount
-                        Text("\(mode.rawValue) (\(count))").tag(mode)
+                if !isSearchActive {
+                    Picker("Filter", selection: $filterMode) {
+                        ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
+                            let count = (mode == .unread) ? totalUnreadCount : totalReadCount
+                            Text("\(mode.rawValue) (\(count))").tag(mode)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .padding([.horizontal, .bottom])
                 }
-                .pickerStyle(.segmented)
-                .padding([.horizontal, .bottom])
+            }
+            .background(Color.viewBackground.ignoresSafeArea())
+            
+            // 隐藏的NavigationLink
+            if let item = selectedArticleItem {
+                NavigationLink(
+                    destination: ArticleContainerView(
+                        article: item.article,
+                        sourceName: item.sourceName,
+                        context: .fromAllArticles,
+                        viewModel: viewModel
+                    ),
+                    isActive: $isNavigationActive
+                ) {
+                    EmptyView()
+                }
+                .hidden()
             }
         }
-        .background(Color.viewBackground.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -617,25 +655,18 @@ struct AllArticlesListView: View {
                             .padding(.vertical, 4)
                 ) {
                     ForEach(grouped[timestamp] ?? [], id: \.article.id) { item in
-                        NavigationLink(destination:
-                            ArticleContainerView(
-                                article: item.article,
-                                sourceName: item.sourceName,
-                                context: .fromAllArticles,
-                                viewModel: viewModel
-                            )
-                        ) {
+                        Button(action: {
+                            Task {
+                                await handleArticleTap(item)
+                            }
+                        }) {
                             ArticleRowCardView(
                                 article: item.article,
                                 sourceName: item.sourceName,
                                 isReadEffective: viewModel.isArticleEffectivelyRead(item.article)
                             )
                         }
-                        .simultaneousGesture(TapGesture().onEnded {
-                            Task {
-                                await downloadImagesIfNeeded(for: item.article)
-                            }
-                        })
+                        .buttonStyle(PlainButtonStyle())
                         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -661,25 +692,18 @@ struct AllArticlesListView: View {
             Section {
                 if expandedTimestamps.contains(timestamp) {
                     ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
-                        NavigationLink(destination:
-                            ArticleContainerView(
-                                article: item.article,
-                                sourceName: item.sourceName,
-                                context: .fromAllArticles,
-                                viewModel: viewModel
-                            )
-                        ) {
+                        Button(action: {
+                            Task {
+                                await handleArticleTap(item)
+                            }
+                        }) {
                             ArticleRowCardView(
                                 article: item.article,
                                 sourceName: item.sourceName,
                                 isReadEffective: viewModel.isArticleEffectivelyRead(item.article)
                             )
                         }
-                        .simultaneousGesture(TapGesture().onEnded {
-                            Task {
-                                await downloadImagesIfNeeded(for: item.article)
-                            }
-                        })
+                        .buttonStyle(PlainButtonStyle())
                         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -739,9 +763,14 @@ struct AllArticlesListView: View {
         }
     }
 
-    // 新增：下载图片的辅助方法
-    private func downloadImagesIfNeeded(for article: Article) async {
-        guard !article.images.isEmpty else { return }
+    // 新增:处理文章点击的统一方法
+    private func handleArticleTap(_ item: (article: Article, sourceName: String)) async {
+        guard !item.article.images.isEmpty else {
+            // 没有图片,直接导航
+            selectedArticleItem = item
+            isNavigationActive = true
+            return
+        }
         
         await MainActor.run {
             isDownloadingImages = true
@@ -750,18 +779,21 @@ struct AllArticlesListView: View {
         
         do {
             try await resourceManager.downloadImagesForArticle(
-                timestamp: article.timestamp,
-                imageNames: article.images
+                timestamp: item.article.timestamp,
+                imageNames: item.article.images
             )
+            
+            await MainActor.run {
+                isDownloadingImages = false
+                selectedArticleItem = item
+                isNavigationActive = true
+            }
         } catch {
             await MainActor.run {
+                isDownloadingImages = false
                 errorMessage = "图片下载失败: \(error.localizedDescription)"
                 showErrorAlert = true
             }
-        }
-        
-        await MainActor.run {
-            isDownloadingImages = false
         }
     }
 

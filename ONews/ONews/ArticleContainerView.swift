@@ -1,3 +1,5 @@
+// ArticleContainerView.swift
+
 import SwiftUI
 
 struct ArticleContainerView: View {
@@ -11,15 +13,21 @@ struct ArticleContainerView: View {
     @State private var currentArticle: Article
     @State private var currentSourceName: String
 
-    // MARK: - 解决方案：使用 @State 存储计数值，避免在 body 中重复计算
     @State private var unreadCountForGroup: Int = 0
     @State private var totalUnreadCountForContext: Int = 0
 
     @State private var showNoNextToast = false
     @State private var isMiniPlayerCollapsed = false
 
-    // 防止 onDisappear 多次触发重复提交
     @State private var didCommitOnDisappear = false
+    
+    // 新增:图片下载状态
+    @State private var isDownloadingImages = false
+    @State private var downloadingMessage = ""
+    
+    // 新增:错误提示
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
 
     enum NavigationContext {
         case fromSource(String)
@@ -40,13 +48,14 @@ struct ArticleContainerView: View {
             ArticleDetailView(
                 article: currentArticle,
                 sourceName: currentSourceName,
-                // 直接从 @State 读取，这是一个非常轻量的操作
                 unreadCountForGroup: unreadCountForGroup,
                 totalUnreadCount: totalUnreadCountForContext,
                 viewModel: viewModel,
                 audioPlayerManager: audioPlayerManager,
                 requestNextArticle: {
-                    self.switchToNextArticleAndStopAudio()
+                    Task {
+                        await self.switchToNextArticleAndStopAudio()
+                    }
                 }
             )
             .id(currentArticle.id)
@@ -72,7 +81,9 @@ struct ArticleContainerView: View {
                     AudioPlayerView(
                         playerManager: audioPlayerManager,
                         playNextAndStart: {
-                            switchToNextArticle(shouldAutoplayNext: true)
+                            Task {
+                                await switchToNextArticle(shouldAutoplayNext: true)
+                            }
                         },
                         toggleCollapse: {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.85, blendDuration: 0.1)) {
@@ -86,41 +97,56 @@ struct ArticleContainerView: View {
                     .zIndex(2)
                 }
             }
+            
+            // 图片下载遮罩层
+            if isDownloadingImages {
+                VStack(spacing: 15) {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        .scaleEffect(1.5)
+                    
+                    Text(downloadingMessage)
+                        .padding(.top, 10)
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black.opacity(0.6))
+                .edgesIgnoringSafeArea(.all)
+                .zIndex(3)
+            }
         }
         .onAppear {
-            // 进入时重置防重入标记
             didCommitOnDisappear = false
-            
-            // 首次加载时计算一次
             updateUnreadCounts()
             
             audioPlayerManager.onNextRequested = {
-                self.switchToNextArticle(shouldAutoplayNext: true)
+                Task {
+                    await self.switchToNextArticle(shouldAutoplayNext: true)
+                }
             }
             audioPlayerManager.onPlaybackFinished = {
                 // 行为已在 AudioPlayerManager 内部处理
             }
         }
         .onDisappear {
-            // 避免重复执行（例如多次 onDisappear 或导航边界情况）
             guard !didCommitOnDisappear else { return }
             didCommitOnDisappear = true
             
-            // 1) 停止音频
             audioPlayerManager.stop()
-            // 2) 将当前正在看的文章也加入暂存
             _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
-            // 3) 提交并刷新 UI（保证退后台回来再左滑返回时，A/B 均能入已读并从未读列表消失）
             viewModel.commitPendingReads()
         }
-        // MARK: - 解决方案：仅在 currentArticle 变化时才重新计算
         .onChange(of: currentArticle) { _, _ in
             updateUnreadCounts()
         }
         .background(Color.viewBackground.ignoresSafeArea())
+        .alert("", isPresented: $showErrorAlert, actions: {
+            Button("好的", role: .cancel) { }
+        }, message: {
+            Text(errorMessage)
+        })
     }
 
-    // MARK: - 解决方案：将计算逻辑封装到独立的函数中
     private func updateUnreadCounts() {
         let sourceNameToUse: String?
         switch navigationContext {
@@ -130,7 +156,6 @@ struct ArticleContainerView: View {
             sourceNameToUse = nil
         }
 
-        // 执行昂贵的计算，并更新 @State 变量
         self.unreadCountForGroup = viewModel.getUnreadCountForDateGroup(
             timestamp: currentArticle.timestamp,
             inSource: sourceNameToUse
@@ -140,17 +165,16 @@ struct ArticleContainerView: View {
         )
     }
 
-    private func switchToNextArticleAndStopAudio() {
+    private func switchToNextArticleAndStopAudio() async {
         audioPlayerManager.stop()
-        switchToNextArticle(shouldAutoplayNext: false)
+        await switchToNextArticle(shouldAutoplayNext: false)
     }
 
-    private func switchToNextArticle(shouldAutoplayNext: Bool) {
+    private func switchToNextArticle(shouldAutoplayNext: Bool) async {
         if shouldAutoplayNext {
             audioPlayerManager.prepareForNextTransition()
         }
         
-        // 在切换前，将当前文章暂存为待读。
         _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
         
         let sourceNameToSearch: String?
@@ -159,25 +183,59 @@ struct ArticleContainerView: View {
         case .fromAllArticles: sourceNameToSearch = nil
         }
         
-        // findNextUnread 现在会智能地跳过已读和已暂存的文章
-        if let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch) {
+        guard let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch) else {
+            await MainActor.run {
+                showToast { shouldShow in self.showNoNextToast = shouldShow }
+                audioPlayerManager.stop()
+            }
+            return
+        }
+        
+        // 新增:如果下一篇文章有图片,先下载
+        if !next.article.images.isEmpty {
+            await MainActor.run {
+                isDownloadingImages = true
+                downloadingMessage = "正在加载图片..."
+            }
+            
+            do {
+                // 获取 ResourceManager 实例
+                let resourceManager = ResourceManager()
+                try await resourceManager.downloadImagesForArticle(
+                    timestamp: next.article.timestamp,
+                    imageNames: next.article.images
+                )
+            } catch {
+                await MainActor.run {
+                    isDownloadingImages = false
+                    errorMessage = "图片下载失败: \(error.localizedDescription)"
+                    showErrorAlert = true
+                    audioPlayerManager.stop()
+                }
+                return
+            }
+            
+            await MainActor.run {
+                isDownloadingImages = false
+            }
+        }
+        
+        // 下载完成后再切换文章
+        await MainActor.run {
             withAnimation(.easeInOut(duration: 0.4)) {
-                // 这一行会触发 .onChange 修饰符，从而调用 updateUnreadCounts()
                 self.currentArticle = next.article
                 self.currentSourceName = next.sourceName
             }
-            if shouldAutoplayNext {
-                DispatchQueue.main.async {
-                    let paragraphs = next.article.article
-                        .components(separatedBy: .newlines)
-                        .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                    let fullText = paragraphs.joined(separator: "\n\n")
-                    self.audioPlayerManager.startPlayback(text: fullText, title: next.article.topic)
-                }
+        }
+        
+        if shouldAutoplayNext {
+            await MainActor.run {
+                let paragraphs = next.article.article
+                    .components(separatedBy: .newlines)
+                    .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                let fullText = paragraphs.joined(separator: "\n\n")
+                self.audioPlayerManager.startPlayback(text: fullText, title: next.article.topic)
             }
-        } else {
-            showToast { shouldShow in self.showNoNextToast = shouldShow }
-            audioPlayerManager.stop()
         }
     }
 
