@@ -1,6 +1,5 @@
 import SwiftUI
 
-// ==================== 数据模型和枚举 ====================
 enum ArticleFilterMode: String, CaseIterable {
     case unread = "Unread"
     case read = "Read"
@@ -22,8 +21,11 @@ struct ArticleListView: View {
     
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
+    
+    // 新增：图片下载状态
+    @State private var isDownloadingImages = false
+    @State private var downloadingMessage = ""
 
-    // 基础过滤（仅按已读/未读）----用于非搜索态
     private var baseFilteredArticles: [Article] {
         source.articles.filter { article in
             let isReadEff = viewModel.isArticleEffectivelyRead(article)
@@ -63,7 +65,6 @@ struct ArticleListView: View {
         source.articles.filter { $0.isRead }.count
     }
 
-    // 搜索过滤（不受当前 filterMode 限制，合并已读+未读）
     private var searchResults: [Article] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return []
@@ -85,7 +86,6 @@ struct ArticleListView: View {
     var body: some View {
         VStack(spacing: 0) {
             if isSearching {
-                // 调用共享的 SearchBarInline 视图
                 SearchBarInline(
                     text: $searchText,
                     onCommit: {
@@ -102,7 +102,6 @@ struct ArticleListView: View {
                 )
             }
 
-            // 【修改】将 List 提取到子视图中
             listContent
                 .listStyle(PlainListStyle())
                 .onAppear(perform: resetExpandedState)
@@ -152,6 +151,24 @@ struct ArticleListView: View {
                 .accessibilityLabel("搜索")
             }
         }
+        .overlay(
+            Group {
+                if isDownloadingImages {
+                    VStack(spacing: 15) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(1.5)
+                        
+                        Text(downloadingMessage)
+                            .padding(.top, 10)
+                            .foregroundColor(.white.opacity(0.9))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black.opacity(0.6))
+                    .edgesIgnoringSafeArea(.all)
+                }
+            }
+        )
         .alert("", isPresented: $showErrorAlert, actions: {
             Button("好的", role: .cancel) { }
         }, message: {
@@ -159,7 +176,6 @@ struct ArticleListView: View {
         })
     }
     
-    // 【新增】提取出的列表内容子视图
     @ViewBuilder
     private var listContent: some View {
         List {
@@ -171,7 +187,6 @@ struct ArticleListView: View {
         }
     }
     
-    // 【新增】提取出的搜索结果列表部分
     @ViewBuilder
     private var searchResultsList: some View {
         let grouped = groupedSearchByTimestamp()
@@ -203,18 +218,25 @@ struct ArticleListView: View {
                             .padding(.vertical, 4)
                 ) {
                     ForEach(grouped[timestamp] ?? []) { article in
-                        NavigationLink(destination: ArticleContainerView(
-                            article: article,
-                            sourceName: source.name,
-                            context: .fromSource(source.name),
-                            viewModel: viewModel
-                        )) {
+                        NavigationLink(destination:
+                            ArticleContainerView(
+                                article: article,
+                                sourceName: source.name,
+                                context: .fromSource(source.name),
+                                viewModel: viewModel
+                            )
+                        ) {
                             ArticleRowCardView(
                                 article: article,
                                 sourceName: nil,
                                 isReadEffective: viewModel.isArticleEffectivelyRead(article)
                             )
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            Task {
+                                await downloadImagesIfNeeded(for: article)
+                            }
+                        })
                         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -233,7 +255,6 @@ struct ArticleListView: View {
         }
     }
     
-    // 【新增】提取出的常规文章列表部分
     @ViewBuilder
     private var articlesList: some View {
         let timestamps = sortedTimestamps(for: groupedArticles)
@@ -241,18 +262,25 @@ struct ArticleListView: View {
             Section {
                 if expandedTimestamps.contains(timestamp) {
                     ForEach(groupedArticles[timestamp] ?? []) { article in
-                        NavigationLink(destination: ArticleContainerView(
-                            article: article,
-                            sourceName: source.name,
-                            context: .fromSource(source.name),
-                            viewModel: viewModel
-                        )) {
+                        NavigationLink(destination:
+                            ArticleContainerView(
+                                article: article,
+                                sourceName: source.name,
+                                context: .fromSource(source.name),
+                                viewModel: viewModel
+                            )
+                        ) {
                             ArticleRowCardView(
                                 article: article,
                                 sourceName: nil,
                                 isReadEffective: viewModel.isArticleEffectivelyRead(article)
                             )
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            Task {
+                                await downloadImagesIfNeeded(for: article)
+                            }
+                        })
                         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -310,6 +338,32 @@ struct ArticleListView: View {
         }
     }
 
+    // 新增：下载图片的辅助方法
+    private func downloadImagesIfNeeded(for article: Article) async {
+        guard !article.images.isEmpty else { return }
+        
+        await MainActor.run {
+            isDownloadingImages = true
+            downloadingMessage = "正在加载图片..."
+        }
+        
+        do {
+            try await resourceManager.downloadImagesForArticle(
+                timestamp: article.timestamp,
+                imageNames: article.images
+            )
+        } catch {
+            await MainActor.run {
+                errorMessage = "图片下载失败: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
+        
+        await MainActor.run {
+            isDownloadingImages = false
+        }
+    }
+
     private func resetExpandedState() {
         let timestamps = sortedTimestamps(for: groupedArticles)
         if timestamps.count == 1 {
@@ -336,7 +390,7 @@ struct ArticleListView: View {
             if isManual {
                 switch error {
                 case is DecodingError:
-                    self.errorMessage = "数据解析失败，请稍后重试。"
+                    self.errorMessage = "数据解析失败,请稍后重试。"
                     self.showErrorAlert = true
                 case let urlError as URLError where
                     urlError.code == .cannotConnectToHost ||
@@ -371,6 +425,10 @@ struct AllArticlesListView: View {
     
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
+    
+    // 新增：图片下载状态
+    @State private var isDownloadingImages = false
+    @State private var downloadingMessage = ""
 
     private var baseFilteredArticles: [(article: Article, sourceName: String)] {
         viewModel.allArticlesSortedForDisplay.filter { item in
@@ -428,7 +486,6 @@ struct AllArticlesListView: View {
     var body: some View {
         VStack(spacing: 0) {
             if isSearching {
-                // 调用共享的 SearchBarInline 视图
                 SearchBarInline(
                     text: $searchText,
                     onCommit: {
@@ -445,7 +502,6 @@ struct AllArticlesListView: View {
                 )
             }
 
-            // 【修改】将 List 提取到子视图中
             listContent
                 .listStyle(PlainListStyle())
                 .onAppear(perform: resetExpandedState)
@@ -494,6 +550,24 @@ struct AllArticlesListView: View {
                 .accessibilityLabel("搜索")
             }
         }
+        .overlay(
+            Group {
+                if isDownloadingImages {
+                    VStack(spacing: 15) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(1.5)
+                        
+                        Text(downloadingMessage)
+                            .padding(.top, 10)
+                            .foregroundColor(.white.opacity(0.9))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black.opacity(0.6))
+                    .edgesIgnoringSafeArea(.all)
+                }
+            }
+        )
         .alert("", isPresented: $showErrorAlert, actions: {
             Button("好的", role: .cancel) { }
         }, message: {
@@ -501,7 +575,6 @@ struct AllArticlesListView: View {
         })
     }
     
-    // 【新增】提取出的列表内容子视图
     @ViewBuilder
     private var listContent: some View {
         List {
@@ -513,7 +586,6 @@ struct AllArticlesListView: View {
         }
     }
     
-    // 【新增】提取出的搜索结果列表部分
     @ViewBuilder
     private var searchResultsList: some View {
         let grouped = groupedSearchByTimestamp()
@@ -545,18 +617,25 @@ struct AllArticlesListView: View {
                             .padding(.vertical, 4)
                 ) {
                     ForEach(grouped[timestamp] ?? [], id: \.article.id) { item in
-                        NavigationLink(destination: ArticleContainerView(
-                            article: item.article,
-                            sourceName: item.sourceName,
-                            context: .fromAllArticles,
-                            viewModel: viewModel
-                        )) {
+                        NavigationLink(destination:
+                            ArticleContainerView(
+                                article: item.article,
+                                sourceName: item.sourceName,
+                                context: .fromAllArticles,
+                                viewModel: viewModel
+                            )
+                        ) {
                             ArticleRowCardView(
                                 article: item.article,
                                 sourceName: item.sourceName,
                                 isReadEffective: viewModel.isArticleEffectivelyRead(item.article)
                             )
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            Task {
+                                await downloadImagesIfNeeded(for: item.article)
+                            }
+                        })
                         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -575,7 +654,6 @@ struct AllArticlesListView: View {
         }
     }
     
-    // 【新增】提取出的常规文章列表部分
     @ViewBuilder
     private var articlesList: some View {
         let timestamps = sortedTimestamps(for: groupedArticles)
@@ -583,18 +661,25 @@ struct AllArticlesListView: View {
             Section {
                 if expandedTimestamps.contains(timestamp) {
                     ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
-                        NavigationLink(destination: ArticleContainerView(
-                            article: item.article,
-                            sourceName: item.sourceName,
-                            context: .fromAllArticles,
-                            viewModel: viewModel
-                        )) {
+                        NavigationLink(destination:
+                            ArticleContainerView(
+                                article: item.article,
+                                sourceName: item.sourceName,
+                                context: .fromAllArticles,
+                                viewModel: viewModel
+                            )
+                        ) {
                             ArticleRowCardView(
                                 article: item.article,
                                 sourceName: item.sourceName,
                                 isReadEffective: viewModel.isArticleEffectivelyRead(item.article)
                             )
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            Task {
+                                await downloadImagesIfNeeded(for: item.article)
+                            }
+                        })
                         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -651,6 +736,32 @@ struct AllArticlesListView: View {
                     }
                 }
             }
+        }
+    }
+
+    // 新增：下载图片的辅助方法
+    private func downloadImagesIfNeeded(for article: Article) async {
+        guard !article.images.isEmpty else { return }
+        
+        await MainActor.run {
+            isDownloadingImages = true
+            downloadingMessage = "正在加载图片..."
+        }
+        
+        do {
+            try await resourceManager.downloadImagesForArticle(
+                timestamp: article.timestamp,
+                imageNames: article.images
+            )
+        } catch {
+            await MainActor.run {
+                errorMessage = "图片下载失败: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
+        
+        await MainActor.run {
+            isDownloadingImages = false
         }
     }
 
