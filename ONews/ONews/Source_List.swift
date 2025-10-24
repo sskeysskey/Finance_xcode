@@ -3,9 +3,13 @@ import SwiftUI
 // ==================== 主视图：SourceListView ====================
 
 struct SourceListView: View {
-    @StateObject private var viewModel = NewsViewModel()
-    @StateObject private var resourceManager = ResourceManager()
-    private let badgeManager = AppBadgeManager()
+    // 1. 从环境中接收共享的 ViewModel 和 Manager，不再自己创建！
+    @EnvironmentObject var viewModel: NewsViewModel
+    @EnvironmentObject var resourceManager: ResourceManager
+    
+//    @StateObject private var viewModel = NewsViewModel()
+//    @StateObject private var resourceManager = ResourceManager()
+//    private let badgeManager = AppBadgeManager()
     
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
@@ -16,7 +20,7 @@ struct SourceListView: View {
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
     
-    @Environment(\.scenePhase) private var scenePhase
+//    @Environment(\.scenePhase) private var scenePhase
     
     private var searchResults: [(article: Article, sourceName: String)] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -117,26 +121,20 @@ struct SourceListView: View {
         .accentColor(.white)
         .preferredColorScheme(.dark)
         .onAppear {
-            let tv = UITableView.appearance()
-            tv.backgroundColor = .clear
-            tv.separatorStyle = .none
-            
-            viewModel.badgeUpdater = badgeManager.updateBadge
-            badgeManager.requestAuthorization()
-            
-            viewModel.loadNews()
-            Task {
-                await syncResources()
-            }
+            // 只需要加载新闻和同步资源
+                        viewModel.loadNews()
+                        Task {
+                            await syncResources()
+                        }
         }
-        .onChange(of: scenePhase) { oldPhase, newPhase in
-            if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
-                viewModel.commitPendingReadsSilently()
-            }
-            else if newPhase == .active && (oldPhase == .inactive || oldPhase == .background) {
-                viewModel.syncReadStatusFromPersistence()
-            }
-        }
+//        .onChange(of: scenePhase) { oldPhase, newPhase in
+//            if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
+//                viewModel.commitPendingReadsSilently()
+//            }
+//            else if newPhase == .active && (oldPhase == .inactive || oldPhase == .background) {
+//                viewModel.syncReadStatusFromPersistence()
+//            }
+//        }
         .sheet(isPresented: $showAddSourceSheet, onDismiss: {
             print("AddSourceView 已关闭，重新加载新闻...")
             viewModel.loadNews()
@@ -151,6 +149,8 @@ struct SourceListView: View {
                 )
             }
             .preferredColorScheme(.dark)
+            // 4. 确保 AddSourceView 也能访问到 resourceManager
+                        .environmentObject(resourceManager)
         }
         .overlay(
             Group {

@@ -1,9 +1,15 @@
 import SwiftUI
 
 struct WelcomeView: View {
-    var onComplete: () -> Void
+    // 【修改 1/2】: 彻底移除旧的 onComplete 闭包属性
+    // var onComplete: () -> Void  <-- 删除这一行
 
-    @StateObject private var resourceManager = ResourceManager()
+    // 【保留】: 这个 Binding 是与 MainAppView 连接的唯一桥梁
+    @Binding var hasCompletedInitialSetup: Bool
+    
+    // 从环境中接收共享的 ResourceManager，不再自己创建
+    @EnvironmentObject var resourceManager: ResourceManager
+
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
 
@@ -25,9 +31,7 @@ struct WelcomeView: View {
                         .edgesIgnoringSafeArea(.all)
                         .overlay(Color.black.opacity(0.4))
 
-                    // 调整文字块：靠上放置，X 轴保持不变
                     VStack {
-                        // 将顶部留白改为固定较小的空间，使文字整体偏上
                         Spacer()
                             .frame(height: 80)
 
@@ -41,12 +45,18 @@ struct WelcomeView: View {
                             .font(.headline)
                             .foregroundColor(.white.opacity(0.8))
 
-                        Spacer() // 其余空间放在下面
+                        Spacer()
                     }
                 }
                 .navigationBarHidden(true)
                 .navigationDestination(isPresented: $showAddSourceView) {
-                    AddSourceView(isFirstTimeSetup: true, onComplete: onComplete)
+                    // 【修改 2/2】: 为 AddSourceView 创建一个新的 onComplete 闭包。
+                    // 当 AddSourceView 调用这个闭包时，我们修改从 MainAppView 传来的 Binding。
+                    // 这样做是安全的，因为它是在 View 的 body 内部定义的。
+                    AddSourceView(isFirstTimeSetup: true, onComplete: {
+                        self.hasCompletedInitialSetup = true
+                    })
+                    .environmentObject(resourceManager)
                 }
             }
             .tint(.white)
@@ -92,7 +102,6 @@ struct WelcomeView: View {
                             showAddSourceView = true
                         }) {
                             ZStack {
-                                // 光韵：从按钮本体开始到约1.4倍
                                 Circle()
                                     .stroke(Color.white.opacity(ripple ? 0 : 0.8), lineWidth: 2)
                                     .frame(width: fabSize, height: fabSize)
