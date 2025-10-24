@@ -143,7 +143,7 @@ struct WelcomeView: View {
         do {
             try await resourceManager.checkAndDownloadAllNewsManifests()
         } catch {
-            self.errorMessage = "下载新闻数据失败，请点击左下角刷新↻按钮。"
+            self.errorMessage = "下载新闻源失败\n请点击左下角刷新↻按钮。"
             self.showErrorAlert = true
             print("WelcomeView 同步失败: \(error)")
         }
