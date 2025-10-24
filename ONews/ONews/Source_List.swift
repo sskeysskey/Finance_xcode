@@ -239,7 +239,8 @@ struct SourceListView: View {
                                 article: item.article,
                                 sourceName: item.sourceName,
                                 context: .fromAllArticles,
-                                viewModel: viewModel
+                                viewModel: viewModel,
+                                resourceManager: resourceManager // 修改：补全缺失的 resourceManager 参数
                             )) {
                                 // 调用共享的 ArticleRowCardView
                                 ArticleRowCardView(

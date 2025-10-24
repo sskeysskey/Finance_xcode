@@ -104,8 +104,6 @@ struct ArticleListView: View {
 
                 listContent
                     .listStyle(PlainListStyle())
-                    // 【修改】移除此处的 onChange(of: filterMode) 修饰符。
-                    // 状态由 ViewModel 统一管理，切换筛选模式时不应重置折叠状态。
 
                 if !isSearchActive {
                     Picker("Filter", selection: $filterMode) {
@@ -126,7 +124,8 @@ struct ArticleListView: View {
                         article: article,
                         sourceName: source.name,
                         context: .fromSource(source.name),
-                        viewModel: viewModel
+                        viewModel: viewModel,
+                        resourceManager: resourceManager // 修改: 传递 resourceManager
                     ),
                     isActive: $isNavigationActive
                 ) {
@@ -528,8 +527,6 @@ struct AllArticlesListView: View {
 
                 listContent
                     .listStyle(PlainListStyle())
-                    // 【修改】移除此处的 onChange(of: filterMode) 修饰符。
-                    // 状态由 ViewModel 统一管理，切换筛选模式时不应重置折叠状态。
 
                 if !isSearchActive {
                     Picker("Filter", selection: $filterMode) {
@@ -550,7 +547,8 @@ struct AllArticlesListView: View {
                         article: item.article,
                         sourceName: item.sourceName,
                         context: .fromAllArticles,
-                        viewModel: viewModel
+                        viewModel: viewModel,
+                        resourceManager: resourceManager // 修改: 传递 resourceManager
                     ),
                     isActive: $isNavigationActive
                 ) {

@@ -35,7 +35,7 @@ class ResourceManager: ObservableObject {
         return URLSession(configuration: configuration)
     }()
 
-    // MARK: - 新增：按需下载单篇文章的图片
+    // MARK: - 按需下载单篇文章的图片 (面向UI)
     func downloadImagesForArticle(timestamp: String, imageNames: [String]) async throws {
         let sanitizedNames = imageNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -97,6 +97,71 @@ class ResourceManager: ObservableObject {
                 
             } catch {
                 print("⚠️ 下载图片失败 \(imageName): \(error.localizedDescription)")
+                throw error
+            }
+        }
+    }
+    
+    // MARK: - 新增: 静默预下载单篇文章的图片 (后台任务)
+    func preDownloadImagesForArticleSilently(timestamp: String, imageNames: [String]) async throws {
+        let sanitizedNames = imageNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        
+        var uniqueNames: [String] = []
+        var seen = Set<String>()
+        for name in sanitizedNames {
+            if !seen.contains(name) {
+                uniqueNames.append(name)
+                seen.insert(name)
+            }
+        }
+        
+        guard !uniqueNames.isEmpty else { return }
+        
+        let directoryName = "news_images_\(timestamp)"
+        let localDirectoryURL = documentsDirectory.appendingPathComponent(directoryName)
+        
+        try? fileManager.createDirectory(at: localDirectoryURL, withIntermediateDirectories: true)
+        
+        var imagesToDownload: [String] = []
+        for imageName in uniqueNames {
+            let localImageURL = localDirectoryURL.appendingPathComponent(imageName)
+            if !fileManager.fileExists(atPath: localImageURL.path) {
+                imagesToDownload.append(imageName)
+            }
+        }
+        
+        guard !imagesToDownload.isEmpty else {
+            print("[静默预载] 所有目标图片已存在，无需下载。")
+            return
+        }
+        
+        print("[静默预载] 发现 \(imagesToDownload.count) 张需要预下载的图片。")
+        
+        for (index, imageName) in imagesToDownload.enumerated() {
+            let downloadPath = "\(directoryName)/\(imageName)"
+            guard var components = URLComponents(string: "\(serverBaseURL)/download") else { continue }
+            components.queryItems = [URLQueryItem(name: "filename", value: downloadPath)]
+            guard let url = components.url else { continue }
+            
+            do {
+                let (tempURL, response) = try await urlSession.download(from: url)
+                
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    throw URLError(.badServerResponse)
+                }
+                
+                let destinationURL = localDirectoryURL.appendingPathComponent(imageName)
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try fileManager.removeItem(at: destinationURL)
+                }
+                try fileManager.moveItem(at: tempURL, to: destinationURL)
+                print("✅ [静默预载] 成功 (\(index + 1)/\(imagesToDownload.count)): \(imageName)")
+                
+            } catch {
+                print("⚠️ [静默预载] 失败 \(imageName): \(error.localizedDescription)")
+                // 向上抛出错误，让调用者决定如何处理。在此场景下，调用者会忽略它。
                 throw error
             }
         }
