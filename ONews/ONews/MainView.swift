@@ -191,9 +191,10 @@ struct ArticleRowCardView: View {
 class NewsViewModel: ObservableObject {
     @Published var sources: [NewsSource] = []
 
-    // MARK: - 新增: UI状态管理
+    // MARK: - UI状态管理
     @Published var expandedTimestampsBySource: [String: Set<String>] = [:]
-    @Published var lastTappedArticleIDBySource: [String: UUID?] = [:]
+    // 【移除】不再需要此属性
+    // @Published var lastTappedArticleIDBySource: [String: UUID?] = [:]
     let allArticlesKey = "__ALL_ARTICLES__" // 用于 "All Articles" 列表的特殊键
 
     private let subscriptionManager = SubscriptionManager.shared
@@ -240,7 +241,7 @@ class NewsViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
-    // MARK: - 新增: UI状态管理方法
+    // MARK: - UI状态管理方法
     func toggleTimestampExpansion(for sourceKey: String, timestamp: String) {
         var currentSet = expandedTimestampsBySource[sourceKey, default: Set<String>()]
         if currentSet.contains(timestamp) {
@@ -251,9 +252,12 @@ class NewsViewModel: ObservableObject {
         expandedTimestampsBySource[sourceKey] = currentSet
     }
 
+    // 【移除】不再需要此方法
+    /*
     func setLastTappedArticleID(for sourceKey: String, id: UUID?) {
         lastTappedArticleIDBySource[sourceKey] = id
     }
+    */
 
     private func loadReadRecords() {
         self.readRecords = UserDefaults.standard.dictionary(forKey: readKey) as? [String: Date] ?? [:]

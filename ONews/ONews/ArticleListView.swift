@@ -125,7 +125,7 @@ struct ArticleListView: View {
                         sourceName: source.name,
                         context: .fromSource(source.name),
                         viewModel: viewModel,
-                        resourceManager: resourceManager // 修改: 传递 resourceManager
+                        resourceManager: resourceManager
                     ),
                     isActive: $isNavigationActive
                 ) {
@@ -191,17 +191,16 @@ struct ArticleListView: View {
     
     @ViewBuilder
     private var listContent: some View {
-        ScrollViewReader { proxy in
-            List {
-                if isSearchActive {
-                    searchResultsList
-                } else {
-                    articlesList
-                }
+        // 【修改】移除了 ScrollViewReader，因为它不再被需要
+        List {
+            if isSearchActive {
+                searchResultsList
+            } else {
+                articlesList
             }
-            .onAppear {
-                initializeStateIfNeeded(proxy: proxy)
-            }
+        }
+        .onAppear {
+            initializeStateIfNeeded()
         }
     }
     
@@ -342,8 +341,9 @@ struct ArticleListView: View {
         }
     }
 
+    // 【修改】移除了记录点击ID的逻辑
     private func handleArticleTap(_ article: Article) async {
-        viewModel.setLastTappedArticleID(for: source.name, id: article.id)
+        // viewModel.setLastTappedArticleID(for: source.name, id: article.id) // <--- 【移除】这行代码
         
         guard !article.images.isEmpty else {
             selectedArticle = article
@@ -376,7 +376,8 @@ struct ArticleListView: View {
         }
     }
 
-    private func initializeStateIfNeeded(proxy: ScrollViewProxy) {
+    // 【修改】移除了滚动逻辑，只保留了初始化展开状态的逻辑
+    private func initializeStateIfNeeded() {
         if viewModel.expandedTimestampsBySource[source.name] == nil {
             let timestamps = sortedTimestamps(for: groupedArticles)
             if timestamps.count == 1 {
@@ -386,6 +387,8 @@ struct ArticleListView: View {
             }
         }
         
+        // 【移除】整个滚动到上一个点击项的逻辑块
+        /*
         if let lastTappedID = viewModel.lastTappedArticleIDBySource[source.name], let id = lastTappedID {
             DispatchQueue.main.async {
                 withAnimation {
@@ -394,6 +397,7 @@ struct ArticleListView: View {
                 viewModel.setLastTappedArticleID(for: source.name, id: nil)
             }
         }
+        */
     }
 
     private func formatTimestamp(_ timestamp: String) -> String {
@@ -548,7 +552,7 @@ struct AllArticlesListView: View {
                         sourceName: item.sourceName,
                         context: .fromAllArticles,
                         viewModel: viewModel,
-                        resourceManager: resourceManager // 修改: 传递 resourceManager
+                        resourceManager: resourceManager
                     ),
                     isActive: $isNavigationActive
                 ) {
@@ -613,17 +617,16 @@ struct AllArticlesListView: View {
     
     @ViewBuilder
     private var listContent: some View {
-        ScrollViewReader { proxy in
-            List {
-                if isSearchActive {
-                    searchResultsList
-                } else {
-                    articlesList
-                }
+        // 【修改】移除了 ScrollViewReader，因为它不再被需要
+        List {
+            if isSearchActive {
+                searchResultsList
+            } else {
+                articlesList
             }
-            .onAppear {
-                initializeStateIfNeeded(proxy: proxy)
-            }
+        }
+        .onAppear {
+            initializeStateIfNeeded()
         }
     }
     
@@ -766,8 +769,9 @@ struct AllArticlesListView: View {
         }
     }
 
+    // 【修改】移除了记录点击ID的逻辑
     private func handleArticleTap(_ item: (article: Article, sourceName: String)) async {
-        viewModel.setLastTappedArticleID(for: viewModel.allArticlesKey, id: item.article.id)
+        // viewModel.setLastTappedArticleID(for: viewModel.allArticlesKey, id: item.article.id) // <--- 【移除】这行代码
         
         guard !item.article.images.isEmpty else {
             selectedArticleItem = item
@@ -800,7 +804,8 @@ struct AllArticlesListView: View {
         }
     }
 
-    private func initializeStateIfNeeded(proxy: ScrollViewProxy) {
+    // 【修改】移除了滚动逻辑，只保留了初始化展开状态的逻辑
+    private func initializeStateIfNeeded() {
         let key = viewModel.allArticlesKey
         
         if viewModel.expandedTimestampsBySource[key] == nil {
@@ -812,6 +817,8 @@ struct AllArticlesListView: View {
             }
         }
         
+        // 【移除】整个滚动到上一个点击项的逻辑块
+        /*
         if let lastTappedID = viewModel.lastTappedArticleIDBySource[key], let id = lastTappedID {
             DispatchQueue.main.async {
                 withAnimation {
@@ -820,6 +827,7 @@ struct AllArticlesListView: View {
                 viewModel.setLastTappedArticleID(for: key, id: nil)
             }
         }
+        */
     }
 
     private func formatTimestamp(_ timestamp: String) -> String {
