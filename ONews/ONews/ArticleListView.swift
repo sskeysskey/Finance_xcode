@@ -13,8 +13,6 @@ struct ArticleListView: View {
 
     @State private var filterMode: ArticleFilterMode = .unread
     
-    @State private var expandedTimestamps: Set<String> = []
-
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
@@ -22,11 +20,9 @@ struct ArticleListView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
-    // 新增:图片下载状态
     @State private var isDownloadingImages = false
     @State private var downloadingMessage = ""
     
-    // 新增:导航控制
     @State private var selectedArticle: Article?
     @State private var isNavigationActive = false
 
@@ -102,17 +98,14 @@ struct ArticleListView: View {
                                 isSearchActive = false
                                 searchText = ""
                             }
-                            resetExpandedState()
                         }
                     )
                 }
 
                 listContent
                     .listStyle(PlainListStyle())
-                    .onAppear(perform: resetExpandedState)
-                    .onChange(of: filterMode) { _, _ in
-                        resetExpandedState()
-                    }
+                    // 【修改】移除此处的 onChange(of: filterMode) 修饰符。
+                    // 状态由 ViewModel 统一管理，切换筛选模式时不应重置折叠状态。
 
                 if !isSearchActive {
                     Picker("Filter", selection: $filterMode) {
@@ -127,7 +120,6 @@ struct ArticleListView: View {
             }
             .background(Color.viewBackground.ignoresSafeArea())
             
-            // 隐藏的NavigationLink
             if let article = selectedArticle {
                 NavigationLink(
                     destination: ArticleContainerView(
@@ -200,11 +192,16 @@ struct ArticleListView: View {
     
     @ViewBuilder
     private var listContent: some View {
-        List {
-            if isSearchActive {
-                searchResultsList
-            } else {
-                articlesList
+        ScrollViewReader { proxy in
+            List {
+                if isSearchActive {
+                    searchResultsList
+                } else {
+                    articlesList
+                }
+            }
+            .onAppear {
+                initializeStateIfNeeded(proxy: proxy)
             }
         }
     }
@@ -252,6 +249,7 @@ struct ArticleListView: View {
                             )
                         }
                         .buttonStyle(PlainButtonStyle())
+                        .id(article.id)
                         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -273,9 +271,11 @@ struct ArticleListView: View {
     @ViewBuilder
     private var articlesList: some View {
         let timestamps = sortedTimestamps(for: groupedArticles)
+        let expandedSet = viewModel.expandedTimestampsBySource[source.name, default: Set<String>()]
+        
         ForEach(timestamps, id: \.self) { timestamp in
             Section {
-                if expandedTimestamps.contains(timestamp) {
+                if expandedSet.contains(timestamp) {
                     ForEach(groupedArticles[timestamp] ?? []) { article in
                         Button(action: {
                             Task {
@@ -289,6 +289,7 @@ struct ArticleListView: View {
                             )
                         }
                         .buttonStyle(PlainButtonStyle())
+                        .id(article.id)
                         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -327,7 +328,7 @@ struct ArticleListView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
 
-                    Image(systemName: expandedTimestamps.contains(timestamp) ? "chevron.down" : "chevron.right")
+                    Image(systemName: expandedSet.contains(timestamp) ? "chevron.down" : "chevron.right")
                         .foregroundColor(.secondary)
                         .font(.footnote.weight(.semibold))
                 }
@@ -335,21 +336,17 @@ struct ArticleListView: View {
                 .contentShape(Rectangle())
                 .onTapGesture {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        if expandedTimestamps.contains(timestamp) {
-                            expandedTimestamps.remove(timestamp)
-                        } else {
-                            expandedTimestamps.insert(timestamp)
-                        }
+                        viewModel.toggleTimestampExpansion(for: source.name, timestamp: timestamp)
                     }
                 }
             }
         }
     }
 
-    // 新增:处理文章点击的统一方法
     private func handleArticleTap(_ article: Article) async {
+        viewModel.setLastTappedArticleID(for: source.name, id: article.id)
+        
         guard !article.images.isEmpty else {
-            // 没有图片,直接导航
             selectedArticle = article
             isNavigationActive = true
             return
@@ -380,12 +377,23 @@ struct ArticleListView: View {
         }
     }
 
-    private func resetExpandedState() {
-        let timestamps = sortedTimestamps(for: groupedArticles)
-        if timestamps.count == 1 {
-            self.expandedTimestamps = Set(timestamps)
-        } else {
-            self.expandedTimestamps = []
+    private func initializeStateIfNeeded(proxy: ScrollViewProxy) {
+        if viewModel.expandedTimestampsBySource[source.name] == nil {
+            let timestamps = sortedTimestamps(for: groupedArticles)
+            if timestamps.count == 1 {
+                viewModel.expandedTimestampsBySource[source.name] = Set(timestamps)
+            } else {
+                viewModel.expandedTimestampsBySource[source.name] = []
+            }
+        }
+        
+        if let lastTappedID = viewModel.lastTappedArticleIDBySource[source.name], let id = lastTappedID {
+            DispatchQueue.main.async {
+                withAnimation {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+                viewModel.setLastTappedArticleID(for: source.name, id: nil)
+            }
         }
     }
 
@@ -436,17 +444,13 @@ struct AllArticlesListView: View {
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
-
-    @State private var expandedTimestamps: Set<String> = []
     
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
-    // 新增:图片下载状态
     @State private var isDownloadingImages = false
     @State private var downloadingMessage = ""
     
-    // 新增:导航控制
     @State private var selectedArticleItem: (article: Article, sourceName: String)?
     @State private var isNavigationActive = false
 
@@ -518,17 +522,14 @@ struct AllArticlesListView: View {
                                 isSearchActive = false
                                 searchText = ""
                             }
-                            resetExpandedState()
                         }
                     )
                 }
 
                 listContent
                     .listStyle(PlainListStyle())
-                    .onAppear(perform: resetExpandedState)
-                    .onChange(of: filterMode) { _, _ in
-                        resetExpandedState()
-                    }
+                    // 【修改】移除此处的 onChange(of: filterMode) 修饰符。
+                    // 状态由 ViewModel 统一管理，切换筛选模式时不应重置折叠状态。
 
                 if !isSearchActive {
                     Picker("Filter", selection: $filterMode) {
@@ -543,7 +544,6 @@ struct AllArticlesListView: View {
             }
             .background(Color.viewBackground.ignoresSafeArea())
             
-            // 隐藏的NavigationLink
             if let item = selectedArticleItem {
                 NavigationLink(
                     destination: ArticleContainerView(
@@ -615,11 +615,16 @@ struct AllArticlesListView: View {
     
     @ViewBuilder
     private var listContent: some View {
-        List {
-            if isSearchActive {
-                searchResultsList
-            } else {
-                articlesList
+        ScrollViewReader { proxy in
+            List {
+                if isSearchActive {
+                    searchResultsList
+                } else {
+                    articlesList
+                }
+            }
+            .onAppear {
+                initializeStateIfNeeded(proxy: proxy)
             }
         }
     }
@@ -667,6 +672,7 @@ struct AllArticlesListView: View {
                             )
                         }
                         .buttonStyle(PlainButtonStyle())
+                        .id(item.article.id)
                         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -688,9 +694,11 @@ struct AllArticlesListView: View {
     @ViewBuilder
     private var articlesList: some View {
         let timestamps = sortedTimestamps(for: groupedArticles)
+        let expandedSet = viewModel.expandedTimestampsBySource[viewModel.allArticlesKey, default: Set<String>()]
+
         ForEach(timestamps, id: \.self) { timestamp in
             Section {
-                if expandedTimestamps.contains(timestamp) {
+                if expandedSet.contains(timestamp) {
                     ForEach(groupedArticles[timestamp] ?? [], id: \.article.id) { item in
                         Button(action: {
                             Task {
@@ -704,6 +712,7 @@ struct AllArticlesListView: View {
                             )
                         }
                         .buttonStyle(PlainButtonStyle())
+                        .id(item.article.id)
                         .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
@@ -744,7 +753,7 @@ struct AllArticlesListView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
 
-                    Image(systemName: expandedTimestamps.contains(timestamp) ? "chevron.down" : "chevron.right")
+                    Image(systemName: expandedSet.contains(timestamp) ? "chevron.down" : "chevron.right")
                         .foregroundColor(.secondary)
                         .font(.footnote.weight(.semibold))
                 }
@@ -752,21 +761,17 @@ struct AllArticlesListView: View {
                 .contentShape(Rectangle())
                 .onTapGesture {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        if expandedTimestamps.contains(timestamp) {
-                            expandedTimestamps.remove(timestamp)
-                        } else {
-                            expandedTimestamps.insert(timestamp)
-                        }
+                        viewModel.toggleTimestampExpansion(for: viewModel.allArticlesKey, timestamp: timestamp)
                     }
                 }
             }
         }
     }
 
-    // 新增:处理文章点击的统一方法
     private func handleArticleTap(_ item: (article: Article, sourceName: String)) async {
+        viewModel.setLastTappedArticleID(for: viewModel.allArticlesKey, id: item.article.id)
+        
         guard !item.article.images.isEmpty else {
-            // 没有图片,直接导航
             selectedArticleItem = item
             isNavigationActive = true
             return
@@ -797,12 +802,25 @@ struct AllArticlesListView: View {
         }
     }
 
-    private func resetExpandedState() {
-        let timestamps = sortedTimestamps(for: groupedArticles)
-        if timestamps.count == 1 {
-            self.expandedTimestamps = Set(timestamps)
-        } else {
-            self.expandedTimestamps = []
+    private func initializeStateIfNeeded(proxy: ScrollViewProxy) {
+        let key = viewModel.allArticlesKey
+        
+        if viewModel.expandedTimestampsBySource[key] == nil {
+            let timestamps = sortedTimestamps(for: groupedArticles)
+            if timestamps.count == 1 {
+                viewModel.expandedTimestampsBySource[key] = Set(timestamps)
+            } else {
+                viewModel.expandedTimestampsBySource[key] = []
+            }
+        }
+        
+        if let lastTappedID = viewModel.lastTappedArticleIDBySource[key], let id = lastTappedID {
+            DispatchQueue.main.async {
+                withAnimation {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+                viewModel.setLastTappedArticleID(for: key, id: nil)
+            }
         }
     }
 
