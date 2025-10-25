@@ -35,6 +35,40 @@ class ResourceManager: ObservableObject {
         return URLSession(configuration: configuration)
     }()
 
+    // MARK: - 新增: 检查图片是否存在而不下载
+    /// 检查指定文章的图片是否都已存在于本地。
+    /// - Parameters:
+    ///   - timestamp: 文章的时间戳，用于定位图片目录。
+    ///   - imageNames: 需要检查的图片文件名数组。
+    /// - Returns: 如果所有图片都存在则返回 `true`，否则返回 `false`。
+    func checkIfImagesExistForArticle(timestamp: String, imageNames: [String]) -> Bool {
+        let sanitizedNames = imageNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        
+        guard !sanitizedNames.isEmpty else {
+            // 如果文章没有图片，视作“所有图片都存在”
+            return true
+        }
+        
+        let directoryName = "news_images_\(timestamp)"
+        let localDirectoryURL = documentsDirectory.appendingPathComponent(directoryName)
+        
+        // 遍历所有图片，只要有一张不存在，就立刻返回 false
+        for imageName in sanitizedNames {
+            let localImageURL = localDirectoryURL.appendingPathComponent(imageName)
+            if !fileManager.fileExists(atPath: localImageURL.path) {
+                // 发现有图片缺失
+                print("检查发现图片缺失: \(imageName)")
+                return false
+            }
+        }
+        
+        // 所有图片都已存在
+        print("检查发现所有图片均已本地存在。")
+        return true
+    }
+
     // MARK: - 按需下载单篇文章的图片 (面向UI)
     func downloadImagesForArticle(timestamp: String, imageNames: [String]) async throws {
         let sanitizedNames = imageNames
@@ -102,7 +136,7 @@ class ResourceManager: ObservableObject {
         }
     }
     
-    // MARK: - 新增: 静默预下载单篇文章的图片 (后台任务)
+    // MARK: - 静默预下载单篇文章的图片 (后台任务)
     func preDownloadImagesForArticleSilently(timestamp: String, imageNames: [String]) async throws {
         let sanitizedNames = imageNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

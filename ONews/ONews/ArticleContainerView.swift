@@ -202,35 +202,45 @@ struct ArticleContainerView: View {
             return
         }
         
-        // 如果下一篇文章有图片,先下载 (这个逻辑保持不变，作为预下载失败的后备方案)
+        // 【核心修改】在这里，我们先检查图片是否存在，再决定是否显示下载UI
         if !next.article.images.isEmpty {
-            await MainActor.run {
-                isDownloadingImages = true
-                downloadingMessage = "正在加载图片..."
-            }
+            // 1. 调用新的检查函数，这不会触发UI变化
+            let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
+                timestamp: next.article.timestamp,
+                imageNames: next.article.images
+            )
             
-            do {
-                // 这个调用现在会很快完成（如果预下载成功）
-                try await resourceManager.downloadImagesForArticle(
-                    timestamp: next.article.timestamp,
-                    imageNames: next.article.images
-                )
-            } catch {
+            // 2. 只有当图片确实不存在时，才显示加载界面并执行下载
+            if !imagesAlreadyExist {
+                await MainActor.run {
+                    isDownloadingImages = true
+                    downloadingMessage = "正在加载图片..."
+                }
+                
+                do {
+                    // 这个调用现在只会在必要时执行
+                    try await resourceManager.downloadImagesForArticle(
+                        timestamp: next.article.timestamp,
+                        imageNames: next.article.images
+                    )
+                } catch {
+                    await MainActor.run {
+                        isDownloadingImages = false
+                        errorMessage = "图片下载失败: \(error.localizedDescription)"
+                        showErrorAlert = true
+                        audioPlayerManager.stop()
+                    }
+                    return // 下载失败，中断切换
+                }
+                
                 await MainActor.run {
                     isDownloadingImages = false
-                    errorMessage = "图片下载失败: \(error.localizedDescription)"
-                    showErrorAlert = true
-                    audioPlayerManager.stop()
                 }
-                return
             }
-            
-            await MainActor.run {
-                isDownloadingImages = false
-            }
+            // 如果 imagesAlreadyExist 为 true，则此处的 if 代码块被完全跳过，直接进入文章切换
         }
         
-        // 下载完成后再切换文章
+        // 切换文章的动画
         await MainActor.run {
             withAnimation(.easeInOut(duration: 0.4)) {
                 self.currentArticle = next.article
@@ -238,6 +248,7 @@ struct ArticleContainerView: View {
             }
         }
         
+        // 如果需要，自动播放下一篇的音频
         if shouldAutoplayNext {
             await MainActor.run {
                 let paragraphs = next.article.article
