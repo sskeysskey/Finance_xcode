@@ -10,11 +10,14 @@ struct WelcomeView: View {
     @State private var errorMessage = ""
     @State private var showAddSourceView = false
     @State private var ripple = false
+    
+    // 【新增】: 用于控制“已是最新”弹窗的本地状态
+    @State private var showAlreadyUpToDateAlert = false
 
-    // 【新增】: 引入 scenePhase 来监控 App 的生命周期状态
+    // 【保留】: 引入 scenePhase 来监控 App 的生命周期状态
     @Environment(\.scenePhase) private var scenePhase
     
-    // 【新增】: 一个状态标志，确保初始同步只执行一次
+    // 【保留】: 一个状态标志，确保初始同步只执行一次
     @State private var hasAttemptedInitialSync = false
 
     // 【保留】: 尺寸参数保持不变
@@ -58,36 +61,45 @@ struct WelcomeView: View {
                 }
             }
             .tint(.white)
-            // 【移除】: 不再使用 onAppear 来触发初始同步，这是导致问题的根源
-            // .onAppear {
-            //     Task { await syncInitialResources() }
-            // }
-            .alert("", isPresented: $showErrorAlert, actions: {
+            .alert("获取失败", isPresented: $showErrorAlert, actions: {
                 Button("好的", role: .cancel) { }
             }, message: {
                 Text(errorMessage)
             })
-            // 【新增】: 使用 onChange 监听 scenePhase 的变化
+            // 【新增】: 用于显示“已是最新”的弹窗
+            .alert("提示", isPresented: $showAlreadyUpToDateAlert) {
+                Button("好的", role: .cancel) {}
+            } message: {
+                Text("新闻源列表已是最新，请点击右下角“+”按钮。")
+            }
+            // 【修改】: 使用 onChange 监听 scenePhase 的变化
             .onChange(of: scenePhase) { oldPhase, newPhase in
-                // 当 App 从非活跃状态变为活跃状态，并且我们还未尝试过初始同步时
                 if newPhase == .active && !hasAttemptedInitialSync {
                     print("App is now active, attempting initial resource sync.")
-                    // 标记为已尝试，防止 App 从后台返回前台时重复执行
                     hasAttemptedInitialSync = true
-                    // 执行同步任务
                     Task {
-                        await syncInitialResources()
+                        // 自动同步，isManual为false
+                        await syncInitialResources(isManual: false)
                     }
                 }
             }
+            // 【新增】: 监听来自 ResourceManager 的弹窗信号
+            .onChange(of: resourceManager.showAlreadyUpToDateAlert) { _, newValue in
+                if newValue {
+                    self.showAlreadyUpToDateAlert = true
+                    // 重置信号，以便下次可以再次触发
+                    resourceManager.showAlreadyUpToDateAlert = false
+                }
+            }
 
-            // 左下角刷新按钮（逻辑不变）
+            // 【修改】: 左下角刷新按钮
             if !resourceManager.isSyncing && !showAddSourceView {
                 VStack {
                     Spacer()
                     HStack {
                         Button(action: {
-                            Task { await syncInitialResources() }
+                            // 手动同步，isManual为true
+                            Task { await syncInitialResources(isManual: true) }
                         }) {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: fabIconSize, weight: .regular))
@@ -160,11 +172,11 @@ struct WelcomeView: View {
         }
     }
 
-    private func syncInitialResources() async {
+    // 【修改】: 增加 isManual 参数以区分调用来源
+    private func syncInitialResources(isManual: Bool = false) async {
         do {
-            try await resourceManager.checkAndDownloadAllNewsManifests()
+            try await resourceManager.checkAndDownloadAllNewsManifests(isManual: isManual)
         } catch {
-            // 这里的错误处理逻辑保持不变，但现在它只会在真正失败时触发
             self.errorMessage = "下载新闻源失败\n请检查网络连接后，点击左下角刷新↻按钮重试。"
             self.showErrorAlert = true
             print("WelcomeView 同步失败: \(error)")

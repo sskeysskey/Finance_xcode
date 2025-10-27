@@ -21,6 +21,9 @@ class ResourceManager: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var progressText = ""
     
+    // 【新增】: 用于通知UI显示“已是最新”弹窗的状态
+    @Published var showAlreadyUpToDateAlert = false
+    
     private let serverBaseURL = "http://106.15.183.158:5001/api/ONews"
     
     private let fileManager = FileManager.default
@@ -248,14 +251,17 @@ class ResourceManager: ObservableObject {
                 }
             }
             
+            // 【修改】: 如果没有需要下载的任务
             if tasksToDownload.isEmpty {
                 if isManual {
-                    self.syncMessage = "新闻清单已是最新。"
-                    resetStateAfterDelay()
+                    // 如果是手动触发的，并且没有文件要下载，则立即停止同步状态，并设置标志以显示弹窗
+                    self.isSyncing = false
+                    self.showAlreadyUpToDateAlert = true
                 } else {
+                    // 如果是自动触发的，则静默停止同步状态
                     self.isSyncing = false
                 }
-                return
+                return // 提前返回
             }
             
             self.isDownloading = true
