@@ -376,28 +376,20 @@ struct ArticleListView: View {
         }
     }
 
-    // 【修改】移除了滚动逻辑，只保留了初始化展开状态的逻辑
+    // 【核心修改】修复了默认展开单一分组的逻辑
     private func initializeStateIfNeeded() {
+        // 检查这个 source key 是否已经有存储的展开/折叠状态
         if viewModel.expandedTimestampsBySource[source.name] == nil {
+            // 如果没有（即首次加载或状态被重置），则检查分组数量
             let timestamps = sortedTimestamps(for: groupedArticles)
             if timestamps.count == 1 {
+                // 如果只有一个分组，就默认将其设置为展开状态
                 viewModel.expandedTimestampsBySource[source.name] = Set(timestamps)
-            } else {
-                viewModel.expandedTimestampsBySource[source.name] = []
             }
+            // 【移除】关键改动：移除了 `else` 分支。
+            // 如果有多个分组，我们什么都不做，让 `expandedTimestampsBySource` 保持为 `nil`，
+            // 这样UI会默认折叠，并且不会“锁定”状态，以便将来数据变化后能正确判断。
         }
-        
-        // 【移除】整个滚动到上一个点击项的逻辑块
-        /*
-        if let lastTappedID = viewModel.lastTappedArticleIDBySource[source.name], let id = lastTappedID {
-            DispatchQueue.main.async {
-                withAnimation {
-                    proxy.scrollTo(id, anchor: .center)
-                }
-                viewModel.setLastTappedArticleID(for: source.name, id: nil)
-            }
-        }
-        */
     }
 
     private func formatTimestamp(_ timestamp: String) -> String {
@@ -804,30 +796,20 @@ struct AllArticlesListView: View {
         }
     }
 
-    // 【修改】移除了滚动逻辑，只保留了初始化展开状态的逻辑
+    // 【核心修改】修复了默认展开单一分组的逻辑
     private func initializeStateIfNeeded() {
         let key = viewModel.allArticlesKey
         
+        // 检查 "ALL" key 是否已经有存储的展开/折叠状态
         if viewModel.expandedTimestampsBySource[key] == nil {
+            // 如果没有（即首次加载），则检查分组数量
             let timestamps = sortedTimestamps(for: groupedArticles)
             if timestamps.count == 1 {
+                // 如果只有一个分组，就默认将其设置为展开状态
                 viewModel.expandedTimestampsBySource[key] = Set(timestamps)
-            } else {
-                viewModel.expandedTimestampsBySource[key] = []
             }
+            // 【移除】关键改动：同样移除了 `else` 分支。
         }
-        
-        // 【移除】整个滚动到上一个点击项的逻辑块
-        /*
-        if let lastTappedID = viewModel.lastTappedArticleIDBySource[key], let id = lastTappedID {
-            DispatchQueue.main.async {
-                withAnimation {
-                    proxy.scrollTo(id, anchor: .center)
-                }
-                viewModel.setLastTappedArticleID(for: key, id: nil)
-            }
-        }
-        */
     }
 
     private func formatTimestamp(_ timestamp: String) -> String {
