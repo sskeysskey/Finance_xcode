@@ -1,25 +1,26 @@
 import SwiftUI
 
 struct WelcomeView: View {
-    // 【修改 1/2】: 彻底移除旧的 onComplete 闭包属性
-    // var onComplete: () -> Void  <-- 删除这一行
-
-    // 【保留】: 这个 Binding 是与 MainAppView 连接的唯一桥梁
+    // 【保留】: 这两个属性保持不变
     @Binding var hasCompletedInitialSetup: Bool
-    
-    // 从环境中接收共享的 ResourceManager，不再自己创建
     @EnvironmentObject var resourceManager: ResourceManager
 
+    // 【保留】: 状态变量保持不变
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
-
     @State private var showAddSourceView = false
     @State private var ripple = false
 
-    // 新增：统一尺寸参数
-    private let fabSize: CGFloat = 56     // 圆形按钮直径
-    private let fabIconSize: CGFloat = 24 // 图标字号
-    private let fabPadding: CGFloat = 20  // 距离安全区边距
+    // 【新增】: 引入 scenePhase 来监控 App 的生命周期状态
+    @Environment(\.scenePhase) private var scenePhase
+    
+    // 【新增】: 一个状态标志，确保初始同步只执行一次
+    @State private var hasAttemptedInitialSync = false
+
+    // 【保留】: 尺寸参数保持不变
+    private let fabSize: CGFloat = 56
+    private let fabIconSize: CGFloat = 24
+    private let fabPadding: CGFloat = 20
 
     var body: some View {
         ZStack {
@@ -50,9 +51,6 @@ struct WelcomeView: View {
                 }
                 .navigationBarHidden(true)
                 .navigationDestination(isPresented: $showAddSourceView) {
-                    // 【修改 2/2】: 为 AddSourceView 创建一个新的 onComplete 闭包。
-                    // 当 AddSourceView 调用这个闭包时，我们修改从 MainAppView 传来的 Binding。
-                    // 这样做是安全的，因为它是在 View 的 body 内部定义的。
                     AddSourceView(isFirstTimeSetup: true, onComplete: {
                         self.hasCompletedInitialSetup = true
                     })
@@ -60,16 +58,30 @@ struct WelcomeView: View {
                 }
             }
             .tint(.white)
-            .onAppear {
-                Task { await syncInitialResources() }
-            }
+            // 【移除】: 不再使用 onAppear 来触发初始同步，这是导致问题的根源
+            // .onAppear {
+            //     Task { await syncInitialResources() }
+            // }
             .alert("", isPresented: $showErrorAlert, actions: {
                 Button("好的", role: .cancel) { }
             }, message: {
                 Text(errorMessage)
             })
+            // 【新增】: 使用 onChange 监听 scenePhase 的变化
+            .onChange(of: scenePhase) { oldPhase, newPhase in
+                // 当 App 从非活跃状态变为活跃状态，并且我们还未尝试过初始同步时
+                if newPhase == .active && !hasAttemptedInitialSync {
+                    print("App is now active, attempting initial resource sync.")
+                    // 标记为已尝试，防止 App 从后台返回前台时重复执行
+                    hasAttemptedInitialSync = true
+                    // 执行同步任务
+                    Task {
+                        await syncInitialResources()
+                    }
+                }
+            }
 
-            // 左下角刷新按钮（同尺寸）
+            // 左下角刷新按钮（逻辑不变）
             if !resourceManager.isSyncing && !showAddSourceView {
                 VStack {
                     Spacer()
@@ -92,7 +104,7 @@ struct WelcomeView: View {
                 }
             }
 
-            // 右下角添加按钮 + 光韵动画（去除未使用的 radius 变量）
+            // 右下角添加按钮 + 光韵动画（逻辑不变）
             if !showAddSourceView {
                 VStack {
                     Spacer()
@@ -128,7 +140,7 @@ struct WelcomeView: View {
                 }
             }
 
-            // 同步遮罩
+            // 同步遮罩（逻辑不变）
             if resourceManager.isSyncing {
                 VStack(spacing: 15) {
                     ProgressView()
@@ -152,7 +164,8 @@ struct WelcomeView: View {
         do {
             try await resourceManager.checkAndDownloadAllNewsManifests()
         } catch {
-            self.errorMessage = "下载新闻源失败\n请点击左下角刷新↻按钮。"
+            // 这里的错误处理逻辑保持不变，但现在它只会在真正失败时触发
+            self.errorMessage = "下载新闻源失败\n请检查网络连接后，点击左下角刷新↻按钮重试。"
             self.showErrorAlert = true
             print("WelcomeView 同步失败: \(error)")
         }

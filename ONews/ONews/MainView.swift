@@ -11,6 +11,9 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     let resourceManager = ResourceManager()
     let badgeManager = AppBadgeManager()
     
+    // 添加一个标记,表示权限是否已请求完成
+    var hasRequestedPermissions = false
+    
     // 这是 App 启动后会调用的方法，是执行一次性设置的完美位置。
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
         
@@ -22,8 +25,14 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             self?.badgeManager.updateBadge(count: count)
         }
         
-        // 2. 在 App 启动时就请求角标权限
-        badgeManager.requestAuthorization()
+        // 异步请求角标权限,完成后设置标记
+        Task {
+            await badgeManager.requestAuthorizationAsync()
+            await MainActor.run {
+                self.hasRequestedPermissions = true
+                print("AppDelegate: 权限请求已完成")
+            }
+        }
         
         // 3. 配置全局 UI 外观
         let tv = UITableView.appearance()
@@ -633,6 +642,23 @@ struct Article: Identifiable, Codable, Hashable {
 @MainActor
 class AppBadgeManager: ObservableObject {
     
+    // 新增异步版本的权限请求
+    func requestAuthorizationAsync() async {
+        await withCheckedContinuation { continuation in
+            UNUserNotificationCenter.current().requestAuthorization(options: [.badge]) { granted, error in
+                Task { @MainActor in
+                    if granted {
+                        print("用户已授予角标权限。")
+                    } else {
+                        print("用户未授予角标权限。")
+                    }
+                    continuation.resume()
+                }
+            }
+        }
+    }
+    
+    // 保留原有的同步版本,供其他地方使用
     func requestAuthorization() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.badge]) { granted, error in
             DispatchQueue.main.async {
@@ -649,7 +675,7 @@ class AppBadgeManager: ObservableObject {
         var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "updateBadgeCount") {
-            print("后台任务时间耗尽，强制结束角标更新任务。")
+            print("后台任务时间耗尽,强制结束角标更新任务。")
             if backgroundTask != .invalid {
                 UIApplication.shared.endBackgroundTask(backgroundTask)
                 backgroundTask = .invalid
@@ -666,7 +692,7 @@ class AppBadgeManager: ObservableObject {
             }
             
             if backgroundTask != .invalid {
-                print("角标更新操作完成，结束后台任务。")
+                print("角标更新操作完成,结束后台任务。")
                 UIApplication.shared.endBackgroundTask(backgroundTask)
                 backgroundTask = .invalid
             }

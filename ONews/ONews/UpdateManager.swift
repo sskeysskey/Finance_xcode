@@ -30,8 +30,8 @@ class ResourceManager: ObservableObject {
     
     private let urlSession: URLSession = {
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 5
-        configuration.waitsForConnectivity = false
+        configuration.timeoutIntervalForRequest = 10
+        configuration.waitsForConnectivity = true
         return URLSession(configuration: configuration)
     }()
 
