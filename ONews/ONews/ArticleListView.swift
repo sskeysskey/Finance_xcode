@@ -21,11 +21,11 @@ struct ArticleListView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
-    // 【修改】增加用于进度条的状态变量
     @State private var isDownloadingImages = false
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
     
+    // 【修改】这两个状态变量依然用于控制导航
     @State private var selectedArticle: Article?
     @State private var isNavigationActive = false
 
@@ -121,20 +121,27 @@ struct ArticleListView: View {
             }
             .background(Color.viewBackground.ignoresSafeArea())
             
+            // 【移除】废弃的、隐藏的 NavigationLink 已被移除
+            /*
             if let article = selectedArticle {
                 NavigationLink(
-                    destination: ArticleContainerView(
-                        article: article,
-                        sourceName: source.name,
-                        context: .fromSource(source.name),
-                        viewModel: viewModel,
-                        resourceManager: resourceManager
-                    ),
+                    destination: ArticleContainerView(...),
                     isActive: $isNavigationActive
-                ) {
-                    EmptyView()
-                }
-                .hidden()
+                ) { EmptyView() }.hidden()
+            }
+            */
+        }
+        // 【核心修改】使用新的 navigationDestination 修饰符来处理程序化导航
+        .navigationDestination(isPresented: $isNavigationActive) {
+            // 确保 selectedArticle 有值时才创建目标视图
+            if let article = selectedArticle {
+                ArticleContainerView(
+                    article: article,
+                    sourceName: source.name,
+                    context: .fromSource(source.name),
+                    viewModel: viewModel,
+                    resourceManager: resourceManager
+                )
             }
         }
         .navigationTitle(source.name.replacingOccurrences(of: "_", with: " "))
@@ -168,7 +175,6 @@ struct ArticleListView: View {
             }
         }
         .overlay(
-            // 【核心修改】更新遮罩层UI以显示详细进度
             Group {
                 if isDownloadingImages {
                     VStack(spacing: 12) {
@@ -348,7 +354,7 @@ struct ArticleListView: View {
         }
     }
 
-    // 【核心修改】更新此函数以使用带回调的下载方法
+    // 【无需修改】此函数逻辑保持不变，它正确地控制了 isNavigationActive 状态
     private func handleArticleTap(_ article: Article) async {
         guard !article.images.isEmpty else {
             selectedArticle = article
@@ -356,7 +362,6 @@ struct ArticleListView: View {
             return
         }
         
-        // 1. 设置下载状态的初始值
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
@@ -364,25 +369,21 @@ struct ArticleListView: View {
         }
         
         do {
-            // 2. 调用新的下载方法，并传入一个闭包来处理进度更新
             try await resourceManager.downloadImagesForArticle(
                 timestamp: article.timestamp,
                 imageNames: article.images,
                 progressHandler: { current, total in
-                    // 这个闭包会在 MainActor 上被调用，可以直接更新UI状态
                     self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
                     self.downloadProgressText = "已下载 \(current) / \(total)"
                 }
             )
             
-            // 3. 下载成功后，隐藏遮罩并导航
             await MainActor.run {
                 isDownloadingImages = false
                 selectedArticle = article
                 isNavigationActive = true
             }
         } catch {
-            // 4. 下载失败后，隐藏遮罩并显示错误
             await MainActor.run {
                 isDownloadingImages = false
                 errorMessage = "图片下载失败: \(error.localizedDescription)"
@@ -451,11 +452,11 @@ struct AllArticlesListView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
-    // 【修改】增加用于进度条的状态变量
     @State private var isDownloadingImages = false
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
     
+    // 【修改】这两个状态变量依然用于控制导航
     @State private var selectedArticleItem: (article: Article, sourceName: String)?
     @State private var isNavigationActive = false
 
@@ -547,20 +548,27 @@ struct AllArticlesListView: View {
             }
             .background(Color.viewBackground.ignoresSafeArea())
             
+            // 【移除】废弃的、隐藏的 NavigationLink 已被移除
+            /*
             if let item = selectedArticleItem {
                 NavigationLink(
-                    destination: ArticleContainerView(
-                        article: item.article,
-                        sourceName: item.sourceName,
-                        context: .fromAllArticles,
-                        viewModel: viewModel,
-                        resourceManager: resourceManager
-                    ),
+                    destination: ArticleContainerView(...),
                     isActive: $isNavigationActive
-                ) {
-                    EmptyView()
-                }
-                .hidden()
+                ) { EmptyView() }.hidden()
+            }
+            */
+        }
+        // 【核心修改】使用新的 navigationDestination 修饰符来处理程序化导航
+        .navigationDestination(isPresented: $isNavigationActive) {
+            // 确保 selectedArticleItem 有值时才创建目标视图
+            if let item = selectedArticleItem {
+                ArticleContainerView(
+                    article: item.article,
+                    sourceName: item.sourceName,
+                    context: .fromAllArticles,
+                    viewModel: viewModel,
+                    resourceManager: resourceManager
+                )
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -593,7 +601,6 @@ struct AllArticlesListView: View {
             }
         }
         .overlay(
-            // 【核心修改】更新遮罩层UI以显示详细进度
             Group {
                 if isDownloadingImages {
                     VStack(spacing: 12) {
@@ -775,7 +782,7 @@ struct AllArticlesListView: View {
         }
     }
 
-    // 【核心修改】更新此函数以使用带回调的下载方法
+    // 【无需修改】此函数逻辑保持不变，它正确地控制了 isNavigationActive 状态
     private func handleArticleTap(_ item: (article: Article, sourceName: String)) async {
         guard !item.article.images.isEmpty else {
             selectedArticleItem = item

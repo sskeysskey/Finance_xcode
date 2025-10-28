@@ -1,15 +1,39 @@
 import SwiftUI
 
+// 【新增】定义导航目标，使其类型安全且可哈希
+enum NavigationTarget: Hashable {
+    case allArticles
+    case source(NewsSource)
+    
+    // NewsSource 默认没有实现 Hashable，我们需要手动实现
+    // 但由于 NewsSource 有一个 UUID 类型的 id，我们可以直接用它来比较和哈希
+    func hash(into hasher: inout Hasher) {
+        switch self {
+        case .allArticles:
+            hasher.combine("allArticles")
+        case .source(let source):
+            hasher.combine(source.id)
+        }
+    }
+    
+    static func == (lhs: NavigationTarget, rhs: NavigationTarget) -> Bool {
+        switch (lhs, rhs) {
+        case (.allArticles, .allArticles):
+            return true
+        case (.source(let lhsSource), .source(let rhsSource)):
+            return lhsSource.id == rhsSource.id
+        default:
+            return false
+        }
+    }
+}
+
+
 // ==================== 主视图：SourceListView ====================
 
 struct SourceListView: View {
-    // 1. 从环境中接收共享的 ViewModel 和 Manager，不再自己创建！
     @EnvironmentObject var viewModel: NewsViewModel
     @EnvironmentObject var resourceManager: ResourceManager
-    
-//    @StateObject private var viewModel = NewsViewModel()
-//    @StateObject private var resourceManager = ResourceManager()
-//    private let badgeManager = AppBadgeManager()
     
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
@@ -19,8 +43,6 @@ struct SourceListView: View {
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
-    
-//    @Environment(\.scenePhase) private var scenePhase
     
     private var searchResults: [(article: Article, sourceName: String)] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -41,10 +63,10 @@ struct SourceListView: View {
     }
     
     var body: some View {
-        NavigationView {
+        // 【修改】将 NavigationView 升级为 NavigationStack
+        NavigationStack {
             VStack(spacing: 0) {
                 if isSearching {
-                    // 调用共享的 SearchBarInline 视图
                     SearchBarInline(
                         text: $searchText,
                         placeholder: "搜索所有文章的标题关键字",
@@ -62,7 +84,6 @@ struct SourceListView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 
-                // 【修改】将 if/else 的内容提取到下面的子视图中，解决编译器超时问题
                 if isSearchActive {
                     searchResultsView
                 } else {
@@ -117,24 +138,31 @@ struct SourceListView: View {
                 }
             }
             .navigationBarTitle(isSearching ? "" : "", displayMode: .inline)
+            // 【修改】添加 navigationDestination 来处理所有来自此视图的导航请求
+            .navigationDestination(for: NavigationTarget.self) { target in
+                switch target {
+                case .allArticles:
+                    AllArticlesListView(viewModel: viewModel, resourceManager: resourceManager)
+                case .source(let source):
+                    // 从 viewModel.sources 中找到最新的 source 数据传递过去
+                    // 这样可以确保即使 viewModel 中的数据更新了，导航到的页面也是最新的
+                    if let updatedSource = viewModel.sources.first(where: { $0.id == source.id }) {
+                        ArticleListView(source: updatedSource, viewModel: viewModel, resourceManager: resourceManager)
+                    } else {
+                        // 如果源被删除了，提供一个回退视图
+                        Text("新闻源 “\(source.name)” 不再可用。")
+                    }
+                }
+            }
         }
         .accentColor(.white)
         .preferredColorScheme(.dark)
         .onAppear {
-            // 只需要加载新闻和同步资源
-                        viewModel.loadNews()
-                        Task {
-                            await syncResources()
-                        }
+            viewModel.loadNews()
+            Task {
+                await syncResources()
+            }
         }
-//        .onChange(of: scenePhase) { oldPhase, newPhase in
-//            if oldPhase == .active && (newPhase == .inactive || newPhase == .background) {
-//                viewModel.commitPendingReadsSilently()
-//            }
-//            else if newPhase == .active && (oldPhase == .inactive || oldPhase == .background) {
-//                viewModel.syncReadStatusFromPersistence()
-//            }
-//        }
         .sheet(isPresented: $showAddSourceSheet, onDismiss: {
             print("AddSourceView 已关闭，重新加载新闻...")
             viewModel.loadNews()
@@ -149,8 +177,7 @@ struct SourceListView: View {
                 )
             }
             .preferredColorScheme(.dark)
-            // 4. 确保 AddSourceView 也能访问到 resourceManager
-                        .environmentObject(resourceManager)
+            .environmentObject(resourceManager)
         }
         .overlay(
             Group {
@@ -202,7 +229,6 @@ struct SourceListView: View {
         })
     }
     
-    // 【新增】提取出的搜索结果子视图
     private var searchResultsView: some View {
         List {
             let grouped = groupedSearchByTimestamp()
@@ -235,14 +261,22 @@ struct SourceListView: View {
                         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     ) {
                         ForEach(grouped[timestamp] ?? [], id: \.article.id) { item in
+                            // 【修改】这里也使用 value-based NavigationLink
+                            // 虽然它会导航到 ArticleContainerView，但这个视图尚未适配 value-based 导航
+                            // 且这里的导航逻辑比较复杂（点击后需要下载），因此保持 ArticleListView/AllArticlesListView 内部的 isPresented 逻辑是更好的选择。
+                            // 为了简化，我们直接导航到包含该文章的列表页。更好的体验需要更复杂的导航状态管理。
+                            // 暂时保持原样，因为主要修复的是 ArticleListView 内部的警告。
+                            // 这里的 NavigationLink 实际上是导航到 ArticleContainerView，但它是在另一个 NavigationStack 的上下文中。
+                            // 为了正确修复，我们需要在 ArticleListView 中处理这个 item。
+                            // 这里的 NavigationLink(destination:) 仍然有效，因为它在 NavigationStack 内。
+                            // 虽然不是最新的 value-based 写法，但它不会产生警告。
                             NavigationLink(destination: ArticleContainerView(
                                 article: item.article,
                                 sourceName: item.sourceName,
                                 context: .fromAllArticles,
                                 viewModel: viewModel,
-                                resourceManager: resourceManager // 修改：补全缺失的 resourceManager 参数
+                                resourceManager: resourceManager
                             )) {
-                                // 调用共享的 ArticleRowCardView
                                 ArticleRowCardView(
                                     article: item.article,
                                     sourceName: item.sourceName,
@@ -273,7 +307,6 @@ struct SourceListView: View {
         .transition(.opacity.animation(.easeInOut))
     }
     
-    // 【新增】提取出的新闻源列表子视图
     private var sourceAndAllArticlesView: some View {
         Group {
             if viewModel.sources.isEmpty && !resourceManager.isSyncing {
@@ -290,8 +323,8 @@ struct SourceListView: View {
                 .frame(maxHeight: .infinity)
             } else {
                 List {
-                    // "ALL" 链接
-                    ZStack {
+                    // 【修改】使用新的 value-based NavigationLink
+                    NavigationLink(value: NavigationTarget.allArticles) {
                         HStack {
                             Text("ALL")
                                 .font(.system(size: 28, weight: .bold))
@@ -302,16 +335,13 @@ struct SourceListView: View {
                                 .foregroundColor(.white.opacity(0.7))
                         }
                         .padding()
-                        NavigationLink(destination: AllArticlesListView(viewModel: viewModel, resourceManager: resourceManager)) {
-                            EmptyView()
-                        }.opacity(0)
                     }
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                     
-                    // 订阅源列表
                     ForEach(viewModel.sources) { source in
-                        ZStack {
+                        // 【修改】使用新的 value-based NavigationLink
+                        NavigationLink(value: NavigationTarget.source(source)) {
                             HStack {
                                 Text(source.name)
                                     .fontWeight(.semibold)
@@ -321,10 +351,6 @@ struct SourceListView: View {
                                     .foregroundColor(.white.opacity(0.7))
                             }
                             .padding(.vertical, 8)
-                            
-                            NavigationLink(destination: ArticleListView(source: source, viewModel: viewModel, resourceManager: resourceManager)) {
-                                EmptyView()
-                            }.opacity(0)
                         }
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
@@ -372,5 +398,17 @@ struct SourceListView: View {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy年M月d日, EEEE"
         return formatter.string(from: date)
+    }
+}
+
+// 【修改】为了让 NavigationTarget.source(NewsSource) 可用
+// 需要让 NewsSource 符合 Hashable 协议。因为它有 id: UUID，这很简单。
+extension NewsSource: Hashable {
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+
+    static func == (lhs: NewsSource, rhs: NewsSource) -> Bool {
+        lhs.id == rhs.id
     }
 }
