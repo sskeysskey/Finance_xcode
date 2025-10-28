@@ -1,3 +1,4 @@
+// /Users/yanzhang/Coding/Xcode/ONews/ONews/ArticleListView.swift
 import SwiftUI
 
 enum ArticleFilterMode: String, CaseIterable {
@@ -20,8 +21,10 @@ struct ArticleListView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
+    // 【修改】增加用于进度条的状态变量
     @State private var isDownloadingImages = false
-    @State private var downloadingMessage = ""
+    @State private var downloadProgress: Double = 0.0
+    @State private var downloadProgressText = ""
     
     @State private var selectedArticle: Article?
     @State private var isNavigationActive = false
@@ -165,19 +168,24 @@ struct ArticleListView: View {
             }
         }
         .overlay(
+            // 【核心修改】更新遮罩层UI以显示详细进度
             Group {
                 if isDownloadingImages {
-                    VStack(spacing: 15) {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            .scaleEffect(1.5)
+                    VStack(spacing: 12) {
+                        Text("正在加载图片...")
+                            .font(.headline)
+                            .foregroundColor(.white)
                         
-                        Text(downloadingMessage)
-                            .padding(.top, 10)
-                            .foregroundColor(.white.opacity(0.9))
+                        ProgressView(value: downloadProgress)
+                            .progressViewStyle(LinearProgressViewStyle(tint: .white))
+                            .padding(.horizontal, 40)
+                        
+                        Text(downloadProgressText)
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.8))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black.opacity(0.6))
+                    .background(Color.black.opacity(0.75))
                     .edgesIgnoringSafeArea(.all)
                 }
             }
@@ -191,7 +199,6 @@ struct ArticleListView: View {
     
     @ViewBuilder
     private var listContent: some View {
-        // 【修改】移除了 ScrollViewReader，因为它不再被需要
         List {
             if isSearchActive {
                 searchResultsList
@@ -341,33 +348,41 @@ struct ArticleListView: View {
         }
     }
 
-    // 【修改】移除了记录点击ID的逻辑
+    // 【核心修改】更新此函数以使用带回调的下载方法
     private func handleArticleTap(_ article: Article) async {
-        // viewModel.setLastTappedArticleID(for: source.name, id: article.id) // <--- 【移除】这行代码
-        
         guard !article.images.isEmpty else {
             selectedArticle = article
             isNavigationActive = true
             return
         }
         
+        // 1. 设置下载状态的初始值
         await MainActor.run {
             isDownloadingImages = true
-            downloadingMessage = "正在加载图片..."
+            downloadProgress = 0.0
+            downloadProgressText = "准备中..."
         }
         
         do {
+            // 2. 调用新的下载方法，并传入一个闭包来处理进度更新
             try await resourceManager.downloadImagesForArticle(
                 timestamp: article.timestamp,
-                imageNames: article.images
+                imageNames: article.images,
+                progressHandler: { current, total in
+                    // 这个闭包会在 MainActor 上被调用，可以直接更新UI状态
+                    self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
+                    self.downloadProgressText = "已下载 \(current) / \(total)"
+                }
             )
             
+            // 3. 下载成功后，隐藏遮罩并导航
             await MainActor.run {
                 isDownloadingImages = false
                 selectedArticle = article
                 isNavigationActive = true
             }
         } catch {
+            // 4. 下载失败后，隐藏遮罩并显示错误
             await MainActor.run {
                 isDownloadingImages = false
                 errorMessage = "图片下载失败: \(error.localizedDescription)"
@@ -376,19 +391,12 @@ struct ArticleListView: View {
         }
     }
 
-    // 【核心修改】修复了默认展开单一分组的逻辑
     private func initializeStateIfNeeded() {
-        // 检查这个 source key 是否已经有存储的展开/折叠状态
         if viewModel.expandedTimestampsBySource[source.name] == nil {
-            // 如果没有（即首次加载或状态被重置），则检查分组数量
             let timestamps = sortedTimestamps(for: groupedArticles)
             if timestamps.count == 1 {
-                // 如果只有一个分组，就默认将其设置为展开状态
                 viewModel.expandedTimestampsBySource[source.name] = Set(timestamps)
             }
-            // 【移除】关键改动：移除了 `else` 分支。
-            // 如果有多个分组，我们什么都不做，让 `expandedTimestampsBySource` 保持为 `nil`，
-            // 这样UI会默认折叠，并且不会“锁定”状态，以便将来数据变化后能正确判断。
         }
     }
 
@@ -443,8 +451,10 @@ struct AllArticlesListView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
+    // 【修改】增加用于进度条的状态变量
     @State private var isDownloadingImages = false
-    @State private var downloadingMessage = ""
+    @State private var downloadProgress: Double = 0.0
+    @State private var downloadProgressText = ""
     
     @State private var selectedArticleItem: (article: Article, sourceName: String)?
     @State private var isNavigationActive = false
@@ -583,19 +593,24 @@ struct AllArticlesListView: View {
             }
         }
         .overlay(
+            // 【核心修改】更新遮罩层UI以显示详细进度
             Group {
                 if isDownloadingImages {
-                    VStack(spacing: 15) {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            .scaleEffect(1.5)
+                    VStack(spacing: 12) {
+                        Text("正在加载图片...")
+                            .font(.headline)
+                            .foregroundColor(.white)
                         
-                        Text(downloadingMessage)
-                            .padding(.top, 10)
-                            .foregroundColor(.white.opacity(0.9))
+                        ProgressView(value: downloadProgress)
+                            .progressViewStyle(LinearProgressViewStyle(tint: .white))
+                            .padding(.horizontal, 40)
+                        
+                        Text(downloadProgressText)
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.8))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black.opacity(0.6))
+                    .background(Color.black.opacity(0.75))
                     .edgesIgnoringSafeArea(.all)
                 }
             }
@@ -609,7 +624,6 @@ struct AllArticlesListView: View {
     
     @ViewBuilder
     private var listContent: some View {
-        // 【修改】移除了 ScrollViewReader，因为它不再被需要
         List {
             if isSearchActive {
                 searchResultsList
@@ -761,10 +775,8 @@ struct AllArticlesListView: View {
         }
     }
 
-    // 【修改】移除了记录点击ID的逻辑
+    // 【核心修改】更新此函数以使用带回调的下载方法
     private func handleArticleTap(_ item: (article: Article, sourceName: String)) async {
-        // viewModel.setLastTappedArticleID(for: viewModel.allArticlesKey, id: item.article.id) // <--- 【移除】这行代码
-        
         guard !item.article.images.isEmpty else {
             selectedArticleItem = item
             isNavigationActive = true
@@ -773,13 +785,18 @@ struct AllArticlesListView: View {
         
         await MainActor.run {
             isDownloadingImages = true
-            downloadingMessage = "正在加载图片..."
+            downloadProgress = 0.0
+            downloadProgressText = "准备中..."
         }
         
         do {
             try await resourceManager.downloadImagesForArticle(
                 timestamp: item.article.timestamp,
-                imageNames: item.article.images
+                imageNames: item.article.images,
+                progressHandler: { current, total in
+                    self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
+                    self.downloadProgressText = "已下载 \(current) / \(total)"
+                }
             )
             
             await MainActor.run {
@@ -796,19 +813,14 @@ struct AllArticlesListView: View {
         }
     }
 
-    // 【核心修改】修复了默认展开单一分组的逻辑
     private func initializeStateIfNeeded() {
         let key = viewModel.allArticlesKey
         
-        // 检查 "ALL" key 是否已经有存储的展开/折叠状态
         if viewModel.expandedTimestampsBySource[key] == nil {
-            // 如果没有（即首次加载），则检查分组数量
             let timestamps = sortedTimestamps(for: groupedArticles)
             if timestamps.count == 1 {
-                // 如果只有一个分组，就默认将其设置为展开状态
                 viewModel.expandedTimestampsBySource[key] = Set(timestamps)
             }
-            // 【移除】关键改动：同样移除了 `else` 分支。
         }
     }
 

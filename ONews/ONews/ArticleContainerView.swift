@@ -1,4 +1,4 @@
-// ArticleContainerView.swift
+// /Users/yanzhang/Coding/Xcode/ONews/ONews/ArticleContainerView.swift
 
 import SwiftUI
 
@@ -7,7 +7,7 @@ struct ArticleContainerView: View {
     let navigationContext: NavigationContext
 
     @ObservedObject var viewModel: NewsViewModel
-    @ObservedObject var resourceManager: ResourceManager // 新增: 引入 ResourceManager
+    @ObservedObject var resourceManager: ResourceManager
 
     @StateObject private var audioPlayerManager = AudioPlayerManager()
 
@@ -22,11 +22,11 @@ struct ArticleContainerView: View {
 
     @State private var didCommitOnDisappear = false
     
-    // 图片下载状态
+    // 【修改】更新图片下载状态变量以支持详细进度
     @State private var isDownloadingImages = false
-    @State private var downloadingMessage = ""
+    @State private var downloadProgress: Double = 0.0
+    @State private var downloadProgressText = ""
     
-    // 错误提示
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
 
@@ -35,12 +35,11 @@ struct ArticleContainerView: View {
         case fromAllArticles
     }
 
-    // 修改: 更新 init 方法
     init(article: Article, sourceName: String, context: NavigationContext, viewModel: NewsViewModel, resourceManager: ResourceManager) {
         self.initialArticle = article
         self.navigationContext = context
         self.viewModel = viewModel
-        self.resourceManager = resourceManager // 新增
+        self.resourceManager = resourceManager
         
         self._currentArticle = State(initialValue: article)
         self._currentSourceName = State(initialValue: sourceName)
@@ -101,19 +100,23 @@ struct ArticleContainerView: View {
                 }
             }
             
-            // 图片下载遮罩层
+            // 【修改】更新图片下载遮罩层UI以显示详细进度
             if isDownloadingImages {
-                VStack(spacing: 15) {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .scaleEffect(1.5)
+                VStack(spacing: 12) {
+                    Text("正在加载图片...")
+                        .font(.headline)
+                        .foregroundColor(.white)
                     
-                    Text(downloadingMessage)
-                        .padding(.top, 10)
-                        .foregroundColor(.white.opacity(0.9))
+                    ProgressView(value: downloadProgress)
+                        .progressViewStyle(LinearProgressViewStyle(tint: .white))
+                        .padding(.horizontal, 40)
+                    
+                    Text(downloadProgressText)
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.8))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black.opacity(0.6))
+                .background(Color.black.opacity(0.75))
                 .edgesIgnoringSafeArea(.all)
                 .zIndex(3)
             }
@@ -122,7 +125,6 @@ struct ArticleContainerView: View {
             didCommitOnDisappear = false
             updateUnreadCounts()
             
-            // 新增: 启动静默预下载任务
             Task {
                 await preDownloadNextArticleImages()
             }
@@ -132,9 +134,7 @@ struct ArticleContainerView: View {
                     await self.switchToNextArticle(shouldAutoplayNext: true)
                 }
             }
-            audioPlayerManager.onPlaybackFinished = {
-                // 行为已在 AudioPlayerManager 内部处理
-            }
+            audioPlayerManager.onPlaybackFinished = { }
         }
         .onDisappear {
             guard !didCommitOnDisappear else { return }
@@ -144,7 +144,7 @@ struct ArticleContainerView: View {
             _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
             viewModel.commitPendingReads()
         }
-        .onChange(of: currentArticle) { _, newArticle in // 修改: 监听文章变化，预载下一篇
+        .onChange(of: currentArticle) { _, newArticle in
             updateUnreadCounts()
             Task {
                 await preDownloadNextArticleImages()
@@ -202,26 +202,30 @@ struct ArticleContainerView: View {
             return
         }
         
-        // 【核心修改】在这里，我们先检查图片是否存在，再决定是否显示下载UI
         if !next.article.images.isEmpty {
-            // 1. 调用新的检查函数，这不会触发UI变化
             let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
                 timestamp: next.article.timestamp,
                 imageNames: next.article.images
             )
             
-            // 2. 只有当图片确实不存在时，才显示加载界面并执行下载
             if !imagesAlreadyExist {
+                // 1. 设置下载状态的初始值
                 await MainActor.run {
                     isDownloadingImages = true
-                    downloadingMessage = "正在加载图片..."
+                    downloadProgress = 0.0
+                    downloadProgressText = "准备中..."
                 }
                 
                 do {
-                    // 这个调用现在只会在必要时执行
+                    // 2. 【核心修正】调用新的下载方法，并传入一个闭包来处理进度更新
                     try await resourceManager.downloadImagesForArticle(
                         timestamp: next.article.timestamp,
-                        imageNames: next.article.images
+                        imageNames: next.article.images,
+                        progressHandler: { current, total in
+                            // 这个闭包会在 MainActor 上被调用，可以直接更新UI状态
+                            self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
+                            self.downloadProgressText = "已下载 \(current) / \(total)"
+                        }
                     )
                 } catch {
                     await MainActor.run {
@@ -233,11 +237,11 @@ struct ArticleContainerView: View {
                     return // 下载失败，中断切换
                 }
                 
+                // 3. 下载成功后，隐藏遮罩
                 await MainActor.run {
                     isDownloadingImages = false
                 }
             }
-            // 如果 imagesAlreadyExist 为 true，则此处的 if 代码块被完全跳过，直接进入文章切换
         }
         
         // 切换文章的动画
@@ -248,7 +252,6 @@ struct ArticleContainerView: View {
             }
         }
         
-        // 如果需要，自动播放下一篇的音频
         if shouldAutoplayNext {
             await MainActor.run {
                 let paragraphs = next.article.article
@@ -260,7 +263,6 @@ struct ArticleContainerView: View {
         }
     }
     
-    // 新增: 静默预下载下一篇文章的图片
     private func preDownloadNextArticleImages() async {
         print("开始检查并预下载下一篇文章的图片...")
         
@@ -270,26 +272,22 @@ struct ArticleContainerView: View {
         case .fromAllArticles: sourceNameToSearch = nil
         }
         
-        // 找到下一篇未读文章
         guard let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch) else {
             print("没有找到下一篇未读文章，无需预下载。")
             return
         }
         
-        // 如果下一篇文章没有图片，则无需操作
         guard !next.article.images.isEmpty else {
             print("下一篇文章 '\(next.article.topic)' 没有图片，无需预下载。")
             return
         }
         
-        // 执行静默下载
         do {
             try await resourceManager.preDownloadImagesForArticleSilently(
                 timestamp: next.article.timestamp,
                 imageNames: next.article.images
             )
         } catch {
-            // 静默下载失败时，只在控制台打印错误，不打扰用户
             print("静默预下载下一篇文章的图片失败: \(error.localizedDescription)")
         }
     }

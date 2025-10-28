@@ -1,3 +1,4 @@
+// /Users/yanzhang/Coding/Xcode/ONews/ONews/UpdateManager.swift
 import Foundation
 import CryptoKit
 
@@ -21,7 +22,6 @@ class ResourceManager: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var progressText = ""
     
-    // 【新增】: 用于通知UI显示“已是最新”弹窗的状态
     @Published var showAlreadyUpToDateAlert = false
     
     private let serverBaseURL = "http://106.15.183.158:5001/api/ONews"
@@ -38,42 +38,38 @@ class ResourceManager: ObservableObject {
         return URLSession(configuration: configuration)
     }()
 
-    // MARK: - 新增: 检查图片是否存在而不下载
-    /// 检查指定文章的图片是否都已存在于本地。
-    /// - Parameters:
-    ///   - timestamp: 文章的时间戳，用于定位图片目录。
-    ///   - imageNames: 需要检查的图片文件名数组。
-    /// - Returns: 如果所有图片都存在则返回 `true`，否则返回 `false`。
+    // MARK: - 检查图片是否存在而不下载
     func checkIfImagesExistForArticle(timestamp: String, imageNames: [String]) -> Bool {
         let sanitizedNames = imageNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         
         guard !sanitizedNames.isEmpty else {
-            // 如果文章没有图片，视作“所有图片都存在”
             return true
         }
         
         let directoryName = "news_images_\(timestamp)"
         let localDirectoryURL = documentsDirectory.appendingPathComponent(directoryName)
         
-        // 遍历所有图片，只要有一张不存在，就立刻返回 false
         for imageName in sanitizedNames {
             let localImageURL = localDirectoryURL.appendingPathComponent(imageName)
             if !fileManager.fileExists(atPath: localImageURL.path) {
-                // 发现有图片缺失
                 print("检查发现图片缺失: \(imageName)")
                 return false
             }
         }
         
-        // 所有图片都已存在
         print("检查发现所有图片均已本地存在。")
         return true
     }
 
     // MARK: - 按需下载单篇文章的图片 (面向UI)
-    func downloadImagesForArticle(timestamp: String, imageNames: [String]) async throws {
+    // 【核心修改】为函数增加一个 progressHandler 回调闭包
+    func downloadImagesForArticle(
+        timestamp: String,
+        imageNames: [String],
+        progressHandler: @escaping @MainActor (Int, Int) -> Void
+    ) async throws {
         let sanitizedNames = imageNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -92,10 +88,8 @@ class ResourceManager: ObservableObject {
         let directoryName = "news_images_\(timestamp)"
         let localDirectoryURL = documentsDirectory.appendingPathComponent(directoryName)
         
-        // 确保目录存在
         try? fileManager.createDirectory(at: localDirectoryURL, withIntermediateDirectories: true)
         
-        // 检查哪些图片需要下载
         var imagesToDownload: [String] = []
         for imageName in uniqueNames {
             let localImageURL = localDirectoryURL.appendingPathComponent(imageName)
@@ -109,9 +103,12 @@ class ResourceManager: ObservableObject {
             return
         }
         
-        print("需要下载 \(imagesToDownload.count) 张图片")
+        let totalToDownload = imagesToDownload.count
+        print("需要下载 \(totalToDownload) 张图片")
         
-        // 下载缺失的图片
+        // 【修改】在下载开始前，立即调用一次回调，用于初始化UI
+        progressHandler(0, totalToDownload)
+        
         for (index, imageName) in imagesToDownload.enumerated() {
             let downloadPath = "\(directoryName)/\(imageName)"
             guard var components = URLComponents(string: "\(serverBaseURL)/download") else { continue }
@@ -130,7 +127,12 @@ class ResourceManager: ObservableObject {
                     try fileManager.removeItem(at: destinationURL)
                 }
                 try fileManager.moveItem(at: tempURL, to: destinationURL)
-                print("✅ 已下载图片 (\(index + 1)/\(imagesToDownload.count)): \(imageName)")
+                
+                // 【修改】每成功下载一张图片，就调用回调函数更新进度
+                // `index + 1` 表示当前已完成的数量
+                let completedCount = index + 1
+                progressHandler(completedCount, totalToDownload)
+                print("✅ 已下载图片 (\(completedCount)/\(totalToDownload)): \(imageName)")
                 
             } catch {
                 print("⚠️ 下载图片失败 \(imageName): \(error.localizedDescription)")
@@ -198,7 +200,6 @@ class ResourceManager: ObservableObject {
                 
             } catch {
                 print("⚠️ [静默预载] 失败 \(imageName): \(error.localizedDescription)")
-                // 向上抛出错误，让调用者决定如何处理。在此场景下，调用者会忽略它。
                 throw error
             }
         }
@@ -251,17 +252,14 @@ class ResourceManager: ObservableObject {
                 }
             }
             
-            // 【修改】: 如果没有需要下载的任务
             if tasksToDownload.isEmpty {
                 if isManual {
-                    // 如果是手动触发的，并且没有文件要下载，则立即停止同步状态，并设置标志以显示弹窗
                     self.isSyncing = false
                     self.showAlreadyUpToDateAlert = true
                 } else {
-                    // 如果是自动触发的，则静默停止同步状态
                     self.isSyncing = false
                 }
-                return // 提前返回
+                return
             }
             
             self.isDownloading = true
@@ -319,7 +317,6 @@ class ResourceManager: ObservableObject {
             let jsonFilesFromServer = serverVersion.files.filter { $0.type == "json" }
             let imageDirsFromServer = serverVersion.files.filter { $0.type == "images" }
 
-            // 只检查 JSON 文件，不自动下载图片
             for jsonInfo in jsonFilesFromServer {
                 let localFileURL = documentsDirectory.appendingPathComponent(jsonInfo.name)
                 let correspondingImageDirName = "news_images_" + jsonInfo.name.components(separatedBy: "_").last!.replacingOccurrences(of: ".json", with: "")
@@ -333,7 +330,6 @@ class ResourceManager: ObservableObject {
                     if serverMD5 != localMD5 {
                         print("MD5不匹配: \(jsonInfo.name)。计划更新。")
                         downloadTasks.append((fileInfo: jsonInfo, isIncremental: false))
-                        // 确保对应的图片目录存在（但不下载图片）
                         let imageDirURL = documentsDirectory.appendingPathComponent(correspondingImageDirName)
                         try? fileManager.createDirectory(at: imageDirURL, withIntermediateDirectories: true)
                     } else {
@@ -343,13 +339,11 @@ class ResourceManager: ObservableObject {
                 } else {
                     print("新文件: \(jsonInfo.name)。计划下载。")
                     downloadTasks.append((fileInfo: jsonInfo, isIncremental: false))
-                    // 确保对应的图片目录存在（但不下载图片）
                     let imageDirURL = documentsDirectory.appendingPathComponent(correspondingImageDirName)
                     try? fileManager.createDirectory(at: imageDirURL, withIntermediateDirectories: true)
                 }
             }
             
-            // 确保所有图片目录都存在
             for dirInfo in imageDirsFromServer {
                 let localDirURL = documentsDirectory.appendingPathComponent(dirInfo.name)
                 try? fileManager.createDirectory(at: localDirURL, withIntermediateDirectories: true)
@@ -370,7 +364,6 @@ class ResourceManager: ObservableObject {
             self.isDownloading = true
             let totalTasks = downloadTasks.count
             
-            // 只下载 JSON 文件
             for (index, task) in downloadTasks.enumerated() {
                 self.progressText = "\(index + 1)/\(totalTasks)"
                 self.downloadProgress = Double(index + 1) / Double(totalTasks)
