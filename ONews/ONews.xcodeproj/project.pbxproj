@@ -6,6 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A365C0002EB0A7390008EB0F /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A365BFFF2EB0A7390008EB0F /* StoreKit.framework */; };
+		A365C0022EB0A98C0008EB0F /* sskey.storekit in Resources */ = {isa = PBXBuildFile; fileRef = A365C0012EB0A98C0008EB0F /* sskey.storekit */; };
+		A365C0032EB0A98C0008EB0F /* sskey.storekit in Resources */ = {isa = PBXBuildFile; fileRef = A365C0012EB0A98C0008EB0F /* sskey.storekit */; };
+		A365C0042EB0A98C0008EB0F /* sskey.storekit in Resources */ = {isa = PBXBuildFile; fileRef = A365C0012EB0A98C0008EB0F /* sskey.storekit */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		A32ACC6A2E08007D004C09AA /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +34,8 @@
 		A32ACC5C2E08007C004C09AA /* ONews.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ONews.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A32ACC692E08007D004C09AA /* ONewsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ONewsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A32ACC732E08007D004C09AA /* ONewsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ONewsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A365BFFF2EB0A7390008EB0F /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
+		A365C0012EB0A98C0008EB0F /* sskey.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = sskey.storekit; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -65,6 +74,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A365C0002EB0A7390008EB0F /* StoreKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -88,6 +98,7 @@
 		A32ACC532E08007C004C09AA = {
 			isa = PBXGroup;
 			children = (
+				A365C0012EB0A98C0008EB0F /* sskey.storekit */,
 				A32ACC5E2E08007C004C09AA /* ONews */,
 				A32ACC6C2E08007D004C09AA /* ONewsTests */,
 				A32ACC762E08007D004C09AA /* ONewsUITests */,
@@ -109,6 +120,7 @@
 		A32E9F632E196F04000B07A8 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				A365BFFF2EB0A7390008EB0F /* StoreKit.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -235,6 +247,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A365C0022EB0A98C0008EB0F /* sskey.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -242,6 +255,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A365C0032EB0A98C0008EB0F /* sskey.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -249,6 +263,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A365C0042EB0A98C0008EB0F /* sskey.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
