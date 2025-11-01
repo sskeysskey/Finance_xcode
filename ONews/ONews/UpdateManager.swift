@@ -1,4 +1,3 @@
-// /Users/yanzhang/Coding/Xcode/ONews/ONews/UpdateManager.swift
 import Foundation
 import CryptoKit
 

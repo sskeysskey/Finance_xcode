@@ -1,4 +1,3 @@
-// /Users/yanzhang/Coding/Xcode/ONews/ONews/ArticleListView.swift
 import SwiftUI
 
 enum ArticleFilterMode: String, CaseIterable {
