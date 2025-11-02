@@ -7,7 +7,7 @@ enum ArticleFilterMode: String, CaseIterable {
 
 // ==================== 单一来源列表 ====================
 struct ArticleListView: View {
-    let source: NewsSource
+    let sourceName: String  // 【修改】只存储源名称
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager
 
@@ -28,8 +28,14 @@ struct ArticleListView: View {
     @State private var selectedArticle: Article?
     @State private var isNavigationActive = false
 
+    // 【新增】动态计算属性，从 viewModel 中获取最新的 source
+    private var source: NewsSource? {
+        viewModel.sources.first(where: { $0.name == sourceName })
+    }
+
     private var baseFilteredArticles: [Article] {
-        source.articles.filter { article in
+        guard let source = source else { return [] }
+        return source.articles.filter { article in
             let isReadEff = viewModel.isArticleEffectivelyRead(article)
             return (filterMode == .unread) ? !isReadEff : isReadEff
         }
@@ -61,16 +67,20 @@ struct ArticleListView: View {
     }
 
     private var unreadCount: Int {
-        source.articles.filter { !$0.isRead }.count
+        guard let source = source else { return 0 }
+        return source.articles.filter { !$0.isRead }.count
     }
+    
     private var readCount: Int {
-        source.articles.filter { $0.isRead }.count
+        guard let source = source else { return 0 }
+        return source.articles.filter { $0.isRead }.count
     }
 
     private var searchResults: [Article] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return []
         }
+        guard let source = source else { return [] }
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return source.articles.filter { $0.topic.lowercased().contains(keyword) }
     }
@@ -86,120 +96,117 @@ struct ArticleListView: View {
     }
 
     var body: some View {
-        ZStack {
-            VStack(spacing: 0) {
-                if isSearching {
-                    SearchBarInline(
-                        text: $searchText,
-                        onCommit: {
-                            isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        },
-                        onCancel: {
-                            withAnimation {
-                                isSearching = false
+        if source == nil {
+            VStack {
+                Text("新闻源不再可用")
+                    .foregroundColor(.white)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.viewBackground.ignoresSafeArea())
+        } else {
+            ZStack {
+                VStack(spacing: 0) {
+                    if isSearching {
+                        SearchBarInline(
+                            text: $searchText,
+                            onCommit: {
+                                isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            },
+                            onCancel: {
+                                withAnimation {
+                                    isSearching = false
+                                    isSearchActive = false
+                                    searchText = ""
+                                }
+                            }
+                        )
+                    }
+
+                    listContent
+                        .listStyle(PlainListStyle())
+
+                    if !isSearchActive {
+                        Picker("Filter", selection: $filterMode) {
+                            ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
+                                let count = (mode == .unread) ? unreadCount : readCount
+                                Text("\(mode.rawValue) (\(count))").tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .padding([.horizontal, .bottom])
+                    }
+                }
+                .background(Color.viewBackground.ignoresSafeArea())
+            }
+            .navigationDestination(isPresented: $isNavigationActive) {
+                if let article = selectedArticle {
+                    ArticleContainerView(
+                        article: article,
+                        sourceName: sourceName,
+                        context: .fromSource(sourceName),
+                        viewModel: viewModel,
+                        resourceManager: resourceManager
+                    )
+                }
+            }
+            .navigationTitle(sourceName.replacingOccurrences(of: "_", with: " "))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task {
+                            await syncResources(isManual: true)
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(resourceManager.isSyncing)
+                    .accessibilityLabel("刷新")
+                }
+                
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        withAnimation {
+                            isSearching.toggle()
+                            if !isSearching {
                                 isSearchActive = false
                                 searchText = ""
                             }
                         }
-                    )
+                    } label: {
+                        Image(systemName: "magnifyingglass")
+                    }
+                    .accessibilityLabel("搜索")
                 }
-
-                listContent
-                    .listStyle(PlainListStyle())
-
-                if !isSearchActive {
-                    Picker("Filter", selection: $filterMode) {
-                        ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                            let count = (mode == .unread) ? unreadCount : readCount
-                            Text("\(mode.rawValue) (\(count))").tag(mode)
+            }
+            .overlay(
+                Group {
+                    if isDownloadingImages {
+                        VStack(spacing: 12) {
+                            Text("正在加载图片...")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            
+                            ProgressView(value: downloadProgress)
+                                .progressViewStyle(LinearProgressViewStyle(tint: .white))
+                                .padding(.horizontal, 40)
+                            
+                            Text(downloadProgressText)
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.8))
                         }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black.opacity(0.75))
+                        .edgesIgnoringSafeArea(.all)
                     }
-                    .pickerStyle(.segmented)
-                    .padding([.horizontal, .bottom])
                 }
-            }
-            .background(Color.viewBackground.ignoresSafeArea())
-            
-            // 【移除】废弃的、隐藏的 NavigationLink 已被移除
-            /*
-            if let article = selectedArticle {
-                NavigationLink(
-                    destination: ArticleContainerView(...),
-                    isActive: $isNavigationActive
-                ) { EmptyView() }.hidden()
-            }
-            */
+            )
+            .alert("", isPresented: $showErrorAlert, actions: {
+                Button("好的", role: .cancel) { }
+            }, message: {
+                Text(errorMessage)
+            })
         }
-        // 【核心修改】使用新的 navigationDestination 修饰符来处理程序化导航
-        .navigationDestination(isPresented: $isNavigationActive) {
-            // 确保 selectedArticle 有值时才创建目标视图
-            if let article = selectedArticle {
-                ArticleContainerView(
-                    article: article,
-                    sourceName: source.name,
-                    context: .fromSource(source.name),
-                    viewModel: viewModel,
-                    resourceManager: resourceManager
-                )
-            }
-        }
-        .navigationTitle(source.name.replacingOccurrences(of: "_", with: " "))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    Task {
-                        await syncResources(isManual: true)
-                    }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .disabled(resourceManager.isSyncing)
-                .accessibilityLabel("刷新")
-            }
-            
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    withAnimation {
-                        isSearching.toggle()
-                        if !isSearching {
-                            isSearchActive = false
-                            searchText = ""
-                        }
-                    }
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                }
-                .accessibilityLabel("搜索")
-            }
-        }
-        .overlay(
-            Group {
-                if isDownloadingImages {
-                    VStack(spacing: 12) {
-                        Text("正在加载图片...")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                        
-                        ProgressView(value: downloadProgress)
-                            .progressViewStyle(LinearProgressViewStyle(tint: .white))
-                            .padding(.horizontal, 40)
-                        
-                        Text(downloadProgressText)
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.8))
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black.opacity(0.75))
-                    .edgesIgnoringSafeArea(.all)
-                }
-            }
-        )
-        .alert("", isPresented: $showErrorAlert, actions: {
-            Button("好的", role: .cancel) { }
-        }, message: {
-            Text(errorMessage)
-        })
     }
     
     @ViewBuilder
@@ -281,7 +288,7 @@ struct ArticleListView: View {
     @ViewBuilder
     private var articlesList: some View {
         let timestamps = sortedTimestamps(for: groupedArticles)
-        let expandedSet = viewModel.expandedTimestampsBySource[source.name, default: Set<String>()]
+        let expandedSet = viewModel.expandedTimestampsBySource[sourceName, default: Set<String>()]
         
         ForEach(timestamps, id: \.self) { timestamp in
             Section {
@@ -346,7 +353,7 @@ struct ArticleListView: View {
                 .contentShape(Rectangle())
                 .onTapGesture {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        viewModel.toggleTimestampExpansion(for: source.name, timestamp: timestamp)
+                        viewModel.toggleTimestampExpansion(for: sourceName, timestamp: timestamp)
                     }
                 }
             }
@@ -392,10 +399,10 @@ struct ArticleListView: View {
     }
 
     private func initializeStateIfNeeded() {
-        if viewModel.expandedTimestampsBySource[source.name] == nil {
+        if viewModel.expandedTimestampsBySource[sourceName] == nil {
             let timestamps = sortedTimestamps(for: groupedArticles)
             if timestamps.count == 1 {
-                viewModel.expandedTimestampsBySource[source.name] = Set(timestamps)
+                viewModel.expandedTimestampsBySource[sourceName] = Set(timestamps)
             }
         }
     }
@@ -546,18 +553,7 @@ struct AllArticlesListView: View {
                 }
             }
             .background(Color.viewBackground.ignoresSafeArea())
-            
-            // 【移除】废弃的、隐藏的 NavigationLink 已被移除
-            /*
-            if let item = selectedArticleItem {
-                NavigationLink(
-                    destination: ArticleContainerView(...),
-                    isActive: $isNavigationActive
-                ) { EmptyView() }.hidden()
-            }
-            */
         }
-        // 【核心修改】使用新的 navigationDestination 修饰符来处理程序化导航
         .navigationDestination(isPresented: $isNavigationActive) {
             // 确保 selectedArticleItem 有值时才创建目标视图
             if let item = selectedArticleItem {

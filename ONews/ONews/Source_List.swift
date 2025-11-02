@@ -1,31 +1,9 @@
 import SwiftUI
 
-// 【新增】定义导航目标，使其类型安全且可哈希
+// 【修改】定义导航目标，source 只存储名称
 enum NavigationTarget: Hashable {
     case allArticles
-    case source(NewsSource)
-    
-    // NewsSource 默认没有实现 Hashable，我们需要手动实现
-    // 但由于 NewsSource 有一个 UUID 类型的 id，我们可以直接用它来比较和哈希
-    func hash(into hasher: inout Hasher) {
-        switch self {
-        case .allArticles:
-            hasher.combine("allArticles")
-        case .source(let source):
-            hasher.combine(source.id)
-        }
-    }
-    
-    static func == (lhs: NavigationTarget, rhs: NavigationTarget) -> Bool {
-        switch (lhs, rhs) {
-        case (.allArticles, .allArticles):
-            return true
-        case (.source(let lhsSource), .source(let rhsSource)):
-            return lhsSource.id == rhsSource.id
-        default:
-            return false
-        }
-    }
+    case source(String)  // 只存储源的名称，而不是整个 NewsSource
 }
 
 
@@ -143,15 +121,8 @@ struct SourceListView: View {
                 switch target {
                 case .allArticles:
                     AllArticlesListView(viewModel: viewModel, resourceManager: resourceManager)
-                case .source(let source):
-                    // 从 viewModel.sources 中找到最新的 source 数据传递过去
-                    // 这样可以确保即使 viewModel 中的数据更新了，导航到的页面也是最新的
-                    if let updatedSource = viewModel.sources.first(where: { $0.id == source.id }) {
-                        ArticleListView(source: updatedSource, viewModel: viewModel, resourceManager: resourceManager)
-                    } else {
-                        // 如果源被删除了，提供一个回退视图
-                        Text("新闻源 “\(source.name)” 不再可用。")
-                    }
+                case .source(let sourceName):
+                    ArticleListView(sourceName: sourceName, viewModel: viewModel, resourceManager: resourceManager)
                 }
             }
         }
@@ -261,15 +232,6 @@ struct SourceListView: View {
                         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     ) {
                         ForEach(grouped[timestamp] ?? [], id: \.article.id) { item in
-                            // 【修改】这里也使用 value-based NavigationLink
-                            // 虽然它会导航到 ArticleContainerView，但这个视图尚未适配 value-based 导航
-                            // 且这里的导航逻辑比较复杂（点击后需要下载），因此保持 ArticleListView/AllArticlesListView 内部的 isPresented 逻辑是更好的选择。
-                            // 为了简化，我们直接导航到包含该文章的列表页。更好的体验需要更复杂的导航状态管理。
-                            // 暂时保持原样，因为主要修复的是 ArticleListView 内部的警告。
-                            // 这里的 NavigationLink 实际上是导航到 ArticleContainerView，但它是在另一个 NavigationStack 的上下文中。
-                            // 为了正确修复，我们需要在 ArticleListView 中处理这个 item。
-                            // 这里的 NavigationLink(destination:) 仍然有效，因为它在 NavigationStack 内。
-                            // 虽然不是最新的 value-based 写法，但它不会产生警告。
                             NavigationLink(destination: ArticleContainerView(
                                 article: item.article,
                                 sourceName: item.sourceName,
@@ -340,8 +302,7 @@ struct SourceListView: View {
                     .listRowSeparator(.hidden)
                     
                     ForEach(viewModel.sources) { source in
-                        // 【修改】使用新的 value-based NavigationLink
-                        NavigationLink(value: NavigationTarget.source(source)) {
+                        NavigationLink(value: NavigationTarget.source(source.name)) {
                             HStack {
                                 Text(source.name)
                                     .fontWeight(.semibold)
@@ -398,17 +359,5 @@ struct SourceListView: View {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy年M月d日, EEEE"
         return formatter.string(from: date)
-    }
-}
-
-// 【修改】为了让 NavigationTarget.source(NewsSource) 可用
-// 需要让 NewsSource 符合 Hashable 协议。因为它有 id: UUID，这很简单。
-extension NewsSource: Hashable {
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-
-    static func == (lhs: NewsSource, rhs: NewsSource) -> Bool {
-        lhs.id == rhs.id
     }
 }
