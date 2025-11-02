@@ -367,7 +367,23 @@ struct ArticleListView: View {
             isNavigationActive = true
             return
         }
+
+        // 【新增】先检查图片是否已经存在
+        let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
+            timestamp: article.timestamp,
+            imageNames: article.images
+        )
         
+        if imagesAlreadyExist {
+            // 图片已存在，直接跳转，不显示下载遮罩
+            await MainActor.run {
+                selectedArticle = article
+                isNavigationActive = true
+            }
+            return
+        }
+        
+        // 图片不存在，需要下载
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
@@ -785,6 +801,22 @@ struct AllArticlesListView: View {
             return
         }
         
+        // 【新增】先检查图片是否已经存在
+        let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
+            timestamp: item.article.timestamp,
+            imageNames: item.article.images
+        )
+        
+        if imagesAlreadyExist {
+            // 图片已存在，直接跳转，不显示下载遮罩
+            await MainActor.run {
+                selectedArticleItem = item
+                isNavigationActive = true
+            }
+            return
+        }
+        
+        // 图片不存在，需要下载
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
