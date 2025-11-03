@@ -224,11 +224,10 @@ struct IndicesContentView: View {
                 if let sectors = dataService.sectorsPanel?.sectors {
                     
                     // 1. 定义分组和顺序 (这部分逻辑保持不变)
-                    let topRowOrder = ["Strategy12", "Strategy34", "Watching"]
-                    let bottomRowNames = ["PE_valid", "PE_invalid", "Today"]
+                    let topRowOrder = ["Strategy12", "Strategy34", "Today"]
+                    let bottomRowNames = ["PE_valid", "PE_invalid", "Must"]
                     // 添加不需要显示的分组名称
-                    let hiddenNames = ["Next Week", "2 Weeks", "3 Weeks"]
-                    let excludedNames = topRowOrder + bottomRowNames + hiddenNames
+                    let excludedNames = topRowOrder + bottomRowNames
                     
                     // 2. 根据定义的规则，过滤和排序数据 (这部分逻辑保持不变)
                     
