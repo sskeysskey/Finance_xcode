@@ -22,9 +22,9 @@
     "_billingIssuesEnabled" : false,
     "_disableDialogs" : false,
     "_failTransactionsEnabled" : false,
-    "_locale" : "en_US",
+    "_locale" : "zh_Hans",
     "_renewalBillingIssuesEnabled" : false,
-    "_storefront" : "USA",
+    "_storefront" : "CHN",
     "_storeKitErrors" : [
 
     ],
@@ -36,7 +36,7 @@
       "localizations" : [
 
       ],
-      "name" : "Onews",
+      "name" : "ONews",
       "subscriptions" : [
         {
           "adHocOffers" : [
