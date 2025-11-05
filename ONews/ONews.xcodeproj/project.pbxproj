@@ -8,9 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		A365C0002EB0A7390008EB0F /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A365BFFF2EB0A7390008EB0F /* StoreKit.framework */; };
-		A365C0022EB0A98C0008EB0F /* sskey.storekit in Resources */ = {isa = PBXBuildFile; fileRef = A365C0012EB0A98C0008EB0F /* sskey.storekit */; };
-		A365C0032EB0A98C0008EB0F /* sskey.storekit in Resources */ = {isa = PBXBuildFile; fileRef = A365C0012EB0A98C0008EB0F /* sskey.storekit */; };
-		A365C0042EB0A98C0008EB0F /* sskey.storekit in Resources */ = {isa = PBXBuildFile; fileRef = A365C0012EB0A98C0008EB0F /* sskey.storekit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -35,7 +32,6 @@
 		A32ACC692E08007D004C09AA /* ONewsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ONewsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A32ACC732E08007D004C09AA /* ONewsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ONewsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A365BFFF2EB0A7390008EB0F /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
-		A365C0012EB0A98C0008EB0F /* sskey.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = sskey.storekit; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -98,7 +94,6 @@
 		A32ACC532E08007C004C09AA = {
 			isa = PBXGroup;
 			children = (
-				A365C0012EB0A98C0008EB0F /* sskey.storekit */,
 				A32ACC5E2E08007C004C09AA /* ONews */,
 				A32ACC6C2E08007D004C09AA /* ONewsTests */,
 				A32ACC762E08007D004C09AA /* ONewsUITests */,
@@ -204,7 +199,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastSwiftUpdateCheck = 1640;
-				LastUpgradeCheck = 2600;
+				LastUpgradeCheck = 2610;
 				TargetAttributes = {
 					A32ACC5B2E08007C004C09AA = {
 						CreatedOnToolsVersion = 16.4;
@@ -247,7 +242,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A365C0022EB0A98C0008EB0F /* sskey.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -255,7 +249,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A365C0032EB0A98C0008EB0F /* sskey.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -263,7 +256,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A365C0042EB0A98C0008EB0F /* sskey.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -366,6 +358,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -423,6 +416,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};

@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "icon1024.png",
+      "filename" : "Finance_iphone_logo_.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -13,7 +13,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "icon1024 1.png",
+      "filename" : "Finance_iphone_logo_ 1.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -25,7 +25,7 @@
           "value" : "tinted"
         }
       ],
-      "filename" : "icon1024 2.png",
+      "filename" : "Finance_iphone_logo_ 2.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
