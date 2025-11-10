@@ -70,8 +70,7 @@ struct ArticleContainerView: View {
                 ToastView(message: "该分组内已无更多文章")
             }
             
-            // 【修改】重构音频播放器UI的显示逻辑
-            // 1. 常驻的悬浮按钮
+            // 常驻的悬浮按钮
             MiniAudioBubbleView(
                 isPlaybackActive: audioPlayerManager.isPlaybackActive,
                 onTap: { handleBubbleTap() }
@@ -80,7 +79,7 @@ struct ArticleContainerView: View {
             .transition(.move(edge: .leading).combined(with: .opacity))
             .zIndex(2) // 确保在详情页之上
             
-            // 2. 条件显示的完整播放器
+            // 条件显示的完整播放器
             if !isMiniPlayerCollapsed && audioPlayerManager.isPlaybackActive {
                 AudioPlayerView(
                     playerManager: audioPlayerManager,
@@ -96,12 +95,13 @@ struct ArticleContainerView: View {
                     }
                 )
                 .padding(.horizontal)
-                .padding(.bottom, 6)
+                // 【修改】增大底部间距，将播放器整体上移，避免重叠
+                .padding(.bottom, 30)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .zIndex(3) // 确保在悬浮按钮之上
             }
             
-            // 【修改】更新图片下载遮罩层UI以显示详细进度
+            // 更新图片下载遮罩层UI以显示详细进度
             if isDownloadingImages {
                 VStack(spacing: 12) {
                     Text("正在加载图片...")
@@ -159,10 +159,16 @@ struct ArticleContainerView: View {
         })
     }
 
-    // 【新增】处理悬浮按钮点击的逻辑
+    // 【修改】更新处理悬浮按钮点击的逻辑
     private func handleBubbleTap() {
-        if audioPlayerManager.isPlaybackActive {
-            // 如果正在播放，点击悬浮按钮则展开完整播放器
+        // 【新增逻辑】如果完整播放器是展开状态，并且音频正在播放，则点击悬浮按钮执行最小化操作
+        if !isMiniPlayerCollapsed && audioPlayerManager.isPlaybackActive {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85, blendDuration: 0.1)) {
+                isMiniPlayerCollapsed = true
+            }
+        }
+        // 如果音频正在播放（但播放器是收起的），点击悬浮按钮则展开完整播放器
+        else if audioPlayerManager.isPlaybackActive {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.85, blendDuration: 0.1)) {
                 isMiniPlayerCollapsed = false
             }
@@ -172,7 +178,7 @@ struct ArticleContainerView: View {
         }
     }
     
-    // 【新增】处理右上角工具栏按钮点击的逻辑
+    // 处理右上角工具栏按钮点击的逻辑
     private func handleAudioToggle() {
         if audioPlayerManager.isPlaybackActive {
             audioPlayerManager.stop()
@@ -181,7 +187,7 @@ struct ArticleContainerView: View {
         }
     }
     
-    // 【新增】一个统一的开始播放的辅助函数
+    // 一个统一的开始播放的辅助函数
     private func startPlayback() {
         // 开始播放时，确保完整播放器是展开状态
         isMiniPlayerCollapsed = false
@@ -252,7 +258,7 @@ struct ArticleContainerView: View {
                 }
                 
                 do {
-                    // 2. 【核心修正】调用新的下载方法，并传入一个闭包来处理进度更新
+                    // 2. 调用下载方法，并传入一个闭包来处理进度更新
                     try await resourceManager.downloadImagesForArticle(
                         timestamp: next.article.timestamp,
                         imageNames: next.article.images,
