@@ -22,8 +22,11 @@ struct ArticleDetailView: View {
     let totalUnreadCount: Int
     @ObservedObject var viewModel: NewsViewModel
 
+    // 【修改】保持对 manager 的观察以获取状态
     @ObservedObject var audioPlayerManager: AudioPlayerManager
-    var requestNextArticle: () async -> Void  // 修改:改为异步闭包
+    var requestNextArticle: () async -> Void
+    // 【新增】用于处理右上角音频按钮点击的闭包
+    var onAudioToggle: () -> Void
 
     @State private var isSharePresented = false
     @State private var showCopyToast = false
@@ -100,7 +103,7 @@ struct ArticleDetailView: View {
                     
                     Button(action: {
                         Task {
-                            await self.requestNextArticle()  // 修改:使用 await
+                            await self.requestNextArticle()
                         }
                     }) {
                         HStack {
@@ -161,17 +164,8 @@ struct ArticleDetailView: View {
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack {
-                    Button(action: {
-                        if audioPlayerManager.isPlaybackActive {
-                            audioPlayerManager.stop()
-                        } else {
-                            let paragraphs = article.article
-                                .components(separatedBy: .newlines)
-                                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                            let fullText = paragraphs.joined(separator: "\n\n")
-                            audioPlayerManager.startPlayback(text: fullText)
-                        }
-                    }) {
+                    // 【修改】按钮的 action 现在调用 onAudioToggle 闭包
+                    Button(action: onAudioToggle) {
                         Image(systemName: audioPlayerManager.isPlaybackActive ? "speaker.slash.fill" : "speaker.wave.2.fill")
                     }
                     .disabled(audioPlayerManager.isSynthesizing)

@@ -51,11 +51,13 @@ struct ArticleContainerView: View {
                 unreadCountForGroup: unreadCountForGroup,
                 totalUnreadCount: totalUnreadCountForContext,
                 viewModel: viewModel,
-                audioPlayerManager: audioPlayerManager,
+                audioPlayerManager: audioPlayerManager, // 保持传递以获取状态
                 requestNextArticle: {
-                    Task {
-                        await self.switchToNextArticleAndStopAudio()
-                    }
+                    await self.switchToNextArticleAndStopAudio()
+                },
+                // 【修改】传递 onAudioToggle 闭包
+                onAudioToggle: {
+                    handleAudioToggle()
                 }
             )
             .id(currentArticle.id)
@@ -68,34 +70,35 @@ struct ArticleContainerView: View {
                 ToastView(message: "该分组内已无更多文章")
             }
             
-            if audioPlayerManager.isPlaybackActive {
-                if isMiniPlayerCollapsed {
-                    MiniAudioBubbleView(
-                        isCollapsed: $isMiniPlayerCollapsed,
-                        isPlaying: audioPlayerManager.isPlaying
-                    )
-                    .padding(.bottom, 10)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                    .zIndex(2)
-                } else {
-                    AudioPlayerView(
-                        playerManager: audioPlayerManager,
-                        playNextAndStart: {
-                            Task {
-                                await switchToNextArticle(shouldAutoplayNext: true)
-                            }
-                        },
-                        toggleCollapse: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85, blendDuration: 0.1)) {
-                                isMiniPlayerCollapsed = true
-                            }
+            // 【修改】重构音频播放器UI的显示逻辑
+            // 1. 常驻的悬浮按钮
+            MiniAudioBubbleView(
+                isPlaybackActive: audioPlayerManager.isPlaybackActive,
+                onTap: { handleBubbleTap() }
+            )
+            .padding(.bottom, 10)
+            .transition(.move(edge: .leading).combined(with: .opacity))
+            .zIndex(2) // 确保在详情页之上
+            
+            // 2. 条件显示的完整播放器
+            if !isMiniPlayerCollapsed && audioPlayerManager.isPlaybackActive {
+                AudioPlayerView(
+                    playerManager: audioPlayerManager,
+                    playNextAndStart: {
+                        Task {
+                            await switchToNextArticle(shouldAutoplayNext: true)
                         }
-                    )
-                    .padding(.horizontal)
-                    .padding(.bottom, 6)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .zIndex(2)
-                }
+                    },
+                    toggleCollapse: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85, blendDuration: 0.1)) {
+                            isMiniPlayerCollapsed = true
+                        }
+                    }
+                )
+                .padding(.horizontal)
+                .padding(.bottom, 6)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(3) // 确保在悬浮按钮之上
             }
             
             // 【修改】更新图片下载遮罩层UI以显示详细进度
@@ -116,7 +119,7 @@ struct ArticleContainerView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black.opacity(0.75))
                 .edgesIgnoringSafeArea(.all)
-                .zIndex(3)
+                .zIndex(4) // 最高层级
             }
         }
         .onAppear {
@@ -154,6 +157,40 @@ struct ArticleContainerView: View {
         }, message: {
             Text(errorMessage)
         })
+    }
+
+    // 【新增】处理悬浮按钮点击的逻辑
+    private func handleBubbleTap() {
+        if audioPlayerManager.isPlaybackActive {
+            // 如果正在播放，点击悬浮按钮则展开完整播放器
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85, blendDuration: 0.1)) {
+                isMiniPlayerCollapsed = false
+            }
+        } else {
+            // 如果未播放，点击则开始播放
+            startPlayback()
+        }
+    }
+    
+    // 【新增】处理右上角工具栏按钮点击的逻辑
+    private func handleAudioToggle() {
+        if audioPlayerManager.isPlaybackActive {
+            audioPlayerManager.stop()
+        } else {
+            startPlayback()
+        }
+    }
+    
+    // 【新增】一个统一的开始播放的辅助函数
+    private func startPlayback() {
+        // 开始播放时，确保完整播放器是展开状态
+        isMiniPlayerCollapsed = false
+        
+        let paragraphs = currentArticle.article
+            .components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let fullText = paragraphs.joined(separator: "\n\n")
+        audioPlayerManager.startPlayback(text: fullText, title: currentArticle.topic)
     }
 
     private func updateUnreadCounts() {
@@ -252,6 +289,8 @@ struct ArticleContainerView: View {
         
         if shouldAutoplayNext {
             await MainActor.run {
+                // 自动播放时，确保播放器是展开的
+                self.isMiniPlayerCollapsed = false
                 let paragraphs = next.article.article
                     .components(separatedBy: .newlines)
                     .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }

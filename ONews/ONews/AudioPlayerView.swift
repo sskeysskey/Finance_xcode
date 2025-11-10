@@ -1153,21 +1153,26 @@ struct AudioPlayerView: View {
     }
 }
 
+// 【修改】重构 MiniAudioBubbleView 以适应新需求
 struct MiniAudioBubbleView: View {
-    @Binding var isCollapsed: Bool
-    let isPlaying: Bool
+    // 【新增】接收播放状态，用于决定图标和动画
+    let isPlaybackActive: Bool
+    // 【新增】接收一个通用的点击闭包
+    let onTap: () -> Void
+
+    // 【新增】用于控制脉冲动画的状态
+    @State private var isPulsing = false
 
     var body: some View {
         VStack {
             Spacer()
-            Button(action: {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.85, blendDuration: 0.1)) {
-                    isCollapsed = false
-                }
-            }) {
+            Button(action: onTap) { // 【修改】使用传入的 onTap 闭包
                 HStack(spacing: 8) {
-                    Image(systemName: isPlaying ? "waveform.circle.fill" : "waveform.circle")
+                    // 【修改】根据 isPlaybackActive 改变图标
+                    Image(systemName: isPlaybackActive ? "waveform.circle.fill" : "waveform.circle")
                         .font(.system(size: 22, weight: .semibold))
+                        // 【新增】当播放激活时，应用脉冲缩放效果
+                        .scaleEffect(isPulsing && isPlaybackActive ? 1.1 : 1.0)
                 }
                 .foregroundColor(.white)
                 .padding(.vertical, 9)
@@ -1175,9 +1180,18 @@ struct MiniAudioBubbleView: View {
                 .background(.black.opacity(0.8))
                 .clipShape(Capsule())
                 .shadow(radius: 6)
+                // 【新增】定义脉冲动画
+                .animation(
+                    isPlaybackActive ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default,
+                    value: isPulsing
+                )
             }
             .padding(.leading, 8)
             .padding(.bottom, 4)
+            .onAppear {
+                // 视图出现时启动动画状态切换
+                self.isPulsing = true
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         .allowsHitTesting(true)
