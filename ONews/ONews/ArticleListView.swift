@@ -1,8 +1,8 @@
 import SwiftUI
 
 enum ArticleFilterMode: String, CaseIterable {
-    case unread = "Unread"
-    case read = "Read"
+    case unread = "未读"
+    case read = "已读"
 }
 
 // ==================== 公共协议和扩展 ====================
