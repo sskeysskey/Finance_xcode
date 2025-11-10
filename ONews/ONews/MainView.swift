@@ -266,13 +266,6 @@ class NewsViewModel: ObservableObject {
         expandedTimestampsBySource[sourceKey] = currentSet
     }
 
-    // 【移除】不再需要此方法
-    /*
-    func setLastTappedArticleID(for sourceKey: String, id: UUID?) {
-        lastTappedArticleIDBySource[sourceKey] = id
-    }
-    */
-
     private func loadReadRecords() {
         self.readRecords = UserDefaults.standard.dictionary(forKey: readKey) as? [String: Date] ?? [:]
     }
