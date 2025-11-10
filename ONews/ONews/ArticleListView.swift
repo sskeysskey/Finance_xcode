@@ -26,6 +26,7 @@ struct ArticleItem: Identifiable {
 extension ArticleListDataSource {
     func groupedByTimestamp(_ items: [ArticleItem]) -> [String: [ArticleItem]] {
         let initial = Dictionary(grouping: items, by: { $0.article.timestamp })
+        // 【修改】对于未读列表，内部文章顺序保持不变（通常是按 topic 字母序）；对于已读列表，反转顺序以将最新阅读的放在分组顶部。
         if filterMode == .read {
             return initial.mapValues { Array($0.reversed()) }
         } else {
@@ -34,11 +35,9 @@ extension ArticleListDataSource {
     }
     
     func sortedTimestamps(for groups: [String: [ArticleItem]]) -> [String] {
-        if filterMode == .read {
-            return groups.keys.sorted(by: >)
-        } else {
-            return groups.keys.sorted(by: <)
-        }
+        // 【修改】统一将日期分组排序改为降序（新->旧）。
+        // 无论是在 'read' 还是 'unread' 模式下，都显示最新的日期分组在最上方。
+        return groups.keys.sorted(by: >)
     }
 }
 
@@ -61,11 +60,9 @@ struct ArticleListContent: View {
     }
     
     var sortedTimestamps: [String] {
-        if filterMode == .read {
-            return groupedArticles.keys.sorted(by: >)
-        } else {
-            return groupedArticles.keys.sorted(by: <)
-        }
+        // 【修改】统一将日期分组排序改为降序（新->旧）。
+        // 这样未读列表也会将最新的日期显示在最上方。
+        return groupedArticles.keys.sorted(by: >)
     }
     
     var body: some View {
@@ -514,7 +511,8 @@ struct ArticleListView: View {
     private func initializeStateIfNeeded() {
         if viewModel.expandedTimestampsBySource[sourceName] == nil {
             let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
-            let timestamps = groupedArticles.keys.sorted(by: filterMode == .read ? (>) : (<))
+            // 【修改】统一使用降序排序，以匹配列表的显示顺序
+            let timestamps = groupedArticles.keys.sorted(by: >)
             if timestamps.count == 1 {
                 viewModel.expandedTimestampsBySource[sourceName] = Set(timestamps)
             }
@@ -751,7 +749,8 @@ struct AllArticlesListView: View {
         
         if viewModel.expandedTimestampsBySource[key] == nil {
             let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
-            let timestamps = groupedArticles.keys.sorted(by: filterMode == .read ? (>) : (<))
+            // 【修改】统一使用降序排序，以匹配列表的显示顺序
+            let timestamps = groupedArticles.keys.sorted(by: >)
             if timestamps.count == 1 {
                 viewModel.expandedTimestampsBySource[key] = Set(timestamps)
             }

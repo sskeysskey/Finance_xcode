@@ -228,10 +228,15 @@ class NewsViewModel: ObservableObject {
             source.articles.map { (article: $0, sourceName: source.name) }
         }
         
+        // 【重要修改】这里的排序逻辑现在仅作为后备或内部使用。
+        // 主要的“下一篇”逻辑将依赖于UI传递的列表。
+        // 为了保持一致性，我们将其改为与UI相同的降序排序。
         return flatList.sorted { item1, item2 in
             if item1.article.timestamp != item2.article.timestamp {
-                return item1.article.timestamp < item2.article.timestamp
+                // 改为降序（新 -> 旧）
+                return item1.article.timestamp > item2.article.timestamp
             }
+            // 日期相同时，按标题字母序
             return item1.article.topic < item2.article.topic
         }
     }
@@ -331,9 +336,10 @@ class NewsViewModel: ObservableObject {
         }
         
         var tempSources = allArticlesBySource.map { sourceName, articles -> NewsSource in
+            // 【重要修改】这里也改为与UI一致的降序排序
             let sortedArticles = articles.sorted {
                 if $0.timestamp != $1.timestamp {
-                    return $0.timestamp < $1.timestamp
+                    return $0.timestamp > $1.timestamp // 降序
                 }
                 return $0.topic < $1.topic
             }
