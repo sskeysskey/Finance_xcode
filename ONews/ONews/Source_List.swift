@@ -271,7 +271,12 @@ struct SourceListView: View {
     
     private var sourceAndAllArticlesView: some View {
         Group {
-            if viewModel.sources.isEmpty && !resourceManager.isSyncing {
+            // 【核心修改】
+            // 判断逻辑的核心变更：不再使用 `viewModel.sources.isEmpty` 来判断是否显示“未订阅”提示。
+            // `viewModel.sources` 在数据加载完成前是空的，会导致不必要的闪烁。
+            // 正确的逻辑是直接检查持久化的订阅管理器 `SubscriptionManager`。
+            // `SubscriptionManager.shared.subscribedSources` 能立即、准确地反映用户是否已订阅了任何源。
+            if SubscriptionManager.shared.subscribedSources.isEmpty && !resourceManager.isSyncing {
                 VStack(spacing: 20) {
                     Text("您还没有订阅任何新闻源")
                         .font(.headline)
@@ -284,6 +289,9 @@ struct SourceListView: View {
                 }
                 .frame(maxHeight: .infinity)
             } else {
+                // 如果用户有订阅（即使 `viewModel.sources` 尚未加载完毕），或者正在同步中，
+                // 直接显示列表。列表在数据加载完成前会自然地为空，然后自动填充，
+                // 这样就避免了显示错误的“未订阅”提示。
                 List {
                     // 【修改】使用新的 value-based NavigationLink
                     NavigationLink(value: NavigationTarget.allArticles) {
