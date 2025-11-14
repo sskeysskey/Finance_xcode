@@ -124,6 +124,9 @@ struct MainContentView: View {
     @StateObject private var updateManager = UpdateManager.shared
     @State private var isDataReady = false
 
+    // 【新增】第 1 步：引入 scenePhase 来监控 App 的生命周期状态
+    @Environment(\.scenePhase) private var scenePhase
+
     // 判断更新流程是否在进行中，用来 disable 刷新按钮
     private var isUpdateInProgress: Bool {
         updateManager.updateState != .idle
@@ -172,43 +175,78 @@ struct MainContentView: View {
                 }
             }
             .environmentObject(dataService)
+            // 【移除】第 2 步：移除旧的 .onAppear 修饰符，它的逻辑将被新的 scenePhase 处理器取代
+            /*
             .onAppear {
-                // 先检查本地是否已有 description.json
-                let hasLocalDescription = FileManagerHelper.getLatestFileUrl(for: "description") != nil
-
-                if !hasLocalDescription {
-                    // 首次启动，Documents 里没有任何数据文件
-                    // 先执行一次「同步」更新
+                // ... 所有旧逻辑都将被移动和改进 ...
+            }
+            */
+            // 【新增】第 3 步：使用 onChange 监听 scenePhase 的变化
+            .onChange(of: scenePhase) { oldPhase, newPhase in
+                // 当 App 变为活跃状态时（例如首次启动，或从后台返回，或关闭系统弹窗后）
+                if newPhase == .active {
+                    print("App is now active. Handling initial data load.")
                     Task {
-                        let updated = await updateManager.checkForUpdates(isManual: false)
-                        if updated {
-                            DatabaseManager.shared.reconnectToLatestDatabase()
-                            // MARK: - 修改：首次启动后也调用强制刷新
-                            dataService.forceReloadData()
-                        }
-                        // 不管更新是否成功，都尝试加载（如果更新失败，则可能依然无本地数据，界面会报错）
-                        dataService.loadData()
-                        isDataReady = true
-                    }
-                } else {
-                    // 已经有本地数据，立即加载并展示
-                    dataService.loadData()
-                    isDataReady = true
-
-                    // 后台异步发起一次更新
-                    Task {
-                        if await updateManager.checkForUpdates(isManual: false) {
-                            // 如果更新成功，重新打开 DB，reload 本地数据
-                            DatabaseManager.shared.reconnectToLatestDatabase()
-                            // MARK: - 修改：后台更新成功后，调用强制刷新
-                            dataService.forceReloadData()
-                        }
+                        await handleInitialDataLoad()
                     }
                 }
             }
 
             // 更新状态浮层
             UpdateOverlayView(updateManager: updateManager)
+        }
+    }
+
+    // 【新增】第 4 步：创建一个集中的、可重入的初始数据加载函数
+    private func handleInitialDataLoad() async {
+        // 守卫条件：如果数据已经准备好，则直接退出，防止重复加载。
+        // 这是实现“仅首次成功加载”的关键。
+        guard !isDataReady else {
+            print("Data is already ready. Skipping initial load.")
+            return
+        }
+        
+        // 检查本地是否已有关键数据文件
+        let hasLocalDescription = FileManagerHelper.getLatestFileUrl(for: "description") != nil
+
+        if !hasLocalDescription {
+            // 情况一：首次启动，或本地数据被清除，Documents 里没有任何数据文件。
+            // 执行前台更新流程，UI会显示“正在准备数据...”。
+            print("No local data found. Starting initial sync...")
+            // isManual: false 表示这是自动流程
+            let updated = await updateManager.checkForUpdates(isManual: false)
+            if updated {
+                // 更新成功后，重新连接数据库并强制加载所有数据到内存
+                DatabaseManager.shared.reconnectToLatestDatabase()
+                dataService.forceReloadData()
+                // 设置数据就绪状态，UI将切换到主界面
+                isDataReady = true
+                print("Initial sync successful. Data is now ready.")
+            } else {
+                // 如果更新失败（例如网络问题），isDataReady 保持 false。
+                // 当用户解决问题后（例如开启网络），App再次变为 active，此函数会重试。
+                print("Initial sync failed.")
+            }
+        } else {
+            // 情况二：本地已存在数据。
+            // 这是常规启动流程。
+            print("Local data found. Loading existing data and checking for updates in background.")
+            
+            // 1. 立即加载本地数据并展示UI，提供快速启动体验。
+            dataService.loadData()
+            isDataReady = true
+
+            // 2. 在后台异步发起一次静默更新检查。
+            Task {
+                if await updateManager.checkForUpdates(isManual: false) {
+                    // 如果后台检查发现并成功下载了更新
+                    DatabaseManager.shared.reconnectToLatestDatabase()
+                    dataService.forceReloadData()
+                    print("Background update successful. Data reloaded.")
+                } else {
+                    print("Background check: No new updates or check failed silently.")
+                }
+            }
         }
     }
 }
