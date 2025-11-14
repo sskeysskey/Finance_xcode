@@ -22,15 +22,26 @@ struct RelatedSymbol: Identifiable {
 struct SimilarView: View {
     // 【注意】: 这里仍然使用主 DataService，因为它被传递给 ChartView 和 SearchView
     @EnvironmentObject var dataService: DataService
-    @ObservedObject var viewModel: SimilarViewModel
+    
+    // ==================== 修改开始 ====================
+    // 1. 将 @ObservedObject 改为 @StateObject
+    //    @StateObject 确保 ViewModel 的实例在视图的生命周期内只创建一次，
+    //    即使在导航返回后，ViewModel 及其数据（包括滚动位置所依赖的列表）也能保持不变。
+    @StateObject private var viewModel: SimilarViewModel
+    // ==================== 修改结束 ====================
+
     // 新增：用于控制搜索页面显示的状态变量
     @State private var showSearchView = false
     
     let symbol: String
     
+    // ==================== 修改开始 ====================
+    // 2. 修改 init 方法以正确初始化 @StateObject
+    //    我们需要使用特殊的 `_viewModel` 属性来包裹 StateObject 的初始化过程。
+    //    这是为带有参数的 @StateObject 进行初始化的标准方式。
     init(symbol: String) {
         self.symbol = symbol
-        self.viewModel = SimilarViewModel(symbol: symbol)
+        self._viewModel = StateObject(wrappedValue: SimilarViewModel(symbol: symbol))
     }
     
     var body: some View {
@@ -43,6 +54,7 @@ struct SimilarView: View {
                 ProgressView("Loading...")
                     .padding()
             } else {
+                // ScrollView 现在会因为 ViewModel 的持久化而保持其滚动位置
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(viewModel.relatedSymbols, id: \.id) { item in
