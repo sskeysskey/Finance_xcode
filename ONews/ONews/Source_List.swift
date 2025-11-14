@@ -22,21 +22,37 @@ struct SourceListView: View {
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
     
-    private var searchResults: [(article: Article, sourceName: String)] {
+    // 【修改】更新 searchResults 的数据结构和搜索逻辑
+    private var searchResults: [(article: Article, sourceName: String, isContentMatch: Bool)] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return []
         }
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return viewModel.allArticlesSortedForDisplay.filter { $0.article.topic.lowercased().contains(keyword) }
+        
+        // 使用 compactMap 来处理更复杂的匹配逻辑
+        return viewModel.allArticlesSortedForDisplay.compactMap { item -> (Article, String, Bool)? in
+            // 优先匹配标题
+            if item.article.topic.lowercased().contains(keyword) {
+                return (item.article, item.sourceName, false) // false 表示不是内容匹配
+            }
+            // 如果标题不匹配，再匹配正文
+            if item.article.article.lowercased().contains(keyword) {
+                return (item.article, item.sourceName, true) // true 表示是内容匹配
+            }
+            // 都没有匹配，则返回 nil
+            return nil
+        }
     }
 
-    private func groupedSearchByTimestamp() -> [String: [(article: Article, sourceName: String)]] {
+    // 【修改】更新分组逻辑以适应新的元组结构
+    private func groupedSearchByTimestamp() -> [String: [(article: Article, sourceName: String, isContentMatch: Bool)]] {
         var initial = Dictionary(grouping: searchResults, by: { $0.article.timestamp })
         initial = initial.mapValues { Array($0.reversed()) }
         return initial
     }
 
-    private func sortedSearchTimestamps(for groups: [String: [(article: Article, sourceName: String)]]) -> [String] {
+    // 【修改】更新排序逻辑以适应新的元组结构
+    private func sortedSearchTimestamps(for groups: [String: [(article: Article, sourceName: String, isContentMatch: Bool)]]) -> [String] {
         return groups.keys.sorted(by: >)
     }
     
@@ -47,7 +63,7 @@ struct SourceListView: View {
                 if isSearching {
                     SearchBarInline(
                         text: $searchText,
-                        placeholder: "搜索所有文章的标题关键字",
+                        placeholder: "搜索标题或正文关键字", // 【修改】更新 placeholder
                         onCommit: {
                             isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         },
@@ -231,6 +247,7 @@ struct SourceListView: View {
                         .padding(.vertical, 4)
                         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     ) {
+                        // 【修改】更新 ForEach 以处理新的元组结构
                         ForEach(grouped[timestamp] ?? [], id: \.article.id) { item in
                             NavigationLink(destination: ArticleContainerView(
                                 article: item.article,
@@ -239,10 +256,12 @@ struct SourceListView: View {
                                 viewModel: viewModel,
                                 resourceManager: resourceManager
                             )) {
+                                // 【修改】将 isContentMatch 传递给 ArticleRowCardView
                                 ArticleRowCardView(
                                     article: item.article,
                                     sourceName: item.sourceName,
-                                    isReadEffective: viewModel.isArticleEffectivelyRead(item.article)
+                                    isReadEffective: viewModel.isArticleEffectivelyRead(item.article),
+                                    isContentMatch: item.isContentMatch
                                 )
                                 .colorScheme(.dark)
                             }

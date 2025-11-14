@@ -15,11 +15,14 @@ struct ArticleItem: Identifiable {
     let id: UUID
     let article: Article
     let sourceName: String?
+    var isContentMatch: Bool = false // 【新增】增加内容匹配标志，并提供默认值
      
-    init(article: Article, sourceName: String? = nil) {
+    // 【修改】更新初始化方法以支持 isContentMatch
+    init(article: Article, sourceName: String? = nil, isContentMatch: Bool = false) {
         self.id = article.id
         self.article = article
         self.sourceName = sourceName
+        self.isContentMatch = isContentMatch
     }
 }
 
@@ -126,7 +129,7 @@ struct SearchResultsList: View {
                         Text("搜索结果")
                             .font(.subheadline)
                             .foregroundColor(.blue.opacity(0.7))
-                        Text("\(formatTimestamp(timestamp)) \(groupedResults[timestamp]?.count ?? 0)")
+                        Text("\(formatTimestamp(timestamp)) (\(groupedResults[timestamp]?.count ?? 0))")
                             .font(.headline)
                             .foregroundColor(.blue.opacity(0.85))
                     }
@@ -135,9 +138,9 @@ struct SearchResultsList: View {
                     ForEach(groupedResults[timestamp] ?? []) { item in
                         ArticleRowButton(
                             item: item,
-                            filterMode: .unread,
+                            filterMode: .unread, // 搜索结果统一按未读模式处理上下文菜单
                             viewModel: viewModel,
-                            filteredArticles: [],
+                            filteredArticles: [], // 搜索结果不提供“以上/下已读”
                             onTap: { await onArticleTap(item) }
                         )
                     }
@@ -167,10 +170,12 @@ struct ArticleRowButton: View {
         Button(action: {
             Task { await onTap() }
         }) {
+            // 【修改】传递 isContentMatch 标志
             ArticleRowCardView(
                 article: item.article,
                 sourceName: item.sourceName,
-                isReadEffective: viewModel.isArticleEffectivelyRead(item.article)
+                isReadEffective: viewModel.isArticleEffectivelyRead(item.article),
+                isContentMatch: item.isContentMatch
             )
         }
         .buttonStyle(PlainButtonStyle())
@@ -319,15 +324,23 @@ struct ArticleListView: View {
             .map { ArticleItem(article: $0, sourceName: nil) }
     }
     
+    // 【修改】更新搜索逻辑
     private var searchResults: [ArticleItem] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return []
         }
         guard let source = source else { return [] }
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return source.articles
-            .filter { $0.topic.lowercased().contains(keyword) }
-            .map { ArticleItem(article: $0, sourceName: nil) }
+        
+        return source.articles.compactMap { article -> ArticleItem? in
+            if article.topic.lowercased().contains(keyword) {
+                return ArticleItem(article: article, sourceName: nil, isContentMatch: false)
+            }
+            if article.article.lowercased().contains(keyword) {
+                return ArticleItem(article: article, sourceName: nil, isContentMatch: true)
+            }
+            return nil
+        }
     }
     
     private var unreadCount: Int {
@@ -576,14 +589,22 @@ struct AllArticlesListView: View {
     private var totalUnreadCount: Int { viewModel.totalUnreadCount }
     private var totalReadCount: Int { viewModel.sources.flatMap { $0.articles }.filter { $0.isRead }.count }
     
+    // 【修改】更新搜索逻辑
     private var searchResults: [ArticleItem] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return []
         }
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return viewModel.allArticlesSortedForDisplay
-            .filter { $0.article.topic.lowercased().contains(keyword) }
-            .map { ArticleItem(article: $0.article, sourceName: $0.sourceName) }
+        
+        return viewModel.allArticlesSortedForDisplay.compactMap { item -> ArticleItem? in
+            if item.article.topic.lowercased().contains(keyword) {
+                return ArticleItem(article: item.article, sourceName: item.sourceName, isContentMatch: false)
+            }
+            if item.article.article.lowercased().contains(keyword) {
+                return ArticleItem(article: item.article, sourceName: item.sourceName, isContentMatch: true)
+            }
+            return nil
+        }
     }
     
     var body: some View {
@@ -695,8 +716,10 @@ struct AllArticlesListView: View {
     
     private func handleArticleTap(_ item: ArticleItem) async {
         let article = item.article
+        guard let sourceName = item.sourceName else { return } // AllArticlesList 的 item 必须有 sourceName
+        
         guard !article.images.isEmpty else {
-            selectedArticleItem = (article, item.sourceName ?? "")
+            selectedArticleItem = (article, sourceName)
             isNavigationActive = true
             return
         }
@@ -708,7 +731,7 @@ struct AllArticlesListView: View {
         
         if imagesAlreadyExist {
             await MainActor.run {
-                selectedArticleItem = (article, item.sourceName ?? "")
+                selectedArticleItem = (article, sourceName)
                 isNavigationActive = true
             }
             return
@@ -732,7 +755,7 @@ struct AllArticlesListView: View {
             
             await MainActor.run {
                 isDownloadingImages = false
-                selectedArticleItem = (article, item.sourceName ?? "")
+                selectedArticleItem = (article, sourceName)
                 isNavigationActive = true
             }
         } catch {

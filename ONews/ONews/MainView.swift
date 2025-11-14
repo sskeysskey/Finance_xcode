@@ -122,7 +122,7 @@ extension Color {
 /// 已从各个视图文件中提取至此，以供全局复用。
 struct SearchBarInline: View {
     @Binding var text: String
-    var placeholder: String = "搜索标题关键字" // 【新增】允许自定义 placeholder
+    var placeholder: String = "搜索标题或正文关键字" // 【修改】更新 placeholder 文本
     var onCommit: () -> Void
     var onCancel: () -> Void
 
@@ -174,19 +174,45 @@ struct ArticleRowCardView: View {
     let article: Article
     let sourceName: String?
     let isReadEffective: Bool
+    let isContentMatch: Bool // 【新增】接收是否为内容匹配的标志
+
+    // 【新增】为 isContentMatch 提供默认值，以确保现有调用不受影响
+    init(article: Article, sourceName: String?, isReadEffective: Bool, isContentMatch: Bool = false) {
+        self.article = article
+        self.sourceName = sourceName
+        self.isReadEffective = isReadEffective
+        self.isContentMatch = isContentMatch
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) { // 增加一点间距
             if let name = sourceName {
                 Text(name.replacingOccurrences(of: "_", with: " "))
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
 
-            Text(article.topic)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(isReadEffective ? .secondary : .primary)
-                .lineLimit(3)
+            // 【修改】将标题和新增的“正文匹配”标签放入 HStack
+            HStack(alignment: .top) {
+                Text(article.topic)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(isReadEffective ? .secondary : .primary)
+                    .lineLimit(3)
+                
+                Spacer()
+                
+                // 【新增】如果 isContentMatch 为 true，则显示标签
+                if isContentMatch {
+                    Label("正文", systemImage: "doc.text.magnifyingglass")
+                        .font(.caption2)
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.15))
+                        .cornerRadius(6)
+                        .transition(.opacity.animation(.easeInOut))
+                }
+            }
         }
         .padding(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
         .frame(maxWidth: .infinity, alignment: .leading)

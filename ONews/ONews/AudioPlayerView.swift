@@ -874,9 +874,56 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                    let r2 = Range(match.range(at: 2), in: processed) {
                     let leftYear = String(processed[r1])
                     let rightYearSuffix = String(processed[r2])
-                    let leftDigits = formatDigitsToChinesePerChar(leftYear)      // "1960" -> "一九六零"
-                    let rightDigits = formatDigitsToChinesePerChar(rightYearSuffix) // "70" -> "七零"
-                    let replacement = "\(leftDigits)到\(rightDigits)"             // -> "一九六零到七零"
+                    let leftDigits = formatDigitsToChinesePerChar(leftYear)
+                    let rightDigits = formatDigitsToChinesePerChar(rightYearSuffix)
+                    let replacement = "\(leftDigits)到\(rightDigits)"
+                    replacements.append((match.range, replacement))
+                }
+            }
+            for (range, rep) in replacements.reversed() {
+                if let r = Range(range, in: processed) {
+                    processed.replaceSubrange(r, with: rep)
+                }
+            }
+        }
+
+        // --- 新增修复：处理“数字-数字 年”的持续时间范围 ---
+        // 例如：50-100年 -> 五十到一百年
+        let yearDurationRangePattern = #"(?<!\d)(\d{1,3})\s*-\s*(\d{1,3})\s*年"#
+        if let regex = try? NSRegularExpression(pattern: yearDurationRangePattern) {
+            let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
+            var replacements: [(NSRange, String)] = []
+            regex.enumerateMatches(in: processed, options: [], range: nsRange) { match, _, _ in
+                guard let match = match, match.numberOfRanges >= 3 else { return }
+                if let r1 = Range(match.range(at: 1), in: processed),
+                   let r2 = Range(match.range(at: 2), in: processed),
+                   let leftNum = Int(processed[r1]),
+                   let rightNum = Int(processed[r2]) {
+                    let leftZh = self.readChineseNumber(leftNum)
+                    let rightZh = self.readChineseNumber(rightNum)
+                    let replacement = "\(leftZh)到\(rightZh)年"
+                    replacements.append((match.range, replacement))
+                }
+            }
+            for (range, rep) in replacements.reversed() {
+                if let r = Range(range, in: processed) {
+                    processed.replaceSubrange(r, with: rep)
+                }
+            }
+        }
+
+        // --- 新增修复：处理单个“数字 年”的持续时间 ---
+        // 例如：100年 -> 一百年
+        let singleYearDurationPattern = #"(?<!\d)(\d{1,3})\s*年"#
+        if let regex = try? NSRegularExpression(pattern: singleYearDurationPattern) {
+            let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
+            var replacements: [(NSRange, String)] = []
+            regex.enumerateMatches(in: processed, options: [], range: nsRange) { match, _, _ in
+                guard let match = match, match.numberOfRanges >= 2 else { return }
+                if let r1 = Range(match.range(at: 1), in: processed),
+                   let num = Int(processed[r1]) {
+                    let numZh = self.readChineseNumber(num)
+                    let replacement = "\(numZh)年"
                     replacements.append((match.range, replacement))
                 }
             }
@@ -945,7 +992,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         // 术语替换（保持原有映射）
         let replacements = [
-            "API": "A.P.I",
             "URL": "U.R.L",
             "HTTP": "H.T.T.P",
             "JSON": "Jason",
