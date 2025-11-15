@@ -6,6 +6,34 @@ enum NavigationTarget: Hashable {
     case source(String)  // 只存储源的名称，而不是整个 NewsSource
 }
 
+// 【新增】从 ArticleListView.swift 复制过来的下载遮罩视图，用于显示图片下载进度
+struct DownloadOverlay: View {
+    let isDownloading: Bool
+    let progress: Double
+    let progressText: String
+    
+    var body: some View {
+        if isDownloading {
+            VStack(spacing: 12) {
+                Text("正在加载图片...")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                
+                ProgressView(value: progress)
+                    .progressViewStyle(LinearProgressViewStyle(tint: .white))
+                    .padding(.horizontal, 40)
+                
+                Text(progressText)
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.8))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.opacity(0.75))
+            .edgesIgnoringSafeArea(.all)
+        }
+    }
+}
+
 
 // ==================== 主视图：SourceListView ====================
 
@@ -21,6 +49,13 @@ struct SourceListView: View {
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
+    
+    // 【新增】用于程序化导航和图片下载的状态变量
+    @State private var isDownloadingImages = false
+    @State private var downloadProgress: Double = 0.0
+    @State private var downloadProgressText = ""
+    @State private var selectedArticleItem: (article: Article, sourceName: String)?
+    @State private var isNavigationActive = false
     
     // 【修改】更新 searchResults 的数据结构和搜索逻辑
     private var searchResults: [(article: Article, sourceName: String, isContentMatch: Bool)] {
@@ -141,6 +176,18 @@ struct SourceListView: View {
                     ArticleListView(sourceName: sourceName, viewModel: viewModel, resourceManager: resourceManager)
                 }
             }
+            // 【新增】为搜索结果的程序化导航添加 destination
+            .navigationDestination(isPresented: $isNavigationActive) {
+                if let item = selectedArticleItem {
+                    ArticleContainerView(
+                        article: item.article,
+                        sourceName: item.sourceName,
+                        context: .fromAllArticles, // 搜索结果的上下文视为 "All Articles"
+                        viewModel: viewModel,
+                        resourceManager: resourceManager
+                    )
+                }
+            }
         }
         .accentColor(.white)
         .preferredColorScheme(.dark)
@@ -167,7 +214,9 @@ struct SourceListView: View {
             .environmentObject(resourceManager)
         }
         .overlay(
-            Group {
+            // 【修改】将两个遮罩层组合在一起，避免互相覆盖
+            ZStack {
+                // 原有的同步状态遮罩
                 if resourceManager.isSyncing {
                     VStack(spacing: 15) {
                         if resourceManager.syncMessage == "当前已是最新" || resourceManager.syncMessage == "新闻清单已是最新。" {
@@ -207,6 +256,13 @@ struct SourceListView: View {
                     .edgesIgnoringSafeArea(.all)
                     .contentShape(Rectangle())
                 }
+                
+                // 【新增】图片下载遮罩
+                DownloadOverlay(
+                    isDownloading: isDownloadingImages,
+                    progress: downloadProgress,
+                    progressText: downloadProgressText
+                )
             }
         )
         .alert("", isPresented: $showErrorAlert, actions: {
@@ -247,16 +303,11 @@ struct SourceListView: View {
                         .padding(.vertical, 4)
                         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     ) {
-                        // 【修改】更新 ForEach 以处理新的元组结构
+                        // 【核心修改】将 NavigationLink 替换为 Button，并调用 handleArticleTap
                         ForEach(grouped[timestamp] ?? [], id: \.article.id) { item in
-                            NavigationLink(destination: ArticleContainerView(
-                                article: item.article,
-                                sourceName: item.sourceName,
-                                context: .fromAllArticles,
-                                viewModel: viewModel,
-                                resourceManager: resourceManager
-                            )) {
-                                // 【修改】将 isContentMatch 传递给 ArticleRowCardView
+                            Button(action: {
+                                Task { await handleArticleTap(item) }
+                            }) {
                                 ArticleRowCardView(
                                     article: item.article,
                                     sourceName: item.sourceName,
@@ -265,6 +316,7 @@ struct SourceListView: View {
                                 )
                                 .colorScheme(.dark)
                             }
+                            .buttonStyle(PlainButtonStyle()) // 使用 PlainButtonStyle 避免 List 行的默认按钮样式
                             .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
@@ -290,11 +342,6 @@ struct SourceListView: View {
     
     private var sourceAndAllArticlesView: some View {
         Group {
-            // 【核心修改】
-            // 判断逻辑的核心变更：不再使用 `viewModel.sources.isEmpty` 来判断是否显示“未订阅”提示。
-            // `viewModel.sources` 在数据加载完成前是空的，会导致不必要的闪烁。
-            // 正确的逻辑是直接检查持久化的订阅管理器 `SubscriptionManager`。
-            // `SubscriptionManager.shared.subscribedSources` 能立即、准确地反映用户是否已订阅了任何源。
             if SubscriptionManager.shared.subscribedSources.isEmpty && !resourceManager.isSyncing {
                 VStack(spacing: 20) {
                     Text("您还没有订阅任何新闻源")
@@ -308,9 +355,6 @@ struct SourceListView: View {
                 }
                 .frame(maxHeight: .infinity)
             } else {
-                // 如果用户有订阅（即使 `viewModel.sources` 尚未加载完毕），或者正在同步中，
-                // 直接显示列表。列表在数据加载完成前会自然地为空，然后自动填充，
-                // 这样就避免了显示错误的“未订阅”提示。
                 List {
                     // 【修改】使用新的 value-based NavigationLink
                     NavigationLink(value: NavigationTarget.allArticles) {
@@ -350,6 +394,68 @@ struct SourceListView: View {
             }
         }
         .transition(.opacity.animation(.easeInOut))
+    }
+    
+    // 【新增】处理文章点击和图片下载的函数
+    private func handleArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool)) async {
+        let article = item.article
+        let sourceName = item.sourceName
+        
+        // 1. 如果文章没有图片，直接导航
+        guard !article.images.isEmpty else {
+            selectedArticleItem = (article, sourceName)
+            isNavigationActive = true
+            return
+        }
+        
+        // 2. 检查图片是否已在本地存在
+        let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
+            timestamp: article.timestamp,
+            imageNames: article.images
+        )
+        
+        // 3. 如果图片已存在，直接导航
+        if imagesAlreadyExist {
+            await MainActor.run {
+                selectedArticleItem = (article, sourceName)
+                isNavigationActive = true
+            }
+            return
+        }
+        
+        // 4. 如果图片不存在，开始下载流程
+        await MainActor.run {
+            isDownloadingImages = true
+            downloadProgress = 0.0
+            downloadProgressText = "准备中..."
+        }
+        
+        do {
+            // 调用下载方法，并传入进度更新的闭包
+            try await resourceManager.downloadImagesForArticle(
+                timestamp: article.timestamp,
+                imageNames: article.images,
+                progressHandler: { current, total in
+                    // 这个闭包会在主线程上被调用，可以直接更新UI状态
+                    self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
+                    self.downloadProgressText = "已下载 \(current) / \(total)"
+                }
+            )
+            
+            // 5. 下载成功后，隐藏遮罩并执行导航
+            await MainActor.run {
+                isDownloadingImages = false
+                selectedArticleItem = (article, sourceName)
+                isNavigationActive = true
+            }
+        } catch {
+            // 6. 下载失败，隐藏遮罩并显示错误提示
+            await MainActor.run {
+                isDownloadingImages = false
+                errorMessage = "图片下载失败: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
     }
     
     private func syncResources(isManual: Bool = false) async {

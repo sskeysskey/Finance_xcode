@@ -265,33 +265,6 @@ struct TimestampHeader: View {
     }
 }
 
-struct DownloadOverlay: View {
-    let isDownloading: Bool
-    let progress: Double
-    let progressText: String
-    
-    var body: some View {
-        if isDownloading {
-            VStack(spacing: 12) {
-                Text("正在加载图片...")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                
-                ProgressView(value: progress)
-                    .progressViewStyle(LinearProgressViewStyle(tint: .white))
-                    .padding(.horizontal, 40)
-                
-                Text(progressText)
-                    .font(.caption)
-                    .foregroundColor(.white.opacity(0.8))
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black.opacity(0.75))
-            .edgesIgnoringSafeArea(.all)
-        }
-    }
-}
-
 // ==================== 单一来源列表 ====================
 struct ArticleListView: View {
     let sourceName: String
