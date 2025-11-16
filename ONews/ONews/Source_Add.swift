@@ -53,6 +53,13 @@ class SubscriptionManager: ObservableObject {
             addSubscription(sourceName)
         }
     }
+    
+    // MARK: - 新增方法
+    /// 一次性添加所有给定的新闻源。
+    /// 使用 formUnion 可以高效地合并，并且只会触发一次 @Published 属性的更新。
+    func subscribeToAll(_ sources: [String]) {
+        subscribedSources.formUnion(sources)
+    }
 }
 
 struct AddSourceView: View {
@@ -70,6 +77,15 @@ struct AddSourceView: View {
     var onConfirm: (() -> Void)?  // 非首次场景点击“确定”的回调（默认关闭页面）
 
     @Environment(\.presentationMode) var presentationMode
+
+    // MARK: - 新增计算属性
+    /// 计算是否所有可用源都已被订阅，用于禁用“一键添加”按钮
+    private var areAllSourcesSubscribed: Bool {
+        // 将数组转换为 Set 以便进行高效的子集比较
+        let allSourcesSet = Set(allAvailableSources)
+        // isSuperset(of:) 检查 subscribedSources 是否包含 allSourcesSet 中的所有元素
+        return subscriptionManager.subscribedSources.isSuperset(of: allSourcesSet)
+    }
 
     var body: some View {
         ZStack {
@@ -140,7 +156,25 @@ struct AddSourceView: View {
                         
                         // 底部确定按钮：放在列表末尾
                         Section(footer:
-                            VStack {
+                            VStack(spacing: 12) { // MARK: - 修改部分
+                                // MARK: - 新增“一键添加所有来源”按钮
+                                Button(action: {
+                                    // 调用管理器中的批量添加方法
+                                    subscriptionManager.subscribeToAll(allAvailableSources)
+                                }) {
+                                    Text("一键添加所有来源")
+                                        .font(.headline)
+                                        .foregroundColor(.white)
+                                        .frame(height: 50)
+                                        .frame(maxWidth: .infinity)
+                                        // 如果所有源都已添加，按钮变灰，否则为绿色
+                                        .background(areAllSourcesSubscribed ? Color.gray : Color.green)
+                                        .cornerRadius(10)
+                                }
+                                .disabled(areAllSourcesSubscribed) // 当所有源都已添加时禁用按钮
+                                .animation(.easeInOut, value: areAllSourcesSubscribed) // 添加动画效果
+
+                                // MARK: - 原有的“确定”按钮
                                 Button(action: {
                                     handleConfirm()
                                 }) {
@@ -153,7 +187,7 @@ struct AddSourceView: View {
                                         .cornerRadius(10)
                                 }
                                 .disabled(subscriptionManager.subscribedSources.isEmpty)
-                                .padding(.top, 8)
+                                .animation(.easeInOut, value: subscriptionManager.subscribedSources.isEmpty) // 添加动画效果
                             }
                             .padding(.vertical, 16)
                         ) {
