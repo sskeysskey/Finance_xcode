@@ -7,8 +7,10 @@ struct FileInfo: Codable {
     let md5: String?
 }
 
+// 【修改】为 ServerVersion 添加 locked_days 字段
 struct ServerVersion: Codable {
     let version: String
+    let locked_days: Int? // 使用可选类型以兼容旧版 version.json
     let files: [FileInfo]
 }
 
@@ -22,6 +24,9 @@ class ResourceManager: ObservableObject {
     @Published var progressText = ""
     
     @Published var showAlreadyUpToDateAlert = false
+    
+    // 【新增】存储从服务器获取的配置
+    @Published var serverLockedDays: Int = 0
     
     private let serverBaseURL = "http://106.15.183.158:5001/api/ONews"
     
@@ -214,6 +219,10 @@ class ResourceManager: ObservableObject {
         do {
             let serverVersion = try await getServerVersion()
             
+            // 【新增】获取到配置后，立即更新
+            self.serverLockedDays = serverVersion.locked_days ?? 0
+            print("ResourceManager: 从服务器获取到 locked_days = \(self.serverLockedDays)")
+            
             let allJsonInfos = serverVersion.files
                 .filter { $0.type == "json" && $0.name.starts(with: "onews_") }
                 .sorted { $0.name < $1.name }
@@ -293,6 +302,10 @@ class ResourceManager: ObservableObject {
             let serverVersion = try await getServerVersion()
             let localFiles = try getLocalFiles()
             
+            // 【新增】获取到配置后，立即更新
+            self.serverLockedDays = serverVersion.locked_days ?? 0
+            print("ResourceManager: 从服务器获取到 locked_days = \(self.serverLockedDays)")
+            
             self.syncMessage = "正在清理旧资源..."
             let validServerFiles = Set(serverVersion.files.map { $0.name })
             let filesToDelete = localFiles.subtracting(validServerFiles)
@@ -301,7 +314,7 @@ class ResourceManager: ObservableObject {
             }
 
             if !oldNewsItemsToDelete.isEmpty {
-                print("发现需要清理的过时资源: {oldNewsItemsToDelete}")
+                print("发现需要清理的过时资源: \(oldNewsItemsToDelete)")
                 for itemName in oldNewsItemsToDelete {
                     let itemURL = documentsDirectory.appendingPathComponent(itemName)
                     try? fileManager.removeItem(at: itemURL)
@@ -384,8 +397,6 @@ class ResourceManager: ObservableObject {
             throw error
         }
     }
-    
-    // MARK: - Helper Functions
     
     private func resetStateAfterDelay(seconds: TimeInterval = 2) {
         Task {

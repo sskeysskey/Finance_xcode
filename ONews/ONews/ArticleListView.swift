@@ -50,6 +50,8 @@ struct ArticleListContent: View {
     let filterMode: ArticleFilterMode
     let expandedTimestamps: Set<String>
     let viewModel: NewsViewModel
+    // 【新增】传入 AuthManager 以判断登录状态
+    let authManager: AuthManager
     let onToggleTimestamp: (String) -> Void
     let onArticleTap: (ArticleItem) async -> Void
     
@@ -73,20 +75,25 @@ struct ArticleListContent: View {
             Section {
                 if expandedTimestamps.contains(timestamp) {
                     ForEach(groupedArticles[timestamp] ?? []) { item in
+                        // 【修改】将 authManager 传递下去
                         ArticleRowButton(
                             item: item,
                             filterMode: filterMode,
                             viewModel: viewModel,
+                            authManager: authManager,
                             filteredArticles: items,
                             onTap: { await onArticleTap(item) }
                         )
                     }
                 }
             } header: {
+                // 【修改】计算锁定状态并传递给 TimestampHeader
+                let isLocked = !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: timestamp)
                 TimestampHeader(
                     timestamp: timestamp,
                     count: groupedArticles[timestamp]?.count ?? 0,
                     isExpanded: expandedTimestamps.contains(timestamp),
+                    isLocked: isLocked, // 传递锁定状态
                     onToggle: { onToggleTimestamp(timestamp) }
                 )
             }
@@ -97,6 +104,8 @@ struct ArticleListContent: View {
 struct SearchResultsList: View {
     let results: [ArticleItem]
     let viewModel: NewsViewModel
+    // 【新增】传入 AuthManager
+    let authManager: AuthManager
     let onArticleTap: (ArticleItem) async -> Void
     
     var groupedResults: [String: [ArticleItem]] {
@@ -129,18 +138,28 @@ struct SearchResultsList: View {
                         Text("搜索结果")
                             .font(.subheadline)
                             .foregroundColor(.blue.opacity(0.7))
-                        Text("\(formatTimestamp(timestamp)) (\(groupedResults[timestamp]?.count ?? 0))")
-                            .font(.headline)
-                            .foregroundColor(.blue.opacity(0.85))
+                        HStack {
+                            Text("\(formatTimestamp(timestamp)) (\(groupedResults[timestamp]?.count ?? 0))")
+                                .font(.headline)
+                                .foregroundColor(.blue.opacity(0.85))
+                            // 【新增】在搜索结果的日期标题也显示锁
+                            if !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: timestamp) {
+                                Image(systemName: "lock.fill")
+                                    .foregroundColor(.yellow.opacity(0.8))
+                                    .font(.footnote)
+                            }
+                        }
                     }
                     .padding(.vertical, 4)
                 ) {
                     ForEach(groupedResults[timestamp] ?? []) { item in
+                        // 【修改】传递 authManager
                         ArticleRowButton(
                             item: item,
                             filterMode: .unread, // 搜索结果统一按未读模式处理上下文菜单
                             viewModel: viewModel,
-                            filteredArticles: [], // 搜索结果不提供“以上/下已读”
+                            authManager: authManager,
+                            filteredArticles: [],
                             onTap: { await onArticleTap(item) }
                         )
                     }
@@ -163,6 +182,8 @@ struct ArticleRowButton: View {
     let item: ArticleItem
     let filterMode: ArticleFilterMode
     let viewModel: NewsViewModel
+    // 【新增】传入 AuthManager
+    let authManager: AuthManager
     let filteredArticles: [ArticleItem]
     let onTap: () async -> Void
     
@@ -170,12 +191,14 @@ struct ArticleRowButton: View {
         Button(action: {
             Task { await onTap() }
         }) {
-            // 【修改】传递 isContentMatch 标志
+            // 【修改】计算并传递 isLocked 标志
+            let isLocked = !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: item.article.timestamp)
             ArticleRowCardView(
                 article: item.article,
                 sourceName: item.sourceName,
                 isReadEffective: viewModel.isArticleEffectivelyRead(item.article),
-                isContentMatch: item.isContentMatch
+                isContentMatch: item.isContentMatch,
+                isLocked: isLocked // 传递锁定状态
             )
         }
         .buttonStyle(PlainButtonStyle())
@@ -228,10 +251,20 @@ struct TimestampHeader: View {
     let timestamp: String
     let count: Int
     let isExpanded: Bool
+    // 【新增】接收锁定状态
+    let isLocked: Bool
     let onToggle: () -> Void
     
     var body: some View {
         HStack(spacing: 8) {
+            // 【新增】如果锁定，显示锁图标
+            if isLocked {
+                Image(systemName: "lock.fill")
+                    .foregroundColor(.yellow.opacity(0.8))
+                    .font(.callout)
+                    .transition(.opacity)
+            }
+            
             Text(formatTimestamp(timestamp))
                 .font(.headline)
                 .foregroundColor(.blue.opacity(0.7))
@@ -270,6 +303,8 @@ struct ArticleListView: View {
     let sourceName: String
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager
+    // 【新增】获取认证管理器
+    @EnvironmentObject var authManager: AuthManager
     
     @State private var filterMode: ArticleFilterMode = .unread
     @State private var isSearching: Bool = false
@@ -282,6 +317,8 @@ struct ArticleListView: View {
     @State private var downloadProgressText = ""
     @State private var selectedArticle: Article?
     @State private var isNavigationActive = false
+    // 【新增】控制登录弹窗
+    @State private var showLoginSheet = false
     
     private var source: NewsSource? {
         viewModel.sources.first(where: { $0.name == sourceName })
@@ -358,6 +395,7 @@ struct ArticleListView: View {
                             SearchResultsList(
                                 results: searchResults,
                                 viewModel: viewModel,
+                                authManager: authManager, // 传递
                                 onArticleTap: handleArticleTap
                             )
                         } else {
@@ -366,6 +404,7 @@ struct ArticleListView: View {
                                 filterMode: filterMode,
                                 expandedTimestamps: viewModel.expandedTimestampsBySource[sourceName, default: Set<String>()],
                                 viewModel: viewModel,
+                                authManager: authManager, // 传递
                                 onToggleTimestamp: { timestamp in
                                     viewModel.toggleTimestampExpansion(for: sourceName, timestamp: timestamp)
                                 },
@@ -403,6 +442,11 @@ struct ArticleListView: View {
             .navigationTitle(sourceName.replacingOccurrences(of: "_", with: " "))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // 【新增】用户状态工具栏按钮
+                ToolbarItem(placement: .topBarLeading) {
+                    UserStatusToolbarItem(showLoginSheet: $showLoginSheet)
+                }
+                
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Task { await syncResources(isManual: true) }
@@ -440,11 +484,31 @@ struct ArticleListView: View {
             }, message: {
                 Text(errorMessage)
             })
+            // 【新增】登录弹窗
+            .sheet(isPresented: $showLoginSheet) {
+                LoginView()
+            }
+            // 【核心修改】更新到新的 onChange 语法以解决 iOS 17 的废弃警告
+            .onChange(of: authManager.isLoggedIn) { _, newValue in
+                // 当登录状态变为 true (表示登录成功) 并且登录弹窗正显示时
+                if newValue == true && self.showLoginSheet {
+                    // 自动关闭登录弹窗
+                    self.showLoginSheet = false
+                    print("登录成功，自动关闭 LoginView。")
+                }
+            }
         }
     }
     
     private func handleArticleTap(_ item: ArticleItem) async {
         let article = item.article
+        
+        // 【新增】点击文章时的锁定检查
+        if !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: article.timestamp) {
+            showLoginSheet = true
+            return
+        }
+        
         guard !article.images.isEmpty else {
             selectedArticle = article
             isNavigationActive = true
@@ -537,6 +601,8 @@ struct ArticleListView: View {
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager
+    // 【新增】获取认证管理器
+    @EnvironmentObject var authManager: AuthManager
     
     @State private var filterMode: ArticleFilterMode = .unread
     @State private var isSearching: Bool = false
@@ -549,6 +615,8 @@ struct AllArticlesListView: View {
     @State private var downloadProgressText = ""
     @State private var selectedArticleItem: (article: Article, sourceName: String)?
     @State private var isNavigationActive = false
+    // 【新增】控制登录弹窗
+    @State private var showLoginSheet = false
     
     private var baseFilteredArticles: [ArticleItem] {
         viewModel.allArticlesSortedForDisplay
@@ -604,6 +672,7 @@ struct AllArticlesListView: View {
                         SearchResultsList(
                             results: searchResults,
                             viewModel: viewModel,
+                            authManager: authManager, // 传递
                             onArticleTap: handleArticleTap
                         )
                     } else {
@@ -612,6 +681,7 @@ struct AllArticlesListView: View {
                             filterMode: filterMode,
                             expandedTimestamps: viewModel.expandedTimestampsBySource[viewModel.allArticlesKey, default: Set<String>()],
                             viewModel: viewModel,
+                            authManager: authManager, // 传递
                             onToggleTimestamp: { timestamp in
                                 viewModel.toggleTimestampExpansion(for: viewModel.allArticlesKey, timestamp: timestamp)
                             },
@@ -648,6 +718,11 @@ struct AllArticlesListView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // 【新增】用户状态工具栏按钮
+            ToolbarItem(placement: .topBarLeading) {
+                UserStatusToolbarItem(showLoginSheet: $showLoginSheet)
+            }
+            
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     Task { await syncResources(isManual: true) }
@@ -685,11 +760,30 @@ struct AllArticlesListView: View {
         }, message: {
             Text(errorMessage)
         })
+        // 【新增】登录弹窗
+        .sheet(isPresented: $showLoginSheet) {
+            LoginView()
+        }
+        // 【核心修改】更新到新的 onChange 语法以解决 iOS 17 的废弃警告
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
+            // 当登录状态变为 true (表示登录成功) 并且登录弹窗正显示时
+            if newValue == true && self.showLoginSheet {
+                // 自动关闭登录弹窗
+                self.showLoginSheet = false
+                print("登录成功，自动关闭 LoginView。")
+            }
+        }
     }
     
     private func handleArticleTap(_ item: ArticleItem) async {
         let article = item.article
-        guard let sourceName = item.sourceName else { return } // AllArticlesList 的 item 必须有 sourceName
+        guard let sourceName = item.sourceName else { return }
+        
+        // 【新增】点击文章时的锁定检查
+        if !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: article.timestamp) {
+            showLoginSheet = true
+            return
+        }
         
         guard !article.images.isEmpty else {
             selectedArticleItem = (article, sourceName)

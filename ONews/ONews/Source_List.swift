@@ -34,17 +34,49 @@ struct DownloadOverlay: View {
     }
 }
 
+// 【新增】导航栏用户状态视图
+struct UserStatusToolbarItem: View {
+    @EnvironmentObject var authManager: AuthManager
+    @Binding var showLoginSheet: Bool
+    
+    var body: some View {
+        if authManager.isLoggedIn {
+            Menu {
+                Button(role: .destructive) {
+                    authManager.signOut()
+                } label: {
+                    Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+            } label: {
+                Image(systemName: "person.circle.fill")
+                    .foregroundColor(.white)
+                    .accessibilityLabel("用户中心")
+            }
+        } else {
+            Button(action: {
+                showLoginSheet = true
+            }) {
+                Image(systemName: "person.circle")
+                    .foregroundColor(.white)
+            }
+            .accessibilityLabel("登录")
+        }
+    }
+}
 
-// ==================== 主视图：SourceListView ====================
 
 struct SourceListView: View {
     @EnvironmentObject var viewModel: NewsViewModel
     @EnvironmentObject var resourceManager: ResourceManager
+    // 【新增】获取认证管理器
+    @EnvironmentObject var authManager: AuthManager
     
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     
     @State private var showAddSourceSheet = false
+    // 【新增】控制登录弹窗的显示
+    @State private var showLoginSheet = false
     
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
@@ -129,6 +161,11 @@ struct SourceListView: View {
             )
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // 【新增】将用户状态按钮放在最左边
+                ToolbarItem(placement: .navigationBarLeading) {
+                    UserStatusToolbarItem(showLoginSheet: $showLoginSheet)
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
                         withAnimation {
@@ -212,6 +249,19 @@ struct SourceListView: View {
             }
             .preferredColorScheme(.dark)
             .environmentObject(resourceManager)
+        }
+        // 【新增】用于显示登录界面的 Sheet
+        .sheet(isPresented: $showLoginSheet) {
+            LoginView()
+        }
+        // 【核心修改】更新到新的 onChange 语法以解决 iOS 17 的废弃警告
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
+            // 当登录状态变为 true (表示登录成功) 并且登录弹窗正显示时
+            if newValue == true && self.showLoginSheet {
+                // 自动关闭登录弹窗
+                self.showLoginSheet = false
+                print("登录成功，自动关闭 LoginView。")
+            }
         }
         .overlay(
             // 【修改】将两个遮罩层组合在一起，避免互相覆盖
@@ -308,11 +358,14 @@ struct SourceListView: View {
                             Button(action: {
                                 Task { await handleArticleTap(item) }
                             }) {
+                                // 【修改】传递锁定状态
+                                let isLocked = !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: item.article.timestamp)
                                 ArticleRowCardView(
                                     article: item.article,
                                     sourceName: item.sourceName,
                                     isReadEffective: viewModel.isArticleEffectivelyRead(item.article),
-                                    isContentMatch: item.isContentMatch
+                                    isContentMatch: item.isContentMatch,
+                                    isLocked: isLocked
                                 )
                                 .colorScheme(.dark)
                             }
@@ -401,7 +454,12 @@ struct SourceListView: View {
         let article = item.article
         let sourceName = item.sourceName
         
-        // 1. 如果文章没有图片，直接导航
+        // 【新增】点击文章时的锁定检查
+        if !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: article.timestamp) {
+            showLoginSheet = true
+            return
+        }
+        
         guard !article.images.isEmpty else {
             selectedArticleItem = (article, sourceName)
             isNavigationActive = true
@@ -461,6 +519,7 @@ struct SourceListView: View {
     private func syncResources(isManual: Bool = false) async {
         do {
             try await resourceManager.checkAndDownloadUpdates(isManual: isManual)
+            // 【修改】同步完成后，确保 ViewModel 也更新了配置
             viewModel.loadNews()
         } catch {
             if isManual {

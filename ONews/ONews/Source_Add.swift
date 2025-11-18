@@ -115,6 +115,30 @@ struct AddSourceView: View {
                 } else {
                     // 使用 List 承载所有行，并把“确定”按钮放到列表底部的 Section 页脚
                     List {
+                        // MARK: - [修改点 1] 将“一键添加”按钮移动到列表顶部
+                        Section {
+                            Button(action: {
+                                // MARK: - [修改点 2] 修改按钮行为：添加所有源后立即执行确认操作
+                                subscriptionManager.subscribeToAll(allAvailableSources)
+                                handleConfirm()
+                            }) {
+                                // MARK: - [修改点 3] 优化按钮文本，使其更清晰地反映其行为
+                                Text("一键添加所有新闻源")
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+                                    .frame(height: 50)
+                                    .frame(maxWidth: .infinity)
+                                    .background(areAllSourcesSubscribed ? Color.gray : Color.green)
+                                    .cornerRadius(10)
+                            }
+                            .disabled(areAllSourcesSubscribed)
+                            .animation(.easeInOut, value: areAllSourcesSubscribed)
+                        }
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .padding(.vertical, 8) // 为按钮部分添加一些垂直间距
+
+                        // 遍历所有可用的新闻源
                         ForEach(allAvailableSources, id: \.self) { sourceName in
                             HStack {
                                 Text(sourceName)
@@ -161,8 +185,9 @@ struct AddSourceView: View {
                                 Button(action: {
                                     // 调用管理器中的批量添加方法
                                     subscriptionManager.subscribeToAll(allAvailableSources)
+                                    handleConfirm()
                                 }) {
-                                    Text("一键添加所有来源")
+                                    Text("一键添加所有新闻源")
                                         .font(.headline)
                                         .foregroundColor(.white)
                                         .frame(height: 50)
@@ -244,7 +269,7 @@ struct AddSourceView: View {
                 for url in newsJSONURLs {
                     do {
                         let data = try Data(contentsOf: url)
-                        // 只需要键，解码为 [String: [Article]]；若无 Article 类型，请替换为通用结构
+                        // 假设 Article 是一个 Codable 结构体
                         let decoded = try decoder.decode([String: [Article]].self, from: data)
                         union.formUnion(decoded.keys)
                     } catch {
