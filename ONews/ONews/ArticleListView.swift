@@ -87,8 +87,8 @@ struct ArticleListContent: View {
                     }
                 }
             } header: {
-                // 【修改】计算锁定状态并传递给 TimestampHeader
-                let isLocked = !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: timestamp)
+                // 【修改】锁定条件：未订阅 且 时间戳被锁定
+                let isLocked = !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: timestamp)
                 TimestampHeader(
                     timestamp: timestamp,
                     count: groupedArticles[timestamp]?.count ?? 0,
@@ -142,8 +142,8 @@ struct SearchResultsList: View {
                             Text("\(formatTimestamp(timestamp)) (\(groupedResults[timestamp]?.count ?? 0))")
                                 .font(.headline)
                                 .foregroundColor(.blue.opacity(0.85))
-                            // 【新增】在搜索结果的日期标题也显示锁
-                            if !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: timestamp) {
+                            // 【修改】锁定条件：未订阅 且 时间戳被锁定
+                            if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: timestamp) {
                                 Image(systemName: "lock.fill")
                                     .foregroundColor(.yellow.opacity(0.8))
                                     .font(.footnote)
@@ -191,8 +191,8 @@ struct ArticleRowButton: View {
         Button(action: {
             Task { await onTap() }
         }) {
-            // 【修改】计算并传递 isLocked 标志
-            let isLocked = !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: item.article.timestamp)
+            // 【修改】锁定条件：未订阅 且 时间戳被锁定
+            let isLocked = !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: item.article.timestamp)
             ArticleRowCardView(
                 article: item.article,
                 sourceName: item.sourceName,
@@ -319,6 +319,8 @@ struct ArticleListView: View {
     @State private var isNavigationActive = false
     // 【新增】控制登录弹窗
     @State private var showLoginSheet = false
+    // 【新增】控制订阅弹窗
+    @State private var showSubscriptionSheet = false
     
     private var source: NewsSource? {
         viewModel.sources.first(where: { $0.name == sourceName })
@@ -479,16 +481,14 @@ struct ArticleListView: View {
                     progressText: downloadProgressText
                 )
             )
-            .alert("", isPresented: $showErrorAlert, actions: {
-                Button("好的", role: .cancel) { }
-            }, message: {
-                Text(errorMessage)
-            })
-            // 【新增】登录弹窗
-            .sheet(isPresented: $showLoginSheet) {
-                LoginView()
+            .alert("", isPresented: $showErrorAlert, actions: { Button("好的", role: .cancel) { } }, message: { Text(errorMessage) })
+            .sheet(isPresented: $showLoginSheet) { LoginView() }
+            // 【新增】订阅弹窗
+            .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+            // 【修改】监听 AuthManager 的 showSubscriptionSheet 信号
+            .onChange(of: authManager.showSubscriptionSheet) { _, newValue in
+                self.showSubscriptionSheet = newValue
             }
-            // 【核心修改】更新到新的 onChange 语法以解决 iOS 17 的废弃警告
             .onChange(of: authManager.isLoggedIn) { _, newValue in
                 // 当登录状态变为 true (表示登录成功) 并且登录弹窗正显示时
                 if newValue == true && self.showLoginSheet {
@@ -503,9 +503,15 @@ struct ArticleListView: View {
     private func handleArticleTap(_ item: ArticleItem) async {
         let article = item.article
         
-        // 【新增】点击文章时的锁定检查
-        if !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: article.timestamp) {
-            showLoginSheet = true
+        // 【修改】点击文章时的锁定检查：未订阅 且 被锁定
+        if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
+            if !authManager.isLoggedIn {
+                // 如果没登录，先登录
+                showLoginSheet = true
+            } else {
+                // 如果已登录但没订阅，显示订阅页
+                showSubscriptionSheet = true
+            }
             return
         }
         
@@ -598,6 +604,7 @@ struct ArticleListView: View {
 }
 
 // ==================== 所有文章列表 ====================
+// AllArticlesListView 的修改逻辑与 ArticleListView 完全一致，主要是替换锁定判断条件
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager
@@ -617,6 +624,8 @@ struct AllArticlesListView: View {
     @State private var isNavigationActive = false
     // 【新增】控制登录弹窗
     @State private var showLoginSheet = false
+    // 【新增】
+    @State private var showSubscriptionSheet = false
     
     private var baseFilteredArticles: [ArticleItem] {
         viewModel.allArticlesSortedForDisplay
@@ -647,7 +656,7 @@ struct AllArticlesListView: View {
             return nil
         }
     }
-    
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -755,16 +764,13 @@ struct AllArticlesListView: View {
                 progressText: downloadProgressText
             )
         )
-        .alert("", isPresented: $showErrorAlert, actions: {
-            Button("好的", role: .cancel) { }
-        }, message: {
-            Text(errorMessage)
-        })
-        // 【新增】登录弹窗
-        .sheet(isPresented: $showLoginSheet) {
-            LoginView()
+        .alert("", isPresented: $showErrorAlert, actions: { Button("好的", role: .cancel) { } }, message: { Text(errorMessage) })
+        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        // 【新增】
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        .onChange(of: authManager.showSubscriptionSheet) { _, newValue in
+            self.showSubscriptionSheet = newValue
         }
-        // 【核心修改】更新到新的 onChange 语法以解决 iOS 17 的废弃警告
         .onChange(of: authManager.isLoggedIn) { _, newValue in
             // 当登录状态变为 true (表示登录成功) 并且登录弹窗正显示时
             if newValue == true && self.showLoginSheet {
@@ -779,9 +785,13 @@ struct AllArticlesListView: View {
         let article = item.article
         guard let sourceName = item.sourceName else { return }
         
-        // 【新增】点击文章时的锁定检查
-        if !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: article.timestamp) {
-            showLoginSheet = true
+        // 【修改】锁定检查
+        if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
+            if !authManager.isLoggedIn {
+                showLoginSheet = true
+            } else {
+                showSubscriptionSheet = true
+            }
             return
         }
         

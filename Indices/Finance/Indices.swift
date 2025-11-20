@@ -128,7 +128,7 @@ struct SectorsPanel: Decodable {
                     let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
                     let symbol = IndicesSymbol(symbol: symbolKey, name: symbolName, value: "", tags: nil)
                     
-                    if symbolKey == "CrudeOil" || symbolKey == "Huangjin" {
+                    if symbolKey == "CrudeOil" || symbolKey == "Huangjin" || symbolKey == "Naturalgas" {
                         importantSymbols.append(symbol)
                     } else {
                         normalSymbols.append(symbol)

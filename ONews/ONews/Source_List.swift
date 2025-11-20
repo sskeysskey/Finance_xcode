@@ -42,15 +42,37 @@ struct UserStatusToolbarItem: View {
     var body: some View {
         if authManager.isLoggedIn {
             Menu {
+                // 显示订阅状态
+                if authManager.isSubscribed {
+                    Label("专业版会员", systemImage: "crown.fill")
+                } else {
+                    Label("免费版用户", systemImage: "person")
+                }
+                
+                if let date = authManager.subscriptionExpiryDate {
+                    Text("有效期至: \(date.prefix(10))")
+                        .font(.caption)
+                }
+                
+                Divider()
+                
                 Button(role: .destructive) {
                     authManager.signOut()
                 } label: {
                     Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
                 }
             } label: {
-                Image(systemName: "person.circle.fill")
-                    .foregroundColor(.white)
-                    .accessibilityLabel("用户中心")
+                ZStack {
+                    Image(systemName: "person.circle.fill")
+                        .foregroundColor(.white)
+                    // 如果已订阅，加个小皇冠
+                    if authManager.isSubscribed {
+                        Image(systemName: "crown.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(.yellow)
+                            .offset(x: 8, y: -8)
+                    }
+                }
             }
         } else {
             Button(action: {
@@ -77,6 +99,8 @@ struct SourceListView: View {
     @State private var showAddSourceSheet = false
     // 【新增】控制登录弹窗的显示
     @State private var showLoginSheet = false
+    // 【新增】
+    @State private var showSubscriptionSheet = false
     
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
@@ -250,11 +274,12 @@ struct SourceListView: View {
             .preferredColorScheme(.dark)
             .environmentObject(resourceManager)
         }
-        // 【新增】用于显示登录界面的 Sheet
-        .sheet(isPresented: $showLoginSheet) {
-            LoginView()
+        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        // 【新增】
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        .onChange(of: authManager.showSubscriptionSheet) { _, newValue in
+            self.showSubscriptionSheet = newValue
         }
-        // 【核心修改】更新到新的 onChange 语法以解决 iOS 17 的废弃警告
         .onChange(of: authManager.isLoggedIn) { _, newValue in
             // 当登录状态变为 true (表示登录成功) 并且登录弹窗正显示时
             if newValue == true && self.showLoginSheet {
@@ -454,9 +479,13 @@ struct SourceListView: View {
         let article = item.article
         let sourceName = item.sourceName
         
-        // 【新增】点击文章时的锁定检查
-        if !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: article.timestamp) {
-            showLoginSheet = true
+        // 【修改】锁定检查：未订阅 且 被锁定
+        if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
+            if !authManager.isLoggedIn {
+                showLoginSheet = true
+            } else {
+                showSubscriptionSheet = true
+            }
             return
         }
         
