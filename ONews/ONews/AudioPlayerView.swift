@@ -1038,7 +1038,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "上调": "上条",
             "回调": "回条",
             "GW": "千兆瓦",
-            "Labubu": "喇布布"
+            "Labubu": "喇布布",
+            "ebay": "E.Bay"
         ]
 
         for (key, value) in replacements {

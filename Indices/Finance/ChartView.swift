@@ -199,6 +199,20 @@ struct ChartView: View {
     private var earningTrend: EarningTrend {
         dataService.earningTrends[symbol.uppercased()] ?? .insufficientData
     }
+    
+    // ==================== 新增：获取当前 Symbol 的 Tags ====================
+    private var currentTags: [String] {
+        let upperSymbol = symbol.uppercased()
+        // 检查 Stocks
+        if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == upperSymbol }) {
+            return stock.tag
+        }
+        // 检查 ETFs
+        if let etf = dataService.descriptionData?.etfs.first(where: { $0.symbol.uppercased() == upperSymbol }) {
+            return etf.tag
+        }
+        return []
+    }
     // ==================== 修改结束 ====================
     
     private struct RenderedPoint {
@@ -294,6 +308,29 @@ struct ChartView: View {
     
     var body: some View {
         VStack(spacing: 0) {
+            
+            // ==================== 新增：Tags 显示区域 ====================
+            // 在导航栏下方、信息区域上方显示 Tags
+            if !currentTags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(currentTags, id: \.self) { tag in
+                            Text(tag)
+                                .font(.system(size: 12, weight: .medium))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.gray.opacity(0.15))
+                                .foregroundColor(.secondary)
+                                .cornerRadius(12)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+                .frame(height: 40) // 固定高度
+                .padding(.top, 5)
+            }
+            // ==================== 结束 ====================
+            
             // 固定高度的信息显示区域
             VStack {
                 // 事件文本或时间价格信息区域
@@ -755,11 +792,11 @@ struct ChartView: View {
                         }
                         
                         // 新增显示 pb 的部分
-                        if let pb = marketCapItem.pb {
-                            Text("\(String(format: "%.2f", pb))")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
+                        // if let pb = marketCapItem.pb {
+                        //     Text("\(String(format: "%.2f", pb))")
+                        //         .font(.subheadline)
+                        //         .foregroundColor(.secondary)
+                        // }
                     }
                     
                     if let compareStock = dataService.compareData[symbol.uppercased()] {

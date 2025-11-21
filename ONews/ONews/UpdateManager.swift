@@ -381,7 +381,8 @@ class ResourceManager: ObservableObject {
                 self.downloadProgress = Double(index + 1) / Double(totalTasks)
                 
                 if task.fileInfo.type == "json" {
-                    self.syncMessage = "正在下载文件: \(task.fileInfo.name)..."
+                    // self.syncMessage = "正在下载文件: \(task.fileInfo.name)..."
+                    self.syncMessage = "正在下载文件..."
                     try await downloadSingleFile(named: task.fileInfo.name)
                 }
             }

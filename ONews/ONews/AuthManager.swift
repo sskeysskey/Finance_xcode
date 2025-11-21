@@ -1,7 +1,7 @@
 import SwiftUI
 import AuthenticationServices
 import Security
-import StoreKit // 【新增】引入 StoreKit
+import StoreKit // 引入 StoreKit
 
 // 定义 Keychain 操作的错误类型
 enum KeychainError: Error {
@@ -57,8 +57,14 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                 self.userIdentifier = userId
                 self.isLoggedIn = true
                 print("AuthManager: 本地已登录，User ID: \(userId)")
-                // 【新增】启动时校验服务器状态，防止本地篡改或过期
+                
+                // 【核心修复】
+                // 启动时，不仅要检查服务器，更要直接检查 Apple 本地的 Entitlements (权限)。
                 Task {
+                    // 1. 优先检查 Apple 本地凭证 (这是最快且最准确的源头)
+                    await updateSubscriptionStatus()
+                    
+                    // 2. 同时/随后检查服务器状态
                     await checkServerSubscriptionStatus()
                 }
             } else {
@@ -110,17 +116,24 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     // 【新增】监听交易流
     func listenForTransactions() -> Task<Void, Error> {
         return Task.detached {
-            for await result in Transaction.updates {
-                do {
-                    // 修复点：这里调用的是实例方法 checkVerified
-                    let transaction = try await self.checkVerified(result)
-                    // 交易验证成功，更新 UI 或同步服务器
-                    await self.updateSubscriptionStatus()
-                    await transaction.finish() // 告诉苹果交易已处理
-                } catch {
-                    print("Transaction verification failed")
-                }
+            // 【修复】StoreKit.Transaction.updates 的遍历不会抛出错误
+            // handleTransactionUpdate 也没有标记为 throws（它内部处理了错误），
+            // 所以这里不需要 do-catch，直接调用即可。
+            for await result in StoreKit.Transaction.updates {
+                await self.handleTransactionUpdate(result)
             }
+        }
+    }
+    
+    // 辅助方法处理交易更新
+    // 【修复】参数类型明确指定 StoreKit.Transaction
+    private func handleTransactionUpdate(_ result: VerificationResult<StoreKit.Transaction>) async {
+        do {
+            let transaction = try checkVerified(result)
+            await updateSubscriptionStatus()
+            await transaction.finish()
+        } catch {
+            print("验证失败: \(error)")
         }
     }
     
@@ -188,6 +201,9 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                     try await sendTokenToServer(token: identityToken, userId: userId)
                     // 服务器验证成功后，在本地保存用户凭证
                     try saveUserIdentifierToKeychain(userId)
+                    
+                    // 登录成功后，也立即检查一下本地 Apple 权限，双重保险
+                    await updateSubscriptionStatus()
                     
                     // 更新 UI 状态
                     await MainActor.run {
@@ -275,30 +291,39 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     // 【新增】检查当前订阅状态（从 Apple 获取）
     func updateSubscriptionStatus() async {
         var hasActiveSubscription = false
+        var latestExpirationDate: Date? = nil
         
-        // 遍历当前有效的权限
-        for await result in Transaction.currentEntitlements {
+        // 【修复】明确指定 StoreKit.Transaction
+        for await result in StoreKit.Transaction.currentEntitlements {
             do {
-                // 修复点：调用实例方法 checkVerified
                 let transaction = try checkVerified(result)
                 
-                // 检查是否是我们的订阅产品且未过期
+                // 检查是否是我们的订阅产品
                 if transaction.productID == subscriptionProductID {
-                    if let expirationDate = transaction.expirationDate, expirationDate > Date() {
-                        hasActiveSubscription = true
-                        await MainActor.run {
-                            self.subscriptionExpiryDate = expirationDate.ISO8601Format()
+                    // 检查过期时间
+                    if let expirationDate = transaction.expirationDate {
+                        if expirationDate > Date() {
+                            hasActiveSubscription = true
+                            latestExpirationDate = expirationDate
+                            print("AuthManager: 发现有效订阅，过期时间: \(expirationDate)")
                         }
                     }
                 }
             } catch {
-                print("Failed to verify transaction")
+                print("Failed to verify transaction: \(error)")
             }
         }
         
+        // 更新 UI 状态
+        let finalStatus = hasActiveSubscription
+        let finalDateStr = latestExpirationDate?.ISO8601Format()
+        
         await MainActor.run {
-            self.isSubscribed = hasActiveSubscription
-            print("AuthManager: 本地 StoreKit 检查订阅状态: \(hasActiveSubscription)")
+            if finalStatus {
+                self.isSubscribed = true
+                self.subscriptionExpiryDate = finalDateStr
+            }
+            print("AuthManager: 本地 StoreKit 检查完成。结果: \(self.isSubscribed)")
         }
     }
     
@@ -348,9 +373,11 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             let status = try JSONDecoder().decode(StatusResponse.self, from: data)
             
             await MainActor.run {
-                self.isSubscribed = status.is_subscribed
-                self.subscriptionExpiryDate = status.subscription_expires_at
-                print("AuthManager: 状态同步完成，订阅状态: \(status.is_subscribed)")
+                if status.is_subscribed {
+                    self.isSubscribed = true
+                    self.subscriptionExpiryDate = status.subscription_expires_at
+                }
+                print("AuthManager: 服务器状态同步完成，订阅状态: \(status.is_subscribed)")
             }
         } catch {
             print("AuthManager: 检查状态失败: \(error)")
