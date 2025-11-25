@@ -263,34 +263,51 @@ struct ComparisonChartView: View {
         isLoading = true
         errorMessage = nil
         
-        DispatchQueue.global(qos: .userInitiated).async {
+        // 使用 Task
+        Task {
             var tempData: [String: [DatabaseManager.PriceData]] = [:]
             var shortestDateRange: (start: Date, end: Date)?
+            var errorMsg: String? = nil
             
-            for symbol in symbols {
-                guard let tableName = dataService.getCategory(for: symbol) else {
-                    DispatchQueue.main.async {
-                        errorMessage = "找不到股票代码 \(symbol) 的分类信息"
-                        isLoading = false
+            // 并发获取数据
+            await withTaskGroup(of: (String, [DatabaseManager.PriceData]?).self) { group in
+                for symbol in symbols {
+                    group.addTask {
+                        guard let tableName = await MainActor.run(body: { dataService.getCategory(for: symbol) }) else {
+                            return (symbol, nil) // 找不到分类
+                        }
+                        
+                        let data = await DatabaseManager.shared.fetchHistoricalData(
+                            symbol: symbol,
+                            tableName: tableName,
+                            dateRange: .customRange(start: startDate, end: endDate)
+                        )
+                        return (symbol, data)
                     }
-                    return
                 }
                 
-                let data = DatabaseManager.shared.fetchHistoricalData(
-                    symbol: symbol,
-                    tableName: tableName,
-                    dateRange: .customRange(start: startDate, end: endDate)
-                )
-                
-                if data.isEmpty {
-                    DispatchQueue.main.async {
-                        errorMessage = "没有找到股票代码 \(symbol) 在指定日期范围内的数据"
-                        isLoading = false
+                for await (symbol, data) in group {
+                    if let data = data, !data.isEmpty {
+                        tempData[symbol] = data
+                    } else {
+                        // 只要有一个失败，就标记错误（或者你可以选择忽略失败的）
+                        if errorMsg == nil { errorMsg = "未找到 \(symbol) 的数据" }
                     }
-                    return
                 }
-                
+            }
+            
+            if let error = errorMsg {
+                await MainActor.run {
+                    self.errorMessage = error
+                    self.isLoading = false
+                }
+                return
+            }
+            
+            // 数据处理逻辑 (CPU 密集)
+            for (symbol, data) in tempData {
                 let sortedData = data.sorted { $0.date < $1.date }
+                tempData[symbol] = sortedData
                 
                 let currentStart = sortedData.first?.date ?? startDate
                 let currentEnd = sortedData.last?.date ?? endDate
@@ -303,14 +320,12 @@ struct ComparisonChartView: View {
                 } else {
                     shortestDateRange = (currentStart, currentEnd)
                 }
-                
-                tempData[symbol] = sortedData
             }
             
             guard let dateRange = shortestDateRange else {
-                DispatchQueue.main.async {
-                    errorMessage = "无法确定共同的日期范围"
-                    isLoading = false
+                await MainActor.run {
+                    self.errorMessage = "无法确定共同的日期范围"
+                    self.isLoading = false
                 }
                 return
             }
@@ -323,7 +338,7 @@ struct ComparisonChartView: View {
                 tempData[symbol] = filteredData
             }
             
-            DispatchQueue.main.async {
+            await MainActor.run {
                 chartData = tempData
                 isLoading = false
             }

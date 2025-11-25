@@ -998,23 +998,28 @@ struct ChartView: View {
             oneWeekBeforeRange = nil
         }
         
-        // 原有的数据加载逻辑
-        DispatchQueue.global(qos: .userInitiated).async {
-            print("开始数据库查询...")
-            let newData = DatabaseManager.shared.fetchHistoricalData(
+        // 使用 Task 替代 DispatchQueue.global
+        Task {
+            print("开始网络请求...")
+            
+            // 1. 异步获取历史数据
+            let newData = await DatabaseManager.shared.fetchHistoricalData(
                 symbol: symbol,
                 tableName: groupName,
                 dateRange: .timeRange(selectedTimeRange)
             )
             print("查询完成，获取到 \(newData.count) 条数据")
             
-            let earnings = DatabaseManager.shared.fetchEarningData(forSymbol: symbol)
+            // 2. 异步获取财报数据
+            let earnings = await DatabaseManager.shared.fetchEarningData(forSymbol: symbol)
             print("获取到 \(earnings.count) 条财报数据")
             
+            // 3. 数据处理 (采样) - 这部分是 CPU 密集型，可以保留在 Task 中或放到 detached Task
             let sampledData = sampleData(newData, rate: selectedTimeRange.samplingRate())
             print("采样后数据点数: \(sampledData.count)")
 
-            DispatchQueue.main.async {
+            // 4. 更新 UI
+            await MainActor.run {
                 chartData = newData
                 sampledChartData = sampledData
                 earningData = earnings

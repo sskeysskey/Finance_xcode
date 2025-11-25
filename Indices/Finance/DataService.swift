@@ -176,8 +176,6 @@ class DataService: ObservableObject {
     // 公开缓存：已获取的财报趋势
     @Published var earningTrends: [String: EarningTrend] = [:]
     
-    private var isDataLoaded = false
-    
     // High/Low
     @Published var highGroups: [HighLowGroup] = []
     @Published var lowGroups: [HighLowGroup] = []
@@ -190,8 +188,7 @@ class DataService: ObservableObject {
     // MARK: - 新增：tags 权重（合并自 DataService1）
     @Published var tagsWeightConfig: [Double: [String]] = [:]
     
-    // MARK: - 新增辅助属性
-    /// 检查本地是否已存在数据版本。如果版本号为 nil 或 "0.0"，则认为是首次加载，此时文件不存在是正常情况。
+    private var isDataLoaded = false
     private var isInitialLoad: Bool {
         let localVersion = UserDefaults.standard.string(forKey: "FinanceAppLocalDataVersion")
         return localVersion == nil || localVersion == "0.0"
@@ -214,8 +211,12 @@ class DataService: ObservableObject {
             self.errorMessage = nil
         }
         
-        // 统一加载
-        loadMarketCapData()
+        // 启动异步任务加载网络数据
+        Task {
+            await loadMarketCapData()
+        }
+        
+        // 加载本地 JSON/Text 文件
         loadDescriptionPair()
         loadSectorsData()
         loadCompareDataPair()
@@ -229,58 +230,80 @@ class DataService: ObservableObject {
         print("DataService: 所有数据加载完毕。")
     }
     
-    // MARK: - 合并：获取一组 symbol 的财报趋势
+    // 修改：异步获取财报趋势
+    // 修复了 Swift 6 并发变量捕获错误
     public func fetchEarningTrends(for symbols: [String]) {
-        let dispatchGroup = DispatchGroup()
-
-        for symbol in symbols {
-            let upperSymbol = symbol.uppercased()
-            if self.earningTrends[upperSymbol] != nil {
-                continue
-            }
-            dispatchGroup.enter()
-            DispatchQueue.global(qos: .userInitiated).async {
-                var trend: EarningTrend = .insufficientData
-
-                let sortedEarnings = DatabaseManager.shared.fetchEarningData(forSymbol: symbol).sorted { $0.date > $1.date }
+        Task {
+            for symbol in symbols {
+                let upperSymbol = symbol.uppercased()
+                
+                // 检查缓存 (在 MainActor 上安全读取)
+                let alreadyExists = await MainActor.run { self.earningTrends[upperSymbol] != nil }
+                if alreadyExists { continue }
+                
+                // 异步获取数据
+                let sortedEarnings = await DatabaseManager.shared.fetchEarningData(forSymbol: symbol).sorted { $0.date > $1.date }
+                
+                var calculatedTrend: EarningTrend = .insufficientData
+                
                 if sortedEarnings.count >= 2 {
                     let latestEarning = sortedEarnings[0]
                     let previousEarning = sortedEarnings[1]
-                    if let tableName = self.getCategory(for: symbol) {
-                        let latestClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: latestEarning.date, tableName: tableName)
-                        let previousClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: previousEarning.date, tableName: tableName)
+                    
+                    // 安全获取 tableName (涉及读取 sectorsData，建议在 MainActor)
+                    let tableName = await MainActor.run { self.getCategory(for: symbol) }
+                    
+                    if let tableName = tableName {
+                        // 顺序获取价格，避免 async let 导致的变量捕获问题
+                        let latestClose = await DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: latestEarning.date, tableName: tableName)
+                        let previousClose = await DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: previousEarning.date, tableName: tableName)
+                        
                         if let latest = latestClose, let previous = previousClose {
                             if latestEarning.price > 0 {
-                                trend = (latest > previous) ? .positiveAndUp : .positiveAndDown
+                                calculatedTrend = (latest > previous) ? .positiveAndUp : .positiveAndDown
                             } else {
-                                trend = (latest > previous) ? .negativeAndUp : .negativeAndDown
+                                calculatedTrend = (latest > previous) ? .negativeAndUp : .negativeAndDown
                             }
                         }
                     }
                 }
-                DispatchQueue.main.async {
-                    self.earningTrends[upperSymbol] = trend
-                    dispatchGroup.leave()
+                
+                // 最终更新 UI
+                let finalTrend = calculatedTrend
+                await MainActor.run {
+                    self.earningTrends[upperSymbol] = finalTrend
                 }
             }
-        }
-        dispatchGroup.notify(queue: .main) {
-            // 所有完成后的回调（需要的话）
         }
     }
     
-    // MARK: - Private methods
-    
-    private func loadHighLowData() {
-        guard let url = FileManagerHelper.getLatestFileUrl(for: "HighLow") else {
+    // 修改：异步加载市值数据
+    // 标记为 @MainActor，解决 newData 捕获问题和主线程更新问题
+    @MainActor
+    private func loadMarketCapData() async {
+        // 网络请求（URLSession 自动在后台运行，不会阻塞主线程）
+        let allMarketCapInfo = await DatabaseManager.shared.fetchAllMarketCapData(from: "MNSPP")
+        
+        if allMarketCapInfo.isEmpty {
             if !isInitialLoad {
-                DispatchQueue.main.async {
-                    self.errorMessage = "HighLow 文件未在 Documents 中找到"
-                }
+                self.errorMessage = "无法从服务器加载市值数据。"
             }
             return
         }
-
+        
+        var newData: [String: MarketCapDataItem] = [:]
+        for info in allMarketCapInfo {
+            let item = MarketCapDataItem(marketCap: info.marketCap, peRatio: info.peRatio, pb: info.pb)
+            newData[info.symbol.uppercased()] = item
+        }
+        
+        // 因为函数标记了 @MainActor，这里可以直接赋值
+        self.marketCapData = newData
+    }
+    
+    private func loadHighLowData() {
+        // (保留原代码)
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "HighLow") else { return }
         do {
             let content = try String(contentsOf: url, encoding: .utf8)
             let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
@@ -548,29 +571,8 @@ class DataService: ObservableObject {
         return nil
     }
     
-    private func loadMarketCapData() {
-        let allMarketCapInfo = DatabaseManager.shared.fetchAllMarketCapData(from: "MNSPP")
-        
-        if allMarketCapInfo.isEmpty {
-            if !isInitialLoad {
-                self.errorMessage = "未能从数据库 MNSPP 表加载到市值数据。"
-            }
-            return
-        }
-        
-        var newData: [String: MarketCapDataItem] = [:]
-        for info in allMarketCapInfo {
-            let item = MarketCapDataItem(
-                marketCap: info.marketCap,
-                peRatio: info.peRatio,
-                pb: info.pb
-            )
-            newData[info.symbol.uppercased()] = item
-        }
-        DispatchQueue.main.async {
-            self.marketCapData = newData
-        }
-    }
+    // 【已删除】：底部重复的同步版本 loadMarketCapData() 已被移除，
+    // 以解决 "async call in a function that does not support concurrency" 的歧义问题。
     
     // MARK: - 合并 Compare_All：同时生成两种映射
     private func loadCompareDataPair() {

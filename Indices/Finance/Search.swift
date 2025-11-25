@@ -439,15 +439,17 @@ struct SearchView: View {
         
         // 2. 正常逻辑
         if let groupName = viewModel.dataService.getCategory(for: result.symbol) {
-            // 检查数据库中是否有该symbol的价格数据
-            DispatchQueue.global(qos: .userInitiated).async {
-                let data = DatabaseManager.shared.fetchHistoricalData(
+            // 【修改点】：使用 Task 替代 DispatchQueue.global().async
+            // 因为 fetchHistoricalData 现在是 async 函数
+            Task {
+                let data = await DatabaseManager.shared.fetchHistoricalData(
                     symbol: result.symbol,
                     tableName: groupName,
                     dateRange: .timeRange(.oneMonth)
                 )
                 
-                DispatchQueue.main.async {
+                // UI 更新必须在主线程 (Task 在 View 中通常默认在 MainActor，但显式调用更安全)
+                await MainActor.run {
                     if data.isEmpty {
                         // 如果没有价格数据，但有description数据
                         if getDescriptions(for: result.symbol) != nil {
@@ -696,24 +698,16 @@ class SearchViewModel: ObservableObject {
     func performSearch(query: String, completion: @escaping ([GroupedSearchResults]) -> Void) {
         let keywords = query.lowercased().split(separator: " ").map { String($0) }
         
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self, let descriptionData = self.dataService.descriptionData else {
-                DispatchQueue.main.async { completion([]) }
+        // 使用 Task
+        Task {
+            guard let descriptionData = self.dataService.descriptionData else {
+                await MainActor.run { completion([]) }
                 return
             }
             
-            var groupedResults: [(
-                group: GroupedSearchResults,
-                matchScore: Int,
-                priority: Int
-            )] = []
-            
-            let categories: [MatchCategory] = [
-                .stockSymbol, .etfSymbol,
-                .stockName, .etfName,
-                .stockTag, .etfTag,
-                .stockDescription, .etfDescription
-            ]
+            // 搜索逻辑 (CPU 密集，非 Async)
+            var groupedResults: [(group: GroupedSearchResults, matchScore: Int, priority: Int)] = []
+            let categories: [MatchCategory] = [.stockSymbol, .etfSymbol, .stockName, .etfName, .stockTag, .etfTag, .stockDescription, .etfDescription]
             
             for category in categories {
                 var matches: [(result: SearchResult, score: Int)] = []
@@ -734,100 +728,98 @@ class SearchViewModel: ObservableObject {
             }
             
             let sortedGroups = groupedResults.sorted {
-                if $0.matchScore != $1.matchScore {
-                    return $0.matchScore > $1.matchScore
-                }
+                if $0.matchScore != $1.matchScore { return $0.matchScore > $1.matchScore }
                 return $0.priority > $1.priority
             }.map { $0.group }
             
-            DispatchQueue.main.async {
-                if !keywords.isEmpty {
-                    self.addSearchHistory(term: query)
-                }
+            await MainActor.run {
+                if !keywords.isEmpty { self.addSearchHistory(term: query) }
                 self.groupedSearchResults = sortedGroups
-                
-                // 【修改】: 将数据获取流程串联起来
-                self.fetchLatestVolumes(for: sortedGroups) {
-                    // 在获取 volume 之后，接着获取财报趋势
-                    self.fetchEarningTrends(for: sortedGroups) {
-                        // 所有数据都获取完毕后，才最终回调
-                        completion(sortedGroups)
+            }
+            
+            // 异步获取 Volume
+            await self.fetchLatestVolumes(for: sortedGroups)
+            
+            // 异步获取财报趋势
+            await self.fetchEarningTrends(for: sortedGroups)
+            
+            await MainActor.run {
+                completion(sortedGroups)
+            }
+        }
+    }
+    
+    // MARK: - 修复后的 fetchEarningTrends
+    private func fetchEarningTrends(for groupedResults: [GroupedSearchResults]) async {
+        await withTaskGroup(of: Void.self) { group in
+            for groupedResult in groupedResults {
+                for entry in groupedResult.results {
+                    group.addTask {
+                        let symbol = entry.result.symbol
+                        
+                        // 修复：不再使用 var trend 并在 async let 块中修改
+                        // 而是调用辅助函数直接返回计算结果赋值给 let
+                        let trend = await self.calculateTrend(for: symbol)
+                        
+                        await MainActor.run {
+                            entry.result.earningTrend = trend
+                        }
                     }
                 }
             }
         }
     }
     
-    // 【新增】: 为所有搜索结果异步获取财报趋势
-    private func fetchEarningTrends(for groupedResults: [GroupedSearchResults], completion: @escaping () -> Void) {
-        let dispatchGroup = DispatchGroup()
-
-        for group in groupedResults {
-            for entry in group.results {
-                dispatchGroup.enter()
+    // MARK: - 新增辅助函数：封装计算逻辑，避免变量捕获问题
+    private func calculateTrend(for symbol: String) async -> EarningTrend {
+        let sortedEarnings = await DatabaseManager.shared.fetchEarningData(forSymbol: symbol).sorted { $0.date > $1.date }
+        
+        if sortedEarnings.count >= 2 {
+            let latestEarning = sortedEarnings[0]
+            let previousEarning = sortedEarnings[1]
+            
+            if let tableName = self.dataService.getCategory(for: symbol) {
+                // 在这里使用 async let 是安全的，因为我们没有修改外部的 var
+                async let latestCloseTask = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: latestEarning.date, tableName: tableName)
+                async let previousCloseTask = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: previousEarning.date, tableName: tableName)
                 
-                // 确保在后台线程执行数据库查询
-                DispatchQueue.global(qos: .userInitiated).async {
-                    let symbol = entry.result.symbol
-                    var trend: EarningTrend = .insufficientData
-
-                    // 获取所有财报数据并排序
-                    let sortedEarnings = DatabaseManager.shared.fetchEarningData(forSymbol: symbol).sorted { $0.date > $1.date }
-
-                    if sortedEarnings.count >= 2 {
-                        let latestEarning = sortedEarnings[0]
-                        let previousEarning = sortedEarnings[1]
-
-                        // 使用 dataService 获取正确的表名
-                        if let tableName = self.dataService.getCategory(for: symbol) {
-                            let latestClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: latestEarning.date, tableName: tableName)
-                            let previousClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: previousEarning.date, tableName: tableName)
-
-                            if let latest = latestClose, let previous = previousClose {
-                                if latestEarning.price > 0 {
-                                    trend = (latest > previous) ? .positiveAndUp : .positiveAndDown
-                                } else {
-                                    trend = (latest > previous) ? .negativeAndUp : .negativeAndDown
+                let (latest, previous) = await (latestCloseTask, previousCloseTask)
+                
+                if let l = latest, let p = previous {
+                    if latestEarning.price > 0 {
+                        return (l > p) ? .positiveAndUp : .positiveAndDown
+                    } else {
+                        return (l > p) ? .negativeAndUp : .negativeAndDown
+                    }
+                }
+            }
+        }
+        return .insufficientData
+    }
+    
+    private func fetchLatestVolumes(for groupedResults: [GroupedSearchResults]) async {
+        let etfCategories: Set<MatchCategory> = [.etfSymbol, .etfName, .etfDescription, .etfTag]
+        
+        await withTaskGroup(of: Void.self) { group in
+            for groupedResult in groupedResults {
+                if etfCategories.contains(groupedResult.category) {
+                    for entry in groupedResult.results {
+                        group.addTask {
+                            let symbol = entry.result.symbol
+                            if let latestVolume = await DatabaseManager.shared.fetchLatestVolume(forSymbol: symbol, tableName: "ETFs") {
+                                await MainActor.run {
+                                    entry.result.volume = self.formatVolume(latestVolume)
+                                }
+                            } else {
+                                await MainActor.run {
+                                    entry.result.volume = "--K"
                                 }
                             }
                         }
                     }
-
-                    // 回到主线程更新 UI 相关的属性
-                    DispatchQueue.main.async {
-                        entry.result.earningTrend = trend
-                        dispatchGroup.leave()
-                    }
                 }
             }
         }
-
-        // 当所有异步任务都完成后，调用最终的 completion
-        dispatchGroup.notify(queue: .main) {
-            completion()
-        }
-    }
-    
-    private func fetchLatestVolumes(for groupedResults: [GroupedSearchResults], completion: @escaping () -> Void) {
-        let etfCategories: Set<MatchCategory> = [.etfSymbol, .etfName, .etfDescription, .etfTag]
-        
-        for groupedResult in groupedResults {
-            if etfCategories.contains(groupedResult.category) {
-                for (_, entry) in groupedResult.results.enumerated() {
-                    let symbol = entry.result.symbol
-                    if let latestVolume = DatabaseManager.shared.fetchLatestVolume(forSymbol: symbol, tableName: "ETFs") {
-                        DispatchQueue.main.async {
-                            entry.result.volume = self.formatVolume(latestVolume)
-                        }
-                    } else {
-                        DispatchQueue.main.async {
-                            entry.result.volume = "--K"
-                        }
-                    }
-                }
-            }
-        }
-        completion()
     }
     
     private func formatVolume(_ volume: Int64) -> String {

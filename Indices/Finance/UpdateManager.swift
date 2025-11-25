@@ -4,13 +4,14 @@ import SwiftUI
 // MARK: - 数据模型 (无修改)
 struct VersionResponse: Codable {
     let version: String
-    let daily_free_limit: Int? // 新增字段
+    let daily_free_limit: Int?
     let files: [FileInfo]
 }
 
 struct FileInfo: Codable, Hashable {
     let name: String
     let type: String
+    // updateType 不再需要 sync 逻辑，但为了兼容旧 JSON 结构可以保留定义
     let updateType: String?
 
     // --- 新增此部分 ---
@@ -20,67 +21,6 @@ struct FileInfo: Codable, Hashable {
         case updateType = "update_type" // 将 JSON 中的 "update_type" 映射到 Swift 的 updateType 属性
     }
 }
-
-// MARK: - 新增：同步响应模型
-struct SyncResponse: Codable {
-    let lastId: Int
-    let changes: [Change]
-    
-    enum CodingKeys: String, CodingKey {
-        case lastId = "last_id"
-        case changes
-    }
-}
-
-struct Change: Codable {
-    let logId: Int
-    let table: String
-    let op: String // "I", "U", "D"
-    
-    // 新增：用于定位记录的键，例如 ["name": "AAPL", "date": "2025-01-01"]
-    let key: [String: JSONValue]
-    
-    // data 字段保持不变，用于 I 和 U 操作
-    let data: [String: JSONValue]?
-    
-    enum CodingKeys: String, CodingKey {
-        case logId = "log_id"
-        case table, op, key, data
-    }
-}
-// 用于解码 [String: Any] 的辅助类型
-enum JSONValue: Codable {
-    case int(Int)
-    case double(Double)
-    case string(String)
-    case null
-    
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let intValue = try? container.decode(Int.self) {
-            self = .int(intValue)
-        } else if let doubleValue = try? container.decode(Double.self) {
-            self = .double(doubleValue)
-        } else if let stringValue = try? container.decode(String.self) {
-            self = .string(stringValue)
-        } else if container.decodeNil() {
-            self = .null
-        } else {
-            throw DecodingError.typeMismatch(JSONValue.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Unsupported JSON value"))
-        }
-    }
-    
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .int(let value): try container.encode(value)
-        case .double(let value): try container.encode(value)
-        case .string(let value): try container.encode(value)
-        case .null: try container.encodeNil()
-        }
-    }
-}
-
 
 // MARK: - 更新状态 (无修改)
 enum UpdateState: Equatable {
@@ -138,27 +78,18 @@ class UpdateManager: ObservableObject {
     
     @Published var updateState: UpdateState = .idle
     
+    // 请确保此 IP 与 AppServer 运行的 IP 一致
     private let serverBaseURL = "http://106.15.183.158:5001/api/Finance"
-    
     private let localVersionKey = "FinanceAppLocalDataVersion"
-    private let lastSyncIdKey = "FinanceLastSyncID" // 新增: 用于数据库同步
     
     private init() {}
     
-    private var isInitialLoad: Bool {
-        let localVersion = UserDefaults.standard.string(forKey: localVersionKey)
-        return localVersion == nil || localVersion == "0.0"
-    }
-    
     func checkForUpdates(isManual: Bool = false) async -> Bool {
         if case .checking = updateState, !isManual { return false }
-        if case .downloading = updateState, case .downloadingFile = updateState { return false }
         
-        // 一开始就把状态置为 checking，无论手动还是自动
-            await MainActor.run { self.updateState = .checking }
+        await MainActor.run { self.updateState = .checking }
         
-        if isManual { // 仅在手动检查时立即显示 "checking"
-//            self.updateState = .checking
+        if isManual {
             try? await Task.sleep(for: .milliseconds(1))
         }
         
@@ -181,15 +112,12 @@ class UpdateManager: ObservableObject {
             let isFirstTimeSetup = (UserDefaults.standard.string(forKey: localVersionKey) == nil)
             
             if isFirstTimeSetup || serverVersionResponse.version.compare(localVersion, options: .numeric) == .orderedDescending {
-                print(isFirstTimeSetup ? "首次启动，开始同步所有资源..." : "发现新版本，开始下载/同步文件...")
+                print("发现新版本，开始下载文件...")
                 
-                // MARK: - 核心修改点
-                // 现在 downloadAndSyncFiles 会处理下载和同步两种情况
-                let success = await downloadAndSyncFiles(from: serverVersionResponse)
+                // 仅下载 JSON/Text 文件，不再处理 DB
+                let success = await downloadFiles(from: serverVersionResponse)
                 
                 if success {
-                    print("所有文件更新成功。")
-                    // 清理时要传入所有新文件的信息
                     cleanupOldFiles(keeping: serverVersionResponse.files)
                     UserDefaults.standard.set(serverVersionResponse.version, forKey: localVersionKey)
                     print("本地版本已更新至: \(serverVersionResponse.version)")
@@ -297,85 +225,17 @@ class UpdateManager: ObservableObject {
         }
     }
     
-    // MARK: - 重构的核心方法：downloadAndSyncFiles
-    private func downloadAndSyncFiles(from versionResponse: VersionResponse) async -> Bool {
+    private func downloadFiles(from versionResponse: VersionResponse) async -> Bool {
         let allFiles = versionResponse.files
-        // ==================【请在这里加入调试代码】==================
-            print("--- 开始调试 downloadAndSyncFiles ---")
-            print("从 version.json 解析到的所有文件信息:")
-            for file in allFiles {
-                // 我们想知道 updateType 是否被正确解析
-                print("- 文件名: \(file.name), 类型: \(file.type), 更新方式(updateType): \(file.updateType ?? "nil")")
-            }
-            print("-----------------------------------------")
-            // ========================================================
         let totalTasks = allFiles.count
         var completedTasks = 0
         
-        // 区分需要同步和需要下载的文件
-        let syncableFiles = allFiles.filter { $0.updateType == "sync" }
-        let downloadableFiles = allFiles.filter { $0.updateType != "sync" }
-        
-        // ==================【再在这里加入调试代码】==================
-            print("--- 逻辑判断 ---")
-            print("被识别为需要【同步】的文件数量: \(syncableFiles.count)")
-            print("被识别为需要【下载】的文件数量: \(downloadableFiles.count)")
-            
-        if syncableFiles.first(where: { $0.name == "Finance.db" }) != nil {
-                let dbExists = FileManagerHelper.fileExists(named: "Finance.db")
-                print("Finance.db 被识别为同步文件。")
-                print("检查本地文件是否存在 (fileExists): \(dbExists)")
-                if !dbExists {
-                    print("结论：本地数据库不存在，将执行全量下载。")
-                } else {
-                    print("结论：本地数据库已存在，将执行增量同步。")
-                }
-            } else {
-                print("警告：Finance.db 未被识别为同步文件！")
-            }
-            print("------------------")
-            // ========================================================
+        if allFiles.isEmpty { return true }
         
         self.updateState = .downloading(progress: 0, total: totalTasks)
         
-        // 1. 先处理同步任务 (通常只有一个数据库文件)
-        for fileInfo in syncableFiles {
-            let success: Bool
-            // 如果是首次安装，数据库文件不存在，需要全量下载一次
-            if !FileManagerHelper.fileExists(named: "Finance.db") {
-                print("本地数据库不存在，执行首次全量下载...")
-                // --- 核心修改点：调用新的带进度的下载方法 ---
-                success = await downloadFileWithProgress(named: fileInfo.name)
-                
-                if success {
-                     await resetSyncIDToLatest()
-                }
-            } else {
-                // 否则，执行增量同步
-                print("执行数据库增量同步...")
-                // 在开始同步前，设置一个状态，让用户知道正在处理
-                self.updateState = .downloading(progress: 0, total: totalTasks)
-                success = await syncDatabase()
-            }
-            
-            if !success {
-                print("数据库同步或下载失败: \(fileInfo.name)")
-                return false // 一个失败则整个流程失败
-            }
-            
-            completedTasks += 1
-            let progress = Double(completedTasks) / Double(totalTasks)
-            // 更新整体进度
-            self.updateState = .downloading(progress: progress, total: totalTasks)
-        }
-        
-        // 2. 并行处理所有下载任务
-        if downloadableFiles.isEmpty {
-             return true // 如果没有其他文件要下载，到此成功结束
-        }
-        
         return await withTaskGroup(of: Bool.self, body: { group in
-            for fileInfo in downloadableFiles {
+            for fileInfo in allFiles {
                 group.addTask {
                     // 小文件继续使用旧的下载方法
                     return await self.downloadFile(named: fileInfo.name)
@@ -397,106 +257,7 @@ class UpdateManager: ObservableObject {
             return allSuccess
         })
     }
-
-    // MARK: - 新增：数据库同步逻辑
-    private func syncDatabase() async -> Bool {
-        let lastID = UserDefaults.standard.integer(forKey: lastSyncIdKey)
-        guard let url = URL(string: "\(serverBaseURL)/sync?last_id=\(lastID)") else {
-            print("无效的同步URL")
-            return false
-        }
-        
-        do {
-            print("正在从 last_id: \(lastID) 开始同步...")
-            let (data, _) = try await URLSession.shared.data(from: url)
-            
-            let syncResponse = try JSONDecoder().decode(SyncResponse.self, from: data)
-            
-            if syncResponse.changes.isEmpty {
-                print("没有需要同步的变更。")
-                return true
-            }
-            
-            print("获取到 \(syncResponse.changes.count) 条变更，准备应用...")
-            
-            // 调用 DBManager 应用变更
-            let applySuccess = await DatabaseManager.shared.applySyncChanges(syncResponse.changes)
-            
-            if applySuccess {
-                UserDefaults.standard.set(syncResponse.lastId, forKey: lastSyncIdKey)
-                print("同步成功，新的 last_id 已更新为: \(syncResponse.lastId)")
-                return true
-            } else {
-                print("应用数据库变更失败。")
-                return false
-            }
-            
-        } catch {
-            print("同步失败: \(error.localizedDescription)")
-            return false
-        }
-    }
     
-    // 新增辅助函数：当首次下载DB后，获取服务器最新log_id
-    private func resetSyncIDToLatest() async {
-        // 调用 sync 接口，但 last_id 给一个超大值，这样服务器不会返回任何 changes，
-        // 只会返回当前最新的 log_id
-        let veryLargeLastID = 999999999
-        guard let url = URL(string: "\(serverBaseURL)/sync?last_id=\(veryLargeLastID)") else { return }
-        
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            let syncResponse = try JSONDecoder().decode(SyncResponse.self, from: data)
-            UserDefaults.standard.set(syncResponse.lastId, forKey: lastSyncIdKey)
-            print("已重置数据库同步点，最新 last_id 为: \(syncResponse.lastId)")
-        } catch {
-            print("获取最新 log_id 失败: \(error)")
-            // 如果失败，下次同步会从 0 开始，可能会导致一些重复操作，但 REPLACE INTO 可以处理
-            UserDefaults.standard.set(0, forKey: lastSyncIdKey)
-        }
-    }
-
-    // --- 新增：带进度的文件下载方法 ---
-    private func downloadFileWithProgress(named filename: String) async -> Bool {
-        guard let url = URL(string: "\(serverBaseURL)/download?filename=\(filename)") else {
-            print("无效的下载URL for \(filename)")
-            return false
-        }
-        
-        // --- 修改：初始状态不包含 speed ---
-        await MainActor.run {
-            self.updateState = .downloadingFile(name: filename, progress: 0, downloadedBytes: 0, totalBytes: 1)
-        }
-        
-        do {
-            // 使用 FileDownloader 执行下载
-            let downloader = FileDownloader()
-            // --- 修改：回调闭包不再接收 speed ---
-            let fileData = try await downloader.download(from: url) { progress, downloaded, total in
-                Task { @MainActor in
-                    // --- 修改：设置状态时不再传递 speed ---
-                    self.updateState = .downloadingFile(
-                        name: filename,
-                        progress: progress,
-                        downloadedBytes: downloaded,
-                        totalBytes: total
-                    )
-                }
-            }
-            
-            // 下载成功后，保存文件
-            let destinationURL = FileManagerHelper.documentsDirectory.appendingPathComponent(filename)
-            try fileData.write(to: destinationURL)
-            print("成功保存 (带进度): \(filename) 到 Documents")
-            return true
-            
-        } catch {
-            print("下载或保存文件 \(filename) 失败: \(error)")
-            return false
-        }
-    }
-    
-    // 旧的下载方法保持不变，用于下载无需显示进度的小文件
     private func downloadFile(named filename: String) async -> Bool {
         guard let url = URL(string: "\(serverBaseURL)/download?filename=\(filename)") else {
             print("无效的下载URL for \(filename)")
@@ -558,7 +319,7 @@ class UpdateManager: ObservableObject {
                 // 如果一个带时间戳的文件，其完整文件名不在新版本文件列表中，则删除
                 if !newFileNames.contains(filename) {
                     try fileManager.removeItem(at: url)
-                    print("已删除旧文件: \(filename)")
+                    print("已清理旧文件: \(filename)")
                 }
             }
         } catch {
@@ -567,76 +328,10 @@ class UpdateManager: ObservableObject {
     }
 }
 
-// MARK: - 新增：FileDownloader 辅助类
-private class FileDownloader: NSObject {
-    // --- 修改：ProgressHandler 的定义不再包含 speed ---
-    typealias ProgressHandler = @MainActor (Double, Int64, Int64) -> Void
-    
-    private var progressHandler: ProgressHandler?
-    private var continuation: CheckedContinuation<Data, Error>?
-    
-    private var receivedData = Data()
-    private var expectedContentLength: Int64 = 0
-    
-    // --- 已移除：所有与速度计算相关的属性 ---
-
-    func download(from url: URL, onProgress: @escaping ProgressHandler) async throws -> Data {
-        return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
-            self.progressHandler = onProgress
-            
-            let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
-            session.dataTask(with: url).resume()
-        }
-    }
-}
-
-extension FileDownloader: URLSessionDataDelegate {
-    // 1. 收到服务器响应
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode),
-              let contentLength = httpResponse.value(forHTTPHeaderField: "Content-Length"),
-              let totalBytes = Int64(contentLength) else {
-            continuation?.resume(throwing: URLError(.badServerResponse))
-            completionHandler(.cancel)
-            return
-        }
-        self.expectedContentLength = totalBytes
-        completionHandler(.allow)
-    }
-
-    // 2. 收到数据块 (此方法会被多次调用)
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        receivedData.append(data)
-        let progress = Double(receivedData.count) / Double(expectedContentLength)
-        
-        // --- 已移除：速度计算的逻辑 ---
-        
-        // --- 修改：调用进度回调，不再传递 speed ---
-        Task { @MainActor in
-            self.progressHandler?(progress, Int64(receivedData.count), expectedContentLength)
-        }
-    }
-
-    // 3. 任务完成
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error = error {
-            continuation?.resume(throwing: error)
-        } else {
-            // 成功完成，返回所有数据
-            continuation?.resume(returning: receivedData)
-        }
-    }
-}
-
-
-// MARK: - FileManagerHelper (无修改)
 class FileManagerHelper {
     
     static var documentsDirectory: URL {
-        let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
-        return paths[0]
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
     
     // 新增：检查文件是否存在
@@ -648,39 +343,25 @@ class FileManagerHelper {
     static func getLatestFileUrl(for baseName: String) -> URL? {
         let fileManager = FileManager.default
         let documentsURL = self.documentsDirectory
-        
         do {
             let fileURLs = try fileManager.contentsOfDirectory(at: documentsURL, includingPropertiesForKeys: nil)
-            
             var latestFile: (url: URL, timestamp: String)? = nil
-            
             let regex = try NSRegularExpression(pattern: "^\(baseName)_(\\d{6})\\..+$")
 
             for url in fileURLs {
                 let filename = url.lastPathComponent
                 let range = NSRange(location: 0, length: filename.utf16.count)
-                
                 if let match = regex.firstMatch(in: filename, options: [], range: range) {
                     if let timestampRange = Range(match.range(at: 1), in: filename) {
                         let timestamp = String(filename[timestampRange])
-                        
                         if latestFile == nil || timestamp > latestFile!.timestamp {
                             latestFile = (url, timestamp)
                         }
                     }
                 }
             }
-            
-            if let file = latestFile {
-                print("找到最新文件 for '\(baseName)': \(file.url.lastPathComponent)")
-                return file.url
-            } else {
-                print("警告: 未能在 Documents 中找到 for '\(baseName)' 的任何版本文件。")
-                return nil
-            }
-            
+            return latestFile?.url
         } catch {
-            print("错误: 无法列出 Documents 目录中的文件: \(error)")
             return nil
         }
     }

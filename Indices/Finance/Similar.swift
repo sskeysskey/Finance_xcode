@@ -193,27 +193,23 @@ class SimilarViewModel: ObservableObject {
     private func loadSimilarSymbols() {
         isLoading = true
         
-        // 使用串行队列处理数据库操作
-        dbQueue.async {
-            // 正确地使用 DataService1 单例
+        // 使用 Task 替代 dbQueue
+        Task {
             let dataService1 = DataService1.shared
             
-            // 预取 MNSPP 市值映射
-            let marketCapMap: [String: Double] = {
-                let rows = DatabaseManager.shared.fetchAllMarketCapData(from: "MNSPP")
-                var dict: [String: Double] = [:]
-                dict.reserveCapacity(rows.count)
-                for row in rows {
-                    dict[row.symbol.uppercased()] = row.marketCap
-                }
-                return dict
-            }()
+            // 1. 异步获取市值映射
+            let rows = await DatabaseManager.shared.fetchAllMarketCapData(from: "MNSPP")
+            var marketCapMap: [String: Double] = [:]
+            marketCapMap.reserveCapacity(rows.count)
+            for row in rows {
+                marketCapMap[row.symbol.uppercased()] = row.marketCap
+            }
             
-            // 获取 symbol 的 tags 及权重
+            // 2. 计算 Tags (内存操作)
             let targetTagsWithWeight = self.findTagsBySymbol(symbol: self.symbol, data: dataService1.descriptionData1)
             
             guard !targetTagsWithWeight.isEmpty else {
-                DispatchQueue.main.async {
+                await MainActor.run {
                     self.errorMessage = "未找到该 symbol 的 tags"
                     self.isLoading = false
                 }
@@ -228,65 +224,65 @@ class SimilarViewModel: ObservableObject {
             stocks.removeAll { $0.symbol.uppercased() == self.symbol.uppercased() }
             etfs.removeAll { $0.symbol.uppercased() == self.symbol.uppercased() }
             
-            // 创建 RelatedSymbol 数组
-            let createRelatedSymbol = { (item: MatchedSymbol) -> RelatedSymbol in
-                let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
-                let compareValue = dataService1.compareData1[item.symbol.uppercased()] ?? ""
-                let allTags = item.allTags
-                let mc = marketCapMap[item.symbol.uppercased()]
-                
-                // --- 开始新的财报趋势计算逻辑 ---
-                var trend: EarningTrend = .insufficientData
-
-                let sortedEarnings = DatabaseManager.shared.fetchEarningData(forSymbol: item.symbol).sorted { $0.date > $1.date }
-
-                if sortedEarnings.count >= 2 {
-                    let latestEarningReport = sortedEarnings[0]
-                    let previousEarningReport = sortedEarnings[1]
-
-                    // 【核心修正】: 调用 DataService1 中新增的 getCategory 方法
-                    if let tableName = dataService1.getCategory(for: item.symbol) {
-                        let latestClosePrice = DatabaseManager.shared.fetchClosingPrice(
-                            forSymbol: item.symbol, onDate: latestEarningReport.date, tableName: tableName
-                        )
-                        let previousClosePrice = DatabaseManager.shared.fetchClosingPrice(
-                            forSymbol: item.symbol, onDate: previousEarningReport.date, tableName: tableName
-                        )
-
-                        if let latestPrice = latestClosePrice, let previousPrice = previousClosePrice {
-                            let earningValue = latestEarningReport.price
+            // 3. 处理结果并异步获取财报趋势
+            // 由于需要对每个结果进行网络请求，这里使用 TaskGroup 并发处理以提高速度
+            var processedSymbols: [RelatedSymbol] = []
+            let allCandidates = stocks + etfs
+            
+            await withTaskGroup(of: RelatedSymbol?.self) { group in
+                for item in allCandidates {
+                    group.addTask {
+                        let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
+                        let compareValue = dataService1.compareData1[item.symbol.uppercased()] ?? ""
+                        // 过滤掉没有 compareValue 的
+                        if compareValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
+                        
+                        let allTags = item.allTags
+                        let mc = marketCapMap[item.symbol.uppercased()]
+                        
+                        // 异步获取财报趋势
+                        var trend: EarningTrend = .insufficientData
+                        let sortedEarnings = await DatabaseManager.shared.fetchEarningData(forSymbol: item.symbol).sorted { $0.date > $1.date }
+                        
+                        if sortedEarnings.count >= 2 {
+                            let latestEarning = sortedEarnings[0]
+                            let previousEarning = sortedEarnings[1]
                             
-                            if earningValue > 0 {
-                                trend = (latestPrice > previousPrice) ? .positiveAndUp : .positiveAndDown
-                            } else {
-                                trend = (latestPrice > previousPrice) ? .negativeAndUp : .negativeAndDown
+                            if let tableName = dataService1.getCategory(for: item.symbol) {
+                                async let latestClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: item.symbol, onDate: latestEarning.date, tableName: tableName)
+                                async let previousClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: item.symbol, onDate: previousEarning.date, tableName: tableName)
+                                
+                                if let latest = await latestClose, let previous = await previousClose {
+                                    if latestEarning.price > 0 {
+                                        trend = (latest > previous) ? .positiveAndUp : .positiveAndDown
+                                    } else {
+                                        trend = (latest > previous) ? .negativeAndUp : .negativeAndDown
+                                    }
+                                }
                             }
                         }
+                        
+                        return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc, earningTrend: trend)
                     }
                 }
-                // --- 结束新的财报趋势计算逻辑 ---
-
-                return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc, earningTrend: trend)
+                
+                for await result in group {
+                    if let res = result {
+                        processedSymbols.append(res)
+                    }
+                }
             }
             
-            let stocksRelated = stocks.map(createRelatedSymbol)
-            let etfsRelated = etfs.map(createRelatedSymbol)
-            
-            let allSymbols = (stocksRelated + etfsRelated).filter { !$0.compareValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            
-            let sortedSymbols = allSymbols.sorted { a, b in
-                if a.totalWeight != b.totalWeight {
-                    return a.totalWeight > b.totalWeight
-                }
+            // 排序
+            let sortedSymbols = processedSymbols.sorted { a, b in
+                if a.totalWeight != b.totalWeight { return a.totalWeight > b.totalWeight }
                 let amc = a.marketCap ?? -Double.greatestFiniteMagnitude
                 let bmc = b.marketCap ?? -Double.greatestFiniteMagnitude
-                if amc != bmc {
-                    return amc > bmc
-                }
+                if amc != bmc { return amc > bmc }
                 return a.symbol < b.symbol
             }.prefix(50)
             
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.relatedSymbols = Array(sortedSymbols)
                 self.isLoading = false
             }

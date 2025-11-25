@@ -1,444 +1,218 @@
 import Foundation
-import SQLite3
 
-extension DatabaseManager: @unchecked Sendable {}
-
+// 移除 SQLite3 引用，改为纯网络请求
 class DatabaseManager {
     static let shared = DatabaseManager()
-    private var db: OpaquePointer?
-    private let dbQueue = DispatchQueue(label: "com.finance.db.queue") // 新增：串行队列
     
-    // MARK: - 表分组定义
-    // 定义使用 (name, date) 作为复合主键的表集合
-    private let tablesWithCompositeKey: Set<String> = [
-        "Earning", "Energy", "Indices", "Crypto", "Currencies", "Bonds",
-        "Basic_Materials", "Communication_Services", "Consumer_Cyclical",
-        "Consumer_Defensive", "Financial_Services", "Utilities", "Real_Estate",
-        "Industrials", "Healthcare", "Technology", "Economics", "ETFs",
-        "Commodities"
-    ]
-
-    // 定义使用 (symbol) 作为主键的表集合
-    private let tablesWithSymbolKey: Set<String> = ["MNSPP"]
+    // 服务器地址，请确保与 UpdateManager 中一致
+    private let serverBaseURL = "http://106.15.183.158:5001/api/Finance"
     
-    struct MarketCapInfo {
+    private init() {}
+    
+    // 移除 reconnectToLatestDatabase，因为不再持有本地连接
+    func reconnectToLatestDatabase() {
+        // 空实现，保持兼容性
+    }
+    
+    // MARK: - Models
+    
+    struct MarketCapInfo: Codable {
         let symbol: String
         let marketCap: Double
         let peRatio: Double?
         let pb: Double?
     }
     
-    private init() {
-        print("=== DatabaseManager Initializing ===")
-        openDatabase()
-    }
-    
-    deinit {
-        if db != nil {
-            sqlite3_close(db)
-        }
-    }
-    
-    func reconnectToLatestDatabase() {
-        print("=== DatabaseManager Reconnecting ===")
-        if db != nil {
-            sqlite3_close(db)
-            db = nil
-            print("已关闭旧的数据库连接。")
-        }
-        openDatabase()
-    }
-
-    private func openDatabase() {
-        let dbName = "Finance.db"
-        let dbUrl = FileManagerHelper.documentsDirectory.appendingPathComponent(dbName)
-
-        guard FileManager.default.fileExists(atPath: dbUrl.path) else {
-            print("错误：数据库文件 \(dbName) 在 Documents 目录中未找到。")
-            self.db = nil
-            return
-        }
-
-        if sqlite3_open(dbUrl.path, &db) == SQLITE_OK {
-            print("成功从 Documents 目录打开数据库: \(dbName)")
-        } else {
-            let errorMessage = String(cString: sqlite3_errmsg(db))
-            print("无法从 Documents 目录打开数据库: \(dbName)。错误: \(errorMessage)")
-            self.db = nil
-        }
-    }
-
-    func applySyncChanges(_ changes: [Change]) async -> Bool {
-        return await withCheckedContinuation { continuation in
-            dbQueue.async {
-                guard self.db != nil else {
-                    print("数据库连接无效，无法应用变更。")
-                    continuation.resume(returning: false)
-                    return
-                }
-                
-                guard sqlite3_exec(self.db, "BEGIN TRANSACTION", nil, nil, nil) == SQLITE_OK else {
-                    print("开启事务失败: \(String(cString: sqlite3_errmsg(self.db)))")
-                    continuation.resume(returning: false)
-                    return
-                }
-                
-                for change in changes {
-                    var success = false
-                    switch change.op {
-                    case "I", "U":
-                        success = self.applyReplace(for: change)
-                    case "D":
-                        success = self.applyDelete(for: change)
-                    default:
-                        print("未知的操作类型: \(change.op)")
-                        success = true
-                    }
-                    
-                    if !success {
-                        print("应用变更失败，正在回滚...")
-                        sqlite3_exec(self.db, "ROLLBACK TRANSACTION", nil, nil, nil)
-                        continuation.resume(returning: false)
-                        return
-                    }
-                }
-                
-                guard sqlite3_exec(self.db, "COMMIT TRANSACTION", nil, nil, nil) == SQLITE_OK else {
-                    print("提交事务失败: \(String(cString: sqlite3_errmsg(self.db)))")
-                    sqlite3_exec(self.db, "ROLLBACK TRANSACTION", nil, nil, nil)
-                    continuation.resume(returning: false)
-                    return
-                }
-                
-                print("成功应用 \(changes.count) 条变更。")
-                continuation.resume(returning: true)
-            }
-        }
-    }
-
-    // ==================== 【最终版修复代码】 ====================
-    private func applyDelete(for change: Change) -> Bool {
-        var sql: String
-        var statement: OpaquePointer?
-        
-        // 使用 Set 来判断表的类型，实现动态处理
-        if tablesWithCompositeKey.contains(change.table) {
-            // 处理所有使用 (name, date) 作为主键的表
-            guard case let .string(name) = change.key["name"],
-                  case let .string(date) = change.key["date"] else {
-                print("\(change.table) 删除失败：无法从 key 解析 name 和 date。Key: \(change.key)")
-                return false
-            }
-            
-            sql = "DELETE FROM \"\(change.table)\" WHERE name = ? AND date = ?;"
-            
-            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-                print("为 \(change.table) DELETE 准备语句失败: \(String(cString: sqlite3_errmsg(db)))")
-                return false
-            }
-            sqlite3_bind_text(statement, 1, (name as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(statement, 2, (date as NSString).utf8String, -1, nil)
-
-        } else if tablesWithSymbolKey.contains(change.table) {
-            // 处理所有使用 (symbol) 作为主键的表
-            guard case let .string(symbol) = change.key["symbol"] else {
-                print("\(change.table) 删除失败：无法从 key 解析 symbol。Key: \(change.key)")
-                return false
-            }
-            
-            sql = "DELETE FROM \"\(change.table)\" WHERE symbol = ?;"
-            
-            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-                print("为 \(change.table) DELETE 准备语句失败: \(String(cString: sqlite3_errmsg(db)))")
-                return false
-            }
-            sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
-            
-        } else {
-            // 如果有未知的表类型，打印错误
-            print("未知的表类型 \(change.table)，无法执行删除。请检查 DBManager.swift 中的分组定义。")
-            return false
-        }
-        
-        let result = sqlite3_step(statement)
-        sqlite3_finalize(statement)
-        
-        guard result == SQLITE_DONE else {
-            print("执行 DELETE 失败 (table: \(change.table), key: \(change.key)): \(String(cString: sqlite3_errmsg(db)))")
-            return false
-        }
-        
-        return true
-    }
-    // ==========================================================
-
-    private func applyReplace(for change: Change) -> Bool {
-        guard let data = change.data, !data.isEmpty else { return false }
-        
-        let sortedKeys = data.keys.sorted()
-        
-        let columns = sortedKeys.map { "\"\($0)\"" }.joined(separator: ", ")
-        let placeholders = Array(repeating: "?", count: data.count).joined(separator: ", ")
-        let sql = "REPLACE INTO \"\(change.table)\" (\(columns)) VALUES (\(placeholders));"
-        
-        var statement: OpaquePointer?
-        
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            print("为 REPLACE 操作准备语句失败: \(String(cString: sqlite3_errmsg(db)))")
-            print("导致准备失败的变更是: \(change)")
-            return false
-        }
-        
-        var index: Int32 = 1
-        for key in sortedKeys {
-            let value = data[key]!
-            
-            switch value {
-            case .int(let intValue):
-                sqlite3_bind_int64(statement, index, Int64(intValue))
-            case .double(let doubleValue):
-                if doubleValue.truncatingRemainder(dividingBy: 1) == 0 {
-                    sqlite3_bind_int64(statement, index, Int64(doubleValue))
-                } else {
-                    sqlite3_bind_double(statement, index, doubleValue)
-                }
-            case .string(let stringValue):
-                sqlite3_bind_text(statement, index, (stringValue as NSString).utf8String, -1, nil)
-            case .null:
-                sqlite3_bind_null(statement, index)
-            }
-            index += 1
-        }
-        
-        let result = sqlite3_step(statement)
-        sqlite3_finalize(statement)
-        
-        guard result == SQLITE_DONE else {
-            print("执行 REPLACE 失败 (table: \(change.table), key: \(change.key)): \(String(cString: sqlite3_errmsg(db)))")
-            return false
-        }
-        
-        return true
-    }
-    
-    struct PriceData: Identifiable {
+    struct PriceData: Identifiable, Codable {
         let id: Int
         let date: Date
         let price: Double
         let volume: Int64?
+        
+        // 自定义解码以处理日期字符串
+        enum CodingKeys: String, CodingKey {
+            case id, date, price, volume
+        }
+        
+        init(id: Int, date: Date, price: Double, volume: Int64?) {
+            self.id = id
+            self.date = date
+            self.price = price
+            self.volume = volume
+        }
+        
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(Int.self, forKey: .id)
+            price = try container.decode(Double.self, forKey: .price)
+            volume = try container.decodeIfPresent(Int64.self, forKey: .volume)
+            
+            let dateString = try container.decode(String.self, forKey: .date)
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            if let date = formatter.date(from: dateString) {
+                self.date = date
+            } else {
+                self.date = Date.distantPast // Fallback
+            }
+        }
     }
     
-    func fetchAllMarketCapData(from tableName: String) -> [MarketCapInfo] {
-            var results: [MarketCapInfo] = []
-            
-            // 在串行队列中同步执行数据库操作
-            dbQueue.sync {
-                guard db != nil else { return }
-                let query = "SELECT symbol, marketcap, pe_ratio, pb FROM \"\(tableName)\""
-                var statement: OpaquePointer?
-                
-                if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
-                    while sqlite3_step(statement) == SQLITE_ROW {
-                        let symbol = String(cString: sqlite3_column_text(statement, 0))
-                        let marketCap = sqlite3_column_double(statement, 1)
-                        let peRatio: Double? = sqlite3_column_type(statement, 2) != SQLITE_NULL ? sqlite3_column_double(statement, 2) : nil
-                        let pb: Double? = sqlite3_column_type(statement, 3) != SQLITE_NULL ? sqlite3_column_double(statement, 3) : nil
-                        results.append(MarketCapInfo(symbol: symbol, marketCap: marketCap, peRatio: peRatio, pb: pb))
-                    }
-                } else {
-                    print("Failed to prepare statement for market cap data: \(String(cString: sqlite3_errmsg(db)))")
-                }
-                sqlite3_finalize(statement)
-            }
-            
-            return results
+    struct EarningData: Codable {
+        let date: Date
+        let price: Double
+        
+        enum CodingKeys: String, CodingKey {
+            case date, price
         }
-    
-    func fetchLatestVolume(forSymbol symbol: String, tableName: String) -> Int64? {
-            var latestVolume: Int64? = nil
-            
-            dbQueue.sync {
-                guard db != nil else { return }
-                let query = "SELECT volume FROM \(tableName) WHERE name = ? ORDER BY date DESC LIMIT 1"
-                var statement: OpaquePointer?
-
-                if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
-                    sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
-                    if sqlite3_step(statement) == SQLITE_ROW {
-                        latestVolume = sqlite3_column_int64(statement, 0)
-                    }
-                } else {
-                    print("Failed to prepare statement: \(String(cString: sqlite3_errmsg(db)))")
-                }
-                sqlite3_finalize(statement)
-            }
-            
-            return latestVolume
+        
+        init(date: Date, price: Double) {
+            self.date = date
+            self.price = price
         }
+        
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            price = try container.decode(Double.self, forKey: .price)
+            let dateString = try container.decode(String.self, forKey: .date)
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            if let date = formatter.date(from: dateString) {
+                self.date = date
+            } else {
+                self.date = Date.distantPast
+            }
+        }
+    }
     
     enum DateRangeInput {
         case timeRange(TimeRange)
         case customRange(start: Date, end: Date)
     }
-
+    
+    // MARK: - API Requests
+    
+    // 1. 获取所有市值数据 (Async)
+    func fetchAllMarketCapData(from tableName: String) async -> [MarketCapInfo] {
+        // tableName 参数在服务器端目前硬编码为 MNSPP，但保留参数以兼容
+        guard let url = URL(string: "\(serverBaseURL)/query/market_cap") else { return [] }
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let results = try JSONDecoder().decode([MarketCapInfo].self, from: data)
+            return results
+        } catch {
+            print("Network error fetching market cap: \(error)")
+            return []
+        }
+    }
+    
+    // 2. 获取最新成交量 (Async)
+    func fetchLatestVolume(forSymbol symbol: String, tableName: String) async -> Int64? {
+        guard var components = URLComponents(string: "\(serverBaseURL)/query/latest_volume") else { return nil }
+        components.queryItems = [
+            URLQueryItem(name: "symbol", value: symbol),
+            URLQueryItem(name: "table", value: tableName)
+        ]
+        
+        guard let url = components.url else { return nil }
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let response = try JSONDecoder().decode([String: Int64?].self, from: data)
+            return response["volume"] ?? nil
+        } catch {
+            print("Network error fetching volume: \(error)")
+            return nil
+        }
+    }
+    
+    // 3. 获取历史数据 (Async)
     func fetchHistoricalData(
         symbol: String,
         tableName: String,
         dateRange: DateRangeInput
-    ) -> [PriceData] {
-        var result: [PriceData] = []
+    ) async -> [PriceData] {
+        guard var components = URLComponents(string: "\(serverBaseURL)/query/historical") else { return [] }
         
-        dbQueue.sync {
-            guard db != nil else { return }
-            let dateFormat = "yyyy-MM-dd"
-            
-            let (startDate, endDate): (Date, Date) = {
-                switch dateRange {
-                case .timeRange(let timeRange):
-                    return (timeRange.startDate, Date())
-                case .customRange(let start, let end):
-                    return (start, end)
-                }
-            }()
-            
-            let hasVolumeColumn = self.checkIfTableHasVolumeInternal(tableName: tableName)
-            
-            let query = """
-                SELECT id, date, price\(hasVolumeColumn ? ", volume" : "")
-                FROM "\(tableName)"
-                WHERE name = ? AND date BETWEEN ? AND ?
-                ORDER BY date ASC
-            """
-            
-            var statement: OpaquePointer?
-            
-            if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
-                let formatter = DateFormatter()
-                formatter.dateFormat = dateFormat
-                
-                sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(statement, 2, (formatter.string(from: startDate) as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(statement, 3, (formatter.string(from: endDate) as NSString).utf8String, -1, nil)
-                
-                while sqlite3_step(statement) == SQLITE_ROW {
-                    let id = Int(sqlite3_column_int(statement, 0))
-                    let dateString = String(cString: sqlite3_column_text(statement, 1))
-                    let price = sqlite3_column_double(statement, 2)
-                    
-                    if let date = formatter.date(from: dateString) {
-                        let volume = hasVolumeColumn ? sqlite3_column_int64(statement, 3) : nil
-                        result.append(PriceData(id: id, date: date, price: price, volume: volume))
-                    }
-                }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        
+        let (startDate, endDate): (Date, Date) = {
+            switch dateRange {
+            case .timeRange(let timeRange):
+                return (timeRange.startDate, Date())
+            case .customRange(let start, let end):
+                return (start, end)
             }
-            
-            sqlite3_finalize(statement)
-        }
+        }()
         
-        return result
+        components.queryItems = [
+            URLQueryItem(name: "symbol", value: symbol),
+            URLQueryItem(name: "table", value: tableName),
+            URLQueryItem(name: "start", value: formatter.string(from: startDate)),
+            URLQueryItem(name: "end", value: formatter.string(from: endDate))
+        ]
+        
+        guard let url = components.url else { return [] }
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let results = try JSONDecoder().decode([PriceData].self, from: data)
+            return results
+        } catch {
+            print("Network error fetching historical data: \(error)")
+            return []
+        }
     }
     
-    struct EarningData {
-        let date: Date
-        let price: Double
+    // 4. 获取财报数据 (Async)
+    func fetchEarningData(forSymbol symbol: String) async -> [EarningData] {
+        guard var components = URLComponents(string: "\(serverBaseURL)/query/earning") else { return [] }
+        components.queryItems = [URLQueryItem(name: "symbol", value: symbol)]
+        
+        guard let url = components.url else { return [] }
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let results = try JSONDecoder().decode([EarningData].self, from: data)
+            return results
+        } catch {
+            print("Network error fetching earning data: \(error)")
+            return []
+        }
     }
-
-    func fetchEarningData(forSymbol symbol: String) -> [EarningData] {
-            var result: [EarningData] = []
-            
-            // 在串行队列中同步执行数据库操作
-            dbQueue.sync {
-                guard db != nil else { return }
-                let dateFormat = "yyyy-MM-dd"
-                let formatter = DateFormatter()
-                formatter.dateFormat = dateFormat
-                
-                let query = "SELECT date, price FROM Earning WHERE name = ?"
-                var statement: OpaquePointer?
-                
-                if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
-                    sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
-                    
-                    while sqlite3_step(statement) == SQLITE_ROW {
-                        if let dateString = sqlite3_column_text(statement, 0) {
-                            let dateStr = String(cString: dateString)
-                            let price = sqlite3_column_double(statement, 1)
-                            
-                            if let date = formatter.date(from: dateStr) {
-                                result.append(EarningData(date: date, price: price))
-                            }
-                        }
-                    }
-                } else {
-                    print("Failed to prepare statement: \(String(cString: sqlite3_errmsg(db)))")
-                }
-                
-                sqlite3_finalize(statement)
-            }
-            
-            return result
-        }
     
-        /// 根据 symbol, date 和 table name 获取单日的收盘价
-        func fetchClosingPrice(forSymbol symbol: String, onDate date: Date, tableName: String) -> Double? {
-            var price: Double?
-            
-            dbQueue.sync {
-                guard db != nil else { return }
-                
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyy-MM-dd"
-                let dateString = formatter.string(from: date)
-                
-                let query = "SELECT price FROM \"\(tableName)\" WHERE name = ? AND date = ? LIMIT 1"
-                var statement: OpaquePointer?
-                
-                if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
-                    sqlite3_bind_text(statement, 1, (symbol as NSString).utf8String, -1, nil)
-                    sqlite3_bind_text(statement, 2, (dateString as NSString).utf8String, -1, nil)
-                    
-                    if sqlite3_step(statement) == SQLITE_ROW {
-                        price = sqlite3_column_double(statement, 0)
-                    }
-                } else {
-                    print("Failed to prepare statement for closing price: \(String(cString: sqlite3_errmsg(db)))")
-                }
-                
-                sqlite3_finalize(statement)
-            }
-            
-            return price
+    // 5. 获取收盘价 (Async)
+    func fetchClosingPrice(forSymbol symbol: String, onDate date: Date, tableName: String) async -> Double? {
+        guard var components = URLComponents(string: "\(serverBaseURL)/query/closing_price") else { return nil }
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        
+        components.queryItems = [
+            URLQueryItem(name: "symbol", value: symbol),
+            URLQueryItem(name: "date", value: formatter.string(from: date)),
+            URLQueryItem(name: "table", value: tableName)
+        ]
+        
+        guard let url = components.url else { return nil }
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let response = try JSONDecoder().decode([String: Double?].self, from: data)
+            return response["price"] ?? nil
+        } catch {
+            print("Network error fetching closing price: \(error)")
+            return nil
         }
-    
-    // 将原来的 checkIfTableHasVolume 拆分为两个方法
-    private func checkIfTableHasVolumeInternal(tableName: String) -> Bool {
-        guard db != nil else { return false }
-        var hasVolume = false
-        var statement: OpaquePointer?
-        
-        let query = "PRAGMA table_info(\"\(tableName)\")"
-        
-        if sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK {
-            while sqlite3_step(statement) == SQLITE_ROW {
-                if let name = sqlite3_column_text(statement, 1) {
-                    let columnName = String(cString: name)
-                    if columnName.lowercased() == "volume" {
-                        hasVolume = true
-                        break
-                    }
-                }
-            }
-        }
-        
-        sqlite3_finalize(statement)
-        return hasVolume
     }
-
-    func checkIfTableHasVolume(tableName: String) -> Bool {
-        var result = false
-        dbQueue.sync {
-            result = checkIfTableHasVolumeInternal(tableName: tableName)
-        }
-        return result
+    
+    // 6. 检查表是否有 Volume (Async - 实际逻辑在服务器端处理，这里仅保留接口或简化)
+    // 由于服务器端的 query_historical 会自动处理 volume 字段，
+    // 客户端其实不需要显式检查。为了兼容旧代码调用，可以返回 true (假设服务器处理) 或移除调用。
+    // 这里我们简单返回 true，因为服务器 API 已经封装了 schema 检查。
+    func checkIfTableHasVolume(tableName: String) async -> Bool {
+        return true 
     }
 }

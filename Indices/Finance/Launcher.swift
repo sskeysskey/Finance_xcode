@@ -23,7 +23,7 @@ struct Finance: App {
     }
 }
 
-// MARK: - 更新状态视图 (无修改)
+// MARK: - 更新状态视图
 struct UpdateOverlayView: View {
     @ObservedObject var updateManager: UpdateManager
 
@@ -44,7 +44,7 @@ struct UpdateOverlayView: View {
             case .checking:
                 StatusView(icon: nil, message: "正在检查更新...")
             
-            // --- 修改：处理新的 downloadingFile case ---
+            // --- 处理单个文件下载进度的视图 ---
             case .downloadingFile(let name, let progress, let downloaded, let total):
                 VStack(spacing: 12) {
                     Text("正在下载 \(name)")
@@ -55,7 +55,7 @@ struct UpdateOverlayView: View {
                     ProgressView(value: progress)
                         .progressViewStyle(LinearProgressViewStyle())
                     
-                    // --- 修改：只显示 已下载 / 总大小 ---
+                    // 只显示 已下载 / 总大小
                     Text("\(byteFormatter.string(fromByteCount: downloaded)) / \(byteFormatter.string(fromByteCount: total))")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -66,21 +66,10 @@ struct UpdateOverlayView: View {
                 .cornerRadius(15)
                 .shadow(radius: 10)
 
-            // 旧的下载视图，用于显示文件总数进度
-            case .downloading(let progress, let total):
-                 VStack(spacing: 12) {
-                    Text("正在处理文件...")
-                         .font(.headline)
-                    ProgressView(value: progress)
-                    Text("已完成 \(Int(progress * Double(total)))/\(total)")
-                         .font(.caption)
-                         .foregroundColor(.secondary)
-                }
-                .padding(20)
-                .frame(maxWidth: 300)
-                .background(Color(.systemBackground).opacity(0.9))
-                .cornerRadius(15)
-                .shadow(radius: 10)
+            // MARK: - 修改：隐藏了“正在处理文件”及总进度(1/12)的显示
+            // 原来的 .downloading(let progress, let total) 被修改为不显示任何内容
+            case .downloading:
+                EmptyView()
                 
             case .alreadyUpToDate:
                 StatusView(icon: "checkmark.circle.fill", iconColor: .green, message: "当前已是最新版本")
@@ -269,7 +258,7 @@ struct MainContentView: View {
     @StateObject private var dataService = DataService.shared
     @StateObject private var updateManager = UpdateManager.shared
     @State private var isDataReady = false
-    @EnvironmentObject var authManager: AuthManager // 获取 AuthManager
+    @EnvironmentObject var authManager: AuthManager
     @State private var showLoginSheet = false
     @State private var showSubscriptionSheet = false
     // 【新增】控制个人中心显示
@@ -301,7 +290,7 @@ struct MainContentView: View {
                     } else {
                         VStack {
                             Spacer()
-                            ProgressView("正在准备数据…")
+                            ProgressView("正在加载数据")
                             Spacer()
                         }
                     }
@@ -371,14 +360,18 @@ struct MainContentView: View {
             }
 
             // 更新状态浮层
-            UpdateOverlayView(updateManager: updateManager)
+            VStack {
+                Spacer()
+                    .frame(height: 350) // 【新增】向下偏移
+                UpdateOverlayView(updateManager: updateManager)
+                Spacer()
+            }
         }
         // 【新增】全局弹窗处理
         .sheet(isPresented: $showLoginSheet) { LoginView() }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .sheet(isPresented: $showProfileSheet) { UserProfileView() } // 个人中心
         .onChange(of: authManager.showSubscriptionSheet) { _, val in showSubscriptionSheet = val }
-        // .onChange(of: authManager.isLoggedIn) { _, val in if val { showLoginSheet = false } } // 这一行移除，由 LoginView 内部处理
     }
 
     // 【新增】第 4 步：创建一个集中的、可重入的初始数据加载函数
