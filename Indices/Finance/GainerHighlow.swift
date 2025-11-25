@@ -42,13 +42,28 @@ struct ETF: MarketItem {
 struct MarketItemRow<T: MarketItem>: View {
     let item: T
     @EnvironmentObject var dataService: DataService
+    
+    // 【新增】权限管理
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    @State private var isNavigationActive = false
+    @State private var showLoginSheet = false
+    @State private var showSubscriptionSheet = false
 
     private var earningTrend: EarningTrend {
         dataService.earningTrends[item.symbol.uppercased()] ?? .insufficientData
     }
     
     var body: some View {
-        NavigationLink(destination: ChartView(symbol: item.symbol, groupName: item.groupName)) {
+        // 【修改】使用 Button 替代 NavigationLink
+        Button(action: {
+            if usageManager.canProceed(authManager: authManager) {
+                isNavigationActive = true
+            } else {
+                if !authManager.isLoggedIn { showLoginSheet = true }
+                else { showSubscriptionSheet = true }
+            }
+        }) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
                     // 根据财报趋势设置颜色
@@ -68,6 +83,15 @@ struct MarketItemRow<T: MarketItem>: View {
                     .foregroundColor(.gray)
             }
             .padding(5)
+        }
+        // 【新增】导航与弹窗
+        .navigationDestination(isPresented: $isNavigationActive) {
+            ChartView(symbol: item.symbol, groupName: item.groupName)
+        }
+        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
+            if newValue && showLoginSheet { showLoginSheet = false }
         }
         .onAppear {
             // 当单个 item 出现时，如果数据还未加载，可以触发一次
@@ -225,6 +249,7 @@ struct LazyView<Content: View>: View {
     }
 }
 
+// MARK: - HighLowListView (核心修改)
 struct HighLowListView: View {
     let title: String
     let groups: [HighLowGroup]
@@ -234,6 +259,16 @@ struct HighLowListView: View {
     
     // 新增：用于控制搜索页面显示的状态变量
     @State private var showSearchView = false
+    
+    // 【新增】权限管理
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    @State private var showLoginSheet = false
+    @State private var showSubscriptionSheet = false
+    
+    // 【新增】导航控制
+    @State private var selectedItem: HighLowItem?
+    @State private var isNavigationActive = false
 
     var body: some View {
         List {
@@ -270,9 +305,19 @@ struct HighLowListView: View {
             // 传入 dataService 并设置 isSearchActive 为 true，让搜索框自动激活
             SearchView(isSearchActive: true, dataService: dataService)
         }
+        // 【新增】程序化导航与弹窗
+        .navigationDestination(isPresented: $isNavigationActive) {
+            if let item = selectedItem {
+                ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Stocks")
+            }
+        }
+        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
+            if newValue && showLoginSheet { showLoginSheet = false }
+        }
     }
 
-    /// 分组的头部视图，包含标题和折叠/展开按钮
     @ViewBuilder
     private func sectionHeader(for group: HighLowGroup) -> some View {
         HStack {
@@ -306,10 +351,16 @@ struct HighLowListView: View {
 
     /// 列表中的单行视图，展示 symbol、百分比值和其关联的 tags
     private func rowView(for item: HighLowItem) -> some View {
-        // 获取 symbol 所属的分类，用于导航到 ChartView
-        let groupName = dataService.getCategory(for: item.symbol) ?? "Stocks"
-        
-        return NavigationLink(destination: ChartView(symbol: item.symbol, groupName: groupName)) {
+        // 【修改】使用 Button 替代 NavigationLink
+        Button(action: {
+            if usageManager.canProceed(authManager: authManager) {
+                selectedItem = item
+                isNavigationActive = true
+            } else {
+                if !authManager.isLoggedIn { showLoginSheet = true }
+                else { showSubscriptionSheet = true }
+            }
+        }) {
             VStack(alignment: .leading, spacing: 4) {
                 // 上半部分：Symbol 和 百分比值
                 HStack {

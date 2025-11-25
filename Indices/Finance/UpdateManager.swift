@@ -4,6 +4,7 @@ import SwiftUI
 // MARK: - 数据模型 (无修改)
 struct VersionResponse: Codable {
     let version: String
+    let daily_free_limit: Int? // 新增字段
     let files: [FileInfo]
 }
 
@@ -18,7 +19,6 @@ struct FileInfo: Codable, Hashable {
         case type
         case updateType = "update_type" // 将 JSON 中的 "update_type" 映射到 Swift 的 updateType 属性
     }
-    // --------------------
 }
 
 // MARK: - 新增：同步响应模型
@@ -168,6 +168,12 @@ class UpdateManager: ObservableObject {
         
         switch result {
         case .success(let serverVersionResponse):
+            // 【新增】更新每日免费限制
+            if let limit = serverVersionResponse.daily_free_limit {
+                UsageManager.shared.updateLimit(limit)
+                print("UpdateManager: 已更新每日免费次数限制为 \(limit)")
+            }
+            
             let localVersion = UserDefaults.standard.string(forKey: localVersionKey) ?? "0.0"
             print("服务器版本: \(serverVersionResponse.version), 本地版本: \(localVersion)")
             

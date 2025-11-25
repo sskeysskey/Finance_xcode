@@ -188,6 +188,12 @@ struct SearchView: View {
     @State private var collapsedGroups: [MatchCategory: Bool] = [:]
     let isSearchActive: Bool
     
+    // 【新增】权限管理
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    @State private var showLoginSheet = false
+    @State private var showSubscriptionSheet = false
+    
     init(isSearchActive: Bool = false, dataService: DataService) {
         self.isSearchActive = isSearchActive
         self.viewModel = SearchViewModel(dataService: dataService)
@@ -261,6 +267,12 @@ struct SearchView: View {
             }
             .sheet(item: $selectedSymbol) { selected in
                 ChartView(symbol: selected.result.symbol, groupName: selected.category)
+            }
+            // 【新增】弹窗
+            .sheet(isPresented: $showLoginSheet) { LoginView() }
+            .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+            .onChange(of: authManager.isLoggedIn) { _, newValue in
+                if newValue && showLoginSheet { showLoginSheet = false }
             }
         }
         .onAppear {
@@ -413,9 +425,19 @@ struct SearchView: View {
         }
     }
 
-    // 添加处理结果选择的方法
+    // 【核心修改】处理结果选择，加入权限判断
     private func handleResultSelection(result: SearchResult) {
-        // 检查symbol是否在数据库中有数据
+        // 1. 检查权限
+        guard usageManager.canProceed(authManager: authManager) else {
+            if !authManager.isLoggedIn {
+                showLoginSheet = true
+            } else {
+                showSubscriptionSheet = true
+            }
+            return
+        }
+        
+        // 2. 正常逻辑
         if let groupName = viewModel.dataService.getCategory(for: result.symbol) {
             // 检查数据库中是否有该symbol的价格数据
             DispatchQueue.global(qos: .userInitiated).async {

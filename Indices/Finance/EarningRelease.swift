@@ -2,106 +2,100 @@ import SwiftUI
 import Combine
 
 struct EarningReleaseView: View {
-  @EnvironmentObject var dataService: DataService
-
-  // 时段分组 (BMO, AMC, etc.)
-  struct TimingGroup: Identifiable {
-    let id: String // 唯一标识，例如 "07-21-BMO"
-    let timing: String // "BMO", "AMC", "TNS"
-    let items: [EarningRelease]
+    @EnvironmentObject var dataService: DataService
     
-    // 用于显示的名称
-    var displayName: String {
-        switch timing {
-        case "BMO": return "盘前"
-        case "AMC": return "盘后"
-        case "TNS": return "待定"
-        default: return timing
-        }
-    }
-  }
-
-  // 日期分组，包含多个时段分组
-  struct DateGroup: Identifiable {
-    let id: String // 日期，例如 "07-21"
-    let date: String
-    let timingGroups: [TimingGroup]
-  }
-
-  @State private var expandedSections: [String: Bool] = [:]
-  @State private var showSearchView = false
-
-  private var groupedReleases: [DateGroup] {
-    let groupedByDate = Dictionary(grouping: dataService.earningReleases, by: { $0.date })
+    // 【新增】权限管理
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    @State private var showLoginSheet = false
+    @State private var showSubscriptionSheet = false
     
-    var dateGroups: [DateGroup] = []
+    // 【新增】导航控制
+    @State private var selectedItem: EarningRelease?
+    @State private var isNavigationActive = false
 
-    for (date, releasesOnDate) in groupedByDate {
-      let groupedByTiming = Dictionary(grouping: releasesOnDate, by: { $0.timing })
-      
-      var timingGroups: [TimingGroup] = []
-      
-      for (timing, items) in groupedByTiming {
-        let timingGroup = TimingGroup(id: "\(date)-\(timing)", timing: timing, items: items)
-        timingGroups.append(timingGroup)
-      }
-      
-      let timingOrder: [String: Int] = ["BMO": 0, "AMC": 1, "TNS": 2]
-      timingGroups.sort {
-          (timingOrder[$0.timing] ?? 99) < (timingOrder[$1.timing] ?? 99)
-      }
-      
-      let dateGroup = DateGroup(id: date, date: date, timingGroups: timingGroups)
-      dateGroups.append(dateGroup)
-    }
-
-    dateGroups.sort { $0.date < $1.date }
-    return dateGroups
-  }
-
-  var body: some View {
-    // 使用 .insetGrouped 样式，可以让 Section 之间的区别更明显
-    List {
-      ForEach(groupedReleases) { dateGroup in
-        // Section Header 显示日期
-        Section(header: Text(dateGroup.date).font(.headline).foregroundColor(.primary).padding(.vertical, 5)) {
-          ForEach(dateGroup.timingGroups) { timingGroup in
-            // 时段分组的 Header
-            timingGroupHeader(for: timingGroup)
-            
-            if expandedSections[timingGroup.id] ?? true {
-              ForEach(timingGroup.items) { item in
-                sectionRow(for: item)
-              }
-            }
-          }
-        }
-      }
-    }
-    .listStyle(.plain) // 使用 plain 样式，让我们的自定义背景色可以撑满整行
-    .navigationTitle("财报发布")
-    .onAppear {
-      initializeExpandedStates()
-    }
-    .onReceive(dataService.$earningReleases) { _ in
-      initializeExpandedStates()
-    }
-    .toolbar {
-        ToolbarItem(placement: .navigationBarTrailing) {
-            Button(action: {
-                showSearchView = true
-            }) {
-                Image(systemName: "magnifyingglass")
+    struct TimingGroup: Identifiable {
+        let id: String
+        let timing: String
+        let items: [EarningRelease]
+        var displayName: String {
+            switch timing {
+            case "BMO": return "盘前"
+            case "AMC": return "盘后"
+            case "TNS": return "待定"
+            default: return timing
             }
         }
     }
-    .navigationDestination(isPresented: $showSearchView) {
-        SearchView(isSearchActive: true, dataService: dataService)
-    }
-  }
 
-    // ==================== 修改开始 ====================
-    // 3. 调整 timingGroupHeader 视图，使其在视觉上更突出
+    struct DateGroup: Identifiable {
+        let id: String
+        let date: String
+        let timingGroups: [TimingGroup]
+    }
+
+    @State private var expandedSections: [String: Bool] = [:]
+    @State private var showSearchView = false
+
+    private var groupedReleases: [DateGroup] {
+        let groupedByDate = Dictionary(grouping: dataService.earningReleases, by: { $0.date })
+        var dateGroups: [DateGroup] = []
+        for (date, releasesOnDate) in groupedByDate {
+            let groupedByTiming = Dictionary(grouping: releasesOnDate, by: { $0.timing })
+            var timingGroups: [TimingGroup] = []
+            for (timing, items) in groupedByTiming {
+                let timingGroup = TimingGroup(id: "\(date)-\(timing)", timing: timing, items: items)
+                timingGroups.append(timingGroup)
+            }
+            let timingOrder: [String: Int] = ["BMO": 0, "AMC": 1, "TNS": 2]
+            timingGroups.sort { (timingOrder[$0.timing] ?? 99) < (timingOrder[$1.timing] ?? 99) }
+            let dateGroup = DateGroup(id: date, date: date, timingGroups: timingGroups)
+            dateGroups.append(dateGroup)
+        }
+        dateGroups.sort { $0.date < $1.date }
+        return dateGroups
+    }
+
+    var body: some View {
+        List {
+            ForEach(groupedReleases) { dateGroup in
+                Section(header: Text(dateGroup.date).font(.headline).foregroundColor(.primary).padding(.vertical, 5)) {
+                    ForEach(dateGroup.timingGroups) { timingGroup in
+                        timingGroupHeader(for: timingGroup)
+                        if expandedSections[timingGroup.id] ?? true {
+                            ForEach(timingGroup.items) { item in
+                                sectionRow(for: item)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+        .navigationTitle("财报发布")
+        .onAppear { initializeExpandedStates() }
+        .onReceive(dataService.$earningReleases) { _ in initializeExpandedStates() }
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showSearchView = true }) { Image(systemName: "magnifyingglass") }
+            }
+        }
+        .navigationDestination(isPresented: $showSearchView) {
+            SearchView(isSearchActive: true, dataService: dataService)
+        }
+        // 【新增】程序化导航与弹窗
+        .navigationDestination(isPresented: $isNavigationActive) {
+            if let item = selectedItem {
+                ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Stocks")
+            }
+        }
+        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
+            if newValue && showLoginSheet { showLoginSheet = false }
+        }
+    }
+
     @ViewBuilder
     private func timingGroupHeader(for group: TimingGroup) -> some View {
         HStack {
@@ -133,11 +127,18 @@ struct EarningReleaseView: View {
         //    Color(.systemGray5) 是一个很好的选择，它能自适应浅色/深色模式
         .background(Color(.systemGray5))
     }
-    // ==================== 修改结束 ====================
 
     private func sectionRow(for item: EarningRelease) -> some View {
-        let groupName = dataService.getCategory(for: item.symbol) ?? "Stocks"
-        return NavigationLink(destination: ChartView(symbol: item.symbol, groupName: groupName)) {
+        // 【修改】使用 Button 替代 NavigationLink
+        Button(action: {
+            if usageManager.canProceed(authManager: authManager) {
+                selectedItem = item
+                isNavigationActive = true
+            } else {
+                if !authManager.isLoggedIn { showLoginSheet = true }
+                else { showSubscriptionSheet = true }
+            }
+        }) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.symbol)
                     .font(.system(.body, design: .monospaced))

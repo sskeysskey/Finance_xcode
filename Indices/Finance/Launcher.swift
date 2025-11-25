@@ -3,11 +3,22 @@
 import SwiftUI
 import Foundation
 
+extension Color {
+    static let viewBackground = Color(red: 28/255, green: 28/255, blue: 30/255)
+}
+
 @main
 struct Finance: App {
+    // 【新增】初始化 AuthManager 和 UsageManager
+    @StateObject private var authManager = AuthManager()
+    @StateObject private var usageManager = UsageManager.shared
+    
     var body: some Scene {
         WindowGroup {
             MainContentView()
+                // 【新增】注入环境对象
+                .environmentObject(authManager)
+                .environmentObject(usageManager)
         }
     }
 }
@@ -118,11 +129,151 @@ struct StatusView: View {
     }
 }
 
+// MARK: - 修改：用户个人中心视图
+struct UserProfileView: View {
+    @EnvironmentObject var authManager: AuthManager
+    @Environment(\.dismiss) var dismiss
+    
+    // 新增状态用于控制恢复购买的反馈
+    @State private var isRestoring = false
+    @State private var restoreMessage = ""
+    @State private var showRestoreAlert = false
+    
+    var body: some View {
+        NavigationView {
+            List {
+                // 用户信息部分
+                Section {
+                    HStack {
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 60))
+                            .foregroundColor(.gray)
+                        VStack(alignment: .leading, spacing: 4) {
+                            if authManager.isSubscribed {
+                                Text("专业版会员")
+                                    .font(.subheadline)
+                                    .foregroundColor(.yellow)
+                                    .bold()
+                                if let date = authManager.subscriptionExpiryDate {
+                                    Text("有效期至: \(date.prefix(10))") // 简单截取日期
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            } else {
+                                Text("免费用户")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            if let userId = authManager.userIdentifier {
+                                Text("ID: \(userId.prefix(6))...")
+                                    .font(.caption2)
+                                    .foregroundColor(.gray)
+                            } else {
+                                Text("未登录")
+                                    .font(.caption2)
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        .padding(.leading, 8)
+                    }
+                    .padding(.vertical, 10)
+                }
+                
+                // 【新增】订阅管理部分
+                Section(header: Text("订阅管理")) {
+                    // 恢复购买按钮
+                    Button {
+                        performRestore()
+                    } label: {
+                        HStack {
+                            if isRestoring {
+                                ProgressView()
+                                    .padding(.trailing, 5)
+                            } else {
+                                Image(systemName: "arrow.clockwise.circle")
+                                    .foregroundColor(.blue)
+                            }
+                            Text(isRestoring ? "正在恢复..." : "恢复购买")
+                                .foregroundColor(isRestoring ? .secondary : .primary)
+                        }
+                    }
+                    .disabled(isRestoring)
+                }
+                
+                // 退出登录部分
+                Section {
+                    if authManager.isLoggedIn {
+                        Button(role: .destructive) {
+                            authManager.signOut()
+                            dismiss()
+                        } label: {
+                            HStack {
+                                Image(systemName: "rectangle.portrait.and.arrow.right")
+                                Text("退出登录")
+                            }
+                        }
+                    } else {
+                        // 如果未登录，这里可以提供登录入口，或者直接不显示此 Section
+                        Text("您当前使用的是匿名模式")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("账户")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            // 恢复结果弹窗
+            .alert("恢复结果", isPresented: $showRestoreAlert) {
+                Button("确定", role: .cancel) { }
+            } message: {
+                Text(restoreMessage)
+            }
+        }
+    }
+    
+    // 执行恢复逻辑
+    private func performRestore() {
+        isRestoring = true
+        Task {
+            do {
+                // 调用 AuthManager 的恢复方法
+                try await authManager.restorePurchases()
+                
+                await MainActor.run {
+                    isRestoring = false
+                    if authManager.isSubscribed {
+                        restoreMessage = "成功恢复订阅！您现在可以无限制访问数据。"
+                    } else {
+                        restoreMessage = "未发现有效的订阅记录。"
+                    }
+                    showRestoreAlert = true
+                }
+            } catch {
+                await MainActor.run {
+                    isRestoring = false
+                    restoreMessage = "恢复失败: \(error.localizedDescription)"
+                    showRestoreAlert = true
+                }
+            }
+        }
+    }
+}
 
 struct MainContentView: View {
     @StateObject private var dataService = DataService.shared
     @StateObject private var updateManager = UpdateManager.shared
     @State private var isDataReady = false
+    @EnvironmentObject var authManager: AuthManager // 获取 AuthManager
+    @State private var showLoginSheet = false
+    @State private var showSubscriptionSheet = false
+    // 【新增】控制个人中心显示
+    @State private var showProfileSheet = false
 
     // 【新增】第 1 步：引入 scenePhase 来监控 App 的生命周期状态
     @Environment(\.scenePhase) private var scenePhase
@@ -157,6 +308,39 @@ struct MainContentView: View {
                 }
                 .navigationBarTitle("经济数据与搜索", displayMode: .inline)
                 .toolbar {
+                     // 【新增】左上角用户状态按钮
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        if authManager.isLoggedIn {
+                            // 已登录：点击显示个人中心
+                            Button {
+                                showProfileSheet = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "person.circle.fill")
+                                    if authManager.isSubscribed {
+                                        Image(systemName: "crown.fill").foregroundColor(.yellow).font(.caption)
+                                    }
+                                }
+                            }
+                        } else {
+                            // 未登录：显示菜单，提供登录选项
+                            Menu {
+                                Button {
+                                    showLoginSheet = true
+                                } label: {
+                                    Label("登录", systemImage: "person.crop.circle")
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: "person.circle")
+                                    if authManager.isSubscribed {
+                                        // 即使未登录，如果是订阅状态（匿名购买），也显示皇冠
+                                        Image(systemName: "crown.fill").foregroundColor(.yellow).font(.caption)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button {
                             Task {
@@ -175,12 +359,6 @@ struct MainContentView: View {
                 }
             }
             .environmentObject(dataService)
-            // 【移除】第 2 步：移除旧的 .onAppear 修饰符，它的逻辑将被新的 scenePhase 处理器取代
-            /*
-            .onAppear {
-                // ... 所有旧逻辑都将被移动和改进 ...
-            }
-            */
             // 【新增】第 3 步：使用 onChange 监听 scenePhase 的变化
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 // 当 App 变为活跃状态时（例如首次启动，或从后台返回，或关闭系统弹窗后）
@@ -195,6 +373,12 @@ struct MainContentView: View {
             // 更新状态浮层
             UpdateOverlayView(updateManager: updateManager)
         }
+        // 【新增】全局弹窗处理
+        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        .sheet(isPresented: $showProfileSheet) { UserProfileView() } // 个人中心
+        .onChange(of: authManager.showSubscriptionSheet) { _, val in showSubscriptionSheet = val }
+        // .onChange(of: authManager.isLoggedIn) { _, val in if val { showLoginSheet = false } } // 这一行移除，由 LoginView 内部处理
     }
 
     // 【新增】第 4 步：创建一个集中的、可重入的初始数据加载函数

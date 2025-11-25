@@ -33,6 +33,16 @@ struct SimilarView: View {
     // 新增：用于控制搜索页面显示的状态变量
     @State private var showSearchView = false
     
+    // 【新增】权限管理
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    @State private var showLoginSheet = false
+    @State private var showSubscriptionSheet = false
+    
+    // 【新增】导航控制
+    @State private var selectedSymbolItem: RelatedSymbol?
+    @State private var isNavigationActive = false
+    
     let symbol: String
     
     // ==================== 修改开始 ====================
@@ -58,8 +68,19 @@ struct SimilarView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(viewModel.relatedSymbols, id: \.id) { item in
-                            // 【注意】: 此处的 getCategory 来自于 @EnvironmentObject var dataService
-                            NavigationLink(destination: ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Unknown")) {
+                            // 【修改】使用 Button 替代 NavigationLink
+                            Button(action: {
+                                if usageManager.canProceed(authManager: authManager) {
+                                    selectedSymbolItem = item
+                                    isNavigationActive = true
+                                } else {
+                                    if !authManager.isLoggedIn {
+                                        showLoginSheet = true
+                                    } else {
+                                        showSubscriptionSheet = true
+                                    }
+                                }
+                            }) {
                                 VStack(alignment: .leading, spacing: 8) {
                                     // 上面一行：symbol、totalWeight、compareValue、marketCap
                                     HStack(spacing: 12) {
@@ -101,7 +122,12 @@ struct SimilarView: View {
             }
         }
         .navigationBarTitle("Similar Symbols", displayMode: .inline)
-        // 新增：在导航栏添加工具栏
+        // 【新增】程序化导航
+        .navigationDestination(isPresented: $isNavigationActive) {
+            if let item = selectedSymbolItem {
+                ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Unknown")
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
@@ -117,14 +143,19 @@ struct SimilarView: View {
             // 传入 dataService 并设置 isSearchActive 为 true，让搜索框自动激活
             SearchView(isSearchActive: true, dataService: dataService)
         }
+        // 【新增】弹窗
+        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
+            if newValue && showLoginSheet { showLoginSheet = false }
+        }
     }
     
-    // 【新增】：用于根据 compareValue 决定颜色的辅助函数
     private func colorForCompareValue(_ value: String) -> Color {
         if value.contains("前") || value.contains("后") || value.contains("未") {
             return .orange
         } else {
-            return .white
+            return .white // 或 .primary 根据背景
         }
     }
     

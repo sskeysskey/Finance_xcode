@@ -531,6 +531,16 @@ struct SymbolItemView: View {
     // 注入 DataService
     @EnvironmentObject private var dataService: DataService
     
+    // 【新增】引入权限管理
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    
+    // 【新增】控制导航和弹窗
+    @State private var isNavigationActive = false
+    // 【修改】移除 showLoginSheet，因为点击条目时不再弹出登录
+    // @State private var showLoginSheet = false
+    @State private var showSubscriptionSheet = false
+    
     // 从 DataService 的缓存中获取当前 symbol 的财报趋势
     private var earningTrend: EarningTrend {
         dataService.earningTrends[symbol.symbol.uppercased()] ?? .insufficientData
@@ -560,7 +570,18 @@ struct SymbolItemView: View {
     }
     
     var body: some View {
-        NavigationLink(destination: ChartView(symbol: symbol.symbol, groupName: groupName)) {
+        // 【修改】将 NavigationLink 改为 Button
+        Button(action: {
+            // 核心拦截逻辑
+            if usageManager.canProceed(authManager: authManager) {
+                isNavigationActive = true
+            } else {
+                // 【核心修改】
+                // 无论是否登录，只要超过限额，直接弹出订阅窗口。
+                // 登录窗口仅由首页左上角菜单触发。
+                showSubscriptionSheet = true
+            }
+        }) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     // 应用财报趋势颜色
@@ -592,6 +613,12 @@ struct SymbolItemView: View {
             )
             .padding(.vertical, 4)
         }
+        // 【新增】程序化导航
+        .navigationDestination(isPresented: $isNavigationActive) {
+            ChartView(symbol: symbol.symbol, groupName: groupName)
+        }
+        // 【修改】移除了 .sheet(isPresented: $showLoginSheet) ...
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .onAppear {
             // 当视图出现时，如果缓存中没有数据，可以触发一次单独加载
             if earningTrend == .insufficientData {
@@ -709,7 +736,4 @@ struct SymbolItemView: View {
             return .primary // 默认颜色使用 .primary
         }
     }
-    
-    // 注意：旧的 colorForCompareValue 函数已被移除，不再需要
 }
-// ==================== 修改结束 ====================

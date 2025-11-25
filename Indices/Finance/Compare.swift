@@ -6,6 +6,12 @@ struct CompareView: View {
     @Environment(\.presentationMode) var presentationMode
     @EnvironmentObject var dataService: DataService
     
+    // 【新增】权限管理
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    @State private var showLoginSheet = false
+    @State private var showSubscriptionSheet = false
+    
     let initialSymbol: String
     private let maxSymbols = 10
     
@@ -144,9 +150,13 @@ struct CompareView: View {
             ComparisonChartView(symbols: symbols, startDate: startDate, endDate: endDate)
         }
         .alert(isPresented: $showAlert) {
-            Alert(title: Text("错误"),
-                  message: Text(errorMessage ?? "未知错误"),
-                  dismissButton: .default(Text("确定")))
+            Alert(title: Text("错误"), message: Text(errorMessage ?? "未知错误"), dismissButton: .default(Text("确定")))
+        }
+        // 【新增】弹窗
+        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
+            if newValue && showLoginSheet { showLoginSheet = false }
         }
     }
     
@@ -168,29 +178,18 @@ struct CompareView: View {
     }
     
     private func startComparison() {
+        // 【新增】权限检查
+        guard usageManager.canProceed(authManager: authManager) else {
+            if !authManager.isLoggedIn { showLoginSheet = true }
+            else { showSubscriptionSheet = true }
+            return
+        }
+        
         errorMessage = nil
-        let trimmedSymbols = symbols
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        
-        guard !trimmedSymbols.isEmpty else {
-            errorMessage = "请至少输入一个股票代码"
-            showAlert = true
-            return
-        }
-        
-        if trimmedSymbols.count > maxSymbols {
-            errorMessage = "最多只能比较 \(maxSymbols) 个股票代码"
-            showAlert = true
-            return
-        }
-        
-        guard startDate <= endDate else {
-            errorMessage = "开始日期必须早于或等于结束日期"
-            showAlert = true
-            return
-        }
-        
+        let trimmedSymbols = symbols.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard !trimmedSymbols.isEmpty else { errorMessage = "请至少输入一个股票代码"; showAlert = true; return }
+        if trimmedSymbols.count > maxSymbols { errorMessage = "最多只能比较 \(maxSymbols) 个股票代码"; showAlert = true; return }
+        guard startDate <= endDate else { errorMessage = "开始日期必须早于或等于结束日期"; showAlert = true; return }
         symbols = trimmedSymbols.map { formatSymbol($0) }
         navigateToComparison = true
     }

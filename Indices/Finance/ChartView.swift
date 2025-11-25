@@ -326,7 +326,7 @@ struct ChartView: View {
                     }
                     .padding(.horizontal)
                 }
-                .frame(height: 40) // 固定高度
+                .frame(height: 20) // 固定高度
                 .padding(.top, 5)
             }
             // ==================== 结束 ====================
@@ -335,22 +335,21 @@ struct ChartView: View {
             VStack {
                 // 事件文本或时间价格信息区域
                 ZStack(alignment: .top) {
-                    // 背景空白区域，保持固定高度
+                    // 背景空白区域，改为动态高度
                     Rectangle()
                         .fill(Color.clear)
-                        .frame(height: 80) // 固定三行文本的高度
-                    VStack {
+                        .frame(height: 80)
+                    
+                    VStack(spacing: 5) {
                         if isMultiTouch, let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
-                            // 获取两个时间点
+                            // 双指模式保持不变
                             let date1 = firstPoint.date
                             let date2 = secondPoint.date
                             
-                            // 确定显示顺序：较早的日期显示在左边
                             let (earlierDate, laterDate) = date1 < date2
                                 ? (formatDate(date1), formatDate(date2))
                                 : (formatDate(date2), formatDate(date1))
                             
-                            // 百分比计算仍然保持原有逻辑（基于触摸顺序）
                             let percentChange = priceDifferencePercentage ?? 0
                             
                             HStack {
@@ -368,39 +367,47 @@ struct ChartView: View {
                             .cornerRadius(8)
                             
                         } else if let point = draggedPoint {
-                            // 单指模式：显示单点信息和标记
+                            // 单指模式：使用VStack垂直排列以支持更多内容
                             let pointDate = formatDate(point.date)
-                            
-                            // 计算价格变化百分比
                             let percentChange = calculatePriceChangePercentage(from: point)
+                            let rawMarkerText = getMarkerText(for: point.date)
+
+                            let cleanMarkerText = rawMarkerText?.replacingOccurrences(of: "\n", with: "")
                             
-                            HStack {
-                                Text("\(pointDate)  \(formatPrice(point.price))")
-                                    .font(.system(size: 16, weight: .medium))
-                                
-                                if let percentChange = percentChange {
-                                    Text(formatPercentage(percentChange))
-                                        .font(.system(size: 16, weight: .bold))
-                                        .foregroundColor(percentChange >= 0 ? .green : .red)
+                            VStack(spacing: 5) {
+                                // 第一行：日期、价格和百分比
+                                HStack(spacing: 5) {
+                                    Text("\(pointDate)  \(formatPrice(point.price))")
+                                        .font(.system(size: 16, weight: .medium))
+                                    
+                                    if let percentChange = percentChange {
+                                        Text(formatPercentage(percentChange))
+                                            .font(.system(size: 16, weight: .bold))
+                                            .foregroundColor(percentChange >= 0 ? .green : .red)
+                                    }
                                 }
                                 
-                                // 显示全局或特定标记信息
-                                if let markerText = getMarkerText(for: point.date) {
-                                    Text(markerText)
-                                        .font(.system(size: 18, weight: .medium))
+                                // 第二部分：事件文本（如果有）
+                                if let cleanMarkerText = cleanMarkerText {
+                                    Text(cleanMarkerText)
+                                        .font(.system(size: 14, weight: .medium))
                                         .foregroundColor(.orange)
-                                        .multilineTextAlignment(.leading)
-                                        .lineLimit(2)
+                                        .multilineTextAlignment(.center)
+                                        .lineLimit(nil) // 移除行数限制
+                                        .fixedSize(horizontal: false, vertical: true) // 允许垂直扩展
+                                        .padding(.horizontal, 8)
                                 }
                             }
-                            .padding(.horizontal)
-                            .padding(.vertical, 8)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
                             .background(Color(UIColor.systemGray6))
                             .cornerRadius(8)
+                            .frame(maxWidth: .infinity) // 占满宽度
                         }
                     }
                     .padding(.horizontal)
                     .padding(.top, 10)
+                    .frame(maxWidth: .infinity) // 确保占满宽度
                 }
             }
             

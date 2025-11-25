@@ -18,7 +18,7 @@ struct SubscriptionView: View {
                     Text("选择您的计划")
                         .font(.largeTitle.bold())
                         .foregroundColor(.white)
-                    Text("支持正版，获取最新资讯")
+                    Text("支持正版，获取无限查询权限。")
                         .font(.subheadline)
                         .foregroundColor(.gray)
                 }
@@ -33,7 +33,7 @@ struct SubscriptionView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("免费版")
                                 .font(.title2.bold())
-                            Text("仅浏览 \(authManager.isSubscribed ? "全部" : "历史") 文章")
+                            Text("仅浏览 \(authManager.isSubscribed ? "受限" : "数据") 查询")
                                 .font(.subheadline)
                                 .foregroundColor(.gray)
                         }
@@ -63,13 +63,13 @@ struct SubscriptionView: View {
                             Text("专业版")
                                 .font(.title2.bold())
                                 .foregroundColor(.white)
-                            Text("解锁所有最新文章")
+                            Text("无限检索数据")
                                 .font(.subheadline)
                                 .foregroundColor(.gray)
                         }
                         Spacer()
                         VStack(alignment: .trailing) {
-                            Text("¥12")
+                            Text("¥6")
                                 .font(.title2.bold())
                                 .foregroundColor(.yellow)
                             Text("/月")
@@ -95,7 +95,7 @@ struct SubscriptionView: View {
                         .foregroundColor(.yellow)
                         .padding()
                 } else {
-                    Text("如果不选择付费，您将继续使用免费版，最新文章将保持锁定状态。")
+                    Text("如果不选择付费，您将继续使用免费版，每日会有查询次数限制。")
                         .font(.caption)
                         .foregroundColor(.gray)
                         .multilineTextAlignment(.center)
