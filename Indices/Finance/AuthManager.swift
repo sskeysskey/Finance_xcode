@@ -484,11 +484,11 @@ struct LoginView: View {
                         .font(.system(size: 60))
                         .foregroundColor(.white)
                     
-                    Text("解锁每日查询限制")
+                    Text("登录 美股通 账号")
                         .font(.largeTitle.bold())
                         .foregroundColor(.white)
                     
-                    Text("登录后可让您的订阅在不同设备上同步使用")
+                    Text("登录后，您的订阅将可以在不同设备间同步使用")
                         .font(.headline)
                         .foregroundColor(.white.opacity(0.8))
                         .multilineTextAlignment(.center)
