@@ -165,16 +165,14 @@ typealias ETFListView = MarketListView<ETF>
 // MARK: - 主容器视图
 struct TopContentView: View {
     var body: some View {
-        // 注意：这里的 NavigationView 可能会导致双重导航栏。
-        // 如果在 MainContentView 中已经有一个 NavigationStack，这里可能不需要 NavigationView。
-        // 但为了保持原结构，暂时保留。
-        NavigationView {
-            VStack {
-                Spacer()
-                CustomTabBar()
-            }
-            // .navigationBarHidden(true) // 可以考虑隐藏内层的导航栏避免冲突
+        // 【核心修改】删除外层的 NavigationView
+        // 因为 MainContentView 已经有了 NavigationStack，这里不能再嵌套 NavigationView
+        // 否则会导致约束冲突，使底部栏在首次加载时高度为0或不可见。
+        VStack {
+            Spacer()
+            CustomTabBar()
         }
+        // .navigationBarHidden(true) // 不需要了
     }
 }
 
