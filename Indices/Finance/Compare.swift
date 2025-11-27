@@ -9,7 +9,7 @@ struct CompareView: View {
     // 【新增】权限管理
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
-    @State private var showLoginSheet = false
+    // 【修改】移除 showLoginSheet
     @State private var showSubscriptionSheet = false
     
     let initialSymbol: String
@@ -152,12 +152,8 @@ struct CompareView: View {
         .alert(isPresented: $showAlert) {
             Alert(title: Text("错误"), message: Text(errorMessage ?? "未知错误"), dismissButton: .default(Text("确定")))
         }
-        // 【新增】弹窗
-        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        // 【修改】移除了 LoginView 的 sheet
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
-        .onChange(of: authManager.isLoggedIn) { _, newValue in
-            if newValue && showLoginSheet { showLoginSheet = false }
-        }
     }
     
     func formatSymbol(_ symbol: String) -> String {
@@ -180,8 +176,8 @@ struct CompareView: View {
     private func startComparison() {
         // 【新增】权限检查
         guard usageManager.canProceed(authManager: authManager) else {
-            if !authManager.isLoggedIn { showLoginSheet = true }
-            else { showSubscriptionSheet = true }
+            // 【核心修改】直接弹出订阅页
+            showSubscriptionSheet = true
             return
         }
         

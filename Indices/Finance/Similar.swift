@@ -36,7 +36,7 @@ struct SimilarView: View {
     // 【新增】权限管理
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
-    @State private var showLoginSheet = false
+    // 【修改】移除 showLoginSheet
     @State private var showSubscriptionSheet = false
     
     // 【新增】导航控制
@@ -74,11 +74,8 @@ struct SimilarView: View {
                                     selectedSymbolItem = item
                                     isNavigationActive = true
                                 } else {
-                                    if !authManager.isLoggedIn {
-                                        showLoginSheet = true
-                                    } else {
-                                        showSubscriptionSheet = true
-                                    }
+                                    // 【核心修改】直接弹出订阅页
+                                    showSubscriptionSheet = true
                                 }
                             }) {
                                 VStack(alignment: .leading, spacing: 8) {
@@ -143,12 +140,8 @@ struct SimilarView: View {
             // 传入 dataService 并设置 isSearchActive 为 true，让搜索框自动激活
             SearchView(isSearchActive: true, dataService: dataService)
         }
-        // 【新增】弹窗
-        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        // 【修改】移除了 LoginView 的 sheet
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
-        .onChange(of: authManager.isLoggedIn) { _, newValue in
-            if newValue && showLoginSheet { showLoginSheet = false }
-        }
     }
     
     private func colorForCompareValue(_ value: String) -> Color {

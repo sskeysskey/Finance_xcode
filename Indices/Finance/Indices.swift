@@ -578,7 +578,7 @@ struct SymbolItemView: View {
             } else {
                 // 【核心修改】
                 // 无论是否登录，只要超过限额，直接弹出订阅窗口。
-                // 登录窗口仅由首页左上角菜单触发。
+                // 登录窗口仅由首页左上角菜单触发（如果未屏蔽）。
                 showSubscriptionSheet = true
             }
         }) {

@@ -191,7 +191,7 @@ struct SearchView: View {
     // 【新增】权限管理
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
-    @State private var showLoginSheet = false
+    // 【修改】移除 showLoginSheet
     @State private var showSubscriptionSheet = false
     
     init(isSearchActive: Bool = false, dataService: DataService) {
@@ -268,12 +268,8 @@ struct SearchView: View {
             .sheet(item: $selectedSymbol) { selected in
                 ChartView(symbol: selected.result.symbol, groupName: selected.category)
             }
-            // 【新增】弹窗
-            .sheet(isPresented: $showLoginSheet) { LoginView() }
+            // 【修改】移除了 LoginView 的 sheet
             .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
-            .onChange(of: authManager.isLoggedIn) { _, newValue in
-                if newValue && showLoginSheet { showLoginSheet = false }
-            }
         }
         .onAppear {
             if isSearchActive && isFirstAppear {
@@ -429,11 +425,8 @@ struct SearchView: View {
     private func handleResultSelection(result: SearchResult) {
         // 1. 检查权限
         guard usageManager.canProceed(authManager: authManager) else {
-            if !authManager.isLoggedIn {
-                showLoginSheet = true
-            } else {
-                showSubscriptionSheet = true
-            }
+            // 【核心修改】直接弹出订阅页
+            showSubscriptionSheet = true
             return
         }
         

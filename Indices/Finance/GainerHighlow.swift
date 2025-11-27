@@ -47,7 +47,7 @@ struct MarketItemRow<T: MarketItem>: View {
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
     @State private var isNavigationActive = false
-    @State private var showLoginSheet = false
+    // 【修改】移除 showLoginSheet
     @State private var showSubscriptionSheet = false
 
     private var earningTrend: EarningTrend {
@@ -60,8 +60,8 @@ struct MarketItemRow<T: MarketItem>: View {
             if usageManager.canProceed(authManager: authManager) {
                 isNavigationActive = true
             } else {
-                if !authManager.isLoggedIn { showLoginSheet = true }
-                else { showSubscriptionSheet = true }
+                // 【核心修改】直接弹出订阅页，不再判断是否登录
+                showSubscriptionSheet = true
             }
         }) {
             VStack(alignment: .leading, spacing: 5) {
@@ -88,11 +88,8 @@ struct MarketItemRow<T: MarketItem>: View {
         .navigationDestination(isPresented: $isNavigationActive) {
             ChartView(symbol: item.symbol, groupName: item.groupName)
         }
-        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        // 【修改】移除了 LoginView 的 sheet
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
-        .onChange(of: authManager.isLoggedIn) { _, newValue in
-            if newValue && showLoginSheet { showLoginSheet = false }
-        }
         .onAppear {
             // 当单个 item 出现时，如果数据还未加载，可以触发一次
             if earningTrend == .insufficientData {
@@ -261,7 +258,7 @@ struct HighLowListView: View {
     // 【新增】权限管理
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
-    @State private var showLoginSheet = false
+    // 【修改】移除 showLoginSheet
     @State private var showSubscriptionSheet = false
     
     // 【新增】导航控制
@@ -309,11 +306,8 @@ struct HighLowListView: View {
                 ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Stocks")
             }
         }
-        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        // 【修改】移除了 LoginView 的 sheet
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
-        .onChange(of: authManager.isLoggedIn) { _, newValue in
-            if newValue && showLoginSheet { showLoginSheet = false }
-        }
     }
 
     @ViewBuilder
@@ -355,8 +349,8 @@ struct HighLowListView: View {
                 selectedItem = item
                 isNavigationActive = true
             } else {
-                if !authManager.isLoggedIn { showLoginSheet = true }
-                else { showSubscriptionSheet = true }
+                // 【核心修改】直接弹出订阅页
+                showSubscriptionSheet = true
             }
         }) {
             VStack(alignment: .leading, spacing: 4) {

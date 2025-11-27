@@ -7,7 +7,7 @@ struct EarningReleaseView: View {
     // 【新增】权限管理
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
-    @State private var showLoginSheet = false
+    // 【修改】移除 showLoginSheet
     @State private var showSubscriptionSheet = false
     
     // 【新增】导航控制
@@ -89,11 +89,8 @@ struct EarningReleaseView: View {
                 ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Stocks")
             }
         }
-        .sheet(isPresented: $showLoginSheet) { LoginView() }
+        // 【修改】移除了 LoginView 的 sheet
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
-        .onChange(of: authManager.isLoggedIn) { _, newValue in
-            if newValue && showLoginSheet { showLoginSheet = false }
-        }
     }
 
     @ViewBuilder
@@ -135,8 +132,8 @@ struct EarningReleaseView: View {
                 selectedItem = item
                 isNavigationActive = true
             } else {
-                if !authManager.isLoggedIn { showLoginSheet = true }
-                else { showSubscriptionSheet = true }
+                // 【核心修改】直接弹出订阅页
+                showSubscriptionSheet = true
             }
         }) {
             VStack(alignment: .leading, spacing: 4) {

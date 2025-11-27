@@ -297,7 +297,8 @@ struct MainContentView: View {
                 }
                 .navigationBarTitle("经济数据与搜索", displayMode: .inline)
                 .toolbar {
-                     // 【新增】左上角用户状态按钮
+                     // 【修改】左上角用户状态按钮 - 已屏蔽
+                    /*
                     ToolbarItem(placement: .navigationBarLeading) {
                         if authManager.isLoggedIn {
                             // 已登录：点击显示个人中心
@@ -330,6 +331,7 @@ struct MainContentView: View {
                             }
                         }
                     }
+                    */
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button {
                             Task {
