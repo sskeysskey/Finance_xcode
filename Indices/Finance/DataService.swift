@@ -201,33 +201,42 @@ class DataService: ObservableObject {
         self.loadData()
     }
 
+    // 【核心修改】：将 loadData 改为异步触发，不阻塞主线程
     func loadData() {
         // 哨兵
         guard !isDataLoaded else {
             print("DataService: 数据已加载，跳过重复加载。")
             return
         }
+        
         DispatchQueue.main.async {
             self.errorMessage = nil
         }
         
-        // 启动异步任务加载网络数据
-        Task {
-            await loadMarketCapData()
+        // 使用 Task.detached 将繁重的工作移出主线程
+        Task.detached(priority: .userInitiated) {
+            print("DataService: 开始在后台加载数据...")
+            
+            // 1. 并行或串行加载本地文件 (IO操作)
+            // 注意：这里调用的是同步方法，但在 detached Task 中运行，不会卡 UI
+            await self.loadDescriptionPair()
+            await self.loadSectorsData()
+            await self.loadCompareDataPair()
+            await self.loadSectorsPanel()
+            await self.loadEarningRelease()
+            await self.loadHighLowData()
+            await self.loadCompareStock()
+            await self.loadTagsWeight()
+            
+            // 2. 标记加载完成
+            await MainActor.run {
+                self.isDataLoaded = true
+                print("DataService: 所有本地数据加载完毕 (UI已更新)。")
+            }
+            
+            // 3. 启动网络请求 (本身就是 async 的)
+            await self.loadMarketCapData()
         }
-        
-        // 加载本地 JSON/Text 文件
-        loadDescriptionPair()
-        loadSectorsData()
-        loadCompareDataPair()
-        loadSectorsPanel()
-        loadEarningRelease()
-        loadHighLowData()
-        loadCompareStock()
-        loadTagsWeight()
-        
-        isDataLoaded = true
-        print("DataService: 所有数据加载完毕。")
     }
     
     // 修改：异步获取财报趋势
@@ -301,7 +310,7 @@ class DataService: ObservableObject {
         self.marketCapData = newData
     }
     
-    private func loadHighLowData() {
+    private func loadHighLowData() async {
         // (保留原代码)
         guard let url = FileManagerHelper.getLatestFileUrl(for: "HighLow") else { return }
         do {
@@ -357,29 +366,30 @@ class DataService: ObservableObject {
             }
             
             let timeIntervalOrder = ["5Y", "2Y", "1Y", "6 months", "3 months", "1 months"]
+            let finalHigh = timeIntervalOrder.compactMap { highGroupsDict[$0] }
+            let finalLow = timeIntervalOrder.compactMap { lowGroupsDict[$0] }
             
-            DispatchQueue.main.async {
-                self.highGroups = timeIntervalOrder.compactMap { highGroupsDict[$0] }
-                self.lowGroups = timeIntervalOrder.compactMap { lowGroupsDict[$0] }
+            // 回到主线程更新
+            await MainActor.run {
+                self.highGroups = finalHigh
+                self.lowGroups = finalLow
             }
 
         } catch {
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.errorMessage = "加载 HighLow.txt 失败: \(error.localizedDescription)"
             }
         }
     }
         
-    private func loadEarningRelease() {
+    private func loadEarningRelease() async {
         let filePrefixes = ["Earnings_Release_new", "Earnings_Release_next", "Earnings_Release_third", "Earnings_Release_fourth", "Earnings_Release_fifth"]
         let urlsToProcess = filePrefixes.compactMap { prefix in
             FileManagerHelper.getLatestFileUrl(for: prefix)
         }
         guard !urlsToProcess.isEmpty else {
             if !isInitialLoad {
-                DispatchQueue.main.async {
-                    self.errorMessage = "Earnings_Release 文件未在 Documents 中找到"
-                }
+                await MainActor.run { self.errorMessage = "Earnings_Release 文件未在 Documents 中找到" }
             }
             return
         }
@@ -416,22 +426,20 @@ class DataService: ObservableObject {
                     allEarningReleases.append(release)
                 }
             }
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.earningReleases = allEarningReleases
             }
         } catch {
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.errorMessage = "加载财报文件失败: \(error.localizedDescription)"
             }
         }
     }
 
-    private func loadCompareStock() {
+    private func loadCompareStock() async {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "CompareStock") else {
             if !isInitialLoad {
-                DispatchQueue.main.async {
-                    self.errorMessage = "CompareStock 文件未在 Documents 中找到"
-                }
+                await MainActor.run { self.errorMessage = "CompareStock 文件未在 Documents 中找到" }
             }
             return
         }
@@ -445,40 +453,37 @@ class DataService: ObservableObject {
             let newTopGainers = topGainersLines.compactMap { parseStockLine(String($0)) }
             let newTopLosers = topLosersLines.compactMap { parseStockLine(String($0)) }
             
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.topGainers = newTopGainers
                 self.topLosers = newTopLosers
             }
         } catch {
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.errorMessage = "加载 CompareStock 文件失败: \(error.localizedDescription)"
             }
         }
     }
     
-    private func loadSectorsPanel() {
+    private func loadSectorsPanel() async {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "Sectors_panel") else {
             if !isInitialLoad {
-                DispatchQueue.main.async { self.errorMessage = "Sectors_panel 文件未在 Documents 中找到" }
+                await MainActor.run { self.errorMessage = "Sectors_panel 文件未在 Documents 中找到" }
             }
             return
         }
         do {
             let data = try Data(contentsOf: url)
             let decodedData = try JSONDecoder().decode(SectorsPanel.self, from: data)
-            DispatchQueue.main.async { self.sectorsPanel = decodedData }
+            await MainActor.run { self.sectorsPanel = decodedData }
         } catch {
-            DispatchQueue.main.async { self.errorMessage = "加载 Sectors_panel.json 失败: \(error.localizedDescription)" }
+            await MainActor.run { self.errorMessage = "加载 Sectors_panel.json 失败: \(error.localizedDescription)" }
         }
     }
 
-    // MARK: - 合并：一次性读取 description 文件 data，解两套模型，减少 IO
-    private func loadDescriptionPair() {
+    private func loadDescriptionPair() async {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "description") else {
             if !isInitialLoad {
-                DispatchQueue.main.async {
-                    self.errorMessage = "description 文件未在 Documents 中找到"
-                }
+                await MainActor.run { self.errorMessage = "description 文件未在 Documents 中找到" }
             }
             return
         }
@@ -527,36 +532,34 @@ class DataService: ObservableObject {
             processItemsWithDescription3(loadedDescriptionData.stocks)
             processItemsWithDescription3(loadedDescriptionData.etfs)
             
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.descriptionData = loadedDescriptionData
                 self.descriptionData1 = loadedDescriptionData1
                 self.globalTimeMarkers = newGlobalTimeMarkers
                 self.symbolTimeMarkers = newSymbolTimeMarkers
             }
         } catch {
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.errorMessage = "加载 description.json 失败: \(error.localizedDescription)"
             }
         }
     }
     
-    private func loadSectorsData() {
+    private func loadSectorsData() async {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "Sectors_All") else {
             if !isInitialLoad {
-                DispatchQueue.main.async {
-                    self.errorMessage = "Sectors_All 文件未在 Documents 中找到"
-                }
+                await MainActor.run { self.errorMessage = "Sectors_All 文件未在 Documents 中找到" }
             }
             return
         }
         do {
             let data = try Data(contentsOf: url)
             let decodedData = try JSONDecoder().decode([String: [String]].self, from: data)
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.sectorsData = decodedData
             }
         } catch {
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.errorMessage = "加载 Sectors_All.json 失败: \(error.localizedDescription)"
             }
         }
@@ -575,12 +578,10 @@ class DataService: ObservableObject {
     // 以解决 "async call in a function that does not support concurrency" 的歧义问题。
     
     // MARK: - 合并 Compare_All：同时生成两种映射
-    private func loadCompareDataPair() {
+    private func loadCompareDataPair() async {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "Compare_All") else {
             if !isInitialLoad {
-                DispatchQueue.main.async {
-                    self.errorMessage = "Compare_All 文件未在 Documents 中找到"
-                }
+                await MainActor.run { self.errorMessage = "Compare_All 文件未在 Documents 中找到" }
             }
             return
         }
@@ -600,21 +601,19 @@ class DataService: ObservableObject {
                     upperCaseMap[symbol.uppercased()] = value
                 }
             }
-            DispatchQueue.main.async {
-                // 维持你已有 compareData 的合并策略
+            await MainActor.run {
                 self.compareData = upperCaseMap.merging(originalCaseData) { (_, new) in new }
                 // 单独保留一份全大写键映射，供 Similar 使用
                 self.compareDataUppercased = upperCaseMap
             }
         } catch {
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.errorMessage = "加载 Compare_All.txt 失败: \(error.localizedDescription)"
             }
         }
     }
     
-    // MARK: - 合并：tags_weight
-    private func loadTagsWeight() {
+    private func loadTagsWeight() async {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "tags_weight") else {
             if !isInitialLoad {
                 print("DataService: tags_weight 文件未在 Documents 中找到")
@@ -632,7 +631,7 @@ class DataService: ObservableObject {
                     }
                 }
             }
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.tagsWeightConfig = weightGroups
             }
         } catch {

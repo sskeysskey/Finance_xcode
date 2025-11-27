@@ -276,7 +276,8 @@ struct MainContentView: View {
         ZStack {
             NavigationStack {
                 VStack(spacing: 0) {
-                    if isDataReady {
+                    // 【核心修改】：不仅检查 isDataReady，还检查关键数据 sectorsPanel 是否存在
+                    if isDataReady && dataService.sectorsPanel != nil {
                         IndicesContentView()
                             .frame(maxHeight: .infinity, alignment: .top)
                         Divider()
@@ -378,10 +379,10 @@ struct MainContentView: View {
 
     // 【新增】第 4 步：创建一个集中的、可重入的初始数据加载函数
     private func handleInitialDataLoad() async {
-        // 守卫条件：如果数据已经准备好，则直接退出，防止重复加载。
-        // 这是实现“仅首次成功加载”的关键。
-        guard !isDataReady else {
-            print("Data is already ready. Skipping initial load.")
+        // 【核心修改】：如果数据已经准备好且关键数据 sectorsPanel 不为空，才跳过
+        // 这样可以防止“isDataReady=true 但数据实际上是 nil”导致的空白死循环
+        if isDataReady && dataService.sectorsPanel != nil {
+            print("Data is already ready and populated. Skipping initial load.")
             return
         }
         
@@ -398,9 +399,10 @@ struct MainContentView: View {
                 // 更新成功后，重新连接数据库并强制加载所有数据到内存
                 DatabaseManager.shared.reconnectToLatestDatabase()
                 dataService.forceReloadData()
-                // 设置数据就绪状态，UI将切换到主界面
+                // 注意：forceReloadData 现在是异步的，UI 会通过 @Published 自动更新
+                // 我们只需要设置标志位告诉 UI 可以尝试渲染了
                 isDataReady = true
-                print("Initial sync successful. Data is now ready.")
+                print("Initial sync successful.")
             } else {
                 // 如果更新失败（例如网络问题），isDataReady 保持 false。
                 // 当用户解决问题后（例如开启网络），App再次变为 active，此函数会重试。
@@ -409,10 +411,11 @@ struct MainContentView: View {
         } else {
             // 情况二：本地已存在数据。
             // 这是常规启动流程。
-            print("Local data found. Loading existing data and checking for updates in background.")
+            print("Local data found. Loading existing data...")
             
-            // 1. 立即加载本地数据并展示UI，提供快速启动体验。
+            // 1. 触发加载
             dataService.loadData()
+            // 2. 设置标志位，允许 UI 监听 dataService 的变化
             isDataReady = true
 
             // 2. 在后台异步发起一次静默更新检查。
