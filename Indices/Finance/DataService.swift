@@ -426,8 +426,12 @@ class DataService: ObservableObject {
                     allEarningReleases.append(release)
                 }
             }
+            
+            // 【修复 Swift 6 警告】：创建不可变副本以供捕获
+            let finalEarningReleases = allEarningReleases
+            
             await MainActor.run {
-                self.earningReleases = allEarningReleases
+                self.earningReleases = finalEarningReleases
             }
         } catch {
             await MainActor.run {
@@ -532,11 +536,15 @@ class DataService: ObservableObject {
             processItemsWithDescription3(loadedDescriptionData.stocks)
             processItemsWithDescription3(loadedDescriptionData.etfs)
             
+            // 【修复 Swift 6 警告】：创建不可变副本以供捕获
+            let finalGlobalTimeMarkers = newGlobalTimeMarkers
+            let finalSymbolTimeMarkers = newSymbolTimeMarkers
+            
             await MainActor.run {
                 self.descriptionData = loadedDescriptionData
                 self.descriptionData1 = loadedDescriptionData1
-                self.globalTimeMarkers = newGlobalTimeMarkers
-                self.symbolTimeMarkers = newSymbolTimeMarkers
+                self.globalTimeMarkers = finalGlobalTimeMarkers
+                self.symbolTimeMarkers = finalSymbolTimeMarkers
             }
         } catch {
             await MainActor.run {
@@ -574,9 +582,6 @@ class DataService: ObservableObject {
         return nil
     }
     
-    // 【已删除】：底部重复的同步版本 loadMarketCapData() 已被移除，
-    // 以解决 "async call in a function that does not support concurrency" 的歧义问题。
-    
     // MARK: - 合并 Compare_All：同时生成两种映射
     private func loadCompareDataPair() async {
         guard let url = FileManagerHelper.getLatestFileUrl(for: "Compare_All") else {
@@ -601,10 +606,15 @@ class DataService: ObservableObject {
                     upperCaseMap[symbol.uppercased()] = value
                 }
             }
+            
+            // 【修复 Swift 6 警告】：创建不可变副本以供捕获
+            let finalOriginalCaseData = originalCaseData
+            let finalUpperCaseMap = upperCaseMap
+            
             await MainActor.run {
-                self.compareData = upperCaseMap.merging(originalCaseData) { (_, new) in new }
+                self.compareData = finalUpperCaseMap.merging(finalOriginalCaseData) { (_, new) in new }
                 // 单独保留一份全大写键映射，供 Similar 使用
-                self.compareDataUppercased = upperCaseMap
+                self.compareDataUppercased = finalUpperCaseMap
             }
         } catch {
             await MainActor.run {
@@ -631,8 +641,12 @@ class DataService: ObservableObject {
                     }
                 }
             }
+            
+            // 【修复 Swift 6 警告】：创建不可变副本以供捕获
+            let finalWeightGroups = weightGroups
+            
             await MainActor.run {
-                self.tagsWeightConfig = weightGroups
+                self.tagsWeightConfig = finalWeightGroups
             }
         } catch {
             print("DataService: 解析 tags_weight 文件时出错: \(error)")
