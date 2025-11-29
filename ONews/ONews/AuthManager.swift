@@ -111,14 +111,53 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
 
+    // 【新增】兑换邀请码
+    func redeemInviteCode(_ code: String) async throws {
+        guard let userId = userIdentifier else { throw URLError(.userAuthenticationRequired) }
+        
+        let url = URL(string: "\(serverBaseURL)/user/redeem")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body = ["user_id": userId, "invite_code": code]
+        request.httpBody = try JSONEncoder().encode(body)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        
+        if httpResponse.statusCode != 200 {
+            // 尝试解析错误信息
+            if let errorJson = try? JSONDecoder().decode([String: String].self, from: data),
+               let serverMsg = errorJson["error"] {
+                throw NSError(domain: "AuthError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: serverMsg])
+            }
+            throw URLError(.badServerResponse)
+        }
+        
+        // 解析成功响应
+        struct RedeemResponse: Codable {
+            let is_subscribed: Bool
+            let subscription_expires_at: String?
+        }
+        
+        let redeemResponse = try JSONDecoder().decode(RedeemResponse.self, from: data)
+        
+        await MainActor.run {
+            self.isSubscribed = redeemResponse.is_subscribed
+            self.subscriptionExpiryDate = redeemResponse.subscription_expires_at
+            print("AuthManager: 邀请码兑换成功，VIP 状态已激活。")
+        }
+    }
+
     // MARK: - StoreKit 2 Payment Logic (核心修改)
 
     // 【新增】监听交易流
     func listenForTransactions() -> Task<Void, Error> {
         return Task.detached {
-            // 【修复】StoreKit.Transaction.updates 的遍历不会抛出错误
-            // handleTransactionUpdate 也没有标记为 throws（它内部处理了错误），
-            // 所以这里不需要 do-catch，直接调用即可。
             for await result in StoreKit.Transaction.updates {
                 await self.handleTransactionUpdate(result)
             }
@@ -153,7 +192,6 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         switch result {
         case .success(let verification):
             // 3. 验证交易
-            // 修复点：调用实例方法 checkVerified
             let transaction = try checkVerified(verification)
             
             // 4. 购买成功，更新本地状态
@@ -178,6 +216,21 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             print("交易挂起（如家长控制）")
         @unknown default:
             print("未知状态")
+        }
+    }
+    
+    // 【新增】恢复购买功能 (从 Finance 移植)
+    func restorePurchases() async throws {
+        // 1. 强制同步 App Store 交易信息 (StoreKit 2)
+        // 这会弹出 Apple ID 密码输入框（如果是沙盒环境或长时间未操作）
+        try await AppStore.sync()
+        
+        // 2. 重新检查所有权限
+        await updateSubscriptionStatus()
+        
+        // 3. 如果需要，可以在这里再次同步到 Python 服务器 (可选)
+        if let userId = userIdentifier, isSubscribed {
+            try await syncPurchaseToServer(userId: userId)
         }
     }
 

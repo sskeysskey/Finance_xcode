@@ -53,8 +53,10 @@ struct ArticleDetailView: View {
                         
                         Text(article.topic)
                             .font(.system(.title, design: .serif)).fontWeight(.bold)
-                        Text(sourceName.replacingOccurrences(of: "_", with: " "))
-                            .font(.subheadline).foregroundColor(.gray)
+                        
+                        // 【修改需求2】此处原有的 sourceName 代码已被移除
+                        // Text(sourceName.replacingOccurrences(of: "_", with: " "))
+                        //    .font(.subheadline).foregroundColor(.gray)
                     }
                     .padding(.horizontal, 20)
                     
@@ -152,10 +154,11 @@ struct ArticleDetailView: View {
                         .font(.headline)
                     HStack(spacing: 8) {
                         if unreadCountForGroup == totalUnreadCount {
-                            Text("\(totalUnreadCount) unread")
+                            Text("\(totalUnreadCount) 未读")
                         } else {
-                            Text("\(unreadCountForGroup) | \(totalUnreadCount) unread")
+                            Text("\(unreadCountForGroup) | \(totalUnreadCount) 未读")
                         }
+                        // 这里调用的是 formatMonthDay，下面已经修改了该函数的实现
                         Text(formatMonthDay(from: article.timestamp))
                     }
                     .font(.caption)
@@ -182,6 +185,7 @@ struct ArticleDetailView: View {
         }
     }
 
+    // 【修改需求1】修改日期格式化函数
     private func formatMonthDay(from timestamp: String) -> String {
         let input = DateFormatter()
         input.dateFormat = "yyMMdd"
@@ -189,8 +193,9 @@ struct ArticleDetailView: View {
             return timestamp
         }
         let output = DateFormatter()
-        output.dateFormat = "MMMM d"
-        output.locale = Locale(identifier: "en_US_POSIX")
+        // 修改为中文格式：11月29日
+        output.dateFormat = "M月d日"
+        output.locale = Locale(identifier: "zh_CN")
         return output.string(from: date)
     }
 

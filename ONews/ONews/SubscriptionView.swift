@@ -8,6 +8,16 @@ struct SubscriptionView: View {
     @State private var showError = false
     @State private var errorMessage = ""
     
+    // 【新增】控制隐藏输入框的显示
+    @State private var showRedeemAlert = false
+    @State private var inviteCode = ""
+    @State private var isRedeeming = false
+    
+    // 【新增】恢复购买相关状态
+    @State private var isRestoring = false
+    @State private var showRestoreAlert = false
+    @State private var restoreMessage = ""
+    
     var body: some View {
         ZStack {
             Color.viewBackground.ignoresSafeArea()
@@ -18,6 +28,11 @@ struct SubscriptionView: View {
                     Text("选择您的计划")
                         .font(.largeTitle.bold())
                         .foregroundColor(.white)
+                        // 【核心修改】添加隐蔽的手势触发器
+                        .onTapGesture(count: 5) {
+                            showRedeemAlert = true
+                        }
+                    
                     Text("支持正版，获取最新资讯")
                         .font(.subheadline)
                         .foregroundColor(.gray)
@@ -89,6 +104,37 @@ struct SubscriptionView: View {
                 
                 Spacer()
                 
+                // 【新增】底部链接区域，加入恢复购买按钮
+                HStack(spacing: 20) {
+                    
+                    // 恢复购买按钮
+                    Button(action: {
+                        performRestore()
+                    }) {
+                        Text("恢复购买")
+                            .font(.footnote)
+                            .foregroundColor(.white)
+                            .underline()
+                    }
+                    .disabled(isRestoring || isPurchasing || isRedeeming)
+                    
+                    // 分隔符
+                    Text("|").foregroundColor(.gray.opacity(0.5))
+                    
+                    Link("隐私政策", destination: URL(string: "https://sskeysskey.github.io/website/privacy.html")!)
+                        .font(.footnote)
+                        .foregroundColor(.gray)
+
+                    // 分隔符
+                    Text("|").foregroundColor(.gray.opacity(0.5))
+                    
+                    Link("使用条款 (EULA)", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
+                        .font(.footnote)
+                        .foregroundColor(.gray)
+                }
+                
+                Spacer()
+                
                 // 底部说明
                 if authManager.isSubscribed {
                     Text("您当前是尊贵的专业版用户")
@@ -110,16 +156,28 @@ struct SubscriptionView: View {
             }
             .padding(.horizontal)
             
-            // 加载遮罩
-            if isPurchasing {
+            // 加载遮罩 (购买、兑换或恢复时显示)
+            if isPurchasing || isRedeeming || isRestoring {
                 Color.black.opacity(0.6).ignoresSafeArea()
                 VStack {
                     ProgressView()
                         .scaleEffect(1.5)
                         .tint(.white)
-                    Text("正在处理支付...")
-                        .foregroundColor(.white)
-                        .padding(.top)
+                    
+                    // 根据状态显示不同文案
+                    if isRestoring {
+                        Text("正在恢复购买...")
+                            .foregroundColor(.white)
+                            .padding(.top)
+                    } else if isRedeeming {
+                        Text("正在验证...")
+                            .foregroundColor(.white)
+                            .padding(.top)
+                    } else {
+                        Text("正在处理支付...")
+                            .foregroundColor(.white)
+                            .padding(.top)
+                    }
                 }
             }
         }
@@ -128,8 +186,31 @@ struct SubscriptionView: View {
         } message: {
             Text(errorMessage)
         }
+        // 【新增】兑换码输入弹窗
+        .alert("内部测试/亲友通道", isPresented: $showRedeemAlert) {
+            TextField("请输入邀请码", text: $inviteCode)
+                .textInputAutocapitalization(.characters) // 自动大写
+            Button("取消", role: .cancel) { }
+            Button("兑换") {
+                handleRedeem()
+            }
+        } message: {
+            Text("请输入管理员提供的专用代码以解锁全部功能。")
+        }
+        // 【新增】恢复结果弹窗
+        .alert("恢复结果", isPresented: $showRestoreAlert) {
+            Button("确定", role: .cancel) {
+                // 如果恢复成功，用户点击确定后可以自动关闭页面
+                if authManager.isSubscribed {
+                    dismiss()
+                }
+            }
+        } message: {
+            Text(restoreMessage)
+        }
     }
     
+    // 处理购买
     private func handlePurchase() {
         isPurchasing = true
         Task {
@@ -146,6 +227,58 @@ struct SubscriptionView: View {
                     isPurchasing = false
                     errorMessage = error.localizedDescription
                     showError = true
+                }
+            }
+        }
+    }
+    
+    // 【新增】处理兑换逻辑
+    private func handleRedeem() {
+        guard !inviteCode.isEmpty else { return }
+        isRedeeming = true
+        
+        Task {
+            do {
+                try await authManager.redeemInviteCode(inviteCode)
+                await MainActor.run {
+                    isRedeeming = false
+                    inviteCode = ""
+                    // 兑换成功，关闭页面
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isRedeeming = false
+                    inviteCode = ""
+                    errorMessage = "兑换失败: \(error.localizedDescription)"
+                    showError = true
+                }
+            }
+        }
+    }
+    
+    // 【新增】处理恢复购买
+    private func performRestore() {
+        isRestoring = true
+        Task {
+            do {
+                // 调用 AuthManager 的恢复方法
+                try await authManager.restorePurchases()
+                
+                await MainActor.run {
+                    isRestoring = false
+                    if authManager.isSubscribed {
+                        restoreMessage = "成功恢复订阅！您现在可以无限制访问数据。"
+                    } else {
+                        restoreMessage = "未发现有效的订阅记录。"
+                    }
+                    showRestoreAlert = true
+                }
+            } catch {
+                await MainActor.run {
+                    isRestoring = false
+                    restoreMessage = "恢复失败: \(error.localizedDescription)"
+                    showRestoreAlert = true
                 }
             }
         }
