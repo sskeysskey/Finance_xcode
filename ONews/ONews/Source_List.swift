@@ -420,7 +420,7 @@ struct SourceListView: View {
     
     private var sourceAndAllArticlesView: some View {
         Group {
-            if SubscriptionManager.shared.subscribedSources.isEmpty && !resourceManager.isSyncing {
+            if SubscriptionManager.shared.subscribedSourceIDs.isEmpty && !resourceManager.isSyncing {
                 VStack(spacing: 20) {
                     Text("您还没有订阅任何新闻源")
                         .font(.headline)

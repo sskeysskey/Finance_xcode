@@ -352,21 +352,24 @@ class NewsViewModel: ObservableObject {
         UserDefaults.standard.set(self.readRecords, forKey: readKey)
     }
 
+    // MARK: - 加载新闻 (核心修改)
     func loadNews() {
-        // 【修改】从 resourceManager 获取服务器配置
-        // 因为 NewsViewModel 和 ResourceManager 现在都位于 @MainActor 上，
-        // 所以这里的访问是安全的，不再有编译错误。
         self.lockedDays = resourceManager?.serverLockedDays ?? 0
         
-        let subscribed = subscriptionManager.subscribedSources
-        if subscribed.isEmpty {
-            print("没有订阅任何新闻源。列表将为空。")
-            DispatchQueue.main.async {
-                self.sources = []
-            }
+        // 获取当前的映射关系 (从 version.json 下载下来的)
+        // 注意：如果 resourceManager 为空，则默认为空字典
+        let currentMappings = resourceManager?.sourceMappings ?? [:]
+        
+        let subscribedIDs = SubscriptionManager.shared.subscribedSourceIDs
+        
+        // 【迁移逻辑】如果 ID 订阅为空，但存在旧的名称订阅，我们可能需要迁移
+        // 这里我们不直接 return，而是允许继续加载，以便在遍历文件时进行迁移匹配
+        let hasLegacySubscriptions = UserDefaults.standard.object(forKey: SubscriptionManager.shared.oldSubscribedSourcesKey) != nil
+        
+        if subscribedIDs.isEmpty && !hasLegacySubscriptions {
+            DispatchQueue.main.async { self.sources = [] }
             return
         }
-        print("开始加载新闻，订阅源为: \(subscribed)")
         
         guard let allFileURLs = try? FileManager.default.contentsOfDirectory(at: documentsDirectory, includingPropertiesForKeys: nil) else {
             print("无法读取 Documents 目录。")
@@ -386,28 +389,45 @@ class NewsViewModel: ObservableObject {
         let decoder = JSONDecoder()
 
         for url in newsJSONURLs {
-            let fileName = url.deletingPathExtension().lastPathComponent
-            guard let timestamp = fileName.components(separatedBy: "_").last, !timestamp.isEmpty else {
+            guard let data = try? Data(contentsOf: url),
+                let decoded = try? decoder.decode([String: [Article]].self, from: data) else {
                 continue
             }
             
-            guard let data = try? Data(contentsOf: url) else {
-                continue
-            }
-            
-            guard let decoded = try? decoder.decode([String: [Article]].self, from: data) else {
-                continue
-            }
-            
-            for (sourceName, articles) in decoded {
-                guard subscribed.contains(sourceName) else { continue }
+            // fileKeyName 是 JSON 文件里的键 (例如 "华尔街日报中文网")
+            for (fileKeyName, articles) in decoded {
+                guard let firstArticle = articles.first,
+                    let sourceId = firstArticle.source_id else { 
+                    continue 
+                }
+                
+                // 1. 检查是否订阅 (基于 ID)
+                if !subscribedIDs.contains(sourceId) {
+                    // 尝试迁移逻辑...
+                    SubscriptionManager.shared.migrateOldSubscription(name: fileKeyName, id: sourceId)
+                    // 再次检查
+                    if !SubscriptionManager.shared.isSubscribed(sourceId: sourceId) {
+                        continue
+                    }
+                }
+                
+                // 【核心修复】确定最终显示名称 (Display Name)
+                // 优先查找 sourceMappings 里的名字，找不到则使用文件里的名字
+                let finalDisplayName = currentMappings[sourceId] ?? fileKeyName
+                
+                // 提取时间戳
+                let timestamp = url.lastPathComponent
+                    .replacingOccurrences(of: "onews_", with: "")
+                    .replacingOccurrences(of: ".json", with: "")
                 
                 let articlesWithTimestamp = articles.map { article -> Article in
                     var mutableArticle = article
                     mutableArticle.timestamp = timestamp
                     return mutableArticle
                 }
-                allArticlesBySource[sourceName, default: []].append(contentsOf: articlesWithTimestamp)
+                
+                // 使用 finalDisplayName 作为聚合的 Key
+                allArticlesBySource[finalDisplayName, default: []].append(contentsOf: articlesWithTimestamp)
             }
         }
         
@@ -717,12 +737,13 @@ struct Article: Identifiable, Codable, Hashable {
     let topic: String
     let article: String
     let images: [String]
+    let source_id: String? // 【新增】源ID字段
 
     var isRead: Bool = false
     var timestamp: String = ""
 
     enum CodingKeys: String, CodingKey {
-        case topic, article, images
+        case topic, article, images, source_id
     }
 
     func hash(into hasher: inout Hasher) {
@@ -768,7 +789,6 @@ class AppBadgeManager: ObservableObject {
 
     func updateBadge(count: Int) {
         var backgroundTask: UIBackgroundTaskIdentifier = .invalid
-
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "updateBadgeCount") {
             print("后台任务时间耗尽,强制结束角标更新任务。")
             if backgroundTask != .invalid {
@@ -778,7 +798,6 @@ class AppBadgeManager: ObservableObject {
         }
         
         let badgeCount = max(0, count)
-
         UNUserNotificationCenter.current().setBadgeCount(badgeCount) { error in
             if let error = error {
                 print("【角标更新失败】: \(error.localizedDescription)")

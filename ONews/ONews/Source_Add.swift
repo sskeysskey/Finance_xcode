@@ -8,68 +8,68 @@ import Foundation
 class SubscriptionManager: ObservableObject {
     static let shared = SubscriptionManager() // 使用单例模式，方便全局访问
 
-    private let subscribedSourcesKey = "subscribedNewsSources"
+    // 【修改】Key 改名，明确存储的是 ID
+    private let subscribedSourceIDsKey = "subscribedNewsSourceIDs"
+    // 【兼容】保留旧 Key 用于迁移检查
+    let oldSubscribedSourcesKey = "subscribedNewsSources"
     
-    @Published var subscribedSources: Set<String> {
+    @Published var subscribedSourceIDs: Set<String> { // 【改为ID集合】
         didSet {
-            // 当订阅列表变化时，自动保存到 UserDefaults
-            saveSubscribedSources()
-            print("订阅列表已更新并保存: \(subscribedSources)")
+            saveSubscribedIDs()
+            // print("订阅列表(ID)已更新并保存: \(subscribedSourceIDs)")
         }
     }
 
     private init() {
-        // 初始化时从 UserDefaults 加载已保存的订阅列表
-        let savedSources = UserDefaults.standard.stringArray(forKey: subscribedSourcesKey) ?? []
-        self.subscribedSources = Set(savedSources)
-        print("SubscriptionManager 初始化，加载的订阅源: \(self.subscribedSources)")
+        let savedIDs = UserDefaults.standard.stringArray(forKey: subscribedSourceIDsKey) ?? []
+        self.subscribedSourceIDs = Set(savedIDs)
     }
 
-    /// 将当前的订阅列表（Set）转换为数组并保存到 UserDefaults
-    private func saveSubscribedSources() {
-        UserDefaults.standard.set(Array(self.subscribedSources), forKey: subscribedSourcesKey)
+    private func saveSubscribedIDs() {
+        UserDefaults.standard.set(Array(subscribedSourceIDs), forKey: subscribedSourceIDsKey)
     }
 
-    /// 检查某个新闻源是否已被订阅
-    func isSubscribed(to sourceName: String) -> Bool {
-        return subscribedSources.contains(sourceName)
+    // MARK: - 公共方法
+
+    /// 根据 source_id 判断是否订阅
+    func isSubscribed(sourceId: String) -> Bool {
+        return subscribedSourceIDs.contains(sourceId)
     }
 
-    /// 添加一个新闻源到订阅列表
-    func addSubscription(_ sourceName: String) {
-        subscribedSources.insert(sourceName)
+    func addSubscription(sourceId: String) {
+        subscribedSourceIDs.insert(sourceId)
     }
 
-    /// 从订阅列表移除一个新闻源
-    func removeSubscription(_ sourceName: String) {
-        subscribedSources.remove(sourceName)
+    func removeSubscription(sourceId: String) {
+        subscribedSourceIDs.remove(sourceId)
     }
     
-    /// 切换某个新闻源的订阅状态
-    func toggleSubscription(for sourceName: String) {
-        if isSubscribed(to: sourceName) {
-            removeSubscription(sourceName)
-        } else {
-            addSubscription(sourceName)
+    func subscribeToAll(_ sourceIds: [String]) {
+        subscribedSourceIDs.formUnion(sourceIds)
+    }
+    
+    /// 【新增】供外部调用的迁移方法：将旧的名称订阅转换为 ID 订阅
+    func migrateOldSubscription(name: String, id: String) {
+        // 读取旧的名称列表
+        let oldNames = UserDefaults.standard.stringArray(forKey: oldSubscribedSourcesKey) ?? []
+        if oldNames.contains(name) {
+            print("迁移订阅: 发现旧名称订阅 [\(name)]，自动映射为 ID [\(id)]")
+            addSubscription(sourceId: id)
         }
-    }
-    
-    // MARK: - 新增方法
-    /// 一次性添加所有给定的新闻源。
-    /// 使用 formUnion 可以高效地合并，并且只会触发一次 @Published 属性的更新。
-    func subscribeToAll(_ sources: [String]) {
-        subscribedSources.formUnion(sources)
     }
 }
 
 struct AddSourceView: View {
-    // 状态
-    @State private var allAvailableSources: [String] = []
+    // 状态：存储 (ID, Name) 元组
+    @State private var allAvailableSources: [(id: String, name: String)] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
 
     // 订阅管理器
     @ObservedObject private var subscriptionManager = SubscriptionManager.shared
+
+    // 【新增】接收 ResourceManager 以获取 mappings
+    @EnvironmentObject var resourceManager: ResourceManager 
     
     // 用于判断显示逻辑（首次设置 vs. 后续添加）
     let isFirstTimeSetup: Bool
@@ -81,10 +81,8 @@ struct AddSourceView: View {
     // MARK: - 新增计算属性
     /// 计算是否所有可用源都已被订阅，用于禁用“一键添加”按钮
     private var areAllSourcesSubscribed: Bool {
-        // 将数组转换为 Set 以便进行高效的子集比较
-        let allSourcesSet = Set(allAvailableSources)
-        // isSuperset(of:) 检查 subscribedSources 是否包含 allSourcesSet 中的所有元素
-        return subscriptionManager.subscribedSources.isSuperset(of: allSourcesSet)
+        let allIDs = Set(allAvailableSources.map { $0.id })
+        return subscriptionManager.subscribedSourceIDs.isSuperset(of: allIDs)
     }
 
     var body: some View {
@@ -118,8 +116,8 @@ struct AddSourceView: View {
                         // MARK: - [修改点 1] 将“一键添加”按钮移动到列表顶部
                         Section {
                             Button(action: {
-                                // MARK: - [修改点 2] 修改按钮行为：添加所有源后立即执行确认操作
-                                subscriptionManager.subscribeToAll(allAvailableSources)
+                                let allIDs = allAvailableSources.map { $0.id }
+                                subscriptionManager.subscribeToAll(allIDs)
                                 handleConfirm()
                             }) {
                                 // MARK: - [修改点 3] 优化按钮文本，使其更清晰地反映其行为
@@ -138,23 +136,24 @@ struct AddSourceView: View {
                         .listRowSeparator(.hidden)
                         .padding(.vertical, 8) // 为按钮部分添加一些垂直间距
 
-                        // 遍历所有可用的新闻源
-                        ForEach(allAvailableSources, id: \.self) { sourceName in
+                        // 遍历源列表
+                        ForEach(allAvailableSources, id: \.id) { source in
                             HStack {
-                                Text(sourceName)
+                                Text(source.name) // 显示名称（如“华尔街日报”）
                                     .fontWeight(.medium)
                                     .foregroundColor(.white)
 
                                 Spacer()
                                 
-                                if subscriptionManager.isSubscribed(to: sourceName) {
+                                // 使用 ID 判断订阅状态
+                                if subscriptionManager.isSubscribed(sourceId: source.id) {
                                     Text("已添加")
                                         .font(.caption)
                                         .foregroundColor(.white.opacity(0.8))
                                         .padding(.trailing, 8)
                                     
                                     Button(action: {
-                                        subscriptionManager.removeSubscription(sourceName)
+                                        subscriptionManager.removeSubscription(sourceId: source.id)
                                     }) {
                                         Image(systemName: "minus.circle.fill")
                                             .foregroundColor(.red)
@@ -164,7 +163,7 @@ struct AddSourceView: View {
 
                                 } else {
                                     Button(action: {
-                                        subscriptionManager.addSubscription(sourceName)
+                                        subscriptionManager.addSubscription(sourceId: source.id)
                                     }) {
                                         Image(systemName: "plus.circle.fill")
                                             .foregroundColor(.blue)
@@ -183,8 +182,8 @@ struct AddSourceView: View {
                             VStack(spacing: 12) { // MARK: - 修改部分
                                 // MARK: - 新增“一键添加所有来源”按钮
                                 Button(action: {
-                                    // 调用管理器中的批量添加方法
-                                    subscriptionManager.subscribeToAll(allAvailableSources)
+                                    let allIDs = allAvailableSources.map { $0.id }
+                                    subscriptionManager.subscribeToAll(allIDs)
                                     handleConfirm()
                                 }) {
                                     Text("一键添加所有新闻源")
@@ -208,11 +207,11 @@ struct AddSourceView: View {
                                         .foregroundColor(.white)
                                         .frame(height: 50)
                                         .frame(maxWidth: .infinity)
-                                        .background(subscriptionManager.subscribedSources.isEmpty ? Color.gray : Color.blue)
+                                        .background(subscriptionManager.subscribedSourceIDs.isEmpty ? Color.gray : Color.blue)
                                         .cornerRadius(10)
                                 }
-                                .disabled(subscriptionManager.subscribedSources.isEmpty)
-                                .animation(.easeInOut, value: subscriptionManager.subscribedSources.isEmpty) // 添加动画效果
+                                .disabled(subscriptionManager.subscribedSourceIDs.isEmpty)
+                                .animation(.easeInOut, value: subscriptionManager.subscribedSourceIDs.isEmpty)
                             }
                             .padding(.vertical, 16)
                         ) {
@@ -250,6 +249,10 @@ struct AddSourceView: View {
         isLoading = true
         errorMessage = nil
         
+        // 【修复】在进入后台线程前，先从 ResourceManager 获取映射表
+        // 这样 mappings 变量就在闭包的作用域内了
+        let mappings = resourceManager.sourceMappings
+        
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -263,26 +266,33 @@ struct AddSourceView: View {
                     throw NSError(domain: "AppError", code: 1, userInfo: [NSLocalizedDescriptionKey: "在 Documents 目录中没有找到任何 'onews_*.json' 文件。\n请先返回主页同步资源。"])
                 }
 
-                var union = Set<String>()
+                // 使用字典去重：Key 是 ID，Value 是 Name
+                // 如果同一个 ID 对应多个 Name (比如不同日期的文件改名了)，我们取最新的那个（这里简化为取扫描到的最后一个）
+                var sourceMap = [String: String]()
                 let decoder = JSONDecoder()
                 
                 for url in newsJSONURLs {
-                    do {
-                        let data = try Data(contentsOf: url)
-                        // 假设 Article 是一个 Codable 结构体
-                        let decoded = try decoder.decode([String: [Article]].self, from: data)
-                        union.formUnion(decoded.keys)
-                    } catch {
-                        // 某个文件坏了不应影响整体，记录日志后继续
-                        print("解析 \(url.lastPathComponent) 失败: \(error.localizedDescription)")
+                    guard let data = try? Data(contentsOf: url),
+                          let decoded = try? decoder.decode([String: [Article]].self, from: data) else {
                         continue
+                    }
+                    
+                    for (fileKeyName, articles) in decoded {
+                        if let firstArticle = articles.first, let sourceId = firstArticle.source_id, !sourceId.isEmpty {
+                            // 【核心修改】如果有映射，使用映射名；否则使用文件里的 Key
+                            // 现在 mappings 变量已经存在了，不会报错
+                            let displayName = mappings[sourceId] ?? fileKeyName
+                            sourceMap[sourceId] = displayName
+                        }
                     }
                 }
 
-                let sources = union.sorted()
+                // 转换为数组并按名称排序
+                let sortedSources = sourceMap.map { (id: $0.key, name: $0.value) }
+                    .sorted { $0.name < $1.name }
 
                 DispatchQueue.main.async {
-                    self.allAvailableSources = sources
+                    self.allAvailableSources = sortedSources
                     self.isLoading = false
                 }
             } catch {

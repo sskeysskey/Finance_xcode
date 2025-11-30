@@ -11,6 +11,7 @@ struct FileInfo: Codable {
 struct ServerVersion: Codable {
     let version: String
     let locked_days: Int? // 使用可选类型以兼容旧版 version.json
+    let source_mappings: [String: String]? // source_id -> Display Name
     let files: [FileInfo]
 }
 
@@ -27,6 +28,9 @@ class ResourceManager: ObservableObject {
     
     // 【新增】存储从服务器获取的配置
     @Published var serverLockedDays: Int = 0
+    
+    // 【新增】存储映射关系，虽然主要逻辑依赖本地文件扫描，但这可用于全局查找
+    @Published var sourceMappings: [String: String] = [:] 
     
     private let serverBaseURL = "http://106.15.183.158:5001/api/ONews"
     
@@ -429,9 +433,20 @@ class ResourceManager: ObservableObject {
     }
 
     private func getServerVersion() async throws -> ServerVersion {
-        guard let url = URL(string: "\(serverBaseURL)/check_version") else { throw URLError(.badURL) }
+        guard let url = URL(string: "\(serverBaseURL)/check_version") else { 
+            throw URLError(.badURL) 
+        }
         let (data, _) = try await urlSession.data(from: url)
-        return try JSONDecoder().decode(ServerVersion.self, from: data)
+        let version = try JSONDecoder().decode(ServerVersion.self, from: data)
+        
+        // 【新增】保存映射关系
+        if let mappings = version.source_mappings {
+            await MainActor.run {
+                self.sourceMappings = mappings
+            }
+        }
+        
+        return version
     }
     
     private func getLocalFiles() throws -> Set<String> {

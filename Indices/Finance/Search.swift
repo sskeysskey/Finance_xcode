@@ -106,7 +106,7 @@ struct GroupHeaderView: View {
 struct SearchContentView: View {
     @State private var showSearch = false
     @State private var showCompare = false
-    @State private var showEarning = false // 添加新状态
+    @State private var showEarning = false
     @EnvironmentObject var dataService: DataService
     
     var body: some View {
@@ -678,13 +678,7 @@ class SearchViewModel: ObservableObject {
     var dataService: DataService
     private var cancellables = Set<AnyCancellable>()
     
-    // 【新增】搜索结果缓存
-    private var searchCache: [String: [GroupedSearchResults]] = [:]
-    private let maxCacheSize = 50
-    
-    // 【核心优化】每个分类的最大结果数
-    private let maxResultsPerCategory = 30
-    
+    // 使用 DataService.shared 作为默认值
     init(dataService: DataService = DataService.shared) {
         self.dataService = dataService
         dataService.$errorMessage
@@ -693,34 +687,8 @@ class SearchViewModel: ObservableObject {
             .store(in: &cancellables)
         loadSearchHistory()
     }
-
-    // 【新增】计算加权长度辅助函数
-    private func calculateWeightedLength(_ text: String) -> Int {
-        var length = 0
-        for char in text {
-            if char.isASCII {
-                length += 1
-            } else {
-                length += 2
-            }
-        }
-        return length
-    }
     
     func performSearch(query: String, completion: @escaping ([GroupedSearchResults]) -> Void) {
-        let cacheKey = query.lowercased()
-        let trimmedQuery = query.trimmingCharacters(in: .whitespaces)
-        
-        // 【修改生效处】
-        let queryLength = calculateWeightedLength(trimmedQuery)
-        
-        // 检查缓存
-        if let cachedResults = searchCache[cacheKey] {
-            print("使用缓存结果：\(query)")
-            completion(cachedResults)
-            return
-        }
-        
         let keywords = query.lowercased().split(separator: " ").map { String($0) }
         
         // 使用 Task
@@ -732,21 +700,7 @@ class SearchViewModel: ObservableObject {
             
             // 搜索逻辑 (CPU 密集，非 Async)
             var groupedResults: [(group: GroupedSearchResults, matchScore: Int, priority: Int)] = []
-            
-            // 【修改点 1】: 根据字符长度动态决定要搜索的分类
-            var categories: [MatchCategory] = []
-            
-            // 现在的判断逻辑基于加权长度
-            if queryLength <= 2 {
-                // 1-2 权重长度：只搜代码和名字 (例如 "苹")
-                categories = [.stockSymbol, .etfSymbol, .stockName, .etfName]
-            } else if queryLength >= 3 && queryLength <= 4 {
-                // 3-4 权重长度：搜代码、名字、Tag (例如 "苹果" 或 "AAPL")
-                categories = [.stockSymbol, .etfSymbol, .stockName, .etfName, .stockTag, .etfTag]
-            } else {
-                // 5+ 权重长度：全搜 (例如 "苹果公司" 或 "Apple")
-                categories = [.stockSymbol, .etfSymbol, .stockName, .etfName, .stockTag, .etfTag, .stockDescription, .etfDescription]
-            }
+            let categories: [MatchCategory] = [.stockSymbol, .etfSymbol, .stockName, .etfName, .stockTag, .etfTag, .stockDescription, .etfDescription]
             
             for category in categories {
                 var matches: [(result: SearchResult, score: Int)] = []
@@ -754,22 +708,10 @@ class SearchViewModel: ObservableObject {
                 // 传递 queryLength 给 searchCategory 以便在内部做更细致的判断
                 switch category {
                 case .stockSymbol, .stockName, .stockDescription, .stockTag:
-                    matches = self.searchCategory(
-                        items: descriptionData.stocks,
-                        keywords: keywords,
-                        category: category,
-                        maxResults: self.maxResultsPerCategory,
-                        queryLength: queryLength // 传入长度
-                    )
+                    matches = self.searchCategory(items: descriptionData.stocks, keywords: keywords, category: category)
                     
                 case .etfSymbol, .etfName, .etfDescription, .etfTag:
-                    matches = self.searchCategory(
-                        items: descriptionData.etfs,
-                        keywords: keywords,
-                        category: category,
-                        maxResults: self.maxResultsPerCategory,
-                        queryLength: queryLength // 传入长度
-                    )
+                    matches = self.searchCategory(items: descriptionData.etfs, keywords: keywords, category: category)
                 }
                 
                 if !matches.isEmpty {
@@ -788,15 +730,6 @@ class SearchViewModel: ObservableObject {
             await MainActor.run {
                 if !keywords.isEmpty { self.addSearchHistory(term: query) }
                 self.groupedSearchResults = sortedGroups
-                
-                // 缓存管理
-                if self.searchCache.count >= self.maxCacheSize {
-                    // 简单的FIFO策略，移除第一个
-                    if let firstKey = self.searchCache.keys.first {
-                        self.searchCache.removeValue(forKey: firstKey)
-                    }
-                }
-                self.searchCache[cacheKey] = sortedGroups
             }
             
             // 异步获取 Volume
@@ -888,31 +821,21 @@ class SearchViewModel: ObservableObject {
         let kVolume = Double(volume) / 1000.0
         return String(format: "%.0fK", kVolume)
     }
-
-    // 【修改点 2】: 增加 queryLength 参数
-    func searchCategory<T: SearchDescribableItem>(
-        items: [T],
-        keywords: [String],
-        category: MatchCategory,
-        maxResults: Int,
-        queryLength: Int
-    ) -> [(result: SearchResult, score: Int)] {
+    
+    // 搜索类别，并根据结果进行匹配和排序
+    func searchCategory<T: SearchDescribableItem>(items: [T],
+                                                  keywords: [String],
+                                                  category: MatchCategory)
+    -> [(result: SearchResult, score: Int)] {
         var scoredResults: [(SearchResult, Int)] = []
-        var foundCount = 0
         
-        // 【优化】Early Exit - 找到足够结果后提前退出
         for item in items {
-            if foundCount >= maxResults {
-                break
-            }
-            
-            // 传入 queryLength
-            if let totalScore = matchScoreForItem(item, category: category, keywords: keywords, queryLength: queryLength) {
+            if let totalScore = matchScoreForItem(item, category: category, keywords: keywords) {
                 let upperSymbol = item.symbol.uppercased()
                 let data = dataService.marketCapData[upperSymbol]
                 let marketCap = data?.marketCap
                 let peRatioStr = data?.peRatio != nil ? String(format: "%.2f", data!.peRatio!) : "--"
-                let pbStr = data?.pb != nil ? String(format: "%.2f", data!.pb!) : "--"
+                let pbStr = data?.pb != nil ? String(format: "%.2f", data!.pb!) : "--"  // 添加 PB 格式化
                 
                 let result = SearchResult(
                     symbol: item.symbol,
@@ -925,32 +848,30 @@ class SearchViewModel: ObservableObject {
                 )
                 
                 scoredResults.append((result, totalScore))
-                foundCount += 1
             }
         }
         
-        // 排序并限制数量
-        return scoredResults.sorted { lhs, rhs in
-            if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
-            let lmc = parseMarketCap(lhs.0.marketCap)
-            let rmc = parseMarketCap(rhs.0.marketCap)
-            return lmc > rmc
-        }.prefix(maxResults).map { $0 }
+//        return scoredResults.sorted { $0.1 > $1.1 }
+        // 修改点：组内排序先按分数降序，再按 marketCap 数值降序
+       return scoredResults.sorted { lhs, rhs in
+           if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
+           let lmc = parseMarketCap(lhs.0.marketCap)
+           let rmc = parseMarketCap(rhs.0.marketCap)
+           return lmc > rmc
+       }
     }
     
-    // 【修改点 3】: 增加 queryLength 参数
+    // 计算某个 item 与一组关键词在指定分类下的匹配分数
     private func matchScoreForItem<T: SearchDescribableItem>(
         _ item: T,
         category: MatchCategory,
-        keywords: [String],
-        queryLength: Int) -> Int? {
+        keywords: [String]) -> Int? {
         
         var totalScore = 0
         
         for keyword in keywords {
             let lowerKeyword = keyword.lowercased()
-            // 传入 queryLength
-            let singleScore = scoreOfSingleMatch(item: item, keyword: lowerKeyword, category: category, queryLength: queryLength)
+            let singleScore = scoreOfSingleMatch(item: item, keyword: lowerKeyword, category: category)
             if singleScore <= 0 {
                 return nil
             } else {
@@ -960,33 +881,12 @@ class SearchViewModel: ObservableObject {
         return totalScore
     }
     
-    // 【修改点 4】: 核心匹配逻辑修改
+    // 计算单个关键词在指定分类下的匹配分数
     private func scoreOfSingleMatch<T: SearchDescribableItem>(
         item: T,
         keyword: String,
-        category: MatchCategory,
-        queryLength: Int) -> Int {
+        category: MatchCategory) -> Int {
         
-        // 规则1：如果长度 <= 2，只做完美匹配
-        if queryLength <= 2 {
-            switch category {
-            case .stockSymbol, .etfSymbol:
-                // 只有完全相等才算分 (Symbol 完美匹配给高分)
-                return item.symbol.lowercased() == keyword ? 100 : 0
-            case .stockName, .etfName:
-                // 只有完全相等才算分
-                return item.name.lowercased() == keyword ? 100 : 0
-            default:
-                // 其他分类（Tag, Description）在 <=2 时已经在 performSearch 被过滤了，
-                // 但为了安全起见，这里返回 0
-                return 0
-            }
-        }
-        
-        // 规则2：如果长度 3 或 4，不检索 Description (已在 performSearch 过滤)，其他正常检索
-        // 规则3：如果长度 >= 5，正常检索
-        
-        // 下面是正常的匹配逻辑 (适用于 queryLength >= 3)
         switch category {
         case .stockSymbol, .etfSymbol:
             return matchSymbol(item.symbol.lowercased(), keyword: keyword)
@@ -995,12 +895,7 @@ class SearchViewModel: ObservableObject {
         case .stockTag, .etfTag:
             return matchTags(item.tag, keyword: keyword)
         case .stockDescription, .etfDescription:
-            // 再次兜底：只有 >= 5 才匹配描述
-            if queryLength >= 5 {
-                return matchDescriptions(item.description1, item.description2, keyword: keyword)
-            } else {
-                return 0
-            }
+            return matchDescriptions(item.description1, item.description2, keyword: keyword)
         }
     }
     
