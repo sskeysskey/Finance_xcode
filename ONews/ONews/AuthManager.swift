@@ -502,12 +502,9 @@ struct LoginView: View {
 
     var body: some View {
         ZStack {
-            // 背景
-            Image("welcome_background")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
+            // 【修改】使用系统背景色
+            Color.viewBackground
                 .ignoresSafeArea()
-                .overlay(Color.black.opacity(0.6).ignoresSafeArea())
 
             VStack(spacing: 30) {
                 Spacer()
@@ -516,15 +513,16 @@ struct LoginView: View {
                 VStack(spacing: 15) {
                     Image(systemName: "newspaper.fill")
                         .font(.system(size: 60))
-                        .foregroundColor(.white)
+                        // 【修改】颜色自适应
+                        .foregroundColor(.primary)
                     
                     Text("解锁全部内容")
                         .font(.largeTitle.bold())
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     
                     Text("登录后可查看最新文章并同步阅读进度")
                         .font(.headline)
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                 }
@@ -535,7 +533,7 @@ struct LoginView: View {
                 VStack(spacing: 20) {
                     if authManager.isLoggingIn {
                         ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            // 【修改】使用默认样式
                             .scaleEffect(1.5)
                     } else {
                         // Apple 登录按钮
@@ -552,7 +550,8 @@ struct LoginView: View {
                             // 实际的逻辑由 AuthManager 触发
                             authManager.signInWithApple()
                         }
-                        .signInWithAppleButtonStyle(.white) // 按钮样式
+                        // 【修改】使用系统默认样式，会自动适配黑白
+                        .signInWithAppleButtonStyle(.black) 
                         .frame(height: 50)
                         .cornerRadius(10)
                     }
@@ -574,10 +573,11 @@ struct LoginView: View {
                     dismiss()
                 }
                 .font(.subheadline)
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(.secondary)
                 .padding(.bottom, 20)
             }
         }
-        .preferredColorScheme(.dark)
+        // 【修改】移除强制深色模式
+        // .preferredColorScheme(.dark)
     }
 }

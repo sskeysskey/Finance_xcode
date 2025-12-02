@@ -106,9 +106,12 @@ struct MainAppView: View {
 
 
 // ==================== 共享颜色扩展 ====================
-// 将此扩展移至共享文件，以便所有共享视图都能访问
+// 【修改】使用系统自适应颜色
 extension Color {
-    static let viewBackground = Color(red: 28/255, green: 28/255, blue: 30/255)
+    // systemGroupedBackground: 浅色模式下是灰白色，深色模式下是纯黑色
+    static let viewBackground = Color(.systemGroupedBackground)
+    // secondarySystemGroupedBackground: 浅色模式下是纯白色，深色模式下是深灰色（用于卡片）
+    static let cardBackground = Color(.secondarySystemGroupedBackground)
 }
 
 
@@ -206,6 +209,7 @@ struct ArticleRowCardView: View {
                 HStack(alignment: .top) {
                     Text(article.topic)
                         .font(.system(size: 20, weight: .semibold))
+                        // 【修改】使用 .primary 和 .secondary 让文字颜色自适应
                         .foregroundColor(isReadEffective ? .secondary : .primary)
                         .lineLimit(3)
                     
@@ -228,9 +232,11 @@ struct ArticleRowCardView: View {
         }
         .padding(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.viewBackground)
+        // 【修改】使用卡片专用背景色
+        .background(Color.cardBackground)
         .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
+        // 在浅色模式下阴影更柔和
+        .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
     }
 }
 

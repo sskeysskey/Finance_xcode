@@ -87,19 +87,19 @@ struct AddSourceView: View {
 
     var body: some View {
         ZStack {
-            // 背景图与遮罩，和 WelcomeView 风格一致
-            Image("welcome_background")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
+            // 【修改】使用系统背景色
+            Color.viewBackground
                 .ignoresSafeArea()
-                .overlay(Color.black.opacity(0.4).ignoresSafeArea())
 
             // 主内容：当加载或出错时，展示覆盖层；正常时展示列表
             Group {
                 if isLoading {
-                    ProgressView("正在加载新闻源...")
-                        .tint(.white)
-                        .foregroundColor(.white)
+                    VStack {
+                        ProgressView()
+                        Text("正在加载新闻源...")
+                            .foregroundColor(.secondary)
+                            .padding(.top)
+                    }
                 } else if let error = errorMessage {
                     VStack(spacing: 20) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -108,7 +108,7 @@ struct AddSourceView: View {
                         Text(error)
                             .multilineTextAlignment(.center)
                             .padding()
-                            .foregroundColor(.white)
+                            .foregroundColor(.primary)
                     }
                 } else {
                     // 使用 List 承载所有行，并把“确定”按钮放到列表底部的 Section 页脚
@@ -132,7 +132,8 @@ struct AddSourceView: View {
                             .disabled(areAllSourcesSubscribed)
                             .animation(.easeInOut, value: areAllSourcesSubscribed)
                         }
-                        .listRowBackground(Color.clear)
+                        // 【修改】移除 clear 背景，让 List 使用系统默认样式
+                        // .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                         .padding(.vertical, 8) // 为按钮部分添加一些垂直间距
 
@@ -141,7 +142,8 @@ struct AddSourceView: View {
                             HStack {
                                 Text(source.name) // 显示名称（如“华尔街日报”）
                                     .fontWeight(.medium)
-                                    .foregroundColor(.white)
+                                    // 【修改】文字颜色自适应
+                                    .foregroundColor(.primary)
 
                                 Spacer()
                                 
@@ -149,7 +151,7 @@ struct AddSourceView: View {
                                 if subscriptionManager.isSubscribed(sourceId: source.id) {
                                     Text("已添加")
                                         .font(.caption)
-                                        .foregroundColor(.white.opacity(0.8))
+                                        .foregroundColor(.secondary)
                                         .padding(.trailing, 8)
                                     
                                     Button(action: {
@@ -173,8 +175,8 @@ struct AddSourceView: View {
                                 }
                             }
                             .padding(.vertical, 8)
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
+                            // 【修改】使用卡片背景色
+                            .listRowBackground(Color.cardBackground)
                         }
                         
                         // 底部确定按钮：放在列表末尾
@@ -220,11 +222,11 @@ struct AddSourceView: View {
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
+                    // 【修改】使用 insetGrouped 样式，这是 iOS 设置页面的标准样式，非常漂亮
+                    .listStyle(.insetGrouped)
+                    // .scrollContentBackground(.hidden) // 移除此行，让系统处理背景
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle("添加新闻源")
         .navigationBarTitleDisplayMode(.inline)

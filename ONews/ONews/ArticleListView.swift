@@ -369,9 +369,10 @@ struct ArticleListView: View {
         if source == nil {
             VStack {
                 Text("新闻源不再可用")
-                    .foregroundColor(.white)
+                    .foregroundColor(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // 【修改】使用系统背景
             .background(Color.viewBackground.ignoresSafeArea())
         } else {
             ZStack {
@@ -428,6 +429,7 @@ struct ArticleListView: View {
                         .padding([.horizontal, .bottom])
                     }
                 }
+                // 【修改】使用系统背景
                 .background(Color.viewBackground.ignoresSafeArea())
             }
             .navigationDestination(isPresented: $isNavigationActive) {
@@ -712,6 +714,7 @@ struct AllArticlesListView: View {
                     .padding([.horizontal, .bottom])
                 }
             }
+            // 【修改】使用系统背景
             .background(Color.viewBackground.ignoresSafeArea())
         }
         .navigationDestination(isPresented: $isNavigationActive) {

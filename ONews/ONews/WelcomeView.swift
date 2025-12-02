@@ -29,11 +29,9 @@ struct WelcomeView: View {
         ZStack {
             NavigationStack {
                 ZStack {
-                    Image("welcome_background")
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .edgesIgnoringSafeArea(.all)
-                        .overlay(Color.black.opacity(0.4))
+                    // 【修改】移除背景图片，使用自适应背景色
+                    Color.viewBackground
+                        .ignoresSafeArea()
 
                     VStack {
                         Spacer()
@@ -42,17 +40,21 @@ struct WelcomeView: View {
                         Text("欢迎来到 ONews")
                             .font(.largeTitle)
                             .fontWeight(.bold)
-                            .foregroundColor(.white)
+                            // 【修改】使用系统主色（黑/白自动切换）
+                            .foregroundColor(.primary)
                             .padding(.bottom, 20)
 
                         Text("点击右下方按钮\n开始添加您感兴趣的新闻源")
                             .font(.headline)
-                            .foregroundColor(.white.opacity(0.8))
+                            // 【修改】使用次级颜色
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
 
                         Spacer()
                     }
                 }
-                .navigationBarHidden(true)
+                // 移除 navigationBarHidden(true) 有时能解决布局问题，但在欢迎页隐藏通常没问题
+                // 如果需要显示标题栏颜色，可以移除 .navigationBarHidden(true)
                 .navigationDestination(isPresented: $showAddSourceView) {
                     AddSourceView(isFirstTimeSetup: true, onComplete: {
                         self.hasCompletedInitialSetup = true
@@ -60,17 +62,18 @@ struct WelcomeView: View {
                     .environmentObject(resourceManager)
                 }
             }
-            .tint(.white)
+            // 【修改】移除 .tint(.white)，使用默认蓝色或自定义主题色
+            .tint(.blue)
             .alert("获取失败", isPresented: $showErrorAlert, actions: {
                 Button("好的", role: .cancel) { }
             }, message: {
                 Text(errorMessage)
             })
             // 【新增】: 用于显示“已是最新”的弹窗
-            .alert("提示", isPresented: $showAlreadyUpToDateAlert) {
+            .alert("", isPresented: $showAlreadyUpToDateAlert) {
                 Button("好的", role: .cancel) {}
             } message: {
-                Text("新闻源列表已是最新，请点击右下角“+”按钮。")
+                Text("网络连接正常，请点击右下角“+”按钮来选择你喜欢的新闻源。")
             }
             // 【修改】: 使用 onChange 监听 scenePhase 的变化
             .onChange(of: scenePhase) { oldPhase, newPhase in
@@ -92,7 +95,7 @@ struct WelcomeView: View {
                 }
             }
 
-            // 【修改】: 左下角刷新按钮
+            // 左下角刷新按钮
             if !resourceManager.isSyncing && !showAddSourceView {
                 VStack {
                     Spacer()
@@ -103,11 +106,11 @@ struct WelcomeView: View {
                         }) {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: fabIconSize, weight: .regular))
-                                .foregroundColor(.white)
+                                .foregroundColor(.white) // 按钮图标保持白色
                                 .frame(width: fabSize, height: fabSize)
-                                .background(Color.black.opacity(0.3))
+                                .background(Color.blue) // 改为蓝色背景，更符合系统风格
                                 .clipShape(Circle())
-                                .shadow(radius: 10)
+                                .shadow(radius: 5)
                         }
                         .padding(.leading, fabPadding)
                         .padding(.bottom, fabPadding)
@@ -127,7 +130,7 @@ struct WelcomeView: View {
                         }) {
                             ZStack {
                                 Circle()
-                                    .stroke(Color.white.opacity(ripple ? 0 : 0.8), lineWidth: 2)
+                                    .stroke(Color.blue.opacity(ripple ? 0 : 0.8), lineWidth: 2)
                                     .frame(width: fabSize, height: fabSize)
                                     .scaleEffect(ripple ? 1.4 : 1.0)
                                     .opacity(ripple ? 0 : 1)
@@ -138,7 +141,7 @@ struct WelcomeView: View {
                                     .frame(width: fabSize, height: fabSize)
                                     .background(Color.blue)
                                     .clipShape(Circle())
-                                    .shadow(radius: 10)
+                                    .shadow(radius: 5)
                             }
                         }
                         .onAppear {
@@ -152,7 +155,7 @@ struct WelcomeView: View {
                 }
             }
 
-            // 同步遮罩（逻辑不变）
+            // 同步遮罩
             if resourceManager.isSyncing {
                 VStack(spacing: 15) {
                     ProgressView()
@@ -165,7 +168,8 @@ struct WelcomeView: View {
                         .font(.headline)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black.opacity(0.7))
+                // 遮罩层保持半透明黑色，以突显加载状态
+                .background(Color.black.opacity(0.6))
                 .edgesIgnoringSafeArea(.all)
                 .contentShape(Rectangle())
             }

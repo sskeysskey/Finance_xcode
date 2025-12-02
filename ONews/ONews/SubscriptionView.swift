@@ -20,6 +20,7 @@ struct SubscriptionView: View {
     
     var body: some View {
         ZStack {
+            // 【修改】使用系统背景色
             Color.viewBackground.ignoresSafeArea()
             
             VStack(spacing: 25) {
@@ -27,15 +28,14 @@ struct SubscriptionView: View {
                 VStack(spacing: 10) {
                     Text("选择您的计划")
                         .font(.largeTitle.bold())
-                        .foregroundColor(.white)
-                        // 【核心修改】添加隐蔽的手势触发器
+                        .foregroundColor(.primary)
                         .onTapGesture(count: 5) {
                             showRedeemAlert = true
                         }
                     
                     Text("支持正版，获取最新资讯")
                         .font(.subheadline)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondary)
                 }
                 .padding(.top, 40)
                 
@@ -48,9 +48,10 @@ struct SubscriptionView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("免费版")
                                 .font(.title2.bold())
+                                .foregroundColor(.primary)
                             Text("仅浏览 \(authManager.isSubscribed ? "全部" : "历史") 文章")
                                 .font(.subheadline)
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondary)
                         }
                         Spacer()
                         if !authManager.isSubscribed {
@@ -60,12 +61,14 @@ struct SubscriptionView: View {
                         }
                     }
                     .padding()
-                    .background(Color(white: 0.15))
+                    // 【修改】使用卡片背景色
+                    .background(Color.cardBackground)
                     .cornerRadius(12)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(authManager.isSubscribed ? Color.clear : Color.green, lineWidth: 2)
                     )
+                    .shadow(color: Color.black.opacity(0.05), radius: 5)
                 }
                 .buttonStyle(PlainButtonStyle())
                 
@@ -77,28 +80,30 @@ struct SubscriptionView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("专业版")
                                 .font(.title2.bold())
-                                .foregroundColor(.white)
+                                .foregroundColor(.primary)
                             Text("解锁所有最新文章")
                                 .font(.subheadline)
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondary)
                         }
                         Spacer()
                         VStack(alignment: .trailing) {
                             Text("¥12")
                                 .font(.title2.bold())
-                                .foregroundColor(.yellow)
+                                .foregroundColor(.orange) // 橙色在深浅模式下都比较醒目
                             Text("/月")
                                 .font(.caption)
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondary)
                         }
                     }
                     .padding()
-                    .background(Color(white: 0.15))
+                    // 【修改】使用卡片背景色
+                    .background(Color.cardBackground)
                     .cornerRadius(12)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(authManager.isSubscribed ? Color.yellow : Color.clear, lineWidth: 2)
+                            .stroke(authManager.isSubscribed ? Color.orange : Color.clear, lineWidth: 2)
                     )
+                    .shadow(color: Color.black.opacity(0.05), radius: 5)
                 }
                 .buttonStyle(PlainButtonStyle())
                 
@@ -113,24 +118,22 @@ struct SubscriptionView: View {
                     }) {
                         Text("恢复购买")
                             .font(.footnote)
-                            .foregroundColor(.white)
+                            .foregroundColor(.blue)
                             .underline()
                     }
                     .disabled(isRestoring || isPurchasing || isRedeeming)
                     
-                    // 分隔符
-                    Text("|").foregroundColor(.gray.opacity(0.5))
+                    Text("|").foregroundColor(.secondary)
                     
                     Link("隐私政策", destination: URL(string: "https://sskeysskey.github.io/website/privacy.html")!)
                         .font(.footnote)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondary)
 
-                    // 分隔符
-                    Text("|").foregroundColor(.gray.opacity(0.5))
+                    Text("|").foregroundColor(.secondary)
                     
                     Link("使用条款 (EULA)", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
                         .font(.footnote)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondary)
                 }
                 
                 Spacer()
@@ -138,12 +141,12 @@ struct SubscriptionView: View {
                 // 底部说明
                 if authManager.isSubscribed {
                     Text("您当前是尊贵的专业版用户")
-                        .foregroundColor(.yellow)
+                        .foregroundColor(.orange)
                         .padding()
                 } else {
                     Text("如果不选择付费，您将继续使用免费版，最新文章将保持锁定状态。")
                         .font(.caption)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                 }
@@ -151,7 +154,7 @@ struct SubscriptionView: View {
                 Button("关闭") {
                     dismiss()
                 }
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(.secondary)
                 .padding(.bottom)
             }
             .padding(.horizontal)

@@ -64,8 +64,8 @@ struct UserStatusToolbarItem: View {
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "person.circle.fill")
-                        .foregroundColor(.white)
-                    // 如果已订阅，显示同样大小的皇冠
+                        // 【修改】颜色自适应
+                        .foregroundColor(.primary)
                     if authManager.isSubscribed {
                         Image(systemName: "crown.fill")
                             .foregroundColor(.yellow)
@@ -78,7 +78,8 @@ struct UserStatusToolbarItem: View {
                 showLoginSheet = true
             }) {
                 Image(systemName: "person.circle")
-                    .foregroundColor(.white)
+                    // 【修改】颜色自适应
+                    .foregroundColor(.primary)
             }
             .accessibilityLabel("登录")
         }
@@ -174,14 +175,8 @@ struct SourceListView: View {
                     sourceAndAllArticlesView
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(
-                Image("welcome_background")
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .ignoresSafeArea()
-                    .overlay(Color.black.opacity(0.4).ignoresSafeArea())
-            )
+            // 【修改】使用系统背景色
+            .background(Color.viewBackground.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // 【新增】将用户状态按钮放在最左边
@@ -200,7 +195,8 @@ struct SourceListView: View {
                         }
                     }) {
                         Image(systemName: isSearching ? "xmark.circle.fill" : "magnifyingglass")
-                            .foregroundColor(.white)
+                            // 【修改】颜色自适应
+                            .foregroundColor(.primary)
                     }
                     .accessibilityLabel("搜索")
                 }
@@ -210,7 +206,8 @@ struct SourceListView: View {
                         showAddSourceSheet = true
                     }) {
                         Image(systemName: "plus")
-                            .foregroundColor(.white)
+                            // 【修改】颜色自适应
+                            .foregroundColor(.primary)
                     }
                 }
                 
@@ -221,13 +218,13 @@ struct SourceListView: View {
                         }
                     }) {
                         Image(systemName: "arrow.clockwise")
-                            .foregroundColor(.white)
+                            // 【修改】颜色自适应
+                            .foregroundColor(.primary)
                     }
                     .disabled(resourceManager.isSyncing)
                 }
             }
-            .navigationBarTitle(isSearching ? "" : "", displayMode: .inline)
-            // 【修改】添加 navigationDestination 来处理所有来自此视图的导航请求
+            .navigationTitle(isSearching ? "" : "")
             .navigationDestination(for: NavigationTarget.self) { target in
                 switch target {
                 case .allArticles:
@@ -249,8 +246,8 @@ struct SourceListView: View {
                 }
             }
         }
-        .accentColor(.white)
-        .preferredColorScheme(.dark)
+        // 【修改】移除 .accentColor(.white) 和 .preferredColorScheme(.dark)
+        .tint(.blue) // 使用标准蓝色作为强调色
         .onAppear {
             viewModel.loadNews()
             Task {
@@ -270,7 +267,8 @@ struct SourceListView: View {
                     }
                 )
             }
-            .preferredColorScheme(.dark)
+            // 【修改】移除强制深色模式
+            // .preferredColorScheme(.dark)
             .environmentObject(resourceManager)
         }
         .sheet(isPresented: $showLoginSheet) { LoginView() }
@@ -354,14 +352,11 @@ struct SourceListView: View {
             if searchResults.isEmpty {
                 Section {
                     Text("未找到匹配的文章")
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(.secondary)
                         .padding(.vertical, 12)
                         .listRowBackground(Color.clear)
                 } header: {
                     Text("搜索结果")
-                        .font(.headline)
-                        .foregroundColor(.blue.opacity(0.7))
-                        .padding(.vertical, 4)
                 }
             } else {
                 ForEach(timestamps, id: \.self) { timestamp in
@@ -369,13 +364,12 @@ struct SourceListView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("搜索结果")
                                 .font(.subheadline)
-                                .foregroundColor(.blue.opacity(0.7))
+                                .foregroundColor(.blue)
                             Text("\(formatTimestamp(timestamp)) (\(grouped[timestamp]?.count ?? 0))")
                                 .font(.headline)
-                                .foregroundColor(.blue.opacity(0.85))
+                                .foregroundColor(.primary)
                         }
                         .padding(.vertical, 4)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     ) {
                         // 【核心修改】将 NavigationLink 替换为 Button，并调用 handleArticleTap
                         ForEach(grouped[timestamp] ?? [], id: \.article.id) { item in
@@ -391,7 +385,7 @@ struct SourceListView: View {
                                     isContentMatch: item.isContentMatch,
                                     isLocked: isLocked
                                 )
-                                .colorScheme(.dark)
+                                // 【修改】移除 .colorScheme(.dark)，让卡片跟随系统
                             }
                             .buttonStyle(PlainButtonStyle()) // 使用 PlainButtonStyle 避免 List 行的默认按钮样式
                             .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
@@ -412,8 +406,8 @@ struct SourceListView: View {
             }
         }
         .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(Color.clear)
+        // .scrollContentBackground(.hidden) // 可以保留或移除，Plain 样式下通常需要处理背景
+        .background(Color.viewBackground)
         .transition(.opacity.animation(.easeInOut))
     }
     
@@ -423,7 +417,7 @@ struct SourceListView: View {
                 VStack(spacing: 20) {
                     Text("您还没有订阅任何新闻源")
                         .font(.headline)
-                        .foregroundColor(.white.opacity(0.9))
+                        .foregroundColor(.secondary)
                     Button(action: { showAddSourceSheet = true }) {
                         Label("点击这里添加", systemImage: "plus.circle.fill")
                             .font(.title2)
@@ -438,15 +432,19 @@ struct SourceListView: View {
                         HStack {
                             Text("ALL")
                                 .font(.system(size: 28, weight: .bold))
-                                .foregroundColor(.white)
+                                // 【修改】颜色自适应
+                                .foregroundColor(.primary)
                             Spacer()
                             Text("\(viewModel.totalUnreadCount)")
                                 .font(.system(size: 28, weight: .bold))
-                                .foregroundColor(.white.opacity(0.7))
+                                .foregroundColor(.secondary)
                         }
                         .padding()
                     }
-                    .listRowBackground(Color.clear)
+                    // 【修改】使用卡片背景
+                    .listRowBackground(Color.cardBackground)
+                    // 增加一点间距
+                    .padding(.bottom, 8)
                     .listRowSeparator(.hidden)
                     
                     ForEach(viewModel.sources) { source in
@@ -454,20 +452,20 @@ struct SourceListView: View {
                             HStack {
                                 Text(source.name)
                                     .fontWeight(.semibold)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(.primary)
                                 Spacer()
                                 Text("\(source.unreadCount)")
-                                    .foregroundColor(.white.opacity(0.7))
+                                    .foregroundColor(.secondary)
                             }
                             .padding(.vertical, 8)
                         }
-                        .listRowBackground(Color.clear)
+                        .listRowBackground(Color.cardBackground)
                         .listRowSeparator(.hidden)
                     }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .background(Color.clear)
+                // 【修改】使用 insetGrouped 样式，更现代
+                .listStyle(.insetGrouped)
+                // .scrollContentBackground(.hidden)
             }
         }
         .transition(.opacity.animation(.easeInOut))
