@@ -49,6 +49,56 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         updateListenerTask?.cancel()
     }
 
+    // MARK: - Invite Code Redemption (后门逻辑)
+    
+    /// 尝试兑换邀请码
+    func redeemInviteCode(_ code: String) async throws -> Bool {
+        guard let userId = userIdentifier else {
+            throw NSError(domain: "AuthError", code: 401, userInfo: [NSLocalizedDescriptionKey: "请先登录后再使用兑换码"])
+        }
+        
+        let url = URL(string: "\(serverBaseURL)/user/redeem")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body = ["user_id": userId, "invite_code": code]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        
+        if httpResponse.statusCode == 200 {
+            // 解析返回结果
+            struct RedeemResponse: Codable {
+                let status: String
+                let is_subscribed: Bool
+                let subscription_expires_at: String?
+            }
+            
+            let result = try JSONDecoder().decode(RedeemResponse.self, from: data)
+            
+            await MainActor.run {
+                if result.is_subscribed {
+                    self.isSubscribed = true
+                    self.subscriptionExpiryDate = result.subscription_expires_at
+                    print("AuthManager: 兑换码使用成功，已升级为 VIP")
+                }
+            }
+            return true
+        } else {
+            // 处理错误消息
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let errorMsg = json["error"] as? String {
+                throw NSError(domain: "Server", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorMsg])
+            }
+            throw URLError(.badServerResponse)
+        }
+    }
+
     // 检查钥匙串中的用户状态
     private func checkUserInKeychain() {
         do {

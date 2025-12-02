@@ -9,10 +9,18 @@ struct SubscriptionView: View {
     @State private var showError = false
     @State private var errorMessage = ""
     
-    // 【新增】恢复购买相关状态
+    // 恢复购买相关状态
     @State private var isRestoring = false
     @State private var showRestoreAlert = false
     @State private var restoreMessage = ""
+    
+    // 【新增】后门/内部通道相关状态
+    @State private var tapCount = 0             // 点击计数器
+    @State private var showRedeemSheet = false  // 控制输入框弹窗
+    @State private var redeemCodeInput = ""     // 输入的验证码
+    @State private var redeemMessage = ""       // 验证结果消息
+    @State private var showRedeemResultAlert = false // 控制结果弹窗
+    @State private var isRedeeming = false      // 控制验证过程中的加载状态
     
     var body: some View {
         ZStack {
@@ -24,6 +32,15 @@ struct SubscriptionView: View {
                     Text("选择您的订阅套餐")
                         .font(.largeTitle.bold())
                         .foregroundColor(.white)
+                        // 【核心修改】添加点击手势监听
+                        .onTapGesture {
+                            tapCount += 1
+                            if tapCount >= 5 { // 连续点击5次触发
+                                tapCount = 0
+                                showRedeemSheet = true
+                            }
+                        }
+                    
                     Text("支持正版，获取无限查询权限。")
                         .font(.subheadline)
                         .foregroundColor(.gray)
@@ -97,9 +114,7 @@ struct SubscriptionView: View {
                     
                 // 【修改】底部链接区域，加入恢复购买按钮
                 HStack(spacing: 20) {
-                    
-                    
-                    // 【新增】恢复购买按钮
+                    // 恢复购买按钮
                     Button(action: {
                         performRestore()
                     }) {
@@ -108,7 +123,7 @@ struct SubscriptionView: View {
                             .foregroundColor(.white) //稍微高亮一点，方便用户发现
                             .underline()
                     }
-                    .disabled(isRestoring || isPurchasing)
+                    .disabled(isRestoring || isPurchasing || isRedeeming)
                     
                     // 分隔符
                     Text("|").foregroundColor(.gray.opacity(0.5))
@@ -148,17 +163,21 @@ struct SubscriptionView: View {
             }
             .padding(.horizontal)
             
-            // 【修改】加载遮罩：同时处理支付和恢复的状态
-            if isPurchasing || isRestoring {
+            // 加载遮罩：同时处理支付、恢复、兑换的状态
+            if isPurchasing || isRestoring || isRedeeming {
                 Color.black.opacity(0.6).ignoresSafeArea()
                 VStack {
                     ProgressView()
                         .scaleEffect(1.5)
                         .tint(.white)
-                    // 根据状态显示不同文案
-                    Text(isRestoring ? "正在恢复购买..." : "正在处理支付...")
-                        .foregroundColor(.white)
-                        .padding(.top)
+                    
+                    if isRestoring {
+                        Text("正在恢复购买...").foregroundColor(.white).padding(.top)
+                    } else if isPurchasing {
+                        Text("正在处理支付...").foregroundColor(.white).padding(.top)
+                    } else if isRedeeming {
+                        Text("正在验证代码...").foregroundColor(.white).padding(.top)
+                    }
                 }
             }
         }
@@ -168,7 +187,7 @@ struct SubscriptionView: View {
         } message: {
             Text(errorMessage)
         }
-        // 【新增】恢复结果弹窗
+        // 恢复结果弹窗
         .alert("恢复结果", isPresented: $showRestoreAlert) {
             Button("确定", role: .cancel) {
                 // 如果恢复成功，用户点击确定后可以自动关闭页面，提升体验（可选）
@@ -178,6 +197,29 @@ struct SubscriptionView: View {
             }
         } message: {
             Text(restoreMessage)
+        }
+        // 【新增】内部通道输入弹窗
+        .alert("内部访问", isPresented: $showRedeemSheet) {
+            TextField("请输入访问代码", text: $redeemCodeInput)
+            Button("取消", role: .cancel) {
+                redeemCodeInput = "" // 取消时清空
+            }
+            Button("验证") {
+                performRedeem()
+            }
+        } message: {
+            Text("请输入特定的访问代码以解锁功能。")
+        }
+        // 【新增】兑换结果反馈弹窗
+        .alert("验证结果", isPresented: $showRedeemResultAlert) {
+            Button("确定", role: .cancel) {
+                // 如果验证成功，关闭订阅页面
+                if authManager.isSubscribed {
+                    dismiss()
+                }
+            }
+        } message: {
+            Text(redeemMessage)
         }
     }
     
@@ -203,14 +245,13 @@ struct SubscriptionView: View {
         }
     }
     
-    // 【新增】处理恢复购买
+    // 处理恢复购买
     private func performRestore() {
         isRestoring = true
         Task {
             do {
                 // 调用 AuthManager 的恢复方法
                 try await authManager.restorePurchases()
-                
                 await MainActor.run {
                     isRestoring = false
                     if authManager.isSubscribed {
@@ -225,6 +266,37 @@ struct SubscriptionView: View {
                     isRestoring = false
                     restoreMessage = "恢复失败: \(error.localizedDescription)"
                     showRestoreAlert = true
+                }
+            }
+        }
+    }
+    
+    // 【新增】执行兑换码验证逻辑
+    private func performRedeem() {
+        // 简单的本地判空
+        guard !redeemCodeInput.isEmpty else { return }
+        
+        isRedeeming = true
+        
+        Task {
+            do {
+                // 调用 AuthManager 的方法请求服务器
+                let success = try await authManager.redeemInviteCode(redeemCodeInput)
+                
+                await MainActor.run {
+                    isRedeeming = false
+                    if success {
+                        redeemMessage = "验证成功！您已获得无限访问权限。"
+                        redeemCodeInput = "" // 清空输入
+                    }
+                    showRedeemResultAlert = true
+                }
+            } catch {
+                await MainActor.run {
+                    isRedeeming = false
+                    // 显示具体的错误信息（例如：无效的邀请码）
+                    redeemMessage = "验证失败: \(error.localizedDescription)"
+                    showRedeemResultAlert = true
                 }
             }
         }

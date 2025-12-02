@@ -688,7 +688,35 @@ class SearchViewModel: ObservableObject {
         loadSearchHistory()
     }
     
+    // 【新增】: 分析查询字符串，返回搜索约束条件
+    private func analyzeQueryConstraints(query: String) -> (skipDescription: Bool, forceExactMatch: Bool) {
+        let length = query.count
+        if length == 0 { return (false, false) }
+        
+        // 1. 判断是否包含中文 (只要包含一个汉字即视为中文处理逻辑)
+        if query.range(of: "\\p{Han}", options: .regularExpression) != nil {
+            if length >= 3 { return (false, false) }      // >=3: 一切如常
+            if length == 2 { return (true, false) }       // 2: 不搜描述
+            return (true, true)                           // 1: 不搜描述 + 精准匹配
+        }
+        
+        // 2. 判断是否为纯数字
+        if query.range(of: "^[0-9]+$", options: .regularExpression) != nil {
+            if length >= 3 { return (false, false) }      // >=3: 一切如常
+            if length == 2 { return (true, false) }       // 2: 不搜描述
+            return (true, true)                           // 1: 不搜描述 + 精准匹配
+        }
+        
+        // 3. 默认为英文/其他
+        if length >= 4 { return (false, false) }          // >=4: 一切如常
+        if length == 3 { return (true, false) }           // 3: 不搜描述
+        return (true, true)                               // 1或2: 不搜描述 + 精准匹配
+    }
+    
     func performSearch(query: String, completion: @escaping ([GroupedSearchResults]) -> Void) {
+        // 获取约束条件
+        let constraints = analyzeQueryConstraints(query: query)
+        
         let keywords = query.lowercased().split(separator: " ").map { String($0) }
         
         // 使用 Task
@@ -700,18 +728,31 @@ class SearchViewModel: ObservableObject {
             
             // 搜索逻辑 (CPU 密集，非 Async)
             var groupedResults: [(group: GroupedSearchResults, matchScore: Int, priority: Int)] = []
-            let categories: [MatchCategory] = [.stockSymbol, .etfSymbol, .stockName, .etfName, .stockTag, .etfTag, .stockDescription, .etfDescription]
+            
+            // 初始分类列表
+            var categories: [MatchCategory] = [.stockSymbol, .etfSymbol, .stockName, .etfName, .stockTag, .etfTag, .stockDescription, .etfDescription]
+            
+            // 【修改】: 如果约束条件要求跳过描述，直接从列表中移除，避免无用的计算
+            if constraints.skipDescription {
+                categories.removeAll { $0 == .stockDescription || $0 == .etfDescription }
+            }
             
             for category in categories {
+                // 【修改】: 传递 forceExactMatch 参数
                 var matches: [(result: SearchResult, score: Int)] = []
                 
-                // 传递 queryLength 给 searchCategory 以便在内部做更细致的判断
                 switch category {
                 case .stockSymbol, .stockName, .stockDescription, .stockTag:
-                    matches = self.searchCategory(items: descriptionData.stocks, keywords: keywords, category: category)
+                    matches = self.searchCategory(items: descriptionData.stocks,
+                                                  keywords: keywords,
+                                                  category: category,
+                                                  forceExactMatch: constraints.forceExactMatch)
                     
                 case .etfSymbol, .etfName, .etfDescription, .etfTag:
-                    matches = self.searchCategory(items: descriptionData.etfs, keywords: keywords, category: category)
+                    matches = self.searchCategory(items: descriptionData.etfs,
+                                                  keywords: keywords,
+                                                  category: category,
+                                                  forceExactMatch: constraints.forceExactMatch)
                 }
                 
                 if !matches.isEmpty {
@@ -821,21 +862,23 @@ class SearchViewModel: ObservableObject {
         let kVolume = Double(volume) / 1000.0
         return String(format: "%.0fK", kVolume)
     }
-    
-    // 搜索类别，并根据结果进行匹配和排序
+
+    // 【修改】: 增加 forceExactMatch 参数
     func searchCategory<T: SearchDescribableItem>(items: [T],
                                                   keywords: [String],
-                                                  category: MatchCategory)
+                                                  category: MatchCategory,
+                                                  forceExactMatch: Bool)
     -> [(result: SearchResult, score: Int)] {
         var scoredResults: [(SearchResult, Int)] = []
         
         for item in items {
-            if let totalScore = matchScoreForItem(item, category: category, keywords: keywords) {
+            // 传递 forceExactMatch
+            if let totalScore = matchScoreForItem(item, category: category, keywords: keywords, forceExactMatch: forceExactMatch) {
                 let upperSymbol = item.symbol.uppercased()
                 let data = dataService.marketCapData[upperSymbol]
                 let marketCap = data?.marketCap
                 let peRatioStr = data?.peRatio != nil ? String(format: "%.2f", data!.peRatio!) : "--"
-                let pbStr = data?.pb != nil ? String(format: "%.2f", data!.pb!) : "--"  // 添加 PB 格式化
+                let pbStr = data?.pb != nil ? String(format: "%.2f", data!.pb!) : "--"
                 
                 let result = SearchResult(
                     symbol: item.symbol,
@@ -861,17 +904,19 @@ class SearchViewModel: ObservableObject {
        }
     }
     
-    // 计算某个 item 与一组关键词在指定分类下的匹配分数
+    // 【修改】: 增加 forceExactMatch 参数
     private func matchScoreForItem<T: SearchDescribableItem>(
         _ item: T,
         category: MatchCategory,
-        keywords: [String]) -> Int? {
+        keywords: [String],
+        forceExactMatch: Bool) -> Int? {
         
         var totalScore = 0
         
         for keyword in keywords {
             let lowerKeyword = keyword.lowercased()
-            let singleScore = scoreOfSingleMatch(item: item, keyword: lowerKeyword, category: category)
+            // 传递 forceExactMatch
+            let singleScore = scoreOfSingleMatch(item: item, keyword: lowerKeyword, category: category, forceExactMatch: forceExactMatch)
             if singleScore <= 0 {
                 return nil
             } else {
@@ -881,28 +926,36 @@ class SearchViewModel: ObservableObject {
         return totalScore
     }
     
-    // 计算单个关键词在指定分类下的匹配分数
+    // 【修改】: 增加 forceExactMatch 参数
     private func scoreOfSingleMatch<T: SearchDescribableItem>(
         item: T,
         keyword: String,
-        category: MatchCategory) -> Int {
+        category: MatchCategory,
+        forceExactMatch: Bool) -> Int {
         
         switch category {
         case .stockSymbol, .etfSymbol:
-            return matchSymbol(item.symbol.lowercased(), keyword: keyword)
+            return matchSymbol(item.symbol.lowercased(), keyword: keyword, forceExactMatch: forceExactMatch)
         case .stockName, .etfName:
-            return matchName(item.name, keyword: keyword)
+            return matchName(item.name, keyword: keyword, forceExactMatch: forceExactMatch)
         case .stockTag, .etfTag:
-            return matchTags(item.tag, keyword: keyword)
+            return matchTags(item.tag, keyword: keyword, forceExactMatch: forceExactMatch)
         case .stockDescription, .etfDescription:
+            // Description 已经被上层逻辑过滤掉了，但为了安全起见，这里也可以处理
             return matchDescriptions(item.description1, item.description2, keyword: keyword)
         }
     }
     
-    private func matchSymbol(_ symbol: String, keyword: String) -> Int {
+    // 【修改】: 实现 forceExactMatch 逻辑
+    private func matchSymbol(_ symbol: String, keyword: String, forceExactMatch: Bool) -> Int {
         if symbol == keyword {
             return 3
-        } else if symbol.contains(keyword) {
+        }
+        
+        // 如果强制精准匹配，且不相等，直接返回 0
+        if forceExactMatch { return 0 }
+        
+        if symbol.contains(keyword) {
             return 2
         } else if isFuzzyMatch(text: symbol, keyword: keyword, maxDistance: 1) {
             return 1
@@ -910,15 +963,24 @@ class SearchViewModel: ObservableObject {
         return 0
     }
     
-    private func matchName(_ name: String, keyword: String) -> Int {
+    // 【修改】: 实现 forceExactMatch 逻辑
+    private func matchName(_ name: String, keyword: String, forceExactMatch: Bool) -> Int {
         let lowercasedName = name.lowercased()
+        
+        // 1. 全等匹配 (最高优先级，无论是否强制精准)
+        if lowercasedName == keyword {
+            return 4
+        }
+        
+        // 如果强制精准匹配，且没有全等，直接返回 0
+        if forceExactMatch { return 0 }
+        
+        // 以下是模糊/部分匹配逻辑
         let nameComponents = lowercasedName.components(separatedBy: ",")
         let mainName = nameComponents.first ?? lowercasedName
         let nameWords = mainName.split(separator: " ").map { String($0) }
         
-        if lowercasedName == keyword {
-            return 4
-        } else if nameWords.contains(keyword) || mainName == keyword {
+        if nameWords.contains(keyword) || mainName == keyword {
             return 3
         } else if mainName.contains(keyword) {
             return 2
@@ -930,23 +992,31 @@ class SearchViewModel: ObservableObject {
         return 0
     }
     
-    private func matchTags(_ tags: [String], keyword: String) -> Int {
+    // 【修改】: 实现 forceExactMatch 逻辑
+    private func matchTags(_ tags: [String], keyword: String, forceExactMatch: Bool) -> Int {
         var maxScore = 0
         for t in tags {
             let lowerTag = t.lowercased()
             var score = 0
+            
             if lowerTag == keyword {
                 score = 3
-            } else if lowerTag.contains(keyword) {
-                score = 2
-            } else if isFuzzyMatch(text: lowerTag, keyword: keyword, maxDistance: 1) {
-                score = 1
+            } else if !forceExactMatch {
+                // 只有非强制精准匹配时，才进行部分匹配和模糊匹配
+                if lowerTag.contains(keyword) {
+                    score = 2
+                } else if isFuzzyMatch(text: lowerTag, keyword: keyword, maxDistance: 1) {
+                    score = 1
+                }
             }
+            
             maxScore = max(maxScore, score)
         }
         return maxScore
     }
     
+    // Description 不需要 forceExactMatch，因为如果启用了 forceExactMatch，
+    // 在 performSearch 层级就已经把 .stockDescription/.etfDescription 移除了。
     private func matchDescriptions(_ desc1: String, _ desc2: String, keyword: String) -> Int {
         let d1 = desc1.lowercased()
         let d2 = desc2.lowercased()
