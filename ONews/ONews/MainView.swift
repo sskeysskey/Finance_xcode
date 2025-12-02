@@ -184,8 +184,18 @@ struct ArticleRowCardView: View {
     }
 
     var body: some View {
-        // 【修改】使用 ZStack 来叠加锁图标
-        ZStack(alignment: .leading) {
+        // 【UI优化】改为 HStack 布局，避免锁图标遮挡文字
+        HStack(alignment: .center, spacing: 12) {
+            
+            // 1. 如果被锁定，在最左侧显示锁图标
+            if isLocked {
+                Image(systemName: "lock.fill")
+                    .foregroundColor(.yellow.opacity(0.9)) // 稍微调高一点不透明度，让它更清晰
+                    .font(.title3) // 使用稍大一点的字体
+                    .frame(width: 24) // 固定宽度，确保多行列表对齐美观
+            }
+            
+            // 2. 文章内容部分
             VStack(alignment: .leading, spacing: 6) {
                 if let name = sourceName {
                     Text(name.replacingOccurrences(of: "_", with: " "))
@@ -213,28 +223,14 @@ struct ArticleRowCardView: View {
                     }
                 }
             }
-            .padding(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.viewBackground)
-            .cornerRadius(12)
-            .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
-            // 【修改】如果被锁定，降低内容透明度
+            // 如果被锁定，降低内容文字的透明度，但保持锁图标高亮
             .opacity(isLocked ? 0.6 : 1.0)
-            
-            // 【新增】如果被锁定，在标题左侧显示锁图标
-            if isLocked {
-                HStack {
-                    Image(systemName: "lock.fill")
-                        .foregroundColor(.yellow)
-                        .font(.caption.weight(.bold))
-                        .padding(5)
-                        .background(.black.opacity(0.5))
-                        .clipShape(Circle())
-                        .padding(.leading, 12)
-                    Spacer()
-                }
-            }
         }
+        .padding(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.viewBackground)
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
     }
 }
 

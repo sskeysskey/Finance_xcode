@@ -62,15 +62,14 @@ struct UserStatusToolbarItem: View {
                     Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
                 }
             } label: {
-                ZStack {
+                HStack(spacing: 4) {
                     Image(systemName: "person.circle.fill")
                         .foregroundColor(.white)
-                    // 如果已订阅，加个小皇冠
+                    // 如果已订阅，显示同样大小的皇冠
                     if authManager.isSubscribed {
                         Image(systemName: "crown.fill")
-                            .font(.system(size: 10))
                             .foregroundColor(.yellow)
-                            .offset(x: 8, y: -8)
+                            .font(.caption)
                     }
                 }
             }

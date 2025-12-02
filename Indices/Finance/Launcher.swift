@@ -9,14 +9,14 @@ extension Color {
 
 @main
 struct Finance: App {
-    // 【新增】初始化 AuthManager 和 UsageManager
+    // 初始化 AuthManager 和 UsageManager
     @StateObject private var authManager = AuthManager()
     @StateObject private var usageManager = UsageManager.shared
     
     var body: some Scene {
         WindowGroup {
             MainContentView()
-                // 【新增】注入环境对象
+                // 注入环境对象
                 .environmentObject(authManager)
                 .environmentObject(usageManager)
         }
@@ -264,7 +264,7 @@ struct MainContentView: View {
     // 【新增】控制个人中心显示
     @State private var showProfileSheet = false
 
-    // 【新增】第 1 步：引入 scenePhase 来监控 App 的生命周期状态
+    // 监控 App 的生命周期状态
     @Environment(\.scenePhase) private var scenePhase
 
     // 判断更新流程是否在进行中，用来 disable 刷新按钮
@@ -276,8 +276,9 @@ struct MainContentView: View {
         ZStack {
             NavigationStack {
                 VStack(spacing: 0) {
-                    // 【核心修改】：不仅检查 isDataReady，还检查关键数据 sectorsPanel 是否存在
-                    if isDataReady && dataService.sectorsPanel != nil {
+                    // 【核心修改】如果 sectorsPanel 还没准备好，就显示 Loading
+                    // 即使 isDataReady 为 true，如果 sectorsPanel 为空，也继续显示 Loading
+                    if isDataReady, let _ = dataService.sectorsPanel {
                         IndicesContentView()
                             .frame(maxHeight: .infinity, alignment: .top)
                         Divider()
@@ -289,9 +290,12 @@ struct MainContentView: View {
                             .frame(height: 60)
                             .background(Color(.systemBackground))
                     } else {
-                        VStack {
+                        VStack(spacing: 20) {
                             Spacer()
-                            ProgressView("正在加载数据")
+                            ProgressView()
+                                .scaleEffect(1.5)
+                            Text("正在准备数据...")
+                                .foregroundColor(.secondary)
                             Spacer()
                         }
                     }
@@ -333,11 +337,21 @@ struct MainContentView: View {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button {
                             Task {
-                                // 手动检查更新时，要等整个流程完成才重新 loadData
-                                if await updateManager.checkForUpdates(isManual: true) {
-                                    DatabaseManager.shared.reconnectToLatestDatabase()
-                                    // MARK: - 修改：调用新的强制刷新方法
-                                    dataService.forceReloadData()
+                                // 【核心修复】手动刷新逻辑
+                                // 1. 无论是否有更新，先重新连接数据库
+                                DatabaseManager.shared.reconnectToLatestDatabase()
+                                
+                                // 2. 检查更新 (UI会显示检查中)
+                                let _ = await updateManager.checkForUpdates(isManual: true)
+                                
+                                // 3. 【关键】无论 checkForUpdates 返回 true 还是 false
+                                // 只要用户点击了刷新，我们都强制重载内存中的数据
+                                print("User triggered refresh: Forcing data reload.")
+                                dataService.forceReloadData()
+                                
+                                // 4. 确保 UI 状态正确
+                                await MainActor.run {
+                                    self.isDataReady = true
                                 }
                             }
                         } label: {
@@ -348,11 +362,18 @@ struct MainContentView: View {
                 }
             }
             .environmentObject(dataService)
-            // 【新增】第 3 步：使用 onChange 监听 scenePhase 的变化
+            
+            // 【核心修复】添加 .task 修饰符
+            // 这保证了 View 一初始化就执行，专门解决冷启动问题
+            .task {
+                print("MainContentView .task triggered (Cold Start)")
+                await handleInitialDataLoad()
+            }
+            // 保留 onChange 以处理从后台切回前台的情况
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 // 当 App 变为活跃状态时（例如首次启动，或从后台返回，或关闭系统弹窗后）
                 if newPhase == .active {
-                    print("App is now active. Handling initial data load.")
+                    print("App is now active (ScenePhase). Checking data...")
                     Task {
                         await handleInitialDataLoad()
                     }
@@ -374,12 +395,11 @@ struct MainContentView: View {
         .onChange(of: authManager.showSubscriptionSheet) { _, val in showSubscriptionSheet = val }
     }
 
-    // 【新增】第 4 步：创建一个集中的、可重入的初始数据加载函数
+    // 统一的数据加载逻辑
     private func handleInitialDataLoad() async {
-        // 【核心修改】：如果数据已经准备好且关键数据 sectorsPanel 不为空，才跳过
-        // 这样可以防止“isDataReady=true 但数据实际上是 nil”导致的空白死循环
+        // 双重检查：如果数据已经完全加载（isDataReady 且 sectorsPanel 非空），则跳过
         if isDataReady && dataService.sectorsPanel != nil {
-            print("Data is already ready and populated. Skipping initial load.")
+            print("Data is already populated. Skipping load.")
             return
         }
         
@@ -387,8 +407,7 @@ struct MainContentView: View {
         let hasLocalDescription = FileManagerHelper.getLatestFileUrl(for: "description") != nil
 
         if !hasLocalDescription {
-            // 情况一：首次启动，或本地数据被清除，Documents 里没有任何数据文件。
-            // 执行前台更新流程，UI会显示“正在准备数据...”。
+            // 情况一：无本地数据（首次安装或被清理）
             print("No local data found. Starting initial sync...")
             // isManual: false 表示这是自动流程
             let updated = await updateManager.checkForUpdates(isManual: false)
@@ -396,34 +415,29 @@ struct MainContentView: View {
                 // 更新成功后，重新连接数据库并强制加载所有数据到内存
                 DatabaseManager.shared.reconnectToLatestDatabase()
                 dataService.forceReloadData()
-                // 注意：forceReloadData 现在是异步的，UI 会通过 @Published 自动更新
-                // 我们只需要设置标志位告诉 UI 可以尝试渲染了
-                isDataReady = true
+                await MainActor.run { isDataReady = true }
                 print("Initial sync successful.")
             } else {
-                // 如果更新失败（例如网络问题），isDataReady 保持 false。
-                // 当用户解决问题后（例如开启网络），App再次变为 active，此函数会重试。
-                print("Initial sync failed.")
+                print("Initial sync failed or no update found (unexpected for first run).")
             }
         } else {
-            // 情况二：本地已存在数据。
-            // 这是常规启动流程。
+            // 情况二：有本地数据（常规冷启动）
             print("Local data found. Loading existing data...")
             
-            // 1. 触发加载
+            // 1. 立即加载本地数据
             dataService.loadData()
-            // 2. 设置标志位，允许 UI 监听 dataService 的变化
-            isDataReady = true
+            
+            // 2. 强制主线程更新 UI 状态
+            await MainActor.run {
+                isDataReady = true
+            }
 
-            // 2. 在后台异步发起一次静默更新检查。
+            // 3. 后台静默检查更新
             Task {
                 if await updateManager.checkForUpdates(isManual: false) {
-                    // 如果后台检查发现并成功下载了更新
+                    print("Background update found. Reloading...")
                     DatabaseManager.shared.reconnectToLatestDatabase()
                     dataService.forceReloadData()
-                    print("Background update successful. Data reloaded.")
-                } else {
-                    print("Background check: No new updates or check failed silently.")
                 }
             }
         }
