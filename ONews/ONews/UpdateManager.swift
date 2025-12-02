@@ -216,7 +216,7 @@ class ResourceManager: ObservableObject {
     func checkAndDownloadAllNewsManifests(isManual: Bool = false) async throws {
         self.isSyncing = true
         self.isDownloading = false
-        self.syncMessage = "正在获取新闻清单列表..."
+        self.syncMessage = "正在获取新闻列表..."
         self.progressText = ""
         self.downloadProgress = 0.0
         
@@ -279,7 +279,7 @@ class ResourceManager: ObservableObject {
             for (index, info) in tasksToDownload.enumerated() {
                 self.progressText = "\(index + 1)/\(total)"
                 self.downloadProgress = Double(index + 1) / Double(total)
-                self.syncMessage = "正在下载: \(info.name)..."
+                self.syncMessage = "正在加载数据..."
                 try await downloadSingleFile(named: info.name)
             }
             
