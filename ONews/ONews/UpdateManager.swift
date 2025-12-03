@@ -46,6 +46,24 @@ class ResourceManager: ObservableObject {
         return URLSession(configuration: configuration)
     }()
 
+    // 【新增】专门用于欢迎页特效：只获取 source_mappings 的值
+    func fetchSourceNames() async -> [String] {
+        do {
+            // 复用已有的 getServerVersion 方法
+            let version = try await getServerVersion()
+            // 提取 source_mappings 的所有 value（即中文名称）
+            if let mappings = version.source_mappings {
+                let names = Array(mappings.values)
+                print("特效数据获取成功: \(names)")
+                return names
+            }
+        } catch {
+            print("特效数据获取失败: \(error)")
+        }
+        // 如果失败或为空，返回默认列表以防特效空白
+        return ["流行的西方期刊", "指尖的外媒报纸", "最酷最敢说", "欧美媒体", "一手新闻源", "可以听的海外新闻"]
+    }
+    
     // MARK: - 检查图片是否存在而不下载
     func checkIfImagesExistForArticle(timestamp: String, imageNames: [String]) -> Bool {
         let sanitizedNames = imageNames

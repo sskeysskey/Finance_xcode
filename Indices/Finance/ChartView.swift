@@ -132,6 +132,13 @@ struct BubbleView: View {
     }
 }
 
+// 1. 定义一个结构体来容纳不同颜色的信息
+struct MarkerDisplayInfo {
+    var red: String?    // 全局
+    var orange: String? // 个股
+    var green: String?  // 财报
+}
+
 // 2. 添加Marker结构体表示需要显示气泡的信息
 struct BubbleMarker: Identifiable {
     let id = UUID()
@@ -178,7 +185,7 @@ struct ChartView: View {
     // 标记点显示控制
     @State private var showRedMarkers: Bool = false     // 全局标记(红色)默认关闭
     @State private var showOrangeMarkers: Bool = true   // 股票特定标记(橙色)默认开启
-    @State private var showBlueMarkers: Bool = true     // 财报标记(蓝色)默认开启
+    @State private var showGreenMarkers: Bool = true     // 财报标记(蓝色)默认开启
     
     // 3. 在ChartView中添加状态变量存储气泡数据
     @State private var bubbleMarkers: [BubbleMarker] = []
@@ -367,16 +374,16 @@ struct ChartView: View {
                             .cornerRadius(8)
                             
                         } else if let point = draggedPoint {
-                            // 单指模式：使用VStack垂直排列以支持更多内容
+                            // 单指模式
                             let pointDate = formatDate(point.date)
                             let percentChange = calculatePriceChangePercentage(from: point)
-                            let rawMarkerText = getMarkerText(for: point.date)
-
-                            let cleanMarkerText = rawMarkerText?.replacingOccurrences(of: "\n", with: "")
+                            
+                            // 1. 获取所有颜色的信息
+                            let markerInfo = getMarkerInfo(for: point.date)
                             
                             VStack(spacing: 5) {
-                                // 第一行：日期、价格和百分比
-                                HStack(spacing: 5) {
+                                // --- 第一行：日期、价格、百分比 + [绿色财报信息] ---
+                                HStack(spacing: 8) { // 稍微增加间距
                                     Text("\(pointDate)  \(formatPrice(point.price))")
                                         .font(.system(size: 16, weight: .medium))
                                     
@@ -385,16 +392,32 @@ struct ChartView: View {
                                             .font(.system(size: 16, weight: .bold))
                                             .foregroundColor(percentChange >= 0 ? .green : .red)
                                     }
+                                    
+                                    // [修改点]：如果有绿色信息，追加到第一行后面
+                                    if let greenText = markerInfo.green {
+                                        Text(greenText)
+                                            .font(.system(size: 14, weight: .medium)) // 字体稍小一点以适应单行
+                                            .foregroundColor(.green)
+                                    }
                                 }
                                 
-                                // 第二部分：事件文本（如果有）
-                                if let cleanMarkerText = cleanMarkerText {
-                                    Text(cleanMarkerText)
+                                // --- 第二行：橙色 (个股特定信息) ---
+                                if let orangeText = markerInfo.orange {
+                                    Text(orangeText.replacingOccurrences(of: "\n", with: " ")) // 确保单行显示整洁，或者保留换行取决于你
                                         .font(.system(size: 14, weight: .medium))
                                         .foregroundColor(.orange)
                                         .multilineTextAlignment(.center)
-                                        .lineLimit(nil) // 移除行数限制
-                                        .fixedSize(horizontal: false, vertical: true) // 允许垂直扩展
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .padding(.horizontal, 8)
+                                }
+                                
+                                // --- 第三行：红色 (全局信息) ---
+                                if let redText = markerInfo.red {
+                                    Text(redText.replacingOccurrences(of: "\n", with: " "))
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(.red)
+                                        .multilineTextAlignment(.center)
+                                        .fixedSize(horizontal: false, vertical: true)
                                         .padding(.horizontal, 8)
                                 }
                             }
@@ -402,7 +425,7 @@ struct ChartView: View {
                             .padding(.vertical, 5)
                             .background(Color(UIColor.systemGray6))
                             .cornerRadius(8)
-                            .frame(maxWidth: .infinity) // 占满宽度
+                            .frame(maxWidth: .infinity)
                         }
                     }
                     .padding(.horizontal)
@@ -536,7 +559,7 @@ struct ChartView: View {
                                 if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, marker.date) }) {
                                     let shouldShow = (marker.type == .global && showRedMarkers) ||
                                                    (marker.type == .symbol && showOrangeMarkers) ||
-                                                   (marker.type == .earning && showBlueMarkers)
+                                                   (marker.type == .earning && showGreenMarkers)
                                     
                                     if shouldShow {
                                         let x = CGFloat(index) * horizontalStep
@@ -628,7 +651,7 @@ struct ChartView: View {
                                         // 只显示那些对应颜色点被打开的浮窗
                                         if (marker.color == .red && showRedMarkers) ||
                                            (marker.color == .orange && showOrangeMarkers) ||
-                                           (marker.color == .green && showBlueMarkers) {
+                                           (marker.color == .green && showGreenMarkers) {
                                             BubbleView(
                                                 text: marker.text,
                                                 color: marker.color,
@@ -717,7 +740,7 @@ struct ChartView: View {
             // 修改标记点显示控制开关UI，添加新的浮窗开关
             HStack(spacing: 10) {
                 // 绿色标记点(财报)开关
-                Toggle(isOn: $showBlueMarkers) {
+                Toggle(isOn: $showGreenMarkers) {
                 }
                 .toggleStyle(SwitchToggleStyle(tint: .green))
                 
@@ -1554,50 +1577,56 @@ struct ChartView: View {
         return markers
     }
     
-    private func getMarkerText(for date: Date) -> String? {
-        // 检查全局标记
+    // 2. 新的数据获取方法：同时查找三种标记
+    private func getMarkerInfo(for date: Date) -> MarkerDisplayInfo {
+        var info = MarkerDisplayInfo()
+        
+        // --- 检查红色 (全局) ---
         if showRedMarkers {
+            // 优先精确匹配
             if let text = dataService.globalTimeMarkers.first(where: { isSameDay($0.key, date) })?.value {
-                return text
-            }
-            // 检查是否是最近匹配的点
-            if let (_, text) = dataService.globalTimeMarkers.first(where: {
+                info.red = text
+            } 
+            // 其次最近匹配
+            else if let (_, text) = dataService.globalTimeMarkers.first(where: {
                 let closestPoint = findClosestDataPoint(to: $0.key, in: sampledChartData)
                 return closestPoint?.date == date
             }) {
-                return text
+                info.red = text
             }
         }
         
-        // 检查特定股票标记
+        // --- 检查橙色 (个股) ---
         if showOrangeMarkers, let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()] {
+            // 优先精确匹配
             if let text = symbolMarkers.first(where: { isSameDay($0.key, date) })?.value {
-                return text
+                info.orange = text
             }
-            // 检查是否是最近匹配的点
-            if let (_, text) = symbolMarkers.first(where: {
+            // 其次最近匹配
+            else if let (_, text) = symbolMarkers.first(where: {
                 let closestPoint = findClosestDataPoint(to: $0.key, in: sampledChartData)
                 return closestPoint?.date == date
             }) {
-                return text
+                info.orange = text
             }
         }
         
-        // 检查财报数据标记
-        if showBlueMarkers {
+        // --- 检查绿色 (财报) ---
+        if showGreenMarkers {
+            // 优先精确匹配
             if let earningPoint = earningData.first(where: { isSameDay($0.date, date) }) {
-                return String(format: "昨日财报\n%.2f%%", earningPoint.price)
+                info.green = String(format: "昨日财报 %.2f%%", earningPoint.price) // 去掉了换行符，适合放在第一行
             }
-            // 检查是否是最近匹配的点
-            if let earningPoint = earningData.first(where: {
+            // 其次最近匹配
+            else if let earningPoint = earningData.first(where: {
                 let closestPoint = findClosestDataPoint(to: $0.date, in: sampledChartData)
                 return closestPoint?.date == date
             }) {
-                return String(format: "昨日财报\n%.2f%%", earningPoint.price)
+                info.green = String(format: "昨日财报 %.2f%%", earningPoint.price)
             }
         }
         
-        return nil
+        return info
     }
     
     // 格式化方法

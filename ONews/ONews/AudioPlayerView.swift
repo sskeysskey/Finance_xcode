@@ -296,18 +296,35 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     private func getBestVoice(for text: String) -> AVSpeechSynthesisVoice? {
+        // 【修复步骤1】为了检测语言，先创建一个不包含 URL 的临时字符串。
+        // URL 包含大量英文字符，会严重干扰 NLLanguageRecognizer，导致短中文文章被误判为英文。
+        let textForDetection = text.replacingOccurrences(of: "https?://[^\\s]+", with: "", options: .regularExpression)
+
         let recognizer = NLLanguageRecognizer()
-        recognizer.processString(text)
-        guard let languageCode = recognizer.dominantLanguage?.rawValue else {
-            return AVSpeechSynthesisVoice(language: Locale.current.language.languageCode?.identifier ?? "en-US")
+        recognizer.processString(textForDetection)
+        
+        var languageCode = recognizer.dominantLanguage?.rawValue
+        
+        // 【修复步骤2】强制纠错逻辑
+        // 如果检测结果是英文（或者没检测出来），但文本中明显包含中文字符（Unicode Script Han），
+        // 则强制将语言代码指定为中文 (zh-CN)。这对于中文新闻 App 至关重要。
+        if languageCode == nil || languageCode?.hasPrefix("en") == true {
+            if textForDetection.range(of: "\\p{Han}", options: .regularExpression) != nil {
+                languageCode = "zh-CN"
+            }
         }
 
+        // 兜底：如果还是空的，使用当前系统语言，或者默认 zh-CN
+        let finalLanguageCode = languageCode ?? Locale.current.language.languageCode?.identifier ?? "zh-CN"
+
         let voices = AVSpeechSynthesisVoice.speechVoices()
-        let matches = voices.filter { $0.language.starts(with: languageCode) }
+        let matches = voices.filter { $0.language.starts(with: finalLanguageCode) }
+        
         if let v = matches.first(where: { $0.quality == .premium }) { return v }
         if let v = matches.first(where: { $0.quality == .enhanced }) { return v }
         if let v = matches.first { return v }
-        return AVSpeechSynthesisVoice(language: languageCode)
+        
+        return AVSpeechSynthesisVoice(language: finalLanguageCode)
     }
 
     func playPause() {
@@ -685,12 +702,15 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
     // 调整调用顺序：先去逗号 -> 统一破折号 -> 英文/范围/单位处理 -> 年份逐字化 -> 中英间停顿
     private func preprocessText(_ text: String) -> String {
+        // 【新增优化】在处理任何逻辑之前，先将 URL 替换为可读的文本“链接”
+        // 避免朗读冗长的 http 字符串
+        let textWithoutURLs = text.replacingOccurrences(of: "https?://[^\\s]+", with: "链接", options: .regularExpression)
+        
         // 去掉数字中的逗号
-        let textWithoutCommas = removeCommasFromNumbers(text)
+        let textWithoutCommas = removeCommasFromNumbers(textWithoutURLs)
         // 统一破折号等
         let normalized = normalizeDash(textWithoutCommas)
-        // 先在“百分点/百分比/百分点”前的带小数数字插入“点”，
-        // 例如：0.5个百分点 -> 0点5个百分点（TTS 读作“零点五个百分点”）
+        // 先在“百分点/百分比/百分点”前的带小数数字插入“点”
         let decimalBeforePercentWordFixed = insertDotForDecimalBeforePercentageWords(normalized)
 
         // 先处理英文与数字范围、单位（核心修复）
@@ -698,7 +718,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         // 仅对带“年”的位置做年份逐字化
         let withYearFixed = replaceYearMentionsForChinese(processedSpecialTerms)
 
-        // 中英夹杂时加停顿，但避免在“年”附近插入英文逗号（保留你原先的约束）
+        // 中英夹杂时加停顿，但避免在“年”附近插入英文逗号
         let pattern = #"(?<!年)([\u4e00-\u9fa5])(\s*[A-Za-z]+\s*)([\u4e00-\u9fa5])(?!年)"#
         let regex = try? NSRegularExpression(pattern: pattern, options: [])
         let range = NSRange(withYearFixed.startIndex..<withYearFixed.endIndex, in: withYearFixed)
