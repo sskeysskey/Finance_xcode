@@ -197,6 +197,10 @@ struct ChartView: View {
     @State private var threeWeeksBeforeRange: (start: Date, end: Date)? = nil
     @State private var oneWeekBeforeRange: (start: Date, end: Date)? = nil
     
+    // ==================== 新增：第五周遮罩状态 ====================
+    @State private var fifthWeekRange: (start: Date, end: Date)? = nil
+    // ==================== 结束 ====================
+    
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.presentationMode) var presentationMode
     @EnvironmentObject var dataService: DataService
@@ -383,7 +387,7 @@ struct ChartView: View {
                             
                             VStack(spacing: 5) {
                                 // --- 第一行：日期、价格、百分比 + [绿色财报信息] ---
-                                HStack(spacing: 8) { // 稍微增加间距
+                                HStack(spacing: 8) { // 稍微增加q间距
                                     Text("\(pointDate)  \(formatPrice(point.price))")
                                         .font(.system(size: 16, weight: .medium))
                                     
@@ -521,6 +525,12 @@ struct ChartView: View {
                             if let oneWeek = oneWeekBeforeRange {
                                 drawRange(oneWeek, tint: .blue)
                             }
+                            
+                            // ==================== 新增：绘制第五周遮罩 ====================
+                            if let fifthWeek = fifthWeekRange {
+                                drawRange(fifthWeek, tint: .blue)
+                            }
+                            // ==================== 结束 ====================
                             
                             // 原有的价格线绘制代码
                             if !renderedPoints.isEmpty {
@@ -892,6 +902,35 @@ struct ChartView: View {
         
         return (start: weekStart, end: weekEnd)
     }
+    
+    // ==================== 新增：计算往后推指定周数的那一周的周一到周五 ====================
+    private func calculateWeekRangeForward(from targetDate: Date, weeksForward: Int) -> (start: Date, end: Date)? {
+        let calendar = Calendar.current
+        
+        // 往后推指定周数
+        guard let weeksAfter = calendar.date(byAdding: .weekOfYear, value: weeksForward, to: targetDate) else {
+            return nil
+        }
+        
+        // 获取这一天是周几（1=周日, 2=周一, ..., 7=周六）
+        let weekday = calendar.component(.weekday, from: weeksAfter)
+        
+        // 计算到周一的偏移量（周一 = 2）
+        let daysToMonday = weekday == 1 ? -6 : 2 - weekday
+        
+        // 计算这一周的周一
+        guard let weekStart = calendar.date(byAdding: .day, value: daysToMonday, to: weeksAfter) else {
+            return nil
+        }
+        
+        // 周五是周一后的第4天
+        guard let weekEnd = calendar.date(byAdding: .day, value: 4, to: weekStart) else {
+            return nil
+        }
+        
+        return (start: weekStart, end: weekEnd)
+    }
+    // ==================== 结束 ====================
 
     // 查找当前symbol的财报日期
     private func findEarningReleaseDate() -> Date? {
@@ -1046,6 +1085,18 @@ struct ChartView: View {
                 chartData = newData
                 sampledChartData = sampledData
                 earningData = earnings
+                
+                // ==================== 新增：计算第五周遮罩 ====================
+                // 从 earning 数据库表获取最新一期财报日期
+                if let latestEarningDate = earnings.max(by: { $0.date < $1.date })?.date {
+                    // 往后推4周，到第5周（5 weeks forward），计算周一到周五
+                    fifthWeekRange = calculateWeekRangeForward(from: latestEarningDate, weeksForward: 5)
+                    print("最新财报日期: \(latestEarningDate), 第五周区间: \(String(describing: fifthWeekRange))")
+                } else {
+                    fifthWeekRange = nil
+                }
+                // ==================== 结束 ====================
+                
                 isLoading = false
                 updateRenderedPoints()
                 resetTouchStates()
