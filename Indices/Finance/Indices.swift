@@ -271,9 +271,9 @@ struct IndicesContentView: View {
                         .padding(.horizontal, 12)
                         .padding(.top, 10)
                         
-                        // MARK: - 第二组：推荐股票
+                        // MARK: - 第二组：每日荐股
                         VStack(alignment: .leading, spacing: 10) {
-                            SectionHeader(title: "推荐股票", icon: "star.fill", color: .purple)
+                            SectionHeader(title: "每日荐股", icon: "star.fill", color: .purple)
                             
                             LazyVGrid(columns: gridLayout, spacing: 10) {
                                 ForEach(strategySectors) { sector in
@@ -471,15 +471,15 @@ struct CompactSectorCard: View {
     private var displayName: String {
         if isSpecial { return sectorName }
         switch sectorName {
-        case "Strategy12": return "12"
-        case "Strategy34": return "34"
-        case "Economic_All": return "Eco All"
-        case "Economics": return "Eco"
-        case "Financial_Services": return "Finance"
-        case "Communication_Services": return "Comm"
-        case "Consumer_Cyclical": return "Cyclical"
-        case "Consumer_Defensive": return "Defensive"
-        case "Real_Estate": return "Estate"
+        case "Strategy12": return "系统1"
+        case "Strategy34": return "系统2"
+        case "Economics": return "本周经济数据"
+        case "Economic_All": return "全部经济数据"
+        case "PE_valid": return "系统3"
+        case "PE_invalid": return "系统4"
+        case "Commodities": return "大宗商品"
+        case "Currencies": return "货币汇率"
+        case "Bonds": return "债券收益率"
         default: return sectorName.replacingOccurrences(of: "_", with: " ")
         }
     }
@@ -531,9 +531,6 @@ struct ModernSectorCard: View {
         case "Consumer_Defensive": return "必需消费"
         case "Financial_Services": return "金融服务"
         case "Real_Estate": return "房地产"
-        case "Economic_All": return "全部经济"
-        case "PE_valid": return "PE有效"
-        case "PE_invalid": return "PE无效"
         default: return sectorName.replacingOccurrences(of: "_", with: " ")
         }
     }

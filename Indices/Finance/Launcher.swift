@@ -283,7 +283,7 @@ struct MainContentView: View {
     // 【新增】计算剩余次数的计算属性
     private var remainingLimitTitle: String {
         if authManager.isSubscribed {
-            return "尊贵会员：无限次使用"
+            return ""
         } else {
             let remaining = max(0, usageManager.maxFreeLimit - usageManager.dailyCount)
             return "本日限额次数：\(remaining)"
