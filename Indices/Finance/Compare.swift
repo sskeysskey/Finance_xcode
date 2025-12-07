@@ -174,9 +174,11 @@ struct CompareView: View {
     }
     
     private func startComparison() {
-        // 【新增】权限检查
-        guard usageManager.canProceed(authManager: authManager) else {
-            // 【核心修改】直接弹出订阅页
+        // 【核心修改】
+        // 这里使用 .compare 动作。
+        // 只有当用户点击这个按钮，且通过了检查，才会扣除点数。
+        // 首页点击进入 CompareView 页面时不扣点（因为 SearchContentView 里只是纯导航，没调用 UsageManager）。
+        guard usageManager.canProceed(authManager: authManager, action: .compare) else {
             showSubscriptionSheet = true
             return
         }

@@ -108,6 +108,12 @@ struct SearchContentView: View {
     @State private var showCompare = false
     @State private var showEarning = false
     @EnvironmentObject var dataService: DataService
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    @State private var showSubscriptionSheet = false
+    
+    // 需要手动控制财报的导航
+    @State private var navigateToEarnings = false
     
     var body: some View {
         NavigationStack {
@@ -136,7 +142,14 @@ struct SearchContentView: View {
                     .cornerRadius(8)
                 }
                 
-                Button(action: { showEarning = true }) {
+                Button(action: { 
+                    // 【修改】点击财报入口扣点
+                    if usageManager.canProceed(authManager: authManager, action: .openEarnings) {
+                        navigateToEarnings = true // 触发导航
+                    } else {
+                        showSubscriptionSheet = true
+                    }
+                }) {
                     VStack {
                         Image(systemName: "calendar")
                             .font(.system(size: 20))
@@ -158,9 +171,10 @@ struct SearchContentView: View {
         .navigationDestination(isPresented: $showCompare) {
             CompareView(initialSymbol: "")
         }
-        .navigationDestination(isPresented: $showEarning) {
+        .navigationDestination(isPresented: $navigateToEarnings) {
             EarningReleaseView()
         }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
     }
 }
 
@@ -423,9 +437,9 @@ struct SearchView: View {
 
     // 【核心修改】处理结果选择，加入权限判断
     private func handleResultSelection(result: SearchResult) {
-        // 1. 检查权限
-        guard usageManager.canProceed(authManager: authManager) else {
-            // 【核心修改】直接弹出订阅页
+        // 1. 检查权限 (点击结果查看图表)
+        // 修复：添加 action: .viewChart 参数
+        guard usageManager.canProceed(authManager: authManager, action: .viewChart) else {
             showSubscriptionSheet = true
             return
         }
@@ -483,12 +497,25 @@ struct SearchView: View {
     func startSearch() {
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
+        
+        // 【核心逻辑】
+        // 1. 先检查是否有足够的点数进行搜索 (performDeduction: false，先不扣)
+        if !usageManager.canProceed(authManager: authManager, action: .search, performDeduction: false) {
+            showSubscriptionSheet = true
+            return
+        }
+        
         isSearchFieldFocused = false
         isLoading = true
         showSearchHistory = false
 
         viewModel.performSearch(query: trimmed) { groupedResults in
             DispatchQueue.main.async {
+                // 2. 搜索完成，如果有结果，则扣点
+                if !groupedResults.isEmpty {
+                    self.usageManager.deduct(action: .search)
+                }
+                
                 withAnimation {
                     // 1. 先赋值
                     self.groupedSearchResults = groupedResults
@@ -520,6 +547,7 @@ struct SearchView: View {
     }
 }
 
+// MARK: - 全局函数 (移出 SearchView 防止作用域错误)
 // 解析市值字符串，返回可比较的数值（单位统一为美元）
 private func parseMarketCap(_ text: String?) -> Double {
     guard let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return 0 }

@@ -37,7 +37,6 @@ struct ETF: MarketItem {
     let descriptions: String
 }
 
-// ==================== 修改开始：重构 MarketItemRow ====================
 // MARK: - 单个 Market Item 行视图
 struct MarketItemRow<T: MarketItem>: View {
     let item: T
@@ -46,8 +45,8 @@ struct MarketItemRow<T: MarketItem>: View {
     // 【新增】权限管理
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
+    
     @State private var isNavigationActive = false
-    // 【修改】移除 showLoginSheet
     @State private var showSubscriptionSheet = false
 
     private var earningTrend: EarningTrend {
@@ -57,7 +56,8 @@ struct MarketItemRow<T: MarketItem>: View {
     var body: some View {
         // 【修改】使用 Button 替代 NavigationLink
         Button(action: {
-            if usageManager.canProceed(authManager: authManager) {
+            // 【修复报错】添加 action 参数 .viewChart
+            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
                 isNavigationActive = true
             } else {
                 // 【核心修改】直接弹出订阅页，不再判断是否登录
@@ -173,44 +173,87 @@ struct TopContentView: View {
     }
 }
 
-// MARK: - 自定义底部标签栏 (已修改)
+// MARK: - 自定义底部标签栏 (核心修改：增加点击榜单扣点逻辑)
 struct CustomTabBar: View {
-    @StateObject private var dataService = DataService.shared // 使用单例
+    @StateObject private var dataService = DataService.shared
     
+    // 引入权限管理
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    
+    @State private var showSubscriptionSheet = false
+    
+    // 1. 定义导航目标枚举，使代码更易读
+    enum TabDestination: Identifiable {
+        case gainers
+        case losers
+        case lows
+        case highs
+        
+        var id: Self { self }
+    }
+    
+    // 2. 控制导航跳转的状态
+    @State private var activeTab: TabDestination? = nil
+
     var body: some View {
         HStack(spacing: 0) {
             // 1. 涨幅榜
-            NavigationLink(
-                destination: LazyView(StockListView(title: "Top Gainers", items: dataService.topGainers))
-            ) {
-                TabItemView(title: "涨幅榜", imageName: "arrow.up")
-            }
+            tabButton(title: "涨幅榜", icon: "arrow.up", destination: .gainers)
             
             // 2. 跌幅榜
-            NavigationLink(
-                destination: LazyView(StockListView(title: "Top Losers", items: dataService.topLosers))
-            ) {
-                TabItemView(title: "跌幅榜", imageName: "arrow.down")
-            }
+            tabButton(title: "跌幅榜", icon: "arrow.down", destination: .losers)
             
-            // 3. 新增：Low 列表
-            NavigationLink(
-                destination: LazyView(HighLowListView(title: "Lows", groups: dataService.lowGroups))
-            ) {
-                // 使用雪花图标代表 Low
-                TabItemView(title: "Low", imageName: "snowflake")
-            }
+            // 3. Low 列表
+            tabButton(title: "Low", icon: "snowflake", destination: .lows)
             
-            // 4. 新增：High 列表
-            NavigationLink(
-                destination: LazyView(HighLowListView(title: "Highs", groups: dataService.highGroups))
-            ) {
-                // 使用火焰图标代表 High
-                TabItemView(title: "High", imageName: "flame")
-            }
+            // 4. High 列表
+            tabButton(title: "High", icon: "flame", destination: .highs)
         }
         .frame(height: 50)
         .background(Color(.systemBackground))
+        // 3. 使用 .navigationDestination 替代旧的 NavigationLink(tag:selection:)
+        // 注意：这里利用 Binding 将 activeTab 映射为 Bool
+        .navigationDestination(isPresented: Binding(
+            get: { activeTab == .gainers },
+            set: { if !$0 { activeTab = nil } }
+        )) {
+            LazyView(StockListView(title: "Top Gainers", items: dataService.topGainers))
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { activeTab == .losers },
+            set: { if !$0 { activeTab = nil } }
+        )) {
+            LazyView(StockListView(title: "Top Losers", items: dataService.topLosers))
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { activeTab == .lows },
+            set: { if !$0 { activeTab = nil } }
+        )) {
+            LazyView(HighLowListView(title: "Lows", groups: dataService.lowGroups))
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { activeTab == .highs },
+            set: { if !$0 { activeTab = nil } }
+        )) {
+            LazyView(HighLowListView(title: "Highs", groups: dataService.highGroups))
+        }
+        // 订阅弹窗
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+    }
+    
+    // 封装按钮逻辑
+    private func tabButton(title: String, icon: String, destination: TabDestination) -> some View {
+        Button(action: {
+            // 【核心逻辑】点击榜单入口扣点 (.openList)
+            if usageManager.canProceed(authManager: authManager, action: .openList) {
+                self.activeTab = destination
+            } else {
+                self.showSubscriptionSheet = true
+            }
+        }) {
+            TabItemView(title: title, imageName: icon)
+        }
     }
 }
 
@@ -317,7 +360,6 @@ struct HighLowListView: View {
                 .font(.headline)
                 .foregroundColor(.primary)
             
-            // ==================== 代码修改开始 ====================
             // 如果分组是折叠状态，则显示分组内的项目总数
             if !expandedSections[group.id, default: true] {
                 Text("(\(group.items.count))")
@@ -325,7 +367,6 @@ struct HighLowListView: View {
                     .foregroundColor(.secondary) // 使用次要颜色，以作区分
                     .padding(.leading, 4) // 与标题保持一点间距
             }
-            // ==================== 代码修改结束 ====================
             
             Spacer()
             
@@ -345,7 +386,8 @@ struct HighLowListView: View {
     private func rowView(for item: HighLowItem) -> some View {
         // 【修改】使用 Button 替代 NavigationLink
         Button(action: {
-            if usageManager.canProceed(authManager: authManager) {
+            // 【修复报错】添加 action 参数 .viewChart
+            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
                 selectedItem = item
                 isNavigationActive = true
             } else {

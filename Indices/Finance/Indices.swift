@@ -27,7 +27,6 @@ struct IndicesSector: Identifiable, Codable {
     }
 }
 
-
 struct IndicesSymbol: Identifiable, Codable {
     var id: String { symbol }  // 使用symbol作为唯一标识符
     let symbol: String
@@ -154,19 +153,17 @@ struct SectorsPanel: Decodable {
                 // Currencies 分组特殊处理：添加“重要”子分组，把 USDJPY 和 USDCNY 和 DXY 和 CNYI 放到其中
                 var importantSymbols: [IndicesSymbol] = []
                 var normalSymbols: [IndicesSymbol] = []
-                
+                let importantKeys = ["USDJPY", "USDCNY", "DXY", "CNYI", "JPYI", "CHFI", "EURI", "CNYUSD"]
                 for symbolKey in orderedSymbolKeys {
                     let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
                     let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
                     let symbol = IndicesSymbol(symbol: symbolKey, name: symbolName, value: "", tags: nil)
-                    
-                    if symbolKey == "USDJPY" || symbolKey == "USDCNY" || symbolKey == "DXY" || symbolKey == "CNYI" || symbolKey == "JPYI" || symbolKey == "CHFI" || symbolKey == "EURI" || symbolKey == "CNYUSD" {
+                    if importantKeys.contains(symbolKey) {
                         importantSymbols.append(symbol)
                     } else {
                         normalSymbols.append(symbol)
                     }
                 }
-                
                 if !importantSymbols.isEmpty {
                     var subSectors: [IndicesSector] = []
                     // “重要”子分组
@@ -211,14 +208,22 @@ struct SectorsPanel: Decodable {
 
 struct IndicesContentView: View {
     @EnvironmentObject var dataService: DataService
+    // 【新增】
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
     
-    // 自定义网格布局，用于中间部分
+    // 【新增】用于程序化导航
+    @State private var selectedSector: IndicesSector?
+    @State private var navigateToSector = false
+    @State private var showSubscriptionSheet = false
+    
     private let gridLayout = [
         GridItem(.adaptive(minimum: 100, maximum: .infinity), spacing: 12)
     ]
     
     var body: some View {
-        NavigationView {
+        // 【修改 1】将 NavigationView 替换为 NavigationStack (iOS 16+ 推荐)
+        NavigationStack {
             ScrollView {
                 // 检查 sectorsPanel 是否有数据
                 if let sectors = dataService.sectorsPanel?.sectors {
@@ -255,9 +260,9 @@ struct IndicesContentView: View {
                         if !middleSectors.isEmpty {
                             LazyVGrid(columns: gridLayout, spacing: 12) {
                                 ForEach(middleSectors) { sector in
-                                    NavigationLink {
-                                        SectorDetailView(sector: sector)
-                                            .navigationBarTitleDisplayMode(.inline)
+                                    // 【修改】改为 Button + 拦截
+                                    Button {
+                                        handleSectorClick(sector)
                                     } label: {
                                         SectorButtonView(sectorName: sector.name)
                                     }
@@ -269,9 +274,8 @@ struct IndicesContentView: View {
                         if !topSectors.isEmpty {
                             HStack(spacing: 12) {
                                 ForEach(topSectors) { sector in
-                                    NavigationLink {
-                                        SectorDetailView(sector: sector)
-                                            .navigationBarTitleDisplayMode(.inline)
+                                    Button {
+                                        handleSectorClick(sector)
                                     } label: {
                                         SectorButtonView(sectorName: sector.name)
                                     }
@@ -283,11 +287,10 @@ struct IndicesContentView: View {
                         if !bottomSectors.isEmpty {
                             HStack(spacing: 12) {
                                 ForEach(bottomSectors) { sector in
-                                    NavigationLink {
-                                        SectorDetailView(sector: sector)
-                                            .navigationBarTitleDisplayMode(.inline)
+                                    Button {
+                                        handleSectorClick(sector)
                                     } label: {
-                                            SectorButtonView(sectorName: sector.name)
+                                        SectorButtonView(sectorName: sector.name)
                                     }
                                 }
                             }
@@ -306,7 +309,7 @@ struct IndicesContentView: View {
                     }
                 }
             }
-//            .navigationTitle("Sectors") // 保持你的设计
+            // .navigationTitle("Sectors") // 如果需要标题可取消注释
             .alert(isPresented: Binding<Bool>(
                 get: { dataService.errorMessage != nil },
                 set: { _ in dataService.errorMessage = nil }
@@ -317,8 +320,28 @@ struct IndicesContentView: View {
                     dismissButton: .default(Text("好的"))
                 )
             }
+            // 【修改 2】使用 navigationDestination 替代废弃的 background(NavigationLink...)
+            .navigationDestination(isPresented: $navigateToSector) {
+                if let sector = selectedSector {
+                    SectorDetailView(sector: sector)
+                        .navigationBarTitleDisplayMode(.inline)
+                }
+            }
+            .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         }
-        .navigationViewStyle(StackNavigationViewStyle())
+        // 【修改 3】NavigationStack 不需要 StackNavigationViewStyle，通常可以移除
+        // .navigationViewStyle(StackNavigationViewStyle()) 
+    }
+    
+    // 【新增】处理点击逻辑
+    private func handleSectorClick(_ sector: IndicesSector) {
+        // 使用 .openSector 行为类型
+        if usageManager.canProceed(authManager: authManager, action: .openSector) {
+            self.selectedSector = sector
+            self.navigateToSector = true
+        } else {
+            self.showSubscriptionSheet = true
+        }
     }
 }
 
@@ -338,6 +361,8 @@ struct LoadingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemBackground))
     }
+    
+    
 }
 
 struct SectorButtonView: View {
@@ -572,8 +597,8 @@ struct SymbolItemView: View {
     var body: some View {
         // 【修改】将 NavigationLink 改为 Button
         Button(action: {
-            // 核心拦截逻辑
-            if usageManager.canProceed(authManager: authManager) {
+            // 【修改】使用 .viewChart 行为类型
+            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
                 isNavigationActive = true
             } else {
                 // 【核心修改】

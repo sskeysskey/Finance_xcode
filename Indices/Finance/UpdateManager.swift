@@ -5,6 +5,8 @@ import SwiftUI
 struct VersionResponse: Codable {
     let version: String
     let daily_free_limit: Int?
+    // 【新增】扣点配置字典
+    let cost_config: [String: Int]?
     let files: [FileInfo]
 }
 
@@ -99,10 +101,16 @@ class UpdateManager: ObservableObject {
         
         switch result {
         case .success(let serverVersionResponse):
-            // 【新增】更新每日免费限制
+            // 1. 更新每日免费限制
             if let limit = serverVersionResponse.daily_free_limit {
                 UsageManager.shared.updateLimit(limit)
                 print("UpdateManager: 已更新每日免费次数限制为 \(limit)")
+            }
+            
+            // 【新增】2. 更新扣点配置
+            if let costs = serverVersionResponse.cost_config {
+                UsageManager.shared.updateCosts(costs)
+                print("UpdateManager: 已更新扣点规则: \(costs)")
             }
             
             let localVersion = UserDefaults.standard.string(forKey: localVersionKey) ?? "0.0"

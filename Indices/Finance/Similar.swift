@@ -70,7 +70,8 @@ struct SimilarView: View {
                         ForEach(viewModel.relatedSymbols, id: \.id) { item in
                             // 【修改】使用 Button 替代 NavigationLink
                             Button(action: {
-                                if usageManager.canProceed(authManager: authManager) {
+                                // 【修改】使用 .viewChart
+                                if usageManager.canProceed(authManager: authManager, action: .viewChart) {
                                     selectedSymbolItem = item
                                     isNavigationActive = true
                                 } else {

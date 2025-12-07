@@ -128,7 +128,8 @@ struct EarningReleaseView: View {
     private func sectionRow(for item: EarningRelease) -> some View {
         // 【修改】使用 Button 替代 NavigationLink
         Button(action: {
-            if usageManager.canProceed(authManager: authManager) {
+            // 【修改】使用 .viewChart
+            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
                 selectedItem = item
                 isNavigationActive = true
             } else {
