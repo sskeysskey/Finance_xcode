@@ -6,6 +6,9 @@ import Foundation
 // 扩展颜色定义（保留 V2 的定义，以防后续需要）
 extension Color {
     static let viewBackground = Color(red: 28/255, green: 28/255, blue: 30/255)
+    static let cardBackground = Color(red: 44/255, green: 44/255, blue: 46/255)
+    static let accentGradientStart = Color(red: 10/255, green: 132/255, blue: 255/255)
+    static let accentGradientEnd = Color(red: 94/255, green: 92/255, blue: 230/255)
 }
 
 @main
@@ -94,7 +97,7 @@ struct UpdateOverlayView: View {
     }
 }
 
-// MARK: - 可重用的状态提示视图 (无修改)
+// MARK: - 可重用的状态提示视图
 struct StatusView: View {
     let icon: String?
     var iconColor: Color = .secondary
@@ -119,7 +122,7 @@ struct StatusView: View {
     }
 }
 
-// MARK: - 修改：用户个人中心视图
+// MARK: - 用户个人中心视图
 struct UserProfileView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
@@ -170,7 +173,7 @@ struct UserProfileView: View {
                     .padding(.vertical, 10)
                 }
                 
-                // 【新增】订阅管理部分
+                // 订阅管理部分
                 Section(header: Text("订阅管理")) {
                     // 恢复购买按钮
                     Button {
@@ -290,38 +293,41 @@ struct MainContentView: View {
     var body: some View {
         ZStack {
             NavigationStack {
-                VStack(spacing: 0) {
-                    // 【核心修改】如果 sectorsPanel 还没准备好，就显示 Loading
-                    // 即使 isDataReady 为 true，如果 sectorsPanel 为空，也继续显示 Loading
-                    if isDataReady, let _ = dataService.sectorsPanel {
-                        // 使用 GeometryReader 确保布局适应屏幕
-                        GeometryReader { geometry in
-                            VStack(spacing: 0) {
-                                // 1. 主要的分组区域 (占据大部分空间)
-                                IndicesContentView()
-                                    .frame(height: geometry.size.height * 0.75) // 约占 75%
-                                
-                                // 2. 搜索/比较/财报 工具栏
-                                SearchContentView()
-                                    .frame(height: geometry.size.height * 0.13) // 约占 13%
-                                
-                                // 3. 底部 Tab 栏
-                                TopContentView()
-                                    .frame(height: geometry.size.height * 0.12) // 约占 12%
+                // 【修改点】使用 ZStack 铺设背景色，解决 Light Mode 下的白色缝隙问题
+                ZStack {
+                    // 强制背景色为系统分组背景色（浅灰/深灰），铺满全屏
+                    Color(UIColor.systemGroupedBackground)
+                        .ignoresSafeArea()
+                    
+                    VStack(spacing: 0) {
+                        if isDataReady, let _ = dataService.sectorsPanel {
+                            GeometryReader { geometry in
+                                VStack(spacing: 0) {
+                                    // 1. 主要的分组区域
+                                    IndicesContentView()
+                                        .frame(height: geometry.size.height * 0.75)
+                                    
+                                    // 2. 搜索/比较/财报 工具栏
+                                    SearchContentView()
+                                        .frame(height: geometry.size.height * 0.13)
+                                    
+                                    // 3. 底部 Tab 栏
+                                    TopContentView()
+                                        .frame(height: geometry.size.height * 0.12)
+                                }
                             }
-                        }
-                    } else {
-                        VStack(spacing: 20) {
-                            Spacer()
-                            ProgressView()
-                                .scaleEffect(1.5)
-                            Text("正在准备数据...")
-                                .foregroundColor(.secondary)
-                            Spacer()
+                        } else {
+                            VStack(spacing: 20) {
+                                Spacer()
+                                ProgressView()
+                                    .scaleEffect(1.5)
+                                Text("正在准备数据...")
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                            }
                         }
                     }
                 }
-                // 【核心修改】动态标题
                 .navigationBarTitle(remainingLimitTitle, displayMode: .inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {

@@ -1,12 +1,6 @@
 import SwiftUI
 import Foundation
 
-// MARK: - Extensions (颜色扩展，取自 V2)
-extension Color {
-    static let accentGradientStart = Color(red: 10/255, green: 132/255, blue: 255/255) // System Blue
-    static let accentGradientEnd = Color(red: 94/255, green: 92/255, blue: 230/255)   // System Indigo
-}
-
 // MARK: - Models (保持不变)
 
 struct IndicesSector: Identifiable, Codable {
