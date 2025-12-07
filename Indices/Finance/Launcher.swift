@@ -3,6 +3,7 @@
 import SwiftUI
 import Foundation
 
+// 扩展颜色定义（保留 V2 的定义，以防后续需要）
 extension Color {
     static let viewBackground = Color(red: 28/255, green: 28/255, blue: 30/255)
 }
@@ -259,6 +260,9 @@ struct MainContentView: View {
     @StateObject private var updateManager = UpdateManager.shared
     @State private var isDataReady = false
     @EnvironmentObject var authManager: AuthManager
+    // 【新增】我们需要观察 UsageManager 来更新标题
+    @EnvironmentObject var usageManager: UsageManager
+    
     @State private var showLoginSheet = false
     @State private var showSubscriptionSheet = false
     // 【新增】控制个人中心显示
@@ -271,6 +275,17 @@ struct MainContentView: View {
     private var isUpdateInProgress: Bool {
         updateManager.updateState != .idle
     }
+    
+    // 【新增】计算动态标题
+    // 【新增】计算剩余次数的计算属性
+    private var remainingLimitTitle: String {
+        if authManager.isSubscribed {
+            return "尊贵会员：无限次使用"
+        } else {
+            let remaining = max(0, usageManager.maxFreeLimit - usageManager.dailyCount)
+            return "本日限额次数：\(remaining)"
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -279,16 +294,22 @@ struct MainContentView: View {
                     // 【核心修改】如果 sectorsPanel 还没准备好，就显示 Loading
                     // 即使 isDataReady 为 true，如果 sectorsPanel 为空，也继续显示 Loading
                     if isDataReady, let _ = dataService.sectorsPanel {
-                        IndicesContentView()
-                            .frame(maxHeight: .infinity, alignment: .top)
-                        Divider()
-                        SearchContentView()
-                            .frame(height: 60)
-                            .padding(.vertical, 10)
-                        Divider()
-                        TopContentView()
-                            .frame(height: 60)
-                            .background(Color(.systemBackground))
+                        // 使用 GeometryReader 确保布局适应屏幕
+                        GeometryReader { geometry in
+                            VStack(spacing: 0) {
+                                // 1. 主要的分组区域 (占据大部分空间)
+                                IndicesContentView()
+                                    .frame(height: geometry.size.height * 0.75) // 约占 75%
+                                
+                                // 2. 搜索/比较/财报 工具栏
+                                SearchContentView()
+                                    .frame(height: geometry.size.height * 0.13) // 约占 13%
+                                
+                                // 3. 底部 Tab 栏
+                                TopContentView()
+                                    .frame(height: geometry.size.height * 0.12) // 约占 12%
+                            }
+                        }
                     } else {
                         VStack(spacing: 20) {
                             Spacer()
@@ -300,7 +321,8 @@ struct MainContentView: View {
                         }
                     }
                 }
-                .navigationBarTitle("经济数据与搜索", displayMode: .inline)
+                // 【核心修改】动态标题
+                .navigationBarTitle(remainingLimitTitle, displayMode: .inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         if authManager.isLoggedIn {

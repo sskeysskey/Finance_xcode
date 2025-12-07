@@ -166,10 +166,10 @@ struct TopContentView: View {
         // 因为 MainContentView 已经有了 NavigationStack，这里不能再嵌套 NavigationView
         // 否则会导致约束冲突，使底部栏在首次加载时高度为0或不可见。
         VStack {
-            Spacer()
+            // 去掉 Spacer，让它自然填充
             CustomTabBar()
         }
-        // .navigationBarHidden(true) // 不需要了
+        .background(Color(UIColor.systemGroupedBackground))
     }
 }
 
@@ -198,22 +198,19 @@ struct CustomTabBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // 1. 涨幅榜
-            tabButton(title: "涨幅榜", icon: "arrow.up", destination: .gainers)
-            
-            // 2. 跌幅榜
-            tabButton(title: "跌幅榜", icon: "arrow.down", destination: .losers)
-            
-            // 3. Low 列表
-            tabButton(title: "Low", icon: "snowflake", destination: .lows)
-            
-            // 4. High 列表
-            tabButton(title: "High", icon: "flame", destination: .highs)
+            // 均匀分布的四个按钮
+            tabButton(title: "涨幅榜", icon: "arrow.up.right.circle.fill", color: .red, destination: .gainers)
+            tabButton(title: "跌幅榜", icon: "arrow.down.right.circle.fill", color: .green, destination: .losers)
+            tabButton(title: "新低", icon: "thermometer.snowflake", color: .blue, destination: .lows)
+            tabButton(title: "新高", icon: "flame.fill", color: .orange, destination: .highs)
         }
-        .frame(height: 50)
-        .background(Color(.systemBackground))
-        // 3. 使用 .navigationDestination 替代旧的 NavigationLink(tag:selection:)
-        // 注意：这里利用 Binding 将 activeTab 映射为 Bool
+        .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .background(Color(UIColor.secondarySystemGroupedBackground)) // 底部栏背景
+        .cornerRadius(20, corners: [.topLeft, .topRight]) // 仅顶部圆角
+        .shadow(color: Color.black.opacity(0.05), radius: 5, y: -2)
+        
+        // 导航逻辑 (保持不变)
         .navigationDestination(isPresented: Binding(
             get: { activeTab == .gainers },
             set: { if !$0 { activeTab = nil } }
@@ -243,36 +240,44 @@ struct CustomTabBar: View {
     }
     
     // 封装按钮逻辑
-    private func tabButton(title: String, icon: String, destination: TabDestination) -> some View {
+    private func tabButton(title: String, icon: String, color: Color, destination: TabDestination) -> some View {
         Button(action: {
-            // 【核心逻辑】点击榜单入口扣点 (.openList)
             if usageManager.canProceed(authManager: authManager, action: .openList) {
                 self.activeTab = destination
             } else {
                 self.showSubscriptionSheet = true
             }
         }) {
-            TabItemView(title: title, imageName: icon)
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 22))
+                    .foregroundColor(color)
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+            }
+            .frame(maxWidth: .infinity)
         }
     }
 }
 
-// MARK: - 标签栏子视图
-struct TabItemView: View {
-    let title: String
-    let imageName: String
-    
-    var body: some View {
-        VStack {
-            Image(systemName: imageName)
-                .font(.system(size: 20))
-            Text(title)
-                .font(.caption)
-        }
-        .foregroundColor(.blue)
-        .frame(maxWidth: .infinity)
+// 辅助扩展：部分圆角
+extension View {
+    func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
+        clipShape(RoundedCorner(radius: radius, corners: corners))
     }
 }
+
+struct RoundedCorner: Shape {
+    var radius: CGFloat = .infinity
+    var corners: UIRectCorner = .allCorners
+    func path(in rect: CGRect) -> Path {
+        let path = UIBezierPath(roundedRect: rect, byRoundingCorners: corners, cornerRadii: CGSize(width: radius, height: radius))
+        return Path(path.cgPath)
+    }
+}
+
 
 // MARK: - 懒加载视图包装器
 struct LazyView<Content: View>: View {

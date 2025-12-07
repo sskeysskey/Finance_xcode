@@ -106,65 +106,60 @@ struct GroupHeaderView: View {
 struct SearchContentView: View {
     @State private var showSearch = false
     @State private var showCompare = false
-    @State private var showEarning = false
+    @State private var navigateToEarnings = false
     @EnvironmentObject var dataService: DataService
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
     @State private var showSubscriptionSheet = false
     
-    // 需要手动控制财报的导航
-    @State private var navigateToEarnings = false
-    
     var body: some View {
-        NavigationStack {
-            HStack(spacing: 12) {
-                Button(action: { showCompare = true }) {
-                    VStack {
-                        Image(systemName: "chart.line.uptrend.xyaxis")
-                            .font(.system(size: 20))
-                        Text("比较")
-                            .font(.caption)
-                    }
-                    .frame(width: 60)
-                    .padding(.vertical, 8)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(8)
+        // 移除 NavigationStack，因为外层已经有了
+        HStack(spacing: 15) {
+            // 1. 比较按钮
+            ToolButton(
+                title: "比较",
+                icon: "chart.line.uptrend.xyaxis",
+                color: .blue
+            ) {
+                showCompare = true
+            }
+            
+            // 2. 搜索按钮 (占据中间主要位置)
+            Button(action: { showSearch = true }) {
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 18, weight: .bold))
+                    Text("搜索股票/ETF")
+                        .font(.headline)
                 }
-                
-                Button(action: { showSearch = true }) {
-                    HStack {
-                        Image(systemName: "magnifyingglass")
-                        Text("点击搜索")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color(.systemGray6))
-                    .cornerRadius(8)
-                }
-                
-                Button(action: { 
-                    // 【修改】点击财报入口扣点
-                    if usageManager.canProceed(authManager: authManager, action: .openEarnings) {
-                        navigateToEarnings = true // 触发导航
-                    } else {
-                        showSubscriptionSheet = true
-                    }
-                }) {
-                    VStack {
-                        Image(systemName: "calendar")
-                            .font(.system(size: 20))
-                        Text("财报")
-                            .font(.caption)
-                    }
-                    .frame(width: 60)
-                    .padding(.vertical, 8)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(8)
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .background(
+                    LinearGradient(gradient: Gradient(colors: [Color.blue.opacity(0.8), Color.purple.opacity(0.8)]), startPoint: .leading, endPoint: .trailing)
+                )
+                .cornerRadius(16)
+                .shadow(color: Color.blue.opacity(0.3), radius: 5, x: 0, y: 3)
+            }
+            
+            // 3. 财报按钮
+            ToolButton(
+                title: "财报",
+                icon: "calendar",
+                color: .orange
+            ) {
+                if usageManager.canProceed(authManager: authManager, action: .openEarnings) {
+                    navigateToEarnings = true
+                } else {
+                    showSubscriptionSheet = true
                 }
             }
-            .padding(.horizontal)
-            Spacer()
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color(UIColor.systemGroupedBackground)) // 与整体背景融合
+        
+        // 导航目标
         .navigationDestination(isPresented: $showSearch) {
             SearchView(isSearchActive: true, dataService: dataService)
         }
@@ -175,6 +170,31 @@ struct SearchContentView: View {
             EarningReleaseView()
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+    }
+}
+
+// 辅助组件：方形工具按钮
+struct ToolButton: View {
+    let title: String
+    let icon: String
+    let color: Color
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 20))
+                Text(title)
+                    .font(.caption2)
+                    .fontWeight(.bold)
+            }
+            .foregroundColor(color)
+            .frame(width: 60, height: 56)
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .cornerRadius(12)
+            .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+        }
     }
 }
 
