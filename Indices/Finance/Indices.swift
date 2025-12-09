@@ -217,15 +217,15 @@ struct IndicesContentView: View {
     @State private var navigateToSector = false
     @State private var showSubscriptionSheet = false
     
-    // 新增：控制跳转到“51周新低”二级页面
+    // 新增：控制跳转到“52周新低”二级页面
     @State private var navigateToWeekLow = false
     // 存储传给二级页面的数据
     @State private var weekLowSectorsData: [IndicesSector] = []
     
     // 定义分组名称
-    private let economyGroupNames = Set(["Bonds", "Commodities", "crypto", "Currencies", "ETFs", "Economic_All", "Economics", "indices"])
-    private let strategyGroupNames = Set(["Today", "short", "Short_Shift", "Strategy12", "Strategy34", "PE_valid", "PE_invalid", "Must"])
-    // 这些是放在“51周新低”里面的
+    private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "ETFs", "Economic_All", "Economics", "Indices"])
+    private let strategyGroupNames = Set(["Strategy12", "Strategy34", "PE_valid", "PE_invalid", "Must"])
+    // 这些是放在“52周新低”里面的
     private let weekLowGroupNames = Set(["Basic_Materials", "Communication_Services", "Consumer_Cyclical", "Consumer_Defensive", "Energy", "Financial_Services", "Healthcare", "Industrials", "Real_Estate", "Technology", "Utilities"])
     
     // 【修改点 1】改为 3 列布局，以适应图标样式但保持紧凑
@@ -243,7 +243,7 @@ struct IndicesContentView: View {
                 // 1. 准备数据
                 let economySectors = sectors.filter { economyGroupNames.contains($0.name) }
                 let strategySectors = sectors.filter { strategyGroupNames.contains($0.name) }
-                // 过滤出 51周新低 需要的数据，传递给二级页面
+                // 过滤出 52周新低 需要的数据，传递给二级页面
                 let weekLowSectors = sectors.filter { weekLowGroupNames.contains($0.name) }
                 
                 ScrollView(showsIndicators: false) {
@@ -251,7 +251,7 @@ struct IndicesContentView: View {
                         
                         // MARK: - 第一组：经济数据
                         VStack(alignment: .leading, spacing: 10) {
-                            SectionHeader(title: "经济数据", icon: "globe.asia.australia.fill", color: .blue)
+                            SectionHeader(title: "经济数据", icon: "globe.asia.australia.fill", color: .purple)
                             
                             LazyVGrid(columns: gridLayout, spacing: 10) {
                                 ForEach(economySectors) { sector in
@@ -262,7 +262,7 @@ struct IndicesContentView: View {
                                         CompactSectorCard(
                                             sectorName: sector.name,
                                             icon: getIcon(for: sector.name),
-                                            baseColor: .blue
+                                            baseColor: .purple
                                         )
                                     }
                                 }
@@ -273,7 +273,7 @@ struct IndicesContentView: View {
                         
                         // MARK: - 第二组：每日荐股
                         VStack(alignment: .leading, spacing: 10) {
-                            SectionHeader(title: "每日荐股", icon: "star.fill", color: .purple)
+                            SectionHeader(title: "每日荐股", icon: "star.fill", color: .blue)
                             
                             LazyVGrid(columns: gridLayout, spacing: 10) {
                                 ForEach(strategySectors) { sector in
@@ -283,20 +283,21 @@ struct IndicesContentView: View {
                                         CompactSectorCard(
                                             sectorName: sector.name,
                                             icon: getIcon(for: sector.name),
-                                            baseColor: .purple
+                                            baseColor: .blue
                                         )
                                     }
                                 }
                                 
-                                // 【修改点 3】51周新低按钮，样式更突出
+                                // 【修改点 3】52周新低按钮，样式更突出
+                                // 【本次修改】baseColor 改为 .blue，使其呈现蓝色渐变
                                 Button {
                                     self.weekLowSectorsData = weekLowSectors
                                     self.navigateToWeekLow = true
                                 } label: {
                                     CompactSectorCard(
-                                        sectorName: "51周新低",
+                                        sectorName: "52周新低",
                                         icon: "arrow.down.right.circle.fill",
-                                        baseColor: .orange,
+                                        baseColor: .blue, // 这里改为了 .blue
                                         isSpecial: true
                                     )
                                 }
@@ -347,9 +348,10 @@ struct IndicesContentView: View {
         switch name {
         case "Bonds": return "banknote"
         case "Commodities": return "drop.fill"
-        case "crypto": return "bitcoinsign.circle"
+        case "Crypto": return "bitcoinsign.circle"
         case "Currencies": return "dollarsign.circle"
         case "ETFs": return "square.stack.3d.up"
+        case "Indices": return "building.columns.fill" // 【本次新增】交易所图标
         case "Technology": return "laptopcomputer"
         case "Energy": return "bolt.fill"
         case "Healthcare": return "heart.text.square"
@@ -360,14 +362,16 @@ struct IndicesContentView: View {
         case "Economic_All": return "globe"
         case "Short_Shift": return "arrow.triangle.2.circlepath"
         case "short": return "arrow.down.circle"
-        case "Strategy12": return "1.circle"
-        case "Strategy34": return "3.circle"
+        case "PE_invalid": return "1.circle"
+        case "PE_valid": return "2.circle"
+        case "Strategy12": return "3.circle"
+        case "Strategy34": return "4.circle"
         default: return "chart.pie.fill"
         }
     }
 }
 
-// MARK: - 新增：51周新低 专属页面 (完全移植自 V2)
+// MARK: - 新增：52周新低 专属页面 (完全移植自 V2)
 struct FiftyOneLowView: View {
     let sectors: [IndicesSector]
     @EnvironmentObject var authManager: AuthManager
@@ -383,7 +387,7 @@ struct FiftyOneLowView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("这些板块处于51周低位，可能存在反弹机会。")
+                Text("这些板块处于52周低位，可能存在反弹机会。")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .padding(.horizontal)
@@ -402,7 +406,7 @@ struct FiftyOneLowView: View {
             }
             .padding(.top)
         }
-        .navigationTitle("51周新低")
+        .navigationTitle("52周新低")
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $navigateToSector) {
             if let sector = selectedSector {
@@ -471,15 +475,21 @@ struct CompactSectorCard: View {
     private var displayName: String {
         if isSpecial { return sectorName }
         switch sectorName {
-        case "Strategy12": return "系统1"
-        case "Strategy34": return "系统2"
+        case "Must": return "博主推荐"
+        case "Today": return "观察名单"
+        case "PE_invalid": return "系统1"
+        case "PE_valid": return "系统2"
+        case "Strategy12": return "系统3"
+        case "Strategy34": return "系统4"
+        case "Short": return "超买"
+        case "Short_Shift": return "可做空"
         case "Economics": return "本周经济数据"
         case "Economic_All": return "全部经济数据"
-        case "PE_valid": return "系统3"
-        case "PE_invalid": return "系统4"
         case "Commodities": return "大宗商品"
         case "Currencies": return "货币汇率"
         case "Bonds": return "债券收益率"
+        case "Indices": return "各国交易所"
+        case "Crypto": return "加密货币"
         default: return sectorName.replacingOccurrences(of: "_", with: " ")
         }
     }
@@ -502,7 +512,8 @@ struct CompactSectorCard: View {
         .frame(height: 65) // 【关键】固定高度 65，比 V1 的 44 高一点以容纳图标，但远小于 V2 的 110
         .background(
             LinearGradient(
-                gradient: Gradient(colors: isSpecial ? [.orange, .red] : [baseColor.opacity(0.8), baseColor.opacity(0.5)]),
+                // gradient: Gradient(colors: isSpecial ? [.orange, .red] : [baseColor.opacity(0.8), baseColor.opacity(0.5)]),
+                gradient: Gradient(colors: isSpecial ? [.blue, .blue] : [baseColor.opacity(0.8), baseColor.opacity(0.5)]),
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -517,7 +528,7 @@ struct CompactSectorCard: View {
 }
 
 // 【新增组件】ModernSectorCard (从 V2 移植)
-// 专门用于“51周新低”二级页面，保持大尺寸和华丽效果
+// 专门用于“52周新低”二级页面，保持大尺寸和华丽效果
 struct ModernSectorCard: View {
     let sectorName: String
     let icon: String
