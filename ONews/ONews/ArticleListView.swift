@@ -416,7 +416,8 @@ struct ArticleListView: View {
                         }
                     }
                     .listStyle(PlainListStyle())
-                    .onAppear(perform: initializeStateIfNeeded)
+                    // 【修改】在 onAppear 中调用新的自动展开逻辑
+                    .onAppear(perform: autoExpandGroups)
                     
                     if !isSearchActive {
                         Picker("Filter", selection: $filterMode) {
@@ -427,9 +428,12 @@ struct ArticleListView: View {
                         }
                         .pickerStyle(.segmented)
                         .padding([.horizontal, .bottom])
+                        // 【修改】当筛选模式改变时，也触发自动展开逻辑
+                        .onChange(of: filterMode) { _, _ in
+                            autoExpandGroups()
+                        }
                     }
                 }
-                // 【修改】使用系统背景
                 .background(Color.viewBackground.ignoresSafeArea())
             }
             .navigationDestination(isPresented: $isNavigationActive) {
@@ -566,14 +570,18 @@ struct ArticleListView: View {
         }
     }
     
-    private func initializeStateIfNeeded() {
-        if viewModel.expandedTimestampsBySource[sourceName] == nil {
-            let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
-            // 【修改】统一使用降序排序，以匹配列表的显示顺序
-            let timestamps = groupedArticles.keys.sorted(by: >)
-            if timestamps.count == 1 {
-                viewModel.expandedTimestampsBySource[sourceName] = Set(timestamps)
-            }
+    // 【修改】新的自动展开逻辑：根据当前过滤后的文章数量动态决定
+    private func autoExpandGroups() {
+        // 1. 获取当前模式下（未读/已读）的所有日期分组
+        let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
+        
+        // 2. 核心逻辑：如果只有一个分组，则展开；如果有多个，则全部折叠（清空展开集合）
+        if groupedArticles.keys.count == 1, let singleTimestamp = groupedArticles.keys.first {
+            viewModel.expandedTimestampsBySource[sourceName] = [singleTimestamp]
+        } else {
+            // 如果大于1个分组，强制折叠所有（清空集合）
+            // 这样每次切换模式或进入页面，如果分组多，就会自动收起，符合你的需求
+            viewModel.expandedTimestampsBySource[sourceName] = []
         }
     }
     
@@ -701,7 +709,8 @@ struct AllArticlesListView: View {
                     }
                 }
                 .listStyle(PlainListStyle())
-                .onAppear(perform: initializeStateIfNeeded)
+                // 【修改】在 onAppear 中调用新的自动展开逻辑
+                .onAppear(perform: autoExpandGroups)
                 
                 if !isSearchActive {
                     Picker("Filter", selection: $filterMode) {
@@ -712,9 +721,12 @@ struct AllArticlesListView: View {
                     }
                     .pickerStyle(.segmented)
                     .padding([.horizontal, .bottom])
+                    // 【修改】当筛选模式改变时，也触发自动展开逻辑
+                    .onChange(of: filterMode) { _, _ in
+                        autoExpandGroups()
+                    }
                 }
             }
-            // 【修改】使用系统背景
             .background(Color.viewBackground.ignoresSafeArea())
         }
         .navigationDestination(isPresented: $isNavigationActive) {
@@ -847,16 +859,18 @@ struct AllArticlesListView: View {
         }
     }
     
-    private func initializeStateIfNeeded() {
+    // 【修改】新的自动展开逻辑
+    private func autoExpandGroups() {
         let key = viewModel.allArticlesKey
         
-        if viewModel.expandedTimestampsBySource[key] == nil {
-            let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
-            // 【修改】统一使用降序排序，以匹配列表的显示顺序
-            let timestamps = groupedArticles.keys.sorted(by: >)
-            if timestamps.count == 1 {
-                viewModel.expandedTimestampsBySource[key] = Set(timestamps)
-            }
+        // 1. 获取当前模式下（未读/已读）的所有日期分组
+        let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
+        
+        // 2. 核心逻辑：如果只有一个分组，则展开；如果有多个，则全部折叠
+        if groupedArticles.keys.count == 1, let singleTimestamp = groupedArticles.keys.first {
+            viewModel.expandedTimestampsBySource[key] = [singleTimestamp]
+        } else {
+            viewModel.expandedTimestampsBySource[key] = []
         }
     }
     

@@ -127,7 +127,7 @@ struct SectorsPanel: Decodable {
                     let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
                     let symbol = IndicesSymbol(symbol: symbolKey, name: symbolName, value: "", tags: nil)
                     
-                    if symbolKey == "CrudeOil" || symbolKey == "Huangjin" || symbolKey == "Naturalgas" {
+                    if symbolKey == "CrudeOil" || symbolKey == "Huangjin" || symbolKey == "Naturalgas" || symbolKey == "Silver" || symbolKey == "Copper"  {
                         importantSymbols.append(symbol)
                     } else {
                         normalSymbols.append(symbol)
@@ -488,6 +488,7 @@ struct CompactSectorCard: View {
         case "Commodities": return "大宗商品"
         case "Currencies": return "货币汇率"
         case "Bonds": return "债券收益率"
+        case "ETFs": return "Top ETFs"
         case "Indices": return "各国交易所"
         case "Crypto": return "加密货币"
         default: return sectorName.replacingOccurrences(of: "_", with: " ")
@@ -587,27 +588,63 @@ struct SectorDetailView: View {
     
     var body: some View {
         ScrollView {
-            // 如果存在子分组则遍历每个子分组显示
-            if let subSectors = sector.subSectors, !subSectors.isEmpty {
-                ForEach(subSectors, id: \.name) { subSector in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(subSector.name)
-                            .font(.headline)
-                            .padding(.horizontal)
-                            .padding(.top, 16)
-                        
+            VStack(alignment: .leading, spacing: 0) {
+                
+                // MARK: - 特殊处理 ETFs 分组
+                if sector.name == "ETFs" {
+                    // 1. Pinned (原 Sectors_panel 中的内容)
+                    sectionTitle("Pinned")
+                    LazyVStack(spacing: 0) {
+                        ForEach(symbols) { symbol in
+                            SymbolItemView(symbol: symbol, sectorName: sector.name)
+                        }
+                    }
+                    
+                    // 2. Top 10 (来自 CompareETFs.txt)
+                    if !dataService.etfTopGainers.isEmpty {
+                        sectionTitle("Top 10")
                         LazyVStack(spacing: 0) {
-                            ForEach(loadSymbolsForSubSector(subSector.symbols)) { symbol in
+                            ForEach(dataService.etfTopGainers) { symbol in
                                 SymbolItemView(symbol: symbol, sectorName: sector.name)
                             }
                         }
                     }
-                }
-            } else {
-                // 否则按原规则显示当前分组的 symbol 数组
-                LazyVStack(spacing: 0) {
-                    ForEach(symbols) { symbol in
-                        SymbolItemView(symbol: symbol, sectorName: sector.name)
+                    
+                    // 3. Bottom 10 (来自 CompareETFs.txt)
+                    if !dataService.etfTopLosers.isEmpty {
+                        sectionTitle("Bottom 10")
+                        LazyVStack(spacing: 0) {
+                            ForEach(dataService.etfTopLosers) { symbol in
+                                SymbolItemView(symbol: symbol, sectorName: sector.name)
+                            }
+                        }
+                    }
+                    
+                } else {
+                    // 如果存在子分组则遍历每个子分组显示
+                    // MARK: - 常规分组处理 (保持不变)
+                    if let subSectors = sector.subSectors, !subSectors.isEmpty {
+                        ForEach(subSectors, id: \.name) { subSector in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(subSector.name)
+                                    .font(.headline)
+                                    .padding(.horizontal)
+                                    .padding(.top, 16)
+                                
+                                LazyVStack(spacing: 0) {
+                                    ForEach(loadSymbolsForSubSector(subSector.symbols)) { symbol in
+                                        SymbolItemView(symbol: symbol, sectorName: sector.name)
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // 否则按原规则显示当前分组的 symbol 数组
+                        LazyVStack(spacing: 0) {
+                            ForEach(symbols) { symbol in
+                                SymbolItemView(symbol: symbol, sectorName: sector.name)
+                            }
+                        }
                     }
                 }
             }
@@ -626,7 +663,6 @@ struct SectorDetailView: View {
             )
         }
         .onAppear {
-            // ==================== 修改开始 ====================
             // 1. 触发财报趋势数据加载
             if let subSectors = sector.subSectors, !subSectors.isEmpty {
                 // 如果有子分组，则为所有子分组中的 symbols 请求数据
@@ -638,7 +674,14 @@ struct SectorDetailView: View {
                 // 并为这些 symbols 请求数据
                 dataService.fetchEarningTrends(for: symbols.map { $0.symbol })
             }
-            // ==================== 修改结束 ====================
+            
+            // 【新增】如果是 ETFs 页面，额外触发 Top/Bottom 数据的财报趋势加载
+            if sector.name == "ETFs" {
+                let extraSymbols = dataService.etfTopGainers.map { $0.symbol } + dataService.etfTopLosers.map { $0.symbol }
+                if !extraSymbols.isEmpty {
+                    dataService.fetchEarningTrends(for: extraSymbols)
+                }
+            }
         }
         // 新增：在导航栏添加工具栏
         .toolbar {
@@ -656,6 +699,17 @@ struct SectorDetailView: View {
             // 传入 dataService 并设置 isSearchActive 为 true，让搜索框自动激活
             SearchView(isSearchActive: true, dataService: dataService)
         }
+    }
+    
+    // 辅助视图：标题样式
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.title3)
+            .fontWeight(.bold)
+            .foregroundColor(.primary)
+            .padding(.top, 20)
+            .padding(.bottom, 8)
+            .padding(.leading, 4) // 对齐卡片边缘
     }
     
     func loadSymbolsForSubSector(_ symbols: [IndicesSymbol]) -> [IndicesSymbol] {
@@ -725,8 +779,6 @@ struct SymbolItemView: View {
     
     private var fallbackGroupName: String {
         switch sectorName {
-        case "ETFs_US":
-            return "ETFs"
         case "Economic_All":
             return "Economics"
         default:

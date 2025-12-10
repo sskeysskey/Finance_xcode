@@ -176,6 +176,12 @@ class DataService: ObservableObject {
     // 公开缓存：已获取的财报趋势
     @Published var earningTrends: [String: EarningTrend] = [:]
     
+    // 【新增】存储 ETFs 的 Top 10 和 Bottom 10
+    // 注意：这里假设 IndicesSymbol 在同一个 Target 下可见。
+    // 如果报错找不到 IndicesSymbol，请将 Indices.swift 中的 IndicesSymbol 结构体定义移动到一个单独的文件或 DataService.swift 顶部。
+    @Published var etfTopGainers: [IndicesSymbol] = []
+    @Published var etfTopLosers: [IndicesSymbol] = []
+    
     // High/Low
     @Published var highGroups: [HighLowGroup] = []
     @Published var lowGroups: [HighLowGroup] = []
@@ -227,6 +233,9 @@ class DataService: ObservableObject {
             await self.loadHighLowData()
             await self.loadCompareStock()
             await self.loadTagsWeight()
+            
+            // 【新增】加载 CompareETFs
+            await self.loadCompareETFs()
             
             // 2. 标记加载完成
             await MainActor.run {
@@ -466,6 +475,96 @@ class DataService: ObservableObject {
                 self.errorMessage = "加载 CompareStock 文件失败: \(error.localizedDescription)"
             }
         }
+    }
+
+    // MARK: - 新增：加载并解析 CompareETFs.txt
+    private func loadCompareETFs() async {
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "CompareETFs") else {
+            if !isInitialLoad {
+                print("DataService: CompareETFs 文件未在 Documents 中找到")
+            }
+            return
+        }
+        
+        do {
+            let content = try String(contentsOf: url, encoding: .utf8)
+            let lines = content.split(separator: "\n").map { String($0) }
+            
+            // 过滤空行
+            let validLines = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            
+            guard !validLines.isEmpty else { return }
+            
+            // 获取 Top 10 (前10行)
+            let top10Lines = validLines.prefix(10)
+            // 获取 Bottom 10 (后10行，并倒序)
+            let bottom10Lines = validLines.suffix(10).reversed()
+            
+            let topSymbols = top10Lines.compactMap { parseETFLineToSymbol($0) }
+            let bottomSymbols = bottom10Lines.compactMap { parseETFLineToSymbol($0) }
+            
+            await MainActor.run {
+                self.etfTopGainers = topSymbols
+                self.etfTopLosers = bottomSymbols
+            }
+            
+        } catch {
+            print("DataService: 解析 CompareETFs 文件时出错: \(error)")
+        }
+    }
+    
+    // 辅助方法：将一行文本解析为 IndicesSymbol
+    // 格式示例: "TUR.+     :   1.71%   81239        22.04%   土耳其, 股票"
+    private func parseETFLineToSymbol(_ line: String) -> IndicesSymbol? {
+        let parts = line.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2 else { return nil }
+        
+        // 1. 处理 Symbol 部分 (左边)
+        let rawSymbolPart = String(parts[0]).trimmingCharacters(in: .whitespaces)
+        // 去除后缀 (.*, .+, .-, ++, -- 等)
+        // 逻辑：找到第一个非字母数字字符的位置，截取前面的部分
+        let symbol: String
+        if let range = rawSymbolPart.range(of: "[^A-Za-z0-9]", options: .regularExpression) {
+            symbol = String(rawSymbolPart[..<range.lowerBound])
+        } else {
+            symbol = rawSymbolPart
+        }
+        
+        // 2. 处理数据部分 (右边)
+        let dataPart = String(parts[1]).trimmingCharacters(in: .whitespaces)
+        // 假设格式为: Value(百分比) Volume Percentage2 Description...
+        // 使用正则提取第一段百分比和最后面的描述
+        // 匹配：开头非空字符(Value) ... 中间任意 ... 结尾非空字符(Tags)
+        // 或者简单按空格分割
+        
+        let components = dataPart.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        
+        let value = components.first ?? ""
+        
+        // 尝试提取 Tags (描述)，通常在第3个字段之后，或者直接取后半部分
+        // 简单的策略：如果组件超过3个，剩下的就是 tags
+        var tags: [String]? = nil
+        if components.count >= 4 {
+            // 重新组合后面的部分作为 tags 字符串，然后按逗号分割
+            // 这里的索引 3 是基于示例 "1.71% (0) 81239 (1) 22.04% (2) 土耳其, 股票 (3...)"
+            // 但有时候中间数字可能少。
+            // 更稳妥的方式：找到最后一个百分比数字之后的内容。
+            
+            // 这里为了简单有效，我们假设前3个块是数据，后面是描述
+            let descriptionStartIndex = 3
+            if components.count > descriptionStartIndex {
+                let descriptionString = components[descriptionStartIndex...].joined(separator: " ")
+                tags = descriptionString.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+            }
+        } else if components.count > 1 {
+             // 容错处理
+             let descriptionString = components[1...].joined(separator: " ")
+             tags = descriptionString.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+        }
+        
+        // 构造 IndicesSymbol
+        // name 我们暂时用 symbol 代替，或者留空，因为 UI 主要显示 symbol 和 tags
+        return IndicesSymbol(symbol: symbol, name: symbol, value: value, tags: tags)
     }
     
     private func loadSectorsPanel() async {

@@ -736,33 +736,37 @@ class SearchViewModel: ObservableObject {
         loadSearchHistory()
     }
     
-    // 【新增】: 分析查询字符串，返回搜索约束条件
-    private func analyzeQueryConstraints(query: String) -> (skipDescription: Bool, forceExactMatch: Bool) {
+    // 【修改】: 增加 allowFuzzy 返回值
+    // 返回值: (是否跳过描述搜索, 是否强制精准全等匹配, 是否允许模糊/容错搜索)
+    private func analyzeQueryConstraints(query: String) -> (skipDescription: Bool, forceExactMatch: Bool, allowFuzzy: Bool) {
         let length = query.count
-        if length == 0 { return (false, false) }
+        if length == 0 { return (false, false, true) }
         
         // 1. 判断是否包含中文 (只要包含一个汉字即视为中文处理逻辑)
         if query.range(of: "\\p{Han}", options: .regularExpression) != nil {
-            if length >= 3 { return (false, false) }      // >=3: 一切如常
-            if length == 2 { return (true, false) }       // 2: 不搜描述
-            return (true, true)                           // 1: 不搜描述 + 精准匹配
+            if length >= 3 { return (false, false, true) }      // >=3: 一切如常 (允许模糊)
+            
+            // 【核心修改点】: 2个中文字 -> 跳过描述, 非强制全等(允许包含), 但禁止模糊搜索
+            if length == 2 { return (true, false, false) }
+            
+            return (true, true, false)                          // 1: 不搜描述 + 精准匹配 + 禁止模糊
         }
         
         // 2. 判断是否为纯数字
         if query.range(of: "^[0-9]+$", options: .regularExpression) != nil {
-            if length >= 3 { return (false, false) }      // >=3: 一切如常
-            if length == 2 { return (true, false) }       // 2: 不搜描述
-            return (true, true)                           // 1: 不搜描述 + 精准匹配
+            if length >= 3 { return (false, false, true) }      // >=3: 一切如常
+            if length == 2 { return (true, false, true) }       // 2: 不搜描述
+            return (true, true, false)                          // 1: 不搜描述 + 精准匹配
         }
         
         // 3. 默认为英文/其他
-        if length >= 4 { return (false, false) }          // >=4: 一切如常
-        if length == 3 { return (true, false) }           // 3: 不搜描述
-        return (true, true)                               // 1或2: 不搜描述 + 精准匹配
+        if length >= 4 { return (false, false, true) }          // >=4: 一切如常
+        if length == 3 { return (true, false, true) }           // 3: 不搜描述
+        return (true, true, false)                              // 1或2: 不搜描述 + 精准匹配
     }
     
     func performSearch(query: String, completion: @escaping ([GroupedSearchResults]) -> Void) {
-        // 获取约束条件
+        // 获取约束条件，现在包含 allowFuzzy
         let constraints = analyzeQueryConstraints(query: query)
         
         let keywords = query.lowercased().split(separator: " ").map { String($0) }
@@ -780,13 +784,13 @@ class SearchViewModel: ObservableObject {
             // 初始分类列表
             var categories: [MatchCategory] = [.stockSymbol, .etfSymbol, .stockName, .etfName, .stockTag, .etfTag, .stockDescription, .etfDescription]
             
-            // 【修改】: 如果约束条件要求跳过描述，直接从列表中移除，避免无用的计算
+            // 如果约束条件要求跳过描述，直接从列表中移除
             if constraints.skipDescription {
                 categories.removeAll { $0 == .stockDescription || $0 == .etfDescription }
             }
             
             for category in categories {
-                // 【修改】: 传递 forceExactMatch 参数
+                // 【修改】: 传递 forceExactMatch 和 allowFuzzy 参数
                 var matches: [(result: SearchResult, score: Int)] = []
                 
                 switch category {
@@ -794,13 +798,15 @@ class SearchViewModel: ObservableObject {
                     matches = self.searchCategory(items: descriptionData.stocks,
                                                   keywords: keywords,
                                                   category: category,
-                                                  forceExactMatch: constraints.forceExactMatch)
+                                                  forceExactMatch: constraints.forceExactMatch,
+                                                  allowFuzzy: constraints.allowFuzzy) // 传递 allowFuzzy
                     
                 case .etfSymbol, .etfName, .etfDescription, .etfTag:
                     matches = self.searchCategory(items: descriptionData.etfs,
                                                   keywords: keywords,
                                                   category: category,
-                                                  forceExactMatch: constraints.forceExactMatch)
+                                                  forceExactMatch: constraints.forceExactMatch,
+                                                  allowFuzzy: constraints.allowFuzzy) // 传递 allowFuzzy
                 }
                 
                 if !matches.isEmpty {
@@ -815,7 +821,7 @@ class SearchViewModel: ObservableObject {
                 return $0.priority > $1.priority
             }.map { $0.group }
             
-            // 【新增】缓存结果
+            // 缓存结果
             await MainActor.run {
                 if !keywords.isEmpty { self.addSearchHistory(term: query) }
                 self.groupedSearchResults = sortedGroups
@@ -911,17 +917,18 @@ class SearchViewModel: ObservableObject {
         return String(format: "%.0fK", kVolume)
     }
 
-    // 【修改】: 增加 forceExactMatch 参数
+    // 增加 forceExactMatch 参数，  增加 allowFuzzy 参数
     func searchCategory<T: SearchDescribableItem>(items: [T],
                                                   keywords: [String],
                                                   category: MatchCategory,
-                                                  forceExactMatch: Bool)
+                                                  forceExactMatch: Bool,
+                                                  allowFuzzy: Bool) // 新增参数
     -> [(result: SearchResult, score: Int)] {
         var scoredResults: [(SearchResult, Int)] = []
         
         for item in items {
-            // 传递 forceExactMatch
-            if let totalScore = matchScoreForItem(item, category: category, keywords: keywords, forceExactMatch: forceExactMatch) {
+            // 传递 allowFuzzy
+            if let totalScore = matchScoreForItem(item, category: category, keywords: keywords, forceExactMatch: forceExactMatch, allowFuzzy: allowFuzzy) {
                 let upperSymbol = item.symbol.uppercased()
                 let data = dataService.marketCapData[upperSymbol]
                 let marketCap = data?.marketCap
@@ -952,19 +959,20 @@ class SearchViewModel: ObservableObject {
        }
     }
     
-    // 【修改】: 增加 forceExactMatch 参数
+    // 【修改】: 增加 forceExactMatch 参数，增加 allowFuzzy 参数
     private func matchScoreForItem<T: SearchDescribableItem>(
         _ item: T,
         category: MatchCategory,
         keywords: [String],
-        forceExactMatch: Bool) -> Int? {
+        forceExactMatch: Bool,
+        allowFuzzy: Bool) -> Int? { // 新增参数
         
         var totalScore = 0
         
         for keyword in keywords {
             let lowerKeyword = keyword.lowercased()
-            // 传递 forceExactMatch
-            let singleScore = scoreOfSingleMatch(item: item, keyword: lowerKeyword, category: category, forceExactMatch: forceExactMatch)
+            // 传递 allowFuzzy
+            let singleScore = scoreOfSingleMatch(item: item, keyword: lowerKeyword, category: category, forceExactMatch: forceExactMatch, allowFuzzy: allowFuzzy)
             if singleScore <= 0 {
                 return nil
             } else {
@@ -974,28 +982,29 @@ class SearchViewModel: ObservableObject {
         return totalScore
     }
     
-    // 【修改】: 增加 forceExactMatch 参数
+    // 【修改】: 增加 forceExactMatch 参数，增加 allowFuzzy 参数
     private func scoreOfSingleMatch<T: SearchDescribableItem>(
         item: T,
         keyword: String,
         category: MatchCategory,
-        forceExactMatch: Bool) -> Int {
+        forceExactMatch: Bool,
+        allowFuzzy: Bool) -> Int { // 新增参数
         
         switch category {
         case .stockSymbol, .etfSymbol:
-            return matchSymbol(item.symbol.lowercased(), keyword: keyword, forceExactMatch: forceExactMatch)
+            return matchSymbol(item.symbol.lowercased(), keyword: keyword, forceExactMatch: forceExactMatch, allowFuzzy: allowFuzzy)
         case .stockName, .etfName:
-            return matchName(item.name, keyword: keyword, forceExactMatch: forceExactMatch)
+            return matchName(item.name, keyword: keyword, forceExactMatch: forceExactMatch, allowFuzzy: allowFuzzy)
         case .stockTag, .etfTag:
-            return matchTags(item.tag, keyword: keyword, forceExactMatch: forceExactMatch)
+            return matchTags(item.tag, keyword: keyword, forceExactMatch: forceExactMatch, allowFuzzy: allowFuzzy)
         case .stockDescription, .etfDescription:
             // Description 已经被上层逻辑过滤掉了，但为了安全起见，这里也可以处理
             return matchDescriptions(item.description1, item.description2, keyword: keyword)
         }
     }
     
-    // 【修改】: 实现 forceExactMatch 逻辑
-    private func matchSymbol(_ symbol: String, keyword: String, forceExactMatch: Bool) -> Int {
+    // 【修改】: 实现 forceExactMatch 逻辑，增加 allowFuzzy 逻辑
+    private func matchSymbol(_ symbol: String, keyword: String, forceExactMatch: Bool, allowFuzzy: Bool) -> Int {
         if symbol == keyword {
             return 3
         }
@@ -1005,14 +1014,14 @@ class SearchViewModel: ObservableObject {
         
         if symbol.contains(keyword) {
             return 2
-        } else if isFuzzyMatch(text: symbol, keyword: keyword, maxDistance: 1) {
+        } else if allowFuzzy && isFuzzyMatch(text: symbol, keyword: keyword, maxDistance: 1) { // 检查 allowFuzzy
             return 1
         }
         return 0
     }
     
-    // 【修改】: 实现 forceExactMatch 逻辑
-    private func matchName(_ name: String, keyword: String, forceExactMatch: Bool) -> Int {
+    // 【修改】: 实现 forceExactMatch 逻辑，增加 allowFuzzy 逻辑
+    private func matchName(_ name: String, keyword: String, forceExactMatch: Bool, allowFuzzy: Bool) -> Int {
         let lowercasedName = name.lowercased()
         
         // 1. 全等匹配 (最高优先级，无论是否强制精准)
@@ -1034,14 +1043,14 @@ class SearchViewModel: ObservableObject {
             return 2
         } else if lowercasedName.contains(keyword) {
             return 1
-        } else if isFuzzyMatch(text: lowercasedName, keyword: keyword, maxDistance: 1) {
+        } else if allowFuzzy && isFuzzyMatch(text: lowercasedName, keyword: keyword, maxDistance: 1) { // 检查 allowFuzzy
             return 1
         }
         return 0
     }
     
-    // 【修改】: 实现 forceExactMatch 逻辑
-    private func matchTags(_ tags: [String], keyword: String, forceExactMatch: Bool) -> Int {
+    // 【修改】: 实现 forceExactMatch 逻辑，增加 allowFuzzy 逻辑
+    private func matchTags(_ tags: [String], keyword: String, forceExactMatch: Bool, allowFuzzy: Bool) -> Int {
         var maxScore = 0
         for t in tags {
             let lowerTag = t.lowercased()
@@ -1053,7 +1062,7 @@ class SearchViewModel: ObservableObject {
                 // 只有非强制精准匹配时，才进行部分匹配和模糊匹配
                 if lowerTag.contains(keyword) {
                     score = 2
-                } else if isFuzzyMatch(text: lowerTag, keyword: keyword, maxDistance: 1) {
+                } else if allowFuzzy && isFuzzyMatch(text: lowerTag, keyword: keyword, maxDistance: 1) { // 检查 allowFuzzy
                     score = 1
                 }
             }
