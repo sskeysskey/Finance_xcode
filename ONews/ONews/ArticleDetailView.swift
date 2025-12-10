@@ -169,12 +169,14 @@ struct ArticleDetailView: View {
                 HStack {
                     // 【修改】按钮的 action 现在调用 onAudioToggle 闭包
                     Button(action: onAudioToggle) {
-                        Image(systemName: audioPlayerManager.isPlaybackActive ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        Image(systemName: audioPlayerManager.isPlaybackActive ? "headphones.slash" : "headphones")
                     }
                     .disabled(audioPlayerManager.isSynthesizing)
                     
                     Button { isSharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
                 }
+                // 【修改点1】这里添加 .primary 颜色，使图标变为黑白（跟随系统主题）
+                .foregroundColor(.primary)
             }
         }
         .navigationBarTitleDisplayMode(.inline)

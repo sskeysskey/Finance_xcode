@@ -1286,27 +1286,21 @@ struct MiniAudioBubbleView: View {
         VStack {
             Spacer()
             Button(action: onTap) { // 【修改】使用传入的 onTap 闭包
-                HStack(spacing: 8) {
-                    // 【修改】根据 isPlaybackActive 改变图标
-                    Image(systemName: isPlaybackActive ? "waveform.circle.fill" : "waveform.circle")
-                        .font(.system(size: 22, weight: .semibold))
-                        // 【新增】当播放激活时，应用脉冲缩放效果
-                        .scaleEffect(isPulsing && isPlaybackActive ? 1.1 : 1.0)
-                }
-                .foregroundColor(.white)
-                .padding(.vertical, 9)
-                .padding(.horizontal, 12)
-                .background(.black.opacity(0.8))
-                .clipShape(Capsule())
-                .shadow(radius: 6)
-                // 【新增】定义脉冲动画
-                .animation(
-                    isPlaybackActive ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default,
-                    value: isPulsing
-                )
+                // 直接放置 Image，移除外层的 HStack（如果只有一个图标，HStack 是多余的）
+                Image(systemName: isPlaybackActive ? "headphones.circle" : "headphones.circle.fill")
+                    .font(.system(size: 40)) // 【可选】稍微调大一点图标尺寸，因为没有背景了
+                    .foregroundColor(.white) // 图标颜色，根据您的背景调整，这里设为白色
+                    .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2) // 【新增】添加一点阴影让图标在复杂背景上更清晰
+                    // 【新增】当播放激活时，应用脉冲缩放效果
+                    .scaleEffect(isPulsing && isPlaybackActive ? 1.1 : 1.0)
+                    // 【新增】定义脉冲动画
+                    .animation(
+                        isPlaybackActive ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default,
+                        value: isPulsing
+                    )
             }
-            .padding(.leading, 8)
-            .padding(.bottom, 4)
+            .padding(.leading, 16) // 调整外边距位置
+            .padding(.bottom, 16)
             .onAppear {
                 // 视图出现时启动动画状态切换
                 self.isPulsing = true
