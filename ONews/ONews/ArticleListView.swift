@@ -322,6 +322,9 @@ struct ArticleListView: View {
     // 【新增】控制订阅弹窗
     @State private var showSubscriptionSheet = false
     
+    // 【修复需求】新增一个状态变量，用于记录是否已经执行过初始的自动展开逻辑
+    @State private var hasPerformedAutoExpansion = false
+    
     private var source: NewsSource? {
         viewModel.sources.first(where: { $0.name == sourceName })
     }
@@ -416,8 +419,13 @@ struct ArticleListView: View {
                         }
                     }
                     .listStyle(PlainListStyle())
-                    // 【修改】在 onAppear 中调用新的自动展开逻辑
-                    .onAppear(perform: autoExpandGroups)
+                    // 【修复需求】修改 onAppear 逻辑：仅在首次进入时执行自动展开
+                    .onAppear {
+                        if !hasPerformedAutoExpansion {
+                            autoExpandGroups()
+                            hasPerformedAutoExpansion = true
+                        }
+                    }
                     
                     if !isSearchActive {
                         Picker("Filter", selection: $filterMode) {
@@ -428,7 +436,7 @@ struct ArticleListView: View {
                         }
                         .pickerStyle(.segmented)
                         .padding([.horizontal, .bottom])
-                        // 【修改】当筛选模式改变时，也触发自动展开逻辑
+                        // 【修改】当筛选模式改变时，强制重新执行自动展开逻辑（无视 hasPerformedAutoExpansion）
                         .onChange(of: filterMode) { _, _ in
                             autoExpandGroups()
                         }
@@ -637,6 +645,9 @@ struct AllArticlesListView: View {
     // 【新增】
     @State private var showSubscriptionSheet = false
     
+    // 【修复需求】新增一个状态变量，用于记录是否已经执行过初始的自动展开逻辑
+    @State private var hasPerformedAutoExpansion = false
+    
     private var baseFilteredArticles: [ArticleItem] {
         viewModel.allArticlesSortedForDisplay
             .filter { item in
@@ -709,8 +720,13 @@ struct AllArticlesListView: View {
                     }
                 }
                 .listStyle(PlainListStyle())
-                // 【修改】在 onAppear 中调用新的自动展开逻辑
-                .onAppear(perform: autoExpandGroups)
+                // 【修复需求】修改 onAppear 逻辑：仅在首次进入时执行自动展开
+                .onAppear {
+                    if !hasPerformedAutoExpansion {
+                        autoExpandGroups()
+                        hasPerformedAutoExpansion = true
+                    }
+                }
                 
                 if !isSearchActive {
                     Picker("Filter", selection: $filterMode) {
@@ -721,7 +737,7 @@ struct AllArticlesListView: View {
                     }
                     .pickerStyle(.segmented)
                     .padding([.horizontal, .bottom])
-                    // 【修改】当筛选模式改变时，也触发自动展开逻辑
+                    // 【修改】当筛选模式改变时，强制重新执行自动展开逻辑（无视 hasPerformedAutoExpansion）
                     .onChange(of: filterMode) { _, _ in
                         autoExpandGroups()
                     }
