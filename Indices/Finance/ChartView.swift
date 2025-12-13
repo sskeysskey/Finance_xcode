@@ -197,8 +197,9 @@ struct ChartView: View {
     @State private var threeWeeksBeforeRange: (start: Date, end: Date)? = nil
     @State private var oneWeekBeforeRange: (start: Date, end: Date)? = nil
     
-    // ==================== 新增：第五周遮罩状态 ====================
+    // ==================== 修改：第五周和第三周遮罩状态 ====================
     @State private var fifthWeekRange: (start: Date, end: Date)? = nil
+    @State private var thirdWeekRange: (start: Date, end: Date)? = nil // 新增这一行
     // ==================== 结束 ====================
     
     @Environment(\.colorScheme) var colorScheme
@@ -526,9 +527,15 @@ struct ChartView: View {
                                 drawRange(oneWeek, tint: .blue)
                             }
                             
-                            // ==================== 新增：绘制第五周遮罩 ====================
+                            // ==================== 修改：绘制第五周和第三周遮罩 ====================
+                            // 绘制第五周 (蓝色)
                             if let fifthWeek = fifthWeekRange {
                                 drawRange(fifthWeek, tint: .blue)
+                            }
+                            
+                            // 新增：绘制第三周 (紫色)
+                            if let thirdWeek = thirdWeekRange {
+                                drawRange(thirdWeek, tint: .purple)
                             }
                             // ==================== 结束 ====================
                             
@@ -1086,14 +1093,22 @@ struct ChartView: View {
                 sampledChartData = sampledData
                 earningData = earnings
                 
-                // ==================== 新增：计算第五周遮罩 ====================
+                // ==================== 修改：计算第五周和第三周遮罩 ====================
                 // 从 earning 数据库表获取最新一期财报日期
                 if let latestEarningDate = earnings.max(by: { $0.date < $1.date })?.date {
                     // 往后推4周，到第5周（5 weeks forward），计算周一到周五
                     fifthWeekRange = calculateWeekRangeForward(from: latestEarningDate, weeksForward: 5)
-                    print("最新财报日期: \(latestEarningDate), 第五周区间: \(String(describing: fifthWeekRange))")
+                    
+                    // 新增：往后推2周，到第3周（3 weeks forward）
+                    // 也就是第五周再往前推两周 (5 - 2 = 3)
+                    thirdWeekRange = calculateWeekRangeForward(from: latestEarningDate, weeksForward: 3)
+                    
+                    print("最新财报日期: \(latestEarningDate)")
+                    print("第五周区间: \(String(describing: fifthWeekRange))")
+                    print("第三周区间: \(String(describing: thirdWeekRange))")
                 } else {
                     fifthWeekRange = nil
+                    thirdWeekRange = nil // 如果没有财报数据，置空
                 }
                 // ==================== 结束 ====================
                 
