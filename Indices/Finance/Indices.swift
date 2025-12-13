@@ -244,12 +244,16 @@ struct IndicesContentView: View {
     // 存储传给二级页面的数据
     @State private var weekLowSectorsData: [IndicesSector] = []
     
+    // 【新增】控制跳转到“10年新高”页面
+    @State private var navigateToTenYearHigh = false
+    
     // 定义分组名称
     private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "ETFs", "Economic_All", "Economics", "Indices"])
     // 【修改点】移除了 "Strategy34"
     private let strategyGroupNames = Set(["Strategy12", "PE_valid", "PE_invalid", "Must"])
     // 这些是放在“52周新低”里面的
     private let weekLowGroupNames = Set(["Basic_Materials", "Communication_Services", "Consumer_Cyclical", "Consumer_Defensive", "Energy", "Financial_Services", "Healthcare", "Industrials", "Real_Estate", "Technology", "Utilities"])
+    
     
     // 【修改点 1】改为 3 列布局，以适应图标样式但保持紧凑
     private let gridLayout = [
@@ -275,7 +279,6 @@ struct IndicesContentView: View {
                         // MARK: - 第一组：经济数据
                         VStack(alignment: .leading, spacing: 10) {
                             SectionHeader(title: "经济数据", icon: "globe.asia.australia.fill", color: .purple)
-                            
                             LazyVGrid(columns: gridLayout, spacing: 10) {
                                 ForEach(economySectors) { sector in
                                     Button {
@@ -294,7 +297,7 @@ struct IndicesContentView: View {
                         .padding(.horizontal, 12)
                         .padding(.top, 10)
                         
-                        // MARK: - 第二组：每日荐股
+                        // MARK: - 第二组：每日荐股 (在此处添加按钮)
                         VStack(alignment: .leading, spacing: 10) {
                             SectionHeader(title: "每日荐股", icon: "star.fill", color: .blue)
                             
@@ -320,7 +323,24 @@ struct IndicesContentView: View {
                                     CompactSectorCard(
                                         sectorName: "52周新低",
                                         icon: "arrow.down.right.circle.fill",
-                                        baseColor: .blue, // 这里改为了 .blue
+                                        baseColor: .blue,
+                                        isSpecial: true
+                                    )
+                                }
+                                
+                                // 2. 【新增】10年新高按钮
+                                Button {
+                                    // 这里可以使用 openList 行为进行扣点检查
+                                    if usageManager.canProceed(authManager: authManager, action: .openList) {
+                                        self.navigateToTenYearHigh = true
+                                    } else {
+                                        self.showSubscriptionSheet = true
+                                    }
+                                } label: {
+                                    CompactSectorCard(
+                                        sectorName: "10年新高",
+                                        icon: "arrow.up.right.circle.fill", // 上升图标
+                                        baseColor: .red, // 红色代表高/热
                                         isSpecial: true
                                     )
                                 }
@@ -340,6 +360,10 @@ struct IndicesContentView: View {
                 // 【修改点 4】跳转到移植过来的 FiftyOneLowView
                 .navigationDestination(isPresented: $navigateToWeekLow) {
                     FiftyOneLowView(sectors: weekLowSectorsData)
+                }
+                // 【新增】跳转到 10年新高 页面
+                .navigationDestination(isPresented: $navigateToTenYearHigh) {
+                    TenYearHighView()
                 }
                 
             } else {
@@ -391,6 +415,110 @@ struct IndicesContentView: View {
         case "Strategy34": return "4.circle"
         default: return "chart.pie.fill"
         }
+    }
+}
+
+// MARK: - 【新增】10年新高 专属页面
+struct TenYearHighView: View {
+    @EnvironmentObject var dataService: DataService
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // 顶部说明
+                HStack {
+                    Image(systemName: "flame.fill")
+                        .foregroundColor(.red)
+                    Text("这些股票处于10年高位，动能强劲。")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal)
+                .padding(.top, 10)
+                
+                if dataService.tenYearHighSectors.isEmpty {
+                    // 空状态处理
+                    VStack(spacing: 20) {
+                        Spacer()
+                        Text("暂无数据或正在加载...")
+                            .foregroundColor(.gray)
+                        Spacer()
+                    }
+                    .frame(height: 200)
+                } else {
+                    // 遍历所有分组
+                    LazyVStack(spacing: 16) {
+                        ForEach(dataService.tenYearHighSectors) { sector in
+                            CollapsibleSectorSection(sector: sector)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+            }
+            .padding(.bottom, 20)
+        }
+        .navigationTitle("10年新高")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(UIColor.systemGroupedBackground))
+    }
+}
+
+// MARK: - 【新增】可折叠的分组视图
+struct CollapsibleSectorSection: View {
+    let sector: IndicesSector
+    // 默认展开
+    @State private var isExpanded: Bool = false
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // 1. 头部 (点击可折叠/展开)
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            }) {
+                HStack {
+                    Text(sector.name.replacingOccurrences(of: "_", with: " "))
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    
+                    Text("(\(sector.symbols.count))")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.gray)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .padding()
+                .background(Color(UIColor.secondarySystemGroupedBackground))
+            }
+            
+            // 2. 内容区域 (Symbols)
+            if isExpanded {
+                VStack(spacing: 0) {
+                    Divider() // 分隔线
+                    
+                    ForEach(sector.symbols) { symbol in
+                        // 复用现有的 SymbolItemView，它已经包含了点击跳转图表、权限检查、样式等逻辑
+                        // 注意：SymbolItemView 内部有 padding，这里为了列表紧凑，可以稍微调整外层容器
+                        SymbolItemView(symbol: symbol, sectorName: sector.name)
+                            .padding(.horizontal, 8) // 稍微内缩一点
+                            .padding(.vertical, 2)
+                    }
+                }
+                .background(Color(UIColor.secondarySystemGroupedBackground))
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .cornerRadius(12)
+        // 给整个卡片加阴影
+        .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
     }
 }
 

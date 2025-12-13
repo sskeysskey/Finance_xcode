@@ -193,6 +193,9 @@ class DataService: ObservableObject {
     
     // MARK: - 新增：tags 权重（合并自 DataService1）
     @Published var tagsWeightConfig: [Double: [String]] = [:]
+
+    // 【新增】存储 10年新高 的数据
+    @Published var tenYearHighSectors: [IndicesSector] = []
     
     private var isDataLoaded = false
     private var isInitialLoad: Bool {
@@ -233,10 +236,9 @@ class DataService: ObservableObject {
             await self.loadHighLowData()
             await self.loadCompareStock()
             await self.loadTagsWeight()
-            
-            // 【新增】加载 CompareETFs
             await self.loadCompareETFs()
-            
+            // 【新增】加载 10年新高数据
+            await self.loadTenYearHighData()
             // 2. 标记加载完成
             await MainActor.run {
                 self.isDataLoaded = true
@@ -245,6 +247,83 @@ class DataService: ObservableObject {
             
             // 3. 启动网络请求 (本身就是 async 的)
             await self.loadMarketCapData()
+        }
+    }
+    
+    // MARK: - 【新增】加载并解析 10年新高数据
+    private func loadTenYearHighData() async {
+        // 使用 getLatestFileUrl 自动匹配日期后缀 (例如 10Y_newhigh_stock_251212.txt)
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "10Y_newhigh_stock") else {
+            if !isInitialLoad {
+                print("DataService: 10Y_newhigh_stock 文件未在 Documents 中找到")
+            }
+            return
+        }
+        
+        do {
+            let content = try String(contentsOf: url, encoding: .utf8)
+            let lines = content.split(separator: "\n")
+            
+            // 临时字典用于分组： [GroupName: [Symbols]]
+            var tempGroups: [String: [IndicesSymbol]] = [:]
+            
+            for line in lines {
+                let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+                if trimmedLine.isEmpty { continue }
+                
+                // 解析行: "Basic_Materials HBM 0.32%*++ 18.68 铜,铜矿..."
+                // 按空格分割，限制分割次数，确保 tags 部分保持完整（如果有空格）
+                // 至少需要: Group, Symbol, Value
+                let parts = trimmedLine.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: true)
+                
+                if parts.count >= 3 {
+                    let groupName = String(parts[0])
+                    let symbolStr = String(parts[1])
+                    let valueStr = String(parts[2]) // e.g. "0.32%*++"
+                    
+                    // 处理 Price 和 Tags
+                    // 原格式: Group Symbol Value Price Tags...
+                    // 我们把 Price 和 Tags 合并显示在 Tags 区域，或者只显示 Tags
+                    var tags: [String]? = nil
+                    
+                    // 尝试提取 Price 和后续描述
+                    if parts.count >= 4 {
+                        let price = String(parts[3])
+                        var descriptionStr = ""
+                        if parts.count >= 5 {
+                            descriptionStr = String(parts[4])
+                        }
+                        
+                        // 将价格和描述组合，或者只用描述。这里为了信息完整，我们将价格放在 tags 的第一个位置
+                        let combinedTagStr = "\(price), " + descriptionStr
+                        tags = combinedTagStr.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+                    }
+                    
+                    let symbolItem = IndicesSymbol(
+                        symbol: symbolStr,
+                        name: symbolStr, // 暂时用 symbol 当名字
+                        value: valueStr,
+                        tags: tags
+                    )
+                    
+                    if tempGroups[groupName] == nil {
+                        tempGroups[groupName] = []
+                    }
+                    tempGroups[groupName]?.append(symbolItem)
+                }
+            }
+            
+            // 将字典转换为 [IndicesSector] 数组，并按名称排序
+            let sectors = tempGroups.map { (key, value) in
+                IndicesSector(name: key, symbols: value)
+            }.sorted { $0.name < $1.name }
+            
+            await MainActor.run {
+                self.tenYearHighSectors = sectors
+            }
+            
+        } catch {
+            print("DataService: 解析 10Y_newhigh_stock 文件时出错: \(error)")
         }
     }
     
