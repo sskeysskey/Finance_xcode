@@ -200,6 +200,28 @@ struct SectorsPanel: Decodable {
             }
         }
         
+        // MARK: - 【新增逻辑】合并 Strategy12 和 Strategy34
+        // 1. 找到两个板块的索引
+        if let idx12 = sectors.firstIndex(where: { $0.name == "Strategy12" }),
+           let idx34 = sectors.firstIndex(where: { $0.name == "Strategy34" }) {
+            
+            let sector12 = sectors[idx12]
+            let sector34 = sectors[idx34]
+            
+            // 2. 合并 symbols (将 34 的内容追加到 12 后面)
+            let mergedSymbols = sector12.symbols + sector34.symbols
+            
+            // 3. 更新 Strategy12 (保留原名 Strategy12，因为 UI 上它已经映射为“系统3”)
+            sectors[idx12] = IndicesSector(
+                name: sector12.name,
+                symbols: mergedSymbols,
+                subSectors: sector12.subSectors // 假设它们没有子分组，如果有也会保留
+            )
+            
+            // 4. 从数组中移除 Strategy34
+            sectors.remove(at: idx34)
+        }
+        
         self.sectors = sectors
     }
 }
@@ -224,7 +246,8 @@ struct IndicesContentView: View {
     
     // 定义分组名称
     private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "ETFs", "Economic_All", "Economics", "Indices"])
-    private let strategyGroupNames = Set(["Strategy12", "Strategy34", "PE_valid", "PE_invalid", "Must"])
+    // 【修改点】移除了 "Strategy34"
+    private let strategyGroupNames = Set(["Strategy12", "PE_valid", "PE_invalid", "Must"])
     // 这些是放在“52周新低”里面的
     private let weekLowGroupNames = Set(["Basic_Materials", "Communication_Services", "Consumer_Cyclical", "Consumer_Defensive", "Energy", "Financial_Services", "Healthcare", "Industrials", "Real_Estate", "Technology", "Utilities"])
     

@@ -201,8 +201,8 @@ struct CustomTabBar: View {
             // 均匀分布的四个按钮
             tabButton(title: "涨幅榜", icon: "arrow.up.right.circle.fill", color: .red, destination: .gainers)
             tabButton(title: "跌幅榜", icon: "arrow.down.right.circle.fill", color: .green, destination: .losers)
-            tabButton(title: "新低", icon: "thermometer.snowflake", color: .blue, destination: .lows)
-            tabButton(title: "新高", icon: "flame.fill", color: .orange, destination: .highs)
+            tabButton(title: "非股票新低", icon: "thermometer.snowflake", color: .blue, destination: .lows)
+            tabButton(title: "非股票新高", icon: "flame.fill", color: .orange, destination: .highs)
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 16)
