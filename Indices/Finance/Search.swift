@@ -117,7 +117,7 @@ struct SearchContentView: View {
         HStack(spacing: 15) {
             // 1. 比较按钮
             ToolButton(
-                title: "比较",
+                title: "对比",
                 icon: "chart.line.uptrend.xyaxis",
                 color: .blue
             ) {
