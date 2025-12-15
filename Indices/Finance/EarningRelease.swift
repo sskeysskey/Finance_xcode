@@ -38,21 +38,39 @@ struct EarningReleaseView: View {
     @State private var showSearchView = false
 
     private var groupedReleases: [DateGroup] {
-        let groupedByDate = Dictionary(grouping: dataService.earningReleases, by: { $0.date })
+        // 1. 【新增】定义一个格式化器，生成 "yyyy-MM-dd" 格式的字符串
+        // 这样既包含了年份用于正确排序，又可以作为分组的 Key
+        let keyFormatter = DateFormatter()
+        keyFormatter.dateFormat = "yyyy-MM-dd"
+        
+        // 2. 【修改】使用 fullDate 生成带年份的 Key 进行分组
+        // 原代码使用的是 $0.date (只有月-日)，导致排序时 "01-xx" 永远排在 "12-xx" 前面
+        let groupedByDate = Dictionary(grouping: dataService.earningReleases, by: { release in
+            keyFormatter.string(from: release.fullDate)
+        })
+        
         var dateGroups: [DateGroup] = []
-        for (date, releasesOnDate) in groupedByDate {
+        for (dateKey, releasesOnDate) in groupedByDate {
             let groupedByTiming = Dictionary(grouping: releasesOnDate, by: { $0.timing })
             var timingGroups: [TimingGroup] = []
             for (timing, items) in groupedByTiming {
-                let timingGroup = TimingGroup(id: "\(date)-\(timing)", timing: timing, items: items)
+                // ID 使用 dateKey 保证唯一性
+                let timingGroup = TimingGroup(id: "\(dateKey)-\(timing)", timing: timing, items: items)
                 timingGroups.append(timingGroup)
             }
             let timingOrder: [String: Int] = ["BMO": 0, "AMC": 1, "TNS": 2]
             timingGroups.sort { (timingOrder[$0.timing] ?? 99) < (timingOrder[$1.timing] ?? 99) }
-            let dateGroup = DateGroup(id: date, date: date, timingGroups: timingGroups)
+            
+            // 3. 【修改】这里传入 dateKey (例如 "2025-12-15")
+            // 这样列表标题也会显示年份，避免用户混淆是哪一年的1月
+            let dateGroup = DateGroup(id: dateKey, date: dateKey, timingGroups: timingGroups)
             dateGroups.append(dateGroup)
         }
+        
+        // 4. 【排序】因为 dateKey 是 "yyyy-MM-dd" 格式，字符串排序即可保证时间顺序
+        // "2025-12-xx" 会正确地排在 "2026-01-xx" 前面
         dateGroups.sort { $0.date < $1.date }
+        
         return dateGroups
     }
 

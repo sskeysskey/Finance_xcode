@@ -744,7 +744,9 @@ struct SectorDetailView: View {
                 // MARK: - 特殊处理 ETFs 分组
                 if sector.name == "ETFs" {
                     // 1. Pinned (原 Sectors_panel 中的内容)
-                    sectionTitle("Pinned")
+                    // 【修改】使用新的漂亮标题组件
+                    EtfSectionHeader(title: "Pinned", icon: "pin.fill", color: .blue)
+                    
                     LazyVStack(spacing: 0) {
                         ForEach(symbols) { symbol in
                             SymbolItemView(symbol: symbol, sectorName: sector.name)
@@ -753,7 +755,9 @@ struct SectorDetailView: View {
                     
                     // 2. Top 10 (来自 CompareETFs.txt)
                     if !dataService.etfTopGainers.isEmpty {
-                        sectionTitle("Top 10")
+                        // 【修改】红色上升主题
+                        EtfSectionHeader(title: "Top 10 Gainers", icon: "chart.line.uptrend.xyaxis", color: .red)
+                        
                         LazyVStack(spacing: 0) {
                             ForEach(dataService.etfTopGainers) { symbol in
                                 SymbolItemView(symbol: symbol, sectorName: sector.name)
@@ -763,7 +767,9 @@ struct SectorDetailView: View {
                     
                     // 3. Bottom 10 (来自 CompareETFs.txt)
                     if !dataService.etfTopLosers.isEmpty {
-                        sectionTitle("Bottom 10")
+                        // 【修改】绿色下降主题
+                        EtfSectionHeader(title: "Bottom 10 Losers", icon: "chart.line.downtrend.xyaxis", color: .green)
+                        
                         LazyVStack(spacing: 0) {
                             ForEach(dataService.etfTopLosers) { symbol in
                                 SymbolItemView(symbol: symbol, sectorName: sector.name)
@@ -777,10 +783,12 @@ struct SectorDetailView: View {
                     if let subSectors = sector.subSectors, !subSectors.isEmpty {
                         ForEach(subSectors, id: \.name) { subSector in
                             VStack(alignment: .leading, spacing: 8) {
+                                // 常规子分组标题也可以稍微美化一下，或者保持原样
                                 Text(subSector.name)
                                     .font(.headline)
                                     .padding(.horizontal)
                                     .padding(.top, 16)
+                                    .foregroundColor(.secondary)
                                 
                                 LazyVStack(spacing: 0) {
                                     ForEach(loadSymbolsForSubSector(subSector.symbols)) { symbol in
@@ -906,7 +914,51 @@ struct SectorDetailView: View {
     }
 }
 
-// ==================== 修改开始：整个 SymbolItemView 被重写 ====================
+// MARK: - 【新增】漂亮的 ETF 分组标题组件
+
+struct EtfSectionHeader: View {
+    let title: String
+    let icon: String
+    let color: Color
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // 1. 左侧图标：带圆形淡色背景
+            ZStack {
+                Circle()
+                    .fill(color.opacity(0.15)) // 淡色背景
+                    .frame(width: 38, height: 38)
+                
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(color)
+            }
+            
+            // 2. 标题文字
+            Text(title)
+                .font(.title3)
+                .fontWeight(.bold)
+                .foregroundColor(.primary)
+            
+            Spacer()
+            
+            // 3. 右侧装饰条：渐变胶囊形状
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: [color, color.opacity(0.2)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(width: 50, height: 4)
+        }
+        .padding(.top, 24) // 增加顶部间距，与上一组内容分开
+        .padding(.bottom, 12) // 底部留白
+        .padding(.horizontal, 4)
+    }
+}
+
 struct SymbolItemView: View {
     let symbol: IndicesSymbol
     let sectorName: String

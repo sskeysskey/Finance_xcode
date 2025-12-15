@@ -88,10 +88,12 @@ struct GroupHeaderView: View {
         HStack {
             Text(category.rawValue)
                 .font(.headline)
-                .foregroundColor(.gray)
+                // 【修改】: 从 .gray 改为 .secondary，更符合系统原生风格
+                .foregroundColor(.secondary)
             Spacer()
             Image(systemName: isCollapsed ? "chevron.down" : "chevron.up")
-                .foregroundColor(.gray)
+                // 【修改】: 同上
+                .foregroundColor(.secondary)
         }
         .contentShape(Rectangle())
         .onTapGesture {
@@ -603,15 +605,16 @@ struct SearchResultRow: View {
                         // 【修改】: 应用动态颜色
                         Text(result.symbol)
                             .foregroundColor(colorForEarningTrend(result.earningTrend))
+                            .fontWeight(.bold) // 稍微加粗一点，让颜色更明显
                         Text(result.name)
-                            .foregroundColor(.primary)
+                            .foregroundColor(.primary) // 确保名字也是自适应颜色
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
                     .font(.headline)
                     Text(result.tag.joined(separator: ", "))
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.secondary) // 使用 secondary 替代 gray
                 }
                 Spacer()
             }
@@ -626,11 +629,11 @@ struct SearchResultRow: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
-                if let pb = result.pb, pb != "--" {  // 添加 PB 的显示
-                                    Text(pb)
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
-                                }
+                if let pb = result.pb, pb != "--" {
+                    Text(pb)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
                 if let compare = result.compare {
                     Text(compare)
                         .font(.subheadline)
@@ -647,19 +650,22 @@ struct SearchResultRow: View {
         .padding(.vertical, 4)
     }
     
-    // 【新增】: 根据 EarningTrend 返回颜色的辅助函数
+    // 【修改】: 修复了 Light Mode 下看不到文字的问题，并优化了对比度
     private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
         switch trend {
         case .positiveAndUp:
-            return .red // 红色
+            return .red // 红色 (通常在浅色/深色都可见)
         case .negativeAndUp:
             return .purple // 紫色
         case .positiveAndDown:
             return .cyan // 蓝色
         case .negativeAndDown:
-            return .green // 绿色
+            // 原来的 .green 在白背景下有时对比度不够，使用系统 green 通常可以，但在浅色模式下 .green 稍显刺眼，这里保持 .green 即可，或者用 .mint
+            return .green 
         case .insufficientData:
-            return .white // 默认白色
+            // 【核心修复】: 以前是 .white，导致浅色模式不可见。
+            // 改为 .primary，它会自动变色（浅色模式黑字，深色模式白字）。
+            return .primary 
         }
     }
     
@@ -668,7 +674,7 @@ struct SearchResultRow: View {
         if value.contains("前") || value.contains("后") || value.contains("未") {
             return .orange
         } else {
-            return .secondary // 默认颜色
+            return .secondary // 默认颜色使用 .secondary 灰色
         }
     }
 }
