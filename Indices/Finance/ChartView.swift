@@ -173,10 +173,17 @@ struct ChartView: View {
 
     // 【新增】控制跳转到期权详情页
     @State private var navigateToOptionsDetail = false
+
+    // ⬇️⬇️⬇️ 【请补上这一行】 ⬇️⬇️⬇️
+    @State private var showSubscriptionSheet = false 
     
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.presentationMode) var presentationMode
+    
+    // MARK: - 核心修复：引入 EnvironmentObject
     @EnvironmentObject var dataService: DataService
+    @EnvironmentObject var authManager: AuthManager   // 【修复】引入 AuthManager
+    @EnvironmentObject var usageManager: UsageManager // 【修复】引入 UsageManager
     
     private var earningTrend: EarningTrend {
         dataService.earningTrends[symbol.uppercased()] ?? .insufficientData
@@ -442,16 +449,20 @@ struct ChartView: View {
                 // 【新增】期权按钮逻辑
                 if dataService.optionsData.keys.contains(symbol.uppercased()) {
                     Button(action: {
-                        navigateToOptionsDetail = true
+                        // 【核心修改】点击 ChartView 里的期权按钮，扣除 10 点
+                        // 现在 usageManager 和 authManager 已经定义，可以正常调用了
+                        if usageManager.canProceed(authManager: authManager, action: .viewOptionsDetail) {
+                            navigateToOptionsDetail = true
+                        } else {
+                             showSubscriptionSheet = true 
+                        }
                     }) {
                         Text("期权")
                             .font(.system(size: 22, weight: .medium))
                             .padding(.leading, 20)
-                            .foregroundColor(.purple) // 使用不同颜色区分
+                            .foregroundColor(.purple)
                     }
-                    .navigationDestination(isPresented: $navigateToOptionsDetail) {
-                        OptionsDetailView(symbol: symbol.uppercased())
-                    }
+                    // 注意：navigationDestination 需要配合上面的 navigateToOptionsDetail 状态
                 }
             }
             .padding(.horizontal, 20).padding(.vertical, 10)
@@ -489,6 +500,10 @@ struct ChartView: View {
         .navigationDestination(isPresented: $showSearchView) {
             SearchView(isSearchActive: true, dataService: dataService)
         }
+        // 【新增】期权详情页跳转
+        .navigationDestination(isPresented: $navigateToOptionsDetail) {
+            OptionsDetailView(symbol: symbol.uppercased())
+        }
         .onDisappear {
             // 确保离开页面时恢复手势
             DispatchQueue.main.async {
@@ -499,6 +514,8 @@ struct ChartView: View {
                 }
             }
         }
+        // 【切记】在 ChartView 的 body 末尾添加 Sheet
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() } 
     }
     
     // MARK: - 绘图逻辑 (抽取出来减少Body长度)

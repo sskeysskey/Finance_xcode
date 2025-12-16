@@ -6,8 +6,9 @@ import Foundation
 struct IndicesSector: Identifiable, Codable {
     var id: String { name }
     let name: String
-    let symbols: [IndicesSymbol]
-    var subSectors: [IndicesSector]? // 添加子分组
+    // 【修改点 1】改为 var，以便后续注入数据
+    var symbols: [IndicesSymbol]
+    var subSectors: [IndicesSector]? 
     
     private enum CodingKeys: String, CodingKey {
         case name, symbols
@@ -311,12 +312,8 @@ struct IndicesContentView: View {
                                 
                                 // 【新增】期权按钮 (放在经济数据组末尾)
                                 Button {
-                                    // 这里可以加权限检查，如果需要的话
-                                    if usageManager.canProceed(authManager: authManager, action: .openList) {
-                                        self.navigateToOptionsList = true
-                                    } else {
-                                        self.showSubscriptionSheet = true
-                                    }
+                                    // 直接跳转，无需检查权限
+                                    self.navigateToOptionsList = true
                                 } label: {
                                     CompactSectorCard(
                                         sectorName: "期权",
@@ -347,11 +344,15 @@ struct IndicesContentView: View {
                                     }
                                 }
                                 
-                                // 【修改点 3】52周新低按钮，样式更突出
-                                // 【本次修改】baseColor 改为 .blue，使其呈现蓝色渐变
+                                // 【修改点 1】52周新低按钮
+                                // 逻辑修改：点击按钮时直接扣除 openSpecialList (10点)
                                 Button {
-                                    self.weekLowSectorsData = weekLowSectors
-                                    self.navigateToWeekLow = true
+                                    if usageManager.canProceed(authManager: authManager, action: .openSpecialList) {
+                                        self.weekLowSectorsData = weekLowSectors
+                                        self.navigateToWeekLow = true
+                                    } else {
+                                        self.showSubscriptionSheet = true
+                                    }
                                 } label: {
                                     CompactSectorCard(
                                         sectorName: "52周新低",
@@ -361,10 +362,10 @@ struct IndicesContentView: View {
                                     )
                                 }
                                 
-                                // 2. 【新增】10年新高按钮
+                                // 【修改点 2】10年新高按钮
+                                // 逻辑修改：点击按钮时直接扣除 openSpecialList (10点)
                                 Button {
-                                    // 这里可以使用 openList 行为进行扣点检查
-                                    if usageManager.canProceed(authManager: authManager, action: .openList) {
+                                    if usageManager.canProceed(authManager: authManager, action: .openSpecialList) {
                                         self.navigateToTenYearHigh = true
                                     } else {
                                         self.showSubscriptionSheet = true
@@ -458,6 +459,14 @@ struct IndicesContentView: View {
 // MARK: - 【新增】界面 A：期权 Symbol 列表
 struct OptionsListView: View {
     @EnvironmentObject var dataService: DataService
+    // 【新增】引入权限环境
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    
+    // 【新增】控制导航状态
+    @State private var selectedSymbol: String?
+    @State private var navigateToDetail = false
+    @State private var showSubscriptionSheet = false
     
     var sortedSymbols: [String] {
         dataService.optionsData.keys.sorted()
@@ -470,15 +479,25 @@ struct OptionsListView: View {
                     .foregroundColor(.secondary)
             } else {
                 ForEach(sortedSymbols, id: \.self) { symbol in
-                    NavigationLink(destination: OptionsDetailView(symbol: symbol)) {
+                    // 【修改】将 NavigationLink 改为 Button 以便拦截点击
+                    Button {
+                        // 【核心修改】点击具体 Symbol 时扣除 10 点
+                        if usageManager.canProceed(authManager: authManager, action: .viewOptionsDetail) {
+                            self.selectedSymbol = symbol
+                            self.navigateToDetail = true
+                        } else {
+                            self.showSubscriptionSheet = true
+                        }
+                    } label: {
                         HStack {
                             Text(symbol)
                                 .font(.headline)
                                 .fontWeight(.bold)
-                            // Spacer()
-                            // Text("\(dataService.optionsData[symbol]?.count ?? 0) 条记录")
-                            //     .font(.subheadline)
-                            //     .foregroundColor(.secondary)
+                                .foregroundColor(.primary) // 确保按钮样式下文字颜色正确
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(.gray)
                         }
                         .padding(.vertical, 4)
                     }
@@ -487,6 +506,13 @@ struct OptionsListView: View {
         }
         .navigationTitle("期权异动")
         .navigationBarTitleDisplayMode(.inline)
+        // 【新增】程序化导航
+        .navigationDestination(isPresented: $navigateToDetail) {
+            if let sym = selectedSymbol {
+                OptionsDetailView(symbol: sym)
+            }
+        }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
     }
 }
 
@@ -674,7 +700,7 @@ struct TenYearHighView: View {
     }
 }
 
-// MARK: - 【新增】可折叠的分组视图
+// MARK: - 【重要】可折叠的分组视图 (复用组件)
 struct CollapsibleSectorSection: View {
     let sector: IndicesSector
     // 默认展开
@@ -689,6 +715,7 @@ struct CollapsibleSectorSection: View {
                 }
             }) {
                 HStack {
+                    // 处理下划线显示
                     Text(sector.name.replacingOccurrences(of: "_", with: " "))
                         .font(.headline)
                         .foregroundColor(.primary)
@@ -731,59 +758,96 @@ struct CollapsibleSectorSection: View {
     }
 }
 
-// MARK: - 新增：52周新低 专属页面 (完全移植自 V2)
+// MARK: - 【修改】52周新低 专属页面
 struct FiftyOneLowView: View {
     let sectors: [IndicesSector]
+    
+    // 1. 【新增】引入 DataService 以获取价格和标签数据
+    @EnvironmentObject var dataService: DataService
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
     
-    @State private var selectedSector: IndicesSector?
-    @State private var navigateToSector = false
     @State private var showSubscriptionSheet = false
     
-    // 二级页面使用自适应网格，展示大卡片
-    private let gridLayout = [GridItem(.adaptive(minimum: 150, maximum: .infinity), spacing: 16)]
+    // 2. 【新增】计算属性：将原始 sectors 数据与 compareData/tags 数据合并
+    var enrichedSectors: [IndicesSector] {
+        let compareMap = dataService.compareData
+        
+        // 性能优化：将 Tags 预处理为字典，避免在循环中进行 O(N) 查找
+        var tagMap: [String: [String]] = [:]
+        if let stocks = dataService.descriptionData?.stocks {
+            for stock in stocks {
+                tagMap[stock.symbol.uppercased()] = stock.tag
+            }
+        }
+        if let etfs = dataService.descriptionData?.etfs {
+            for etf in etfs {
+                tagMap[etf.symbol.uppercased()] = etf.tag
+            }
+        }
+        
+        return sectors.map { sector in
+            var newSector = sector
+            // 现在因为 IndicesSector.symbols 是 var，所以可以修改了
+            newSector.symbols = sector.symbols.map { symbol in
+                var updatedSymbol = symbol
+                let upperSymbol = symbol.symbol.uppercased()
+                
+                // A. 注入 Value (价格/涨跌幅)
+                // 优先使用大写 key 匹配，其次使用原始 key
+                let value = compareMap[upperSymbol] ??
+                            compareMap[symbol.symbol] ??
+                            "N/A"
+                updatedSymbol.value = value
+                
+                // B. 注入 Tags (标签) - 使用字典查找 O(1)
+                updatedSymbol.tags = tagMap[upperSymbol]
+                
+                return updatedSymbol
+            }
+            return newSector
+        }
+    }
     
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("这些板块处于52周低位，可能存在反弹机会。")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal)
-                
-                LazyVGrid(columns: gridLayout, spacing: 16) {
-                    ForEach(sectors) { sector in
-                        Button {
-                            handleSectorClick(sector)
-                        } label: {
-                            // 这里使用 V2 的大卡片样式
-                            ModernSectorCard(sectorName: sector.name, icon: "chart.line.downtrend.xyaxis")
-                        }
-                    }
+            VStack(alignment: .leading, spacing: 16) {
+                // 顶部说明
+                HStack {
+                    Image(systemName: "chart.line.downtrend.xyaxis")
+                        .foregroundColor(.blue)
+                    Text("这些板块处于52周低位，可能存在反弹机会。")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
                 .padding(.horizontal)
+                .padding(.top, 10)
+                
+                if sectors.isEmpty {
+                    VStack(spacing: 20) {
+                        Spacer()
+                        Text("暂无数据或正在加载...")
+                            .foregroundColor(.gray)
+                        Spacer()
+                    }
+                    .frame(height: 200)
+                } else {
+                    // 使用 LazyVStack 垂直排列可折叠分组
+                    LazyVStack(spacing: 16) {
+                        // 3. 【修改】这里遍历 enrichedSectors 而不是原始的 sectors
+                        ForEach(enrichedSectors) { sector in
+                            CollapsibleSectorSection(sector: sector)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
             }
-            .padding(.top)
+            .padding(.bottom, 20)
         }
         .navigationTitle("52周新低")
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(isPresented: $navigateToSector) {
-            if let sector = selectedSector {
-                SectorDetailView(sector: sector)
-            }
-        }
+        .background(Color(UIColor.systemGroupedBackground))
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
-    }
-    
-    private func handleSectorClick(_ sector: IndicesSector) {
-        // 这里同样扣除点数
-        if usageManager.canProceed(authManager: authManager, action: .openSector) {
-            self.selectedSector = sector
-            self.navigateToSector = true
-        } else {
-            self.showSubscriptionSheet = true
-        }
     }
 }
 
@@ -885,55 +949,6 @@ struct CompactSectorCard: View {
         )
         .cornerRadius(12)
         .shadow(color: baseColor.opacity(0.2), radius: 2, x: 0, y: 2)
-    }
-}
-
-// 【新增组件】ModernSectorCard (从 V2 移植)
-// 专门用于“52周新低”二级页面，保持大尺寸和华丽效果
-struct ModernSectorCard: View {
-    let sectorName: String
-    let icon: String
-    var isSpecial: Bool = false
-    
-    private var displayName: String {
-        switch sectorName {
-        case "Basic_Materials": return "原材料"
-        case "Communication_Services": return "通信服务"
-        case "Consumer_Cyclical": return "非必需消费"
-        case "Consumer_Defensive": return "必需消费"
-        case "Financial_Services": return "金融服务"
-        case "Real_Estate": return "房地产"
-        default: return sectorName.replacingOccurrences(of: "_", with: " ")
-        }
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.system(size: 24))
-                    .foregroundColor(.white)
-                Spacer()
-            }
-            
-            Text(displayName)
-                .font(.headline)
-                .fontWeight(.bold)
-                .foregroundColor(.white)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(16)
-        .frame(height: 110) // 保持 V2 的大尺寸
-        .background(
-            LinearGradient(
-                gradient: Gradient(colors: isSpecial ? [.orange, .red] : [Color.accentGradientStart, Color.accentGradientEnd]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .cornerRadius(16)
-        .shadow(color: Color.black.opacity(0.15), radius: 5, x: 0, y: 4)
     }
 }
 
@@ -1067,17 +1082,6 @@ struct SectorDetailView: View {
             // 传入 dataService 并设置 isSearchActive 为 true，让搜索框自动激活
             SearchView(isSearchActive: true, dataService: dataService)
         }
-    }
-    
-    // 辅助视图：标题样式
-    private func sectionTitle(_ text: String) -> some View {
-        Text(text)
-            .font(.title3)
-            .fontWeight(.bold)
-            .foregroundColor(.primary)
-            .padding(.top, 20)
-            .padding(.bottom, 8)
-            .padding(.leading, 4) // 对齐卡片边缘
     }
     
     func loadSymbolsForSubSector(_ symbols: [IndicesSymbol]) -> [IndicesSymbol] {

@@ -7,8 +7,10 @@ enum UsageAction: String {
     case openSector = "open_sector"         // 打开板块分组 (Indices 标题)
     case search = "search_with_results"     // 搜索 (仅当有结果时)
     case openEarnings = "open_earnings"     // 打开财报入口
-    case openList = "open_list"             // 打开榜单 (Gainers/Losers/High/Low)
-    case compare = "compare_execution"      // 【新增】执行比较 (点击开始比较按钮)
+    case openList = "open_list"             // 打开榜单 (Gainers/Losers)
+    case compare = "compare_execution"      // 执行比较
+    case openSpecialList = "open_special_list" // 【新增】打开特殊榜单 (52周新低/10年新高)
+    case viewOptionsDetail = "view_options_detail"
 }
 
 @MainActor
@@ -25,7 +27,9 @@ class UsageManager: ObservableObject {
         UsageAction.search.rawValue: 1,
         UsageAction.openEarnings.rawValue: 1,
         UsageAction.openList.rawValue: 1,
-        UsageAction.compare.rawValue: 1     // 【新增】默认比较扣1点
+        UsageAction.compare.rawValue: 1,
+        UsageAction.openSpecialList.rawValue: 10,
+        UsageAction.viewOptionsDetail.rawValue: 10
     ]
     
     private let countKey = "FinanceDailyUsageCount"
