@@ -515,15 +515,13 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
 struct LoginView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) var colorScheme // 获取当前系统模式
 
     var body: some View {
         ZStack {
-            // 背景
-            Image("welcome_background")
-                .resizable()
-                .aspectRatio(contentMode: .fill)
+            // 1. 使用系统背景色 (Light: 白, Dark: 黑)
+            Color(UIColor.systemBackground)
                 .ignoresSafeArea()
-                .overlay(Color.black.opacity(0.6).ignoresSafeArea())
 
             VStack(spacing: 30) {
                 Spacer()
@@ -531,16 +529,19 @@ struct LoginView: View {
                 // Logo 和标题
                 VStack(spacing: 15) {
                     Image(systemName: "newspaper.fill")
-                        .font(.system(size: 60))
-                        .foregroundColor(.white)
+                        .font(.system(size: 80))
+                        // 2. 使用主色调或 Primary 颜色
+                        .foregroundColor(.blue)
                     
-                    Text("登录 美股通 账号")
+                    Text("登录 【美股精灵】 账号")
                         .font(.largeTitle.bold())
-                        .foregroundColor(.white)
+                        // 3. 使用系统主文本颜色 (自动黑/白)
+                        .foregroundColor(.primary)
                     
-                    Text("登录后，您的订阅将可以在不同设备间同步使用")
+                    Text("登录后\n不同设备间可以同步您的订阅")
                         .font(.headline)
-                        .foregroundColor(.white.opacity(0.8))
+                        // 4. 使用系统次级文本颜色 (灰色)
+                        .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                 }
@@ -551,7 +552,6 @@ struct LoginView: View {
                 VStack(spacing: 20) {
                     if authManager.isLoggingIn {
                         ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             .scaleEffect(1.5)
                     } else {
                         // Apple 登录按钮
@@ -568,9 +568,12 @@ struct LoginView: View {
                             // 实际的逻辑由 AuthManager 触发
                             authManager.signInWithApple()
                         }
-                        .signInWithAppleButtonStyle(.white) // 按钮样式
+                        // 5. 按钮样式适配：亮色模式用黑按钮，深色模式用白按钮
+                        .signInWithAppleButtonStyle(colorScheme == .light ? .black : .white)
                         .frame(height: 50)
                         .cornerRadius(10)
+                        // 添加阴影让按钮更有层次感
+                        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
                     }
 
                     // 错误信息
@@ -591,12 +594,11 @@ struct LoginView: View {
                     dismiss()
                 }
                 .font(.subheadline)
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(.secondary) // 改为次级颜色
                 .padding(.bottom, 20)
             }
         }
-        .preferredColorScheme(.dark)
-        // 监听登录成功，自动关闭
+        // 移除 .preferredColorScheme(.dark) 以允许系统切换
         .onChange(of: authManager.isLoggedIn) { _, newValue in
             if newValue {
                 dismiss()

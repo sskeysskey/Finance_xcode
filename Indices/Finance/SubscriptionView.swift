@@ -3,6 +3,7 @@ import SwiftUI
 struct SubscriptionView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) var colorScheme // 获取系统模式
     
     // 支付相关状态
     @State private var isPurchasing = false
@@ -24,15 +25,16 @@ struct SubscriptionView: View {
     
     var body: some View {
         ZStack {
-            Color.viewBackground.ignoresSafeArea()
+            // 1. 使用系统分组背景色 (Light: 浅灰, Dark: 纯黑)
+            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
             
             VStack(spacing: 25) {
                 // 标题
                 VStack(spacing: 10) {
-                    Text("选择您的订阅套餐")
+                    Text("请选择订阅套餐")
                         .font(.largeTitle.bold())
-                        .foregroundColor(.white)
-                        // 【核心修改】添加点击手势监听
+                        // 2. 自动适配文字颜色
+                        .foregroundColor(.primary)
                         .onTapGesture {
                             tapCount += 1
                             if tapCount >= 5 { // 连续点击5次触发
@@ -41,9 +43,9 @@ struct SubscriptionView: View {
                             }
                         }
                     
-                    Text("支持正版，获取无限查询权限。")
+                    Text("订阅后您将获得无限查询权限")
                         .font(.subheadline)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondary)
                 }
                 .padding(.top, 40)
                 
@@ -56,9 +58,10 @@ struct SubscriptionView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("免费版")
                                 .font(.title2.bold())
-                            Text("仅浏览 \(authManager.isSubscribed ? "每日受限" : "数据") 查询")
+                                .foregroundColor(.primary) // 适配颜色
+                            Text("仅能使用 \(authManager.isSubscribed ? "每日受限" : "每日有限次数") 查询")
                                 .font(.subheadline)
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondary) // 适配颜色
                         }
                         Spacer()
                         if !authManager.isSubscribed {
@@ -68,8 +71,11 @@ struct SubscriptionView: View {
                         }
                     }
                     .padding()
-                    .background(Color(white: 0.15))
+                    // 3. 卡片背景色：Light模式下是白色，Dark模式下是深灰色
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
                     .cornerRadius(12)
+                    // 添加轻微阴影，让白色卡片在浅灰色背景上突显
+                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .stroke(authManager.isSubscribed ? Color.clear : Color.green, lineWidth: 2)
@@ -83,29 +89,30 @@ struct SubscriptionView: View {
                 }) {
                     HStack {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("专业版 (订阅时长 1 Month)")
+                            Text("专业版\n(订阅时长 1 Month)")
                                 .font(.title2.bold())
-                                .foregroundColor(.white)
-                            Text("无限检索数据")
+                                .foregroundColor(.primary)
+                            Text("不限次检索和查询所有数据")
                                 .font(.subheadline)
-                                .foregroundColor(.gray)
+                                .foregroundColor(.secondary)
                         }
                         Spacer()
                         VStack(alignment: .trailing) {
-                            Text("¥6")
+                            Text("¥6/月")
                                 .font(.title2.bold())
-                                .foregroundColor(.yellow)
-                            Text("/月")
-                                .font(.caption)
-                                .foregroundColor(.gray)
+                                // 价格颜色：深色模式用黄色醒目，浅色模式用蓝色或橙色更易读
+                                // 这里使用 orange 兼顾两者
+                                .foregroundColor(.orange)
                         }
                     }
                     .padding()
-                    .background(Color(white: 0.15))
+                    // 卡片背景色
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
                     .cornerRadius(12)
+                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(authManager.isSubscribed ? Color.yellow : Color.clear, lineWidth: 2)
+                            .stroke(authManager.isSubscribed ? Color.orange : Color.clear, lineWidth: 2)
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -120,24 +127,22 @@ struct SubscriptionView: View {
                     }) {
                         Text("恢复购买")
                             .font(.footnote)
-                            .foregroundColor(.white) //稍微高亮一点，方便用户发现
+                            .foregroundColor(.blue) // 链接通常用蓝色
                             .underline()
                     }
                     .disabled(isRestoring || isPurchasing || isRedeeming)
                     
-                    // 分隔符
-                    Text("|").foregroundColor(.gray.opacity(0.5))
+                    Text("|").foregroundColor(.secondary.opacity(0.5))
                     
                     Link("隐私政策", destination: URL(string: "https://sskeysskey.github.io/website/privacy.html")!)
                         .font(.footnote)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondary)
 
-                    // 分隔符
-                    Text("|").foregroundColor(.gray.opacity(0.5))
+                    Text("|").foregroundColor(.secondary.opacity(0.5))
                     
                     Link("使用条款 (EULA)", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
                         .font(.footnote)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondary)
                 }
                 
                 Spacer()
@@ -145,12 +150,12 @@ struct SubscriptionView: View {
                 // 底部说明
                 if authManager.isSubscribed {
                     Text("您当前是尊贵的专业版用户")
-                        .foregroundColor(.yellow)
+                        .foregroundColor(.orange)
                         .padding()
                 } else {
                     Text("如果不选择付费，您将继续使用免费版，每日会有查询次数限制，如当天的用完，可第二天再来。")
                         .font(.caption)
-                        .foregroundColor(.gray)
+                        .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                 }
@@ -158,7 +163,7 @@ struct SubscriptionView: View {
                 Button("关闭") {
                     dismiss()
                 }
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(.secondary)
                 .padding(.bottom)
             }
             .padding(.horizontal)
