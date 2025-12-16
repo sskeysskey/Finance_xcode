@@ -170,6 +170,9 @@ struct ChartView: View {
     @State private var oneWeekBeforeRange: (start: Date, end: Date)? = nil
     @State private var fifthWeekRange: (start: Date, end: Date)? = nil
     @State private var thirdWeekRange: (start: Date, end: Date)? = nil
+
+    // 【新增】控制跳转到期权详情页
+    @State private var navigateToOptionsDetail = false
     
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.presentationMode) var presentationMode
@@ -427,14 +430,32 @@ struct ChartView: View {
                 }) {
                     Text("简介").font(.system(size: 22, weight: .medium)).foregroundColor(.blue)
                 }
+                
                 NavigationLink(destination: CompareView(initialSymbol: symbol)) {
                     Text("比对").font(.system(size: 22, weight: .medium)).padding(.leading, 20).foregroundColor(.blue)
                 }
+                
                 NavigationLink(destination: SimilarView(symbol: symbol)) {
                     Text("相似").font(.system(size: 22, weight: .medium)).padding(.leading, 20).foregroundColor(.blue)
                 }
+                
+                // 【新增】期权按钮逻辑
+                if dataService.optionsData.keys.contains(symbol.uppercased()) {
+                    Button(action: {
+                        navigateToOptionsDetail = true
+                    }) {
+                        Text("期权")
+                            .font(.system(size: 22, weight: .medium))
+                            .padding(.leading, 20)
+                            .foregroundColor(.purple) // 使用不同颜色区分
+                    }
+                    .navigationDestination(isPresented: $navigateToOptionsDetail) {
+                        OptionsDetailView(symbol: symbol.uppercased())
+                    }
+                }
             }
             .padding(.horizontal, 20).padding(.vertical, 10)
+            
             Spacer()
         }
         .background(backgroundColor.edgesIgnoringSafeArea(.all))

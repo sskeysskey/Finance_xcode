@@ -261,6 +261,8 @@ struct IndicesContentView: View {
     // 【新增】控制跳转到“10年新高”页面
     @State private var navigateToTenYearHigh = false
     
+    // 【新增】控制跳转到期权列表页面
+    @State private var navigateToOptionsList = false
     // 定义分组名称
     private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "ETFs", "Economic_All", "Economics", "Indices"])
     // 【修改点】移除了 "Strategy34"
@@ -305,6 +307,23 @@ struct IndicesContentView: View {
                                             baseColor: .purple
                                         )
                                     }
+                                }
+                                
+                                // 【新增】期权按钮 (放在经济数据组末尾)
+                                Button {
+                                    // 这里可以加权限检查，如果需要的话
+                                    if usageManager.canProceed(authManager: authManager, action: .openList) {
+                                        self.navigateToOptionsList = true
+                                    } else {
+                                        self.showSubscriptionSheet = true
+                                    }
+                                } label: {
+                                    CompactSectorCard(
+                                        sectorName: "期权",
+                                        icon: "doc.text.magnifyingglass", // 类似报表的图标
+                                        baseColor: .purple,
+                                        isSpecial: false // 保持组内一致
+                                    )
                                 }
                             }
                         }
@@ -379,6 +398,10 @@ struct IndicesContentView: View {
                 .navigationDestination(isPresented: $navigateToTenYearHigh) {
                     TenYearHighView()
                 }
+                // 【新增】跳转到期权列表
+                .navigationDestination(isPresented: $navigateToOptionsList) {
+                    OptionsListView()
+                }
                 
             } else {
                 LoadingView()
@@ -428,6 +451,178 @@ struct IndicesContentView: View {
         case "Strategy12": return "3.circle"
         case "Strategy34": return "4.circle"
         default: return "chart.pie.fill"
+        }
+    }
+}
+
+// MARK: - 【新增】界面 A：期权 Symbol 列表
+struct OptionsListView: View {
+    @EnvironmentObject var dataService: DataService
+    
+    var sortedSymbols: [String] {
+        dataService.optionsData.keys.sorted()
+    }
+    
+    var body: some View {
+        List {
+            if sortedSymbols.isEmpty {
+                Text("暂无期权异动数据")
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(sortedSymbols, id: \.self) { symbol in
+                    NavigationLink(destination: OptionsDetailView(symbol: symbol)) {
+                        HStack {
+                            Text(symbol)
+                                .font(.headline)
+                                .fontWeight(.bold)
+                            // Spacer()
+                            // Text("\(dataService.optionsData[symbol]?.count ?? 0) 条记录")
+                            //     .font(.subheadline)
+                            //     .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+        }
+        .navigationTitle("期权异动")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - 【新增】界面 B：期权详情表格
+struct OptionsDetailView: View {
+    let symbol: String
+    @EnvironmentObject var dataService: DataService
+    
+    // 0 = Calls, 1 = Puts
+    @State private var selectedTypeIndex = 0
+    
+    var filteredData: [OptionItem] {
+        guard let items = dataService.optionsData[symbol] else { return [] }
+        
+        // 筛选 Calls 或 Puts (保持不变)
+        let filtered = items.filter { item in
+            let itemType = item.type.uppercased()
+            if selectedTypeIndex == 0 {
+                return itemType.contains("CALL") || itemType == "C"
+            } else {
+                return itemType.contains("PUT") || itemType == "P"
+            }
+        }
+        
+        // 【修改点 2：按 1-Day Chg 绝对值排序】
+        return filtered.sorted { item1, item2 in
+            // 将字符串转为 Double 进行比较，如果转换失败默认为 0
+            let val1 = Double(item1.change) ?? 0
+            let val2 = Double(item2.change) ?? 0
+            
+            // abs() 取绝对值
+            // > 表示降序 (大的在前)
+            return abs(val1) > abs(val2)
+        }
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // 1. 顶部切换开关
+            Picker("Type", selection: $selectedTypeIndex) {
+                Text("Calls").tag(0)
+                Text("Puts").tag(1)
+            }
+            .pickerStyle(SegmentedPickerStyle())
+            .padding()
+            .background(Color(UIColor.systemBackground))
+            
+            // 2. 表格头 (根据 CSV 样本调整顺序)
+            HStack {
+                Text("Expiry").frame(maxWidth: .infinity, alignment: .leading)
+                Text("Strike").frame(width: 80, alignment: .center)
+                Text("Open Int").frame(width: 70, alignment: .trailing)
+                Text("1-Day Chg").frame(width: 70, alignment: .trailing)
+            }
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+            .background(Color(UIColor.systemBackground))
+            
+            Divider()
+            
+            // 3. 数据列表
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    if filteredData.isEmpty {
+                        Text("暂无数据")
+                            .foregroundColor(.secondary)
+                            .padding(.top, 20)
+                    } else {
+                        ForEach(filteredData) { item in
+                            HStack {
+                                // Expiry (可能含有 new)
+                                OptionCellView(text: item.expiryDate, alignment: .leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                
+                                // Strike (可能含有 new)
+                                OptionCellView(text: item.strike, alignment: .center)
+                                    .frame(width: 80, alignment: .center)
+                                
+                                // Open Interest
+                                OptionCellView(text: item.openInterest, alignment: .trailing)
+                                    .frame(width: 70, alignment: .trailing)
+                                
+                                // 1-Day Change
+                                OptionCellView(text: item.change, alignment: .trailing)
+                                    .frame(width: 70, alignment: .trailing)
+                            }
+                            .padding(.vertical, 10)
+                            .padding(.horizontal)
+                            .background(Color(UIColor.systemBackground))
+                            
+                            Divider().padding(.leading)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle(symbol)
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(UIColor.systemGroupedBackground))
+    }
+}
+
+// MARK: - 【修改】辅助视图：处理带 "new" 的单元格显示
+struct OptionCellView: View {
+    let text: String
+    var alignment: Alignment = .leading
+    
+    var isNew: Bool {
+        text.lowercased().contains("new")
+    }
+    
+    var displayString: String {
+        if isNew {
+            // 移除 "new" 并去除首尾空格
+            return text.replacingOccurrences(of: "new", with: "", options: .caseInsensitive)
+                       .trimmingCharacters(in: .whitespaces)
+        }
+        return text
+    }
+    
+    var body: some View {
+        Text(displayString)
+            .font(.system(size: 14, weight: isNew ? .bold : .regular))
+            // 如果含有 new，显示为橙红色，否则显示默认颜色
+            .foregroundColor(isNew ? .orange : .primary)
+            .multilineTextAlignment(textAlignment)
+    }
+    
+    private var textAlignment: TextAlignment {
+        switch alignment {
+        case .leading: return .leading
+        case .trailing: return .trailing
+        case .center: return .center
+        default: return .leading
         }
     }
 }

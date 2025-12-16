@@ -54,6 +54,17 @@ struct DescriptionData: Codable {
     let etfs: [SearchETF]
 }
 
+// MARK: - 【新增】期权数据模型
+struct OptionItem: Identifiable, Hashable {
+    let id = UUID()
+    let symbol: String
+    let type: String       // Calls / Puts
+    let expiryDate: String // Expiry Date
+    let strike: String     // Strike
+    let openInterest: String // Open Interest
+    let change: String     // 1-Day Chg
+}
+
 struct SearchStock: Identifiable, Codable, SearchDescribableItem {
     let id = UUID()
     let symbol: String
@@ -196,6 +207,10 @@ class DataService: ObservableObject {
 
     // 【新增】存储 10年新高 的数据
     @Published var tenYearHighSectors: [IndicesSector] = []
+
+    // MARK: - 【新增】期权数据存储
+    // Key 是 Symbol (大写), Value 是该 Symbol 下所有的期权条目
+    @Published var optionsData: [String: [OptionItem]] = [:]
     
     private var isDataLoaded = false
     private var isInitialLoad: Bool {
@@ -239,7 +254,8 @@ class DataService: ObservableObject {
             await self.loadCompareETFs()
             // 【新增】加载 10年新高数据
             await self.loadTenYearHighData()
-            // 2. 标记加载完成
+            await self.loadOptionsData() // 加载期权数据
+
             await MainActor.run {
                 self.isDataLoaded = true
                 print("DataService: 所有本地数据加载完毕 (UI已更新)。")
@@ -396,6 +412,86 @@ class DataService: ObservableObject {
         
         // 因为函数标记了 @MainActor，这里可以直接赋值
         self.marketCapData = newData
+    }
+
+    // MARK: - 【核心修改】加载期权数据 CSV
+    private func loadOptionsData() async {
+        // 匹配文件名 Options_Change_*.csv
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "Options_Change") else {
+            if !isInitialLoad {
+                print("DataService: Options_Change 文件未在 Documents 中找到")
+            }
+            return
+        }
+        
+        do {
+            let content = try String(contentsOf: url, encoding: .utf8)
+            let lines = content.split(separator: "\n", omittingEmptySubsequences: true)
+            
+            var tempOptions: [String: [OptionItem]] = [:]
+            
+            // 遍历每一行
+            for (index, line) in lines.enumerated() {
+                // 1. 跳过表头 (如果第一行包含 "Symbol" 和 "Type")
+                if index == 0 && line.contains("Symbol") && line.contains("Type") {
+                    continue
+                }
+                
+                let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+                if trimmedLine.isEmpty { continue }
+                
+                // 2. 尝试 Tab 分割 (优先，因为样本看起来像 Tab)
+                var parts = trimmedLine.components(separatedBy: "\t")
+                
+                // 如果 Tab 分割失败（只有1列），尝试逗号分割
+                if parts.count <= 1 {
+                    parts = trimmedLine.split(separator: ",").map { String($0) }
+                }
+                
+                // 去除每个部分的空白
+                parts = parts.map { $0.trimmingCharacters(in: .whitespaces) }
+                
+                // 3. 解析列 (根据样本: Symbol, Type, Expiry Date, Strike, Open Interest, 1-Day Chg)
+                if parts.count >= 6 {
+                    let symbol = parts[0].uppercased()
+                    let type = parts[1]
+                    let expiry = parts[2]
+                    let strike = parts[3]
+                    
+                    // 【修改点 1：去除小数点】
+                    // 读取原始字符串 -> 转为 Double -> 格式化为无小数点的 String
+                    let rawOi = parts[4]
+                    let rawChg = parts[5]
+                    
+                    let oi = String(format: "%.0f", Double(rawOi) ?? 0)
+                    let chg = String(format: "%.0f", Double(rawChg) ?? 0)
+                    
+                    let item = OptionItem(
+                        symbol: symbol,
+                        type: type,
+                        expiryDate: expiry,
+                        strike: strike,
+                        openInterest: oi, // 存入处理后的整数
+                        change: chg      // 存入处理后的整数
+                    )
+                    
+                    if tempOptions[symbol] == nil {
+                        tempOptions[symbol] = []
+                    }
+                    tempOptions[symbol]?.append(item)
+                }
+            }
+            
+            // 【修复 Swift 6 错误】
+            // 创建一个不可变的副本，以便安全地传递给 MainActor 闭包
+            let finalOptions = tempOptions
+            await MainActor.run {
+                self.optionsData = finalOptions
+            }
+            
+        } catch {
+            print("DataService: 解析 Options_Change 文件时出错: \(error)")
+        }
     }
     
     private func loadHighLowData() async {
