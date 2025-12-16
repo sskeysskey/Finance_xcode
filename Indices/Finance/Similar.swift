@@ -82,37 +82,42 @@ struct SimilarView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     // 上面一行：symbol、totalWeight、compareValue、marketCap
                                     HStack(spacing: 12) {
-                                        // 【修改】: 根据 EarningTrend 设置颜色
+                                        // 1) Symbol 颜色：根据 EarningTrend 动态变化
                                         Text(item.symbol)
                                             .font(.system(size: 20, weight: .bold))
                                             .foregroundColor(colorForEarningTrend(item.earningTrend))
-                                            .shadow(radius: 1)
+                                            .shadow(radius: 1) // 稍微加点阴影让亮色在白底上更突出
                                         
-                                        // 2) score(totalWeight) 颜色：灰色
+                                        // 2) Score (totalWeight) 颜色：使用 secondary
                                         Text("\(item.totalWeight, specifier: "%.2f")")
                                             .font(.subheadline)
-                                            .foregroundColor(.gray)
+                                            .foregroundColor(.secondary) // 【修改】从 gray 改为 secondary
                                         
-                                        // 3) compare_all 文本颜色：根据内容动态变化
+                                        // 【修改点 1】: 将 Spacer() 移到这里
+                                        // 这会将左边的内容顶在左侧，右边的内容顶在最右侧
+                                        Spacer()
+                                        
+                                        // 3) Compare Value 文本
+                                        // 【修改点 2】: 放在 Spacer 之后，实现靠右对齐
                                         Text("\(item.compareValue)")
                                             .font(.subheadline)
-                                            // 【修改】: 使用辅助函数动态设置文本颜色
+                                            // 使用新的逻辑判断颜色
                                             .foregroundColor(colorForCompareValue(item.compareValue))
-                                        
-                                        Spacer()
                                     }
                                     
                                     // 下面一行：tags
                                     Text(item.allTags.joined(separator: ", "))
                                         .font(.caption)
-                                        .foregroundColor(.gray)
-                                        .lineLimit(1)  // 确保标签只显示一行
-                                        .truncationMode(.tail)  // 如果文本过长，在末尾显示省略号
+                                        .foregroundColor(.secondary) // 【修改】从 gray 改为 secondary
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
                                 }
                                 .padding()
-                                .background(Color(UIColor.secondarySystemBackground))
+                                // 【修改】使用 systemGray6 作为卡片背景，适配深色/浅色模式
+                                .background(Color(.systemGray6)) 
                                 .cornerRadius(8)
                             }
+                            .buttonStyle(PlainButtonStyle()) // 【新增】防止 Button 点击时的默认灰色覆盖效果太丑
                         }
                     }
                     .padding()
@@ -145,15 +150,42 @@ struct SimilarView: View {
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
     }
     
+    // 【核心修改】: 增强了解析逻辑，支持 "09前-1.51%" 这种格式
     private func colorForCompareValue(_ value: String) -> Color {
-        if value.contains("前") || value.contains("后") || value.contains("未") {
-            return .orange
-        } else {
-            return .white // 或 .primary 根据背景
+        // 1. 先去掉 % 及后面的内容
+        // 例子 A: "09前-1.51%" -> 得到 "09前-1.51"
+        // 例子 B: "-0.26%*"   -> 得到 "-0.26"
+        guard let valueBeforePercent = value.components(separatedBy: "%").first else {
+            return .primary
         }
+        
+        var numberString = valueBeforePercent
+        
+        // 2. 检查是否包含中文分隔符 "前" 或 "后"
+        // 如果包含，我们只需要分隔符后面的部分
+        if valueBeforePercent.contains("前") {
+            // "09前-1.51" -> 分割成 ["09", "-1.51"] -> 取最后一个 "-1.51"
+            numberString = valueBeforePercent.components(separatedBy: "前").last ?? numberString
+        } else if valueBeforePercent.contains("后") {
+            // "09后-0.48" -> 分割成 ["09", "-0.48"] -> 取最后一个 "-0.48"
+            numberString = valueBeforePercent.components(separatedBy: "后").last ?? numberString
+        }
+        
+        // 3. 转为 Double 并判断颜色
+        // trimmingCharacters 用于防止解析出来的字符串前后可能有空格
+        if let doubleValue = Double(numberString.trimmingCharacters(in: .whitespaces)) {
+            if doubleValue > 0 {
+                return .red      // 正数
+            } else if doubleValue < 0 {
+                return .green    // 负数
+            }
+        }
+        
+        // 0 或者解析失败（比如纯文本）显示 Primary 颜色
+        return .primary
     }
     
-    // 【新增】: 根据 EarningTrend 返回相应颜色的辅助函数
+    // 【核心修复】: 修复 Light Mode 下不可见的问题，并优化对比度
     private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
         switch trend {
         case .positiveAndUp:
@@ -165,7 +197,8 @@ struct SimilarView: View {
         case .negativeAndDown:
             return .green // 绿色
         case .insufficientData:
-            return .white // 默认白色
+            // 【修改】: 以前是 .white，导致浅色模式不可见。改为 .primary
+            return .primary 
         }
     }
 }

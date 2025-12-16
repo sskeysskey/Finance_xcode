@@ -193,6 +193,7 @@ struct SectorsPanel: Decodable {
                     ))
                 }
                 
+                // 注意：这里导致了 Strategy12 如果为空，就不会被加入 sectors 数组
                 if !symbols.isEmpty {
                     let sector = IndicesSector(name: key, symbols: symbols)
                     sectors.append(sector)
@@ -200,27 +201,40 @@ struct SectorsPanel: Decodable {
             }
         }
         
-        // MARK: - 【新增逻辑】合并 Strategy12 和 Strategy34
-        // 1. 找到两个板块的索引
-        if let idx12 = sectors.firstIndex(where: { $0.name == "Strategy12" }),
-           let idx34 = sectors.firstIndex(where: { $0.name == "Strategy34" }) {
-            
-            let sector12 = sectors[idx12]
+        // MARK: - 【修改后的逻辑】合并 Strategy12 和 Strategy34
+        // 逻辑说明：
+        // 1. 优先寻找 Strategy34，因为它可能包含数据。
+        // 2. 如果找到了 Strategy34：
+        //    a. 如果 Strategy12 也存在，则合并两者，保留 12 的名字。
+        //    b. 如果 Strategy12 不存在 (因为JSON为空被过滤掉了)，则直接将 Strategy34 改名为 Strategy12。
+        
+        if let idx34 = sectors.firstIndex(where: { $0.name == "Strategy34" }) {
             let sector34 = sectors[idx34]
             
-            // 2. 合并 symbols (将 34 的内容追加到 12 后面)
-            let mergedSymbols = sector12.symbols + sector34.symbols
-            
-            // 3. 更新 Strategy12 (保留原名 Strategy12，因为 UI 上它已经映射为“系统3”)
-            sectors[idx12] = IndicesSector(
-                name: sector12.name,
-                symbols: mergedSymbols,
-                subSectors: sector12.subSectors // 假设它们没有子分组，如果有也会保留
-            )
-            
-            // 4. 从数组中移除 Strategy34
-            sectors.remove(at: idx34)
+            if let idx12 = sectors.firstIndex(where: { $0.name == "Strategy12" }) {
+                // 情况 A: 两个都有数据
+                let sector12 = sectors[idx12]
+                let mergedSymbols = sector12.symbols + sector34.symbols
+                
+                // 更新 Strategy12
+                sectors[idx12] = IndicesSector(
+                    name: "Strategy12",
+                    symbols: mergedSymbols,
+                    subSectors: sector12.subSectors
+                )
+                // 删除 Strategy34
+                sectors.remove(at: idx34)
+            } else {
+                // 情况 B: 只有 Strategy34 有数据 (Strategy12 为空未被加载)
+                // 直接将 Strategy34 重命名为 Strategy12，这样 UI 就能识别它了
+                sectors[idx34] = IndicesSector(
+                    name: "Strategy12", // 【关键】改名为 Strategy12
+                    symbols: sector34.symbols,
+                    subSectors: sector34.subSectors
+                )
+            }
         }
+        // 如果只有 Strategy12 而没有 34，它本来就在 sectors 里，无需操作。
         
         self.sectors = sectors
     }

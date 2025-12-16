@@ -425,13 +425,13 @@ struct ChartView: View {
                         DescriptionView(descriptions: ("No description available.", ""), isDarkMode: isDarkMode)
                     }
                 }) {
-                    Text("Description").font(.system(size: 16, weight: .medium)).foregroundColor(.blue)
+                    Text("简介").font(.system(size: 22, weight: .medium)).foregroundColor(.blue)
                 }
                 NavigationLink(destination: CompareView(initialSymbol: symbol)) {
-                    Text("Compare").font(.system(size: 16, weight: .medium)).padding(.leading, 20).foregroundColor(.blue)
+                    Text("比对").font(.system(size: 22, weight: .medium)).padding(.leading, 20).foregroundColor(.blue)
                 }
                 NavigationLink(destination: SimilarView(symbol: symbol)) {
-                    Text("Similar").font(.system(size: 16, weight: .medium)).padding(.leading, 20).foregroundColor(.blue)
+                    Text("相似").font(.system(size: 22, weight: .medium)).padding(.leading, 20).foregroundColor(.blue)
                 }
             }
             .padding(.horizontal, 20).padding(.vertical, 10)

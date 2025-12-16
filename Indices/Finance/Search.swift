@@ -237,76 +237,111 @@ struct SearchView: View {
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            searchBar
-                .padding(.vertical, 4)
+        ZStack(alignment: .top) {
+            // 1. 全局背景色：统一使用 Grouped 背景，使卡片凸显
+            Color(UIColor.systemGroupedBackground)
+                .ignoresSafeArea()
             
-            // 剪贴板小条
-            if showClipboardBar {
-                HStack {
-                    Image(systemName: "doc.on.clipboard")
-                        .foregroundColor(.gray)
-                    Text(clipboardContent)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-                .background(Color(.systemGray5))
-                .cornerRadius(8)
-                .padding(.horizontal)
-                .padding(.bottom, 12) // <<< 修改点：在这里增加一个底部的间距
-                .onTapGesture {
-                    // 粘贴并隐藏小条
-                    searchText = clipboardContent
-                    withAnimation {
-                        showClipboardBar = false
-                        showSearchHistory = false
+            VStack(spacing: 0) {
+                // 2. 搜索区域
+                VStack(spacing: 10) {
+                    searchBar
+                    
+                    // 剪贴板小条 (悬浮胶囊样式)
+                    if showClipboardBar {
+                        Button(action: {
+                            searchText = clipboardContent
+                            withAnimation {
+                                showClipboardBar = false
+                                showSearchHistory = false
+                            }
+                            startSearch()
+                        }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "doc.on.clipboard")
+                                    .font(.caption)
+                                Text("粘贴并搜索: \"\(clipboardContent)\"")
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.blue.opacity(0.1))
+                            .foregroundColor(.blue)
+                            .cornerRadius(20)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 20)
+                                    .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                            )
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .padding(.bottom, 4)
                     }
-                    // 你可以根据需要自动触发搜索：
-                     startSearch()
                 }
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
+                .padding(.bottom, 8)
+                .background(Color(UIColor.systemGroupedBackground)) // 确保头部背景不透明
+                .zIndex(2) // 确保在列表之上
 
-            ZStack {
-                if showSearchHistory {
-                    SearchHistoryView(viewModel: viewModel) { term in
-                        searchText = term
-                        startSearch()
-                    }
-                    .transition(.opacity)
-                    .zIndex(1)
-                }
-                
-                if isLoading {
-                    ProgressView("正在搜索...")
-                        .padding()
-                }
-                
-                if !showSearchHistory && !groupedSearchResults.isEmpty {
-                    searchResultsList
+                // 3. 内容区域
+                ZStack {
+                    if showSearchHistory {
+                        SearchHistoryView(viewModel: viewModel) { term in
+                            searchText = term
+                            startSearch()
+                        }
                         .transition(.opacity)
+                    }
+                    
+                    if isLoading {
+                        VStack {
+                            ProgressView()
+                                .scaleEffect(1.2)
+                            Text("正在搜索...")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.top, 8)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(UIColor.systemGroupedBackground))
+                    }
+                    
+                    if !showSearchHistory && !groupedSearchResults.isEmpty {
+                        searchResultsList
+                            .transition(.opacity)
+                    }
+                    
+                    // 空状态提示
+                    if !isLoading && !showSearchHistory && groupedSearchResults.isEmpty && !searchText.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 40))
+                                .foregroundColor(.gray.opacity(0.5))
+                            Text("未找到相关结果")
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .alert(isPresented: Binding<Bool>(
-                get: { viewModel.errorMessage != nil },
-                set: { if !$0 { viewModel.errorMessage = nil } }
-            )) {
-                Alert(
-                    title: Text("错误"),
-                    message: Text(viewModel.errorMessage ?? ""),
-                    dismissButton: .default(Text("确定"))
-                )
-            }
-            .sheet(item: $selectedSymbol) { selected in
-                ChartView(symbol: selected.result.symbol, groupName: selected.category)
-            }
-            // 【修改】移除了 LoginView 的 sheet
-            .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         }
+        .navigationBarTitleDisplayMode(.inline)
+        // 隐藏默认的 Navigation Bar 背景，让自定义搜索栏更融合
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .alert(isPresented: Binding<Bool>(
+            get: { viewModel.errorMessage != nil },
+            set: { if !$0 { viewModel.errorMessage = nil } }
+        )) {
+            Alert(
+                title: Text("错误"),
+                message: Text(viewModel.errorMessage ?? ""),
+                dismissButton: .default(Text("确定"))
+            )
+        }
+        .sheet(item: $selectedSymbol) { selected in
+            ChartView(symbol: selected.result.symbol, groupName: selected.category)
+        }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .onAppear {
             if isSearchActive && isFirstAppear {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -317,41 +352,32 @@ struct SearchView: View {
         }
     }
     
+    // MARK: - 美化后的搜索条
     private var searchBar: some View {
-        HStack {
-            ZStack(alignment: .trailing) {
-                TextField(
-                    "请输入要搜索的关键字",
-                    text: $searchText,
-                    onEditingChanged: { isEditing in
-                        withAnimation {
-                            // 控制搜索历史的展示
-                            showSearchHistory = isEditing && searchText.isEmpty
-                            if isEditing && searchText.isEmpty {
-                                groupedSearchResults = []
-                            }
-                        }
-                        // 当开始编辑且文本为空时，读取剪贴板并展示小条
+        HStack(spacing: 12) {
+            // 输入框容器
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 18))
+                
+                TextField("请输入股票代码/名称/标签", text: $searchText, onEditingChanged: { isEditing in
+                    withAnimation {
+                        showSearchHistory = isEditing && searchText.isEmpty
                         if isEditing && searchText.isEmpty {
-                            if let content = UIPasteboard.general.string?
-                                .trimmingCharacters(in: .whitespacesAndNewlines),
-                               !content.isEmpty {
-                                clipboardContent = content
-                                withAnimation {
-                                    showClipboardBar = true
-                                }
-                            }
+                            groupedSearchResults = []
                         }
-                    },
-                    onCommit: {
-                        startSearch()
                     }
-                )
+                    if isEditing && searchText.isEmpty {
+                        checkForClipboard()
+                    }
+                }, onCommit: {
+                    startSearch()
+                })
                 .focused($isSearchFieldFocused)
-                .padding(10)
-                .padding(.trailing, showClearButton ? 30 : 10)
-                .background(Color(.systemGray6))
-                .cornerRadius(8)
+                // 移除默认样式，使用自定义容器
+                .textFieldStyle(PlainTextFieldStyle())
+                .font(.system(size: 17))
                 .onChange(of: searchText) { _, newValue in
                     showClearButton = !newValue.isEmpty
                     if newValue.isEmpty {
@@ -373,39 +399,49 @@ struct SearchView: View {
                             groupedSearchResults = []
                             isSearchFieldFocused = true
                         }
-                        // 点击清除时读取剪贴板
-                        if let content = UIPasteboard.general.string?
-                            .trimmingCharacters(in: .whitespacesAndNewlines),
-                           !content.isEmpty {
-                            clipboardContent = content
-                            withAnimation {
-                                showClipboardBar = true
-                            }
-                        }
+                        checkForClipboard()
                     }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.gray)
-                            .opacity(0.6)
+                            .opacity(0.7)
                     }
-                    .padding(.trailing, 15)
-                    .transition(.opacity)
                 }
             }
-
+            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            // 核心美化：白色背景 + 圆角 + 轻微阴影
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .cornerRadius(12)
+            .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+            
+            // 搜索按钮
             Button(action: {
                 startSearch()
                 isSearchFieldFocused = false
             }) {
                 Text("搜索")
+                    .fontWeight(.semibold)
                     .foregroundColor(.white)
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                     .background(Color.blue)
-                    .cornerRadius(8)
+                    .cornerRadius(12)
+                    .shadow(color: Color.blue.opacity(0.3), radius: 3, x: 0, y: 2)
             }
+        }
+        // 核心布局调整：增加水平 Padding，与下方列表对齐
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+    }
+    
+    private func checkForClipboard() {
+        if let content = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty {
+            clipboardContent = content
+            withAnimation { showClipboardBar = true }
         }
     }
     
+    // MARK: - 搜索结果列表
     private var searchResultsList: some View {
         List {
             ForEach(groupedSearchResults) { groupedResult in
@@ -443,6 +479,8 @@ struct SearchView: View {
             }
         }
         .listStyle(InsetGroupedListStyle())
+        // 移除 List 默认背景，让它透出底部的 systemGroupedBackground
+        .scrollContentBackground(.hidden)
         .sheet(item: $selectedSymbolForDescription) { selected in
             if let descriptions = getDescriptions(for: selected.result.symbol) {
                 DescriptionView(descriptions: descriptions, isDarkMode: true)
@@ -685,40 +723,70 @@ struct SearchHistoryView: View {
     var onSelect: (String) -> Void
     
     var body: some View {
-        VStack {
-            if viewModel.searchHistory.isEmpty {
-                Text("暂无搜索历史")
-                    .foregroundColor(.secondary)
-                    .padding()
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(viewModel.searchHistory, id: \.self) { term in
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if viewModel.searchHistory.isEmpty {
+                    HStack {
+                        Spacer()
+                        Text("暂无搜索历史")
+                            .foregroundColor(.secondary)
+                            .padding(.top, 40)
+                        Spacer()
+                    }
+                } else {
+                    // 历史记录标题
+                    HStack {
+                        Text("最近搜索")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 4) // 微调对齐
+                    
+                    // 历史记录列表 (卡片样式)
+                    VStack(spacing: 0) {
+                        ForEach(Array(viewModel.searchHistory.enumerated()), id: \.element) { index, term in
                             HStack {
+                                Image(systemName: "clock")
+                                    .foregroundColor(.gray)
+                                    .font(.system(size: 14))
                                 Text(term)
+                                    .foregroundColor(.primary)
                                 Spacer()
                                 Button(action: {
-                                    viewModel.removeSearchHistory(term: term)
+                                    withAnimation {
+                                        viewModel.removeSearchHistory(term: term)
+                                    }
                                 }) {
-                                    Image(systemName: "trash")
-                                        .foregroundColor(.red)
+                                    Image(systemName: "xmark")
+                                        .foregroundColor(.gray.opacity(0.5))
+                                        .font(.system(size: 12))
+                                        .padding(8)
                                 }
                             }
-                            .padding(.horizontal)
-                            .padding(.vertical, 4)
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 16)
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 onSelect(term)
                             }
+                            
+                            // 分割线 (除了最后一个)
+                            if index < viewModel.searchHistory.count - 1 {
+                                Divider()
+                                    .padding(.leading, 16)
+                            }
                         }
                     }
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(12)
+                    // 阴影让它浮起来
+                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
                 }
-                .background(Color(.systemBackground))
-                .cornerRadius(8)
-                .shadow(radius: 5)
-                .padding([.horizontal, .bottom])
             }
+            .padding(16) // 这里的 Padding 16 保证了它和上面的搜索框对齐
         }
+        .background(Color(UIColor.systemGroupedBackground))
     }
 }
 
