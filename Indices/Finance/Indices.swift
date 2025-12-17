@@ -575,41 +575,50 @@ struct OptionsDetailView: View {
             
             Divider()
             
-            // 3. 数据列表
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    if filteredData.isEmpty {
-                        Text("暂无数据")
-                            .foregroundColor(.secondary)
-                            .padding(.top, 20)
-                    } else {
-                        ForEach(filteredData) { item in
-                            HStack {
-                                // Expiry (可能含有 new)
-                                OptionCellView(text: item.expiryDate, alignment: .leading)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+            // 3. 数据列表 【修改由此开始】
+            ScrollViewReader { proxy in // 1. 引入 Reader
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        // 2. 添加顶部锚点 (不可见视图)
+                        Color.clear
+                            .frame(height: 0)
+                            .id("TopAnchor")
+                        
+                        if filteredData.isEmpty {
+                            Text("暂无数据")
+                                .foregroundColor(.secondary)
+                                .padding(.top, 20)
+                        } else {
+                            ForEach(filteredData) { item in
+                                HStack {
+                                    // ... (内容保持不变) ...
+                                    OptionCellView(text: item.expiryDate, alignment: .leading)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    
+                                    OptionCellView(text: item.strike, alignment: .center)
+                                        .frame(width: 80, alignment: .center)
+                                    
+                                    OptionCellView(text: item.openInterest, alignment: .trailing)
+                                        .frame(width: 70, alignment: .trailing)
+                                    
+                                    OptionCellView(text: item.change, alignment: .trailing)
+                                        .frame(width: 70, alignment: .trailing)
+                                }
+                                .padding(.vertical, 10)
+                                .padding(.horizontal)
+                                .background(Color(UIColor.systemBackground))
                                 
-                                // Strike (可能含有 new)
-                                OptionCellView(text: item.strike, alignment: .center)
-                                    .frame(width: 80, alignment: .center)
-                                
-                                // Open Interest
-                                OptionCellView(text: item.openInterest, alignment: .trailing)
-                                    .frame(width: 70, alignment: .trailing)
-                                
-                                // 1-Day Change
-                                OptionCellView(text: item.change, alignment: .trailing)
-                                    .frame(width: 70, alignment: .trailing)
+                                Divider().padding(.leading)
                             }
-                            .padding(.vertical, 10)
-                            .padding(.horizontal)
-                            .background(Color(UIColor.systemBackground))
-                            
-                            Divider().padding(.leading)
                         }
                     }
                 }
+                // 3. 监听 Tab 切换，强制滚动回顶部
+                .onChange(of: selectedTypeIndex) { oldValue, newValue in
+                    proxy.scrollTo("TopAnchor", anchor: .top)
+                }
             }
+            // 【修改结束】
         }
         .navigationTitle(symbol)
         .navigationBarTitleDisplayMode(.inline)

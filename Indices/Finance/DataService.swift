@@ -160,6 +160,9 @@ class DataService: ObservableObject {
     // MARK: - Singleton
     static let shared = DataService()
     private init() {}
+
+    // 【新增】内部状态，标记是否正在加载
+    private var isLoading = false 
     
     // MARK: - Published properties
     @Published var topGainers: [Stock] = []
@@ -217,27 +220,20 @@ class DataService: ObservableObject {
         let localVersion = UserDefaults.standard.string(forKey: "FinanceAppLocalDataVersion")
         return localVersion == nil || localVersion == "0.0"
     }
-    
-    // MARK: - 公共方法：强制重新加载
-    func forceReloadData() {
-        print("DataService: 收到强制刷新请求，将重新加载所有数据。")
-        self.isDataLoaded = false
-        self.loadData()
-    }
 
     // 【核心修改】：将 loadData 改为异步触发，不阻塞主线程
     func loadData() {
-        // 哨兵
-        guard !isDataLoaded else {
-            print("DataService: 数据已加载，跳过重复加载。")
+        // 【修改】同时检查 是否已加载 和 是否正在加载
+        guard !isDataLoaded, !isLoading else {
+            print("DataService: 数据已加载或正在加载中，跳过重复请求。")
             return
         }
         
-        DispatchQueue.main.async {
-            self.errorMessage = nil
-        }
+        // 标记开始加载
+        self.isLoading = true
         
-        // 使用 Task.detached 将繁重的工作移出主线程
+        DispatchQueue.main.async { self.errorMessage = nil }
+
         Task.detached(priority: .userInitiated) {
             print("DataService: 开始在后台加载数据...")
             
@@ -258,12 +254,22 @@ class DataService: ObservableObject {
 
             await MainActor.run {
                 self.isDataLoaded = true
+                self.isLoading = false // 【新增】加载完成，重置 loading 状态
                 print("DataService: 所有本地数据加载完毕 (UI已更新)。")
             }
             
             // 3. 启动网络请求 (本身就是 async 的)
             await self.loadMarketCapData()
         }
+    }
+
+    // MARK: - 公共方法：强制重新加载
+    // 注意：forceReloadData 需要重置 isLoading
+    func forceReloadData() {
+        print("DataService: 收到强制刷新请求...")
+        self.isDataLoaded = false
+        self.isLoading = false // 强制刷新时允许重新进入
+        self.loadData()
     }
     
     // MARK: - 【新增】加载并解析 10年新高数据

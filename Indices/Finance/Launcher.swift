@@ -363,21 +363,23 @@ struct MainContentView: View {
                         }
                     }
                     ToolbarItem(placement: .navigationBarTrailing) {
+                    HStack(spacing: 16) { // 使用 HStack 并添加间距，确保按钮并排显示
+                        
+                        // 1. 【新增】“新闻”按钮
+                        Button {
+                            openNewsApp()
+                        } label: {
+                            // 这里使用了系统图标 "newspaper"，你也可以换成文字 Text("新闻")
+                            Image(systemName: "newspaper")
+                        }
+                        
+                        // 2. 原有的刷新按钮 (保持逻辑不变)
                         Button {
                             Task {
-                                // 【核心修复】手动刷新逻辑
-                                // 1. 无论是否有更新，先重新连接数据库
                                 DatabaseManager.shared.reconnectToLatestDatabase()
-                                
-                                // 2. 检查更新 (UI会显示检查中)
                                 let _ = await updateManager.checkForUpdates(isManual: true)
-                                
-                                // 3. 【关键】无论 checkForUpdates 返回 true 还是 false
-                                // 只要用户点击了刷新，我们都强制重载内存中的数据
                                 print("User triggered refresh: Forcing data reload.")
                                 dataService.forceReloadData()
-                                
-                                // 4. 确保 UI 状态正确
                                 await MainActor.run {
                                     self.isDataReady = true
                                 }
@@ -387,6 +389,7 @@ struct MainContentView: View {
                         }
                         .disabled(isUpdateInProgress)
                     }
+                }
                 }
             }
             .environmentObject(dataService)
@@ -470,4 +473,32 @@ struct MainContentView: View {
             }
         }
     }
+
+    // 将此函数添加到 MainContentView 结构体内部的底部
+    private func openNewsApp() {
+        // 1. 定义跳转目标
+        // 如果你知道"环球要闻"的 URL Scheme (需要在该 App 的 Info.plist 中定义)，请填在这里
+        // 例如: let appScheme = "globalnews://"
+        // 如果没有配置 Scheme，这一步会失败，直接走下面的 App Store 逻辑
+        let appSchemeStr = "globalnews://" 
+        
+        // 2. 定义 App Store 下载链接
+        // 请替换下面的 id123456789 为"环球要闻"真实的 App ID
+        let appStoreUrlStr = "https://apps.apple.com/cn/app/id6754591885"
+        
+        guard let appUrl = URL(string: appSchemeStr),
+            let storeUrl = URL(string: appStoreUrlStr) else {
+            return
+        }
+        
+        // 3. 尝试跳转
+        if UIApplication.shared.canOpenURL(appUrl) {
+            // 如果已安装，直接打开
+            UIApplication.shared.open(appUrl)
+        } else {
+            // 如果未安装，跳转到 App Store
+            UIApplication.shared.open(storeUrl)
+        }
+    }
+
 }
