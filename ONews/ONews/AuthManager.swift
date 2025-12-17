@@ -516,11 +516,11 @@ struct LoginView: View {
                         // 【修改】颜色自适应
                         .foregroundColor(.primary)
                     
-                    Text("解锁全部内容")
+                    Text("登录 ONews 账号")
                         .font(.largeTitle.bold())
                         .foregroundColor(.primary)
                     
-                    Text("登录后可查看最新文章并同步阅读进度")
+                    Text("登录后\n可在不同设备间同步您的订阅")
                         .font(.headline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -577,7 +577,5 @@ struct LoginView: View {
                 .padding(.bottom, 20)
             }
         }
-        // 【修改】移除强制深色模式
-        // .preferredColorScheme(.dark)
     }
 }

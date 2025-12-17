@@ -26,14 +26,14 @@ struct SubscriptionView: View {
             VStack(spacing: 25) {
                 // 标题
                 VStack(spacing: 10) {
-                    Text("选择您的计划")
+                    Text("请选择订阅套餐")
                         .font(.largeTitle.bold())
                         .foregroundColor(.primary)
                         .onTapGesture(count: 5) {
                             showRedeemAlert = true
                         }
                     
-                    Text("支持正版，获取最新资讯")
+                    Text("选择专业版，获取最新资讯。")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -49,7 +49,7 @@ struct SubscriptionView: View {
                             Text("免费版")
                                 .font(.title2.bold())
                                 .foregroundColor(.primary)
-                            Text("仅浏览 \(authManager.isSubscribed ? "全部" : "历史") 文章")
+                            Text("可以浏览 \(authManager.isSubscribed ? "全部" : "三天前") 的文章")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
@@ -78,21 +78,21 @@ struct SubscriptionView: View {
                 }) {
                     HStack {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("专业版")
+                            Text("专业版PRO")
                                 .font(.title2.bold())
                                 .foregroundColor(.primary)
-                            Text("解锁所有最新文章")
+                            Text("解锁所有最新资讯")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
                         Spacer()
                         VStack(alignment: .trailing) {
-                            Text("¥12")
+                            Text("¥12/月")
                                 .font(.title2.bold())
                                 .foregroundColor(.orange) // 橙色在深浅模式下都比较醒目
-                            Text("/月")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            // Text("/月")
+                            //     .font(.caption)
+                            //     .foregroundColor(.secondary)
                         }
                     }
                     .padding()
@@ -144,7 +144,7 @@ struct SubscriptionView: View {
                         .foregroundColor(.orange)
                         .padding()
                 } else {
-                    Text("如果不选择付费，您将继续使用免费版，最新文章将保持锁定状态。")
+                    Text("如果不选择付费，您将继续使用免费版，仍可以浏览三天前的文章。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)

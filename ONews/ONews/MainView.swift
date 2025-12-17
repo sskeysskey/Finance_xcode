@@ -106,12 +106,12 @@ struct MainAppView: View {
 
 
 // ==================== 共享颜色扩展 ====================
-// 【修改】使用系统自适应颜色
 extension Color {
-    // systemGroupedBackground: 浅色模式下是灰白色，深色模式下是纯黑色
-    static let viewBackground = Color(.systemGroupedBackground)
-    // secondarySystemGroupedBackground: 浅色模式下是纯白色，深色模式下是深灰色（用于卡片）
-    static let cardBackground = Color(.secondarySystemGroupedBackground)
+    // 稍微带一点灰度的背景，比纯白更护眼，能衬托出白色卡片
+    static let viewBackground = Color(UIColor.systemGroupedBackground)
+    
+    // 卡片背景：浅色模式纯白，深色模式深灰
+    static let cardBackground = Color(UIColor.secondarySystemGroupedBackground)
 }
 
 
@@ -174,10 +174,8 @@ struct ArticleRowCardView: View {
     let sourceName: String?
     let isReadEffective: Bool
     let isContentMatch: Bool
-    // 【新增】接收是否被锁定的标志
     let isLocked: Bool
 
-    // 【修改】更新初始化方法
     init(article: Article, sourceName: String?, isReadEffective: Bool, isContentMatch: Bool = false, isLocked: Bool = false) {
         self.article = article
         self.sourceName = sourceName
@@ -187,56 +185,64 @@ struct ArticleRowCardView: View {
     }
 
     var body: some View {
-        // 【UI优化】改为 HStack 布局，避免锁图标遮挡文字
-        HStack(alignment: .center, spacing: 12) {
-            
-            // 1. 如果被锁定，在最左侧显示锁图标
-            if isLocked {
-                Image(systemName: "lock.fill")
-                    .foregroundColor(.yellow.opacity(0.9)) // 稍微调高一点不透明度，让它更清晰
-                    .font(.title3) // 使用稍大一点的字体
-                    .frame(width: 24) // 固定宽度，确保多行列表对齐美观
-            }
-            
-            // 2. 文章内容部分
-            VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 12) {
+            // 1. 顶部元数据行：来源名称 + 锁定状态
+            HStack {
                 if let name = sourceName {
-                    Text(name.replacingOccurrences(of: "_", with: " "))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Text(name.replacingOccurrences(of: "_", with: " ").uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .default))
+                        .tracking(1.0) // 增加字间距，显得更高级
+                        .foregroundColor(isReadEffective ? .secondary.opacity(0.7) : .blue.opacity(0.8))
                 }
-
-                HStack(alignment: .top) {
-                    Text(article.topic)
-                        .font(.system(size: 20, weight: .semibold))
-                        // 【修改】使用 .primary 和 .secondary 让文字颜色自适应
-                        .foregroundColor(isReadEffective ? .secondary : .primary)
-                        .lineLimit(3)
-                    
-                    Spacer()
-                    
-                    if isContentMatch {
-                        Label("正文", systemImage: "doc.text.magnifyingglass")
-                            .font(.caption2)
-                            .foregroundColor(.accentColor)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.15))
-                            .cornerRadius(6)
-                            .transition(.opacity.animation(.easeInOut))
+                
+                Spacer()
+                
+                if isLocked {
+                    HStack(spacing: 4) {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 10))
+                        Text("需订阅")
+                            .font(.system(size: 10, weight: .medium))
                     }
+                    .foregroundColor(.yellow.opacity(0.9))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.yellow.opacity(0.15))
+                    .cornerRadius(8)
                 }
             }
-            // 如果被锁定，降低内容文字的透明度，但保持锁图标高亮
-            .opacity(isLocked ? 0.6 : 1.0)
+            
+            // 2. 标题区域：使用衬线字体增加“报纸/杂志”质感
+            HStack(alignment: .top) {
+                Text(article.topic)
+                    .font(.system(size: 19, weight: isReadEffective ? .regular : .bold, design: .serif)) // 使用 Serif 字体
+                    .foregroundColor(isReadEffective ? .secondary : .primary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true) // 防止截断
+                    .multilineTextAlignment(.leading)
+                    .opacity(isReadEffective ? 0.8 : 1.0)
+                
+                Spacer(minLength: 0)
+            }
+
+            // 3. 底部标签栏：正文匹配标记等
+            if isContentMatch {
+                HStack {
+                    Label("正文匹配", systemImage: "text.magnifyingglass")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+            }
         }
-        .padding(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // 【修改】使用卡片专用背景色
-        .background(Color.cardBackground)
-        .cornerRadius(12)
-        // 在浅色模式下阴影更柔和
-        .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
+        .padding(16) // 内部留白
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.cardBackground)
+                .shadow(color: Color.black.opacity(isReadEffective ? 0.02 : 0.06), radius: 8, x: 0, y: 4) // 柔和的阴影
+        )
+        // 如果已读，稍微降低整体透明度，让未读内容更突出
+        .opacity(isLocked ? 0.7 : 1.0)
     }
 }
 

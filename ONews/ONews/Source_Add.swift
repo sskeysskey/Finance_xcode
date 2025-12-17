@@ -84,60 +84,33 @@ struct AddSourceView: View {
         let allIDs = Set(allAvailableSources.map { $0.id })
         return subscriptionManager.subscribedSourceIDs.isSuperset(of: allIDs)
     }
-
+    
     var body: some View {
-        ZStack {
-            // 【修改】使用系统背景色
-            Color.viewBackground
-                .ignoresSafeArea()
-
-            // 主内容：当加载或出错时，展示覆盖层；正常时展示列表
-            Group {
-                if isLoading {
-                    VStack {
-                        ProgressView()
-                        Text("正在加载新闻源...")
-                            .foregroundColor(.secondary)
-                            .padding(.top)
-                    }
-                } else if let error = errorMessage {
-                    VStack(spacing: 20) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.largeTitle)
-                            .foregroundColor(.red)
-                        Text(error)
-                            .multilineTextAlignment(.center)
-                            .padding()
-                            .foregroundColor(.primary)
-                    }
-                } else {
-                    // 使用 List 承载所有行，并把“确定”按钮放到列表底部的 Section 页脚
-                    List {
-                        // MARK: - [修改点 1] 将“一键添加”按钮移动到列表顶部
-                        Section {
-                            Button(action: {
-                                let allIDs = allAvailableSources.map { $0.id }
-                                subscriptionManager.subscribeToAll(allIDs)
-                                handleConfirm()
-                            }) {
-                                // MARK: - [修改点 3] 优化按钮文本，使其更清晰地反映其行为
-                                Text("一键添加所有新闻源")
-                                    .font(.headline)
-                                    .foregroundColor(.white)
-                                    .frame(height: 50)
-                                    .frame(maxWidth: .infinity)
-                                    .background(areAllSourcesSubscribed ? Color.gray : Color.green)
-                                    .cornerRadius(10)
-                            }
-                            .disabled(areAllSourcesSubscribed)
-                            .animation(.easeInOut, value: areAllSourcesSubscribed)
-                        }
-                        // 【修改】移除 clear 背景，让 List 使用系统默认样式
-                        // .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                        .padding(.vertical, 8) // 为按钮部分添加一些垂直间距
-
-                        // 遍历源列表
+        ZStack(alignment: .bottom) {
+            Color.viewBackground.ignoresSafeArea()
+            
+            if isLoading {
+                VStack {
+                    ProgressView()
+                    Text("正在获取最新源...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 8)
+                }
+                .frame(maxHeight: .infinity)
+            } else if let error = errorMessage {
+                VStack(spacing: 16) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.largeTitle)
+                        .foregroundColor(.orange)
+                    Text(error)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                .frame(maxHeight: .infinity)
+            } else {
+                List {
+                    Section {
                         ForEach(allAvailableSources, id: \.id) { source in
                             HStack {
                                 Text(source.name) // 显示名称（如“华尔街日报”）
@@ -147,85 +120,101 @@ struct AddSourceView: View {
 
                                 Spacer()
                                 
-                                // 使用 ID 判断订阅状态
-                                if subscriptionManager.isSubscribed(sourceId: source.id) {
-                                    Text("已添加")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .padding(.trailing, 8)
-                                    
-                                    Button(action: {
-                                        subscriptionManager.removeSubscription(sourceId: source.id)
-                                    }) {
-                                        Image(systemName: "minus.circle.fill")
-                                            .foregroundColor(.red)
-                                            .font(.title2)
+                                Button(action: {
+                                    withAnimation(.spring()) {
+                                        if subscriptionManager.isSubscribed(sourceId: source.id) {
+                                            subscriptionManager.removeSubscription(sourceId: source.id)
+                                        } else {
+                                            subscriptionManager.addSubscription(sourceId: source.id)
+                                        }
                                     }
-                                    .buttonStyle(BorderlessButtonStyle())
-
-                                } else {
-                                    Button(action: {
-                                        subscriptionManager.addSubscription(sourceId: source.id)
-                                    }) {
-                                        Image(systemName: "plus.circle.fill")
-                                            .foregroundColor(.blue)
-                                            .font(.title2)
-                                    }
-                                    .buttonStyle(BorderlessButtonStyle())
+                                }) {
+                                    Image(systemName: subscriptionManager.isSubscribed(sourceId: source.id) ? "checkmark.circle.fill" : "plus.circle")
+                                        .font(.system(size: 22))
+                                        .foregroundColor(subscriptionManager.isSubscribed(sourceId: source.id) ? .green : .blue)
                                 }
+                                .buttonStyle(PlainButtonStyle())
                             }
-                            .padding(.vertical, 8)
-                            // 【修改】使用卡片背景色
-                            .listRowBackground(Color.cardBackground)
+                            .padding(.vertical, 4)
+                        }
+                    } header: {
+                        Text("可用新闻源")
+                    } footer: {
+                        // 底部占位，防止列表被悬浮按钮遮挡
+                        Spacer().frame(height: 100)
+                    }
+                }
+                .listStyle(.insetGrouped)
+            }
+            
+            // 悬浮底部 Action Bar
+            if !isLoading && errorMessage == nil {
+                VStack(spacing: 0) {
+                    // 顶部添加一根微弱的分割线
+                    Divider()
+                    
+                    VStack(spacing: 12) {
+                        
+                        // 【修改】让一键全选按钮变得非常醒目
+                        if !areAllSourcesSubscribed {
+                            Button(action: {
+                                let allIDs = allAvailableSources.map { $0.id }
+                                // 使用震动反馈增加交互感
+                                let generator = UIImpactFeedbackGenerator(style: .medium)
+                                generator.impactOccurred()
+                                
+                                withAnimation(.spring()) {
+                                    subscriptionManager.subscribeToAll(allIDs)
+                                }
+                            }) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "checkmark.rectangle.stack.fill")
+                                        .font(.system(size: 18))
+                                    Text("一键添加所有 (\(allAvailableSources.count))")
+                                        .fontWeight(.bold)
+                                }
+                                .font(.headline)
+                                .foregroundColor(.white) // 白色文字
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 54) // 稍微加高一点
+                                .background(
+                                    // 使用鲜艳的绿色渐变
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [Color.green, Color.mint]),
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .cornerRadius(16) // 更圆润的角
+                                .shadow(color: Color.green.opacity(0.4), radius: 8, x: 0, y: 4) // 漂亮的绿色光晕阴影
+                            }
+                            .transition(.scale.combined(with: .opacity)) // 添加出现/消失动画
                         }
                         
-                        // 底部确定按钮：放在列表末尾
-                        Section(footer:
-                            VStack(spacing: 12) { // MARK: - 修改部分
-                                // MARK: - 新增“一键添加所有来源”按钮
-                                Button(action: {
-                                    let allIDs = allAvailableSources.map { $0.id }
-                                    subscriptionManager.subscribeToAll(allIDs)
-                                    handleConfirm()
-                                }) {
-                                    Text("一键添加所有新闻源")
-                                        .font(.headline)
-                                        .foregroundColor(.white)
-                                        .frame(height: 50)
-                                        .frame(maxWidth: .infinity)
-                                        // 如果所有源都已添加，按钮变灰，否则为绿色
-                                        .background(areAllSourcesSubscribed ? Color.gray : Color.green)
-                                        .cornerRadius(10)
-                                }
-                                .disabled(areAllSourcesSubscribed) // 当所有源都已添加时禁用按钮
-                                .animation(.easeInOut, value: areAllSourcesSubscribed) // 添加动画效果
-
-                                // MARK: - 原有的“确定”按钮
-                                Button(action: {
-                                    handleConfirm()
-                                }) {
-                                    Text("确定")
-                                        .font(.headline)
-                                        .foregroundColor(.white)
-                                        .frame(height: 50)
-                                        .frame(maxWidth: .infinity)
-                                        .background(subscriptionManager.subscribedSourceIDs.isEmpty ? Color.gray : Color.blue)
-                                        .cornerRadius(10)
-                                }
-                                .disabled(subscriptionManager.subscribedSourceIDs.isEmpty)
-                                .animation(.easeInOut, value: subscriptionManager.subscribedSourceIDs.isEmpty)
-                            }
-                            .padding(.vertical, 16)
-                        ) {
-                            EmptyView()
+                        // 完成设置按钮
+                        Button(action: handleConfirm) {
+                            Text(subscriptionManager.subscribedSourceIDs.isEmpty ? "请至少选择一个" : "完成设置")
+                                .font(.headline)
+                                .foregroundColor(subscriptionManager.subscribedSourceIDs.isEmpty ? .secondary : .white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 50)
+                                .background(
+                                    subscriptionManager.subscribedSourceIDs.isEmpty 
+                                    ? Color.secondary.opacity(0.2) // 禁用状态
+                                    : Color.blue // 启用状态
+                                )
+                                .cornerRadius(16)
                         }
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+                        .disabled(subscriptionManager.subscribedSourceIDs.isEmpty)
                     }
-                    // 【修改】使用 insetGrouped 样式，这是 iOS 设置页面的标准样式，非常漂亮
-                    .listStyle(.insetGrouped)
-                    // .scrollContentBackground(.hidden) // 移除此行，让系统处理背景
+                    .padding(16)
+                    .padding(.bottom, 10) // 适配全面屏底部
+                    .background(
+                        Material.regular // 使用更通透的毛玻璃背景
+                    )
                 }
+                // 确保 Action Bar 始终在最上层
+                .zIndex(2)
             }
         }
         .navigationTitle("添加新闻源")

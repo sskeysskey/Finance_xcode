@@ -358,7 +358,7 @@ struct IndicesContentView: View {
                                         sectorName: "52周新低",
                                         icon: "arrow.down.right.circle.fill",
                                         baseColor: .blue,
-                                        isSpecial: true
+                                        isSpecial: false       // 【修改】改为 false，使其应用透明度渐变，与系统1/2/3一致
                                     )
                                 }
                                 
@@ -374,8 +374,8 @@ struct IndicesContentView: View {
                                     CompactSectorCard(
                                         sectorName: "10年新高",
                                         icon: "arrow.up.right.circle.fill", // 上升图标
-                                        baseColor: .red, // 红色代表高/热
-                                        isSpecial: true
+                                        baseColor: .blue,      // 【修改】由 .red 改为 .blue，统一色调
+                                        isSpecial: false       // 【修改】改为 false，使其应用透明度渐变，与系统1/2/3一致
                                     )
                                 }
                             }

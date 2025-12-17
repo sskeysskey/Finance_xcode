@@ -182,7 +182,6 @@ struct ArticleRowButton: View {
     let item: ArticleItem
     let filterMode: ArticleFilterMode
     let viewModel: NewsViewModel
-    // 【新增】传入 AuthManager
     let authManager: AuthManager
     let filteredArticles: [ArticleItem]
     let onTap: () async -> Void
@@ -191,21 +190,23 @@ struct ArticleRowButton: View {
         Button(action: {
             Task { await onTap() }
         }) {
-            // 【修改】锁定条件：未订阅 且 时间戳被锁定
             let isLocked = !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: item.article.timestamp)
+            
+            // 这里调用新的卡片视图
             ArticleRowCardView(
                 article: item.article,
                 sourceName: item.sourceName,
                 isReadEffective: viewModel.isArticleEffectivelyRead(item.article),
                 isContentMatch: item.isContentMatch,
-                isLocked: isLocked // 传递锁定状态
+                isLocked: isLocked
             )
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(PlainButtonStyle()) // 取消按钮默认点击高亮效果，改用缩放动画（可选）
         .id(item.article.id)
-        .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
+        // 【关键修改】调整内边距，让卡片左右有空隙，上下有间隔
+        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+        .listRowSeparator(.hidden) // 隐藏系统分割线
+        .listRowBackground(Color.clear) // 列表背景透明
         .contextMenu {
             ArticleContextMenu(
                 article: item.article,
@@ -251,41 +252,53 @@ struct TimestampHeader: View {
     let timestamp: String
     let count: Int
     let isExpanded: Bool
-    // 【新增】接收锁定状态
     let isLocked: Bool
     let onToggle: () -> Void
     
     var body: some View {
-        HStack(spacing: 8) {
-            // 【新增】如果锁定，显示锁图标
-            if isLocked {
-                Image(systemName: "lock.fill")
-                    .foregroundColor(.yellow.opacity(0.8))
-                    .font(.callout)
-                    .transition(.opacity)
-            }
-            
-            Text(formatTimestamp(timestamp))
-                .font(.headline)
-                .foregroundColor(.blue.opacity(0.7))
-            
-            Spacer(minLength: 8)
-            
-            Text("\(count)")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            
-            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                .foregroundColor(.secondary)
-                .font(.footnote.weight(.semibold))
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) {
+        Button(action: {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                 onToggle()
             }
+        }) {
+            HStack(alignment: .center, spacing: 10) {
+                // 日期文字
+                Text(formatTimestamp(timestamp))
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .textCase(.uppercase)
+                
+                // 细分割线
+                VStack { Divider() }
+                
+                // 数量气泡或锁图标
+                HStack(spacing: 4) {
+                    if isLocked {
+                        Image(systemName: "lock.fill")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    Text("\(count)")
+                        .font(.caption2.bold())
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.1))
+                .foregroundColor(.secondary)
+                .clipShape(Capsule())
+                
+                // 指示箭头
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.bold))
+                    .foregroundColor(.secondary.opacity(0.5))
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 4)
+            .background(Color.viewBackground) // 确保吸顶时背景不透明
         }
+        .buttonStyle(PlainButtonStyle())
     }
     
     private func formatTimestamp(_ timestamp: String) -> String {
@@ -293,7 +306,8 @@ struct TimestampHeader: View {
         formatter.dateFormat = "yyMMdd"
         guard let date = formatter.date(from: timestamp) else { return timestamp }
         formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy年M月d日, EEEE"
+        // 更现代的日期格式
+        formatter.dateFormat = "M月d日 EEEE" 
         return formatter.string(from: date)
     }
 }

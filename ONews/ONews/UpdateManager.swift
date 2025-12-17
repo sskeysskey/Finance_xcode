@@ -302,7 +302,7 @@ class ResourceManager: ObservableObject {
             }
             
             self.isDownloading = false
-            self.syncMessage = "新闻源已准备就绪！\n\n请点击右下角“+”按钮。"
+            // self.syncMessage = "新闻源已准备就绪！\n\n请点击右下角“+”按钮。"
             self.progressText = ""
             resetStateAfterDelay()
             

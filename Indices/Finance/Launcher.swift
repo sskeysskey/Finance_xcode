@@ -331,7 +331,8 @@ struct MainContentView: View {
                         }
                     }
                 }
-                .navigationBarTitle(remainingLimitTitle, displayMode: .inline)
+                // 👇 替换为这一行（保持 Inline 模式但不设文字）
+                .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         if authManager.isLoggedIn {
@@ -363,6 +364,39 @@ struct MainContentView: View {
                                     }
                                 }
                             }
+                        }
+                    }
+                    // 中间位置：自定义额度显示
+                    ToolbarItem(placement: .principal) {
+                        if !authManager.isSubscribed {
+                            HStack(spacing: 6) {
+                                // 图标：使用小闪电或票据图标
+                                Image(systemName: "bolt.shield.fill") // 或者 "ticket.fill"
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.orange)
+                                
+                                // 文字：计算剩余额度
+                                let remaining = max(0, usageManager.maxFreeLimit - usageManager.dailyCount)
+                                Text("今日免费点数 \(remaining)")
+                                    .font(.system(size: 13, weight: .medium)) // 使用更小的字体
+                                    .foregroundColor(.primary)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                // 背景：磨砂玻璃质感的胶囊形状
+                                Capsule()
+                                    .fill(Color(.tertiarySystemFill))
+                                    // 可选：添加一点极细的边框让它更精致
+                                    .overlay(
+                                        Capsule().stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
+                                    )
+                            )
+                            // 强制不截断，优先压缩间距
+                            .fixedSize(horizontal: true, vertical: false)
+                        } else {
+                            // 如果是会员，可以留空，或者显示一个精致的 App Logo / 名称
+                            // Text("Finance").font(.headline)
                         }
                     }
                     ToolbarItem(placement: .navigationBarTrailing) {

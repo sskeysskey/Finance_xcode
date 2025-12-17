@@ -157,195 +157,133 @@ struct WelcomeView: View {
     
     // 【保留】: 一个状态标志，确保初始同步只执行一次
     @State private var hasAttemptedInitialSync = false
-
-    // 【保留】: 尺寸参数保持不变
-    private let fabSize: CGFloat = 56
-    private let fabIconSize: CGFloat = 24
-    private let fabPadding: CGFloat = 20
-
+    
+    private let fabSize: CGFloat = 60
+    
     var body: some View {
-        ZStack {
-            NavigationStack {
-                ZStack {
-                    // 【保留】背景色
-                    Color.viewBackground
-                        .ignoresSafeArea()
+        NavigationStack {
+            ZStack {
+                Color.viewBackground.ignoresSafeArea()
+                
+                // 特效层
+                VStack {
+                    Spacer().frame(height: 120)
+                    FloatingWordsView()
+                        .environmentObject(resourceManager)
+                        .frame(height: 400)
+                        .mask(LinearGradient(gradient: Gradient(colors: [.clear, .black, .black, .clear]), startPoint: .top, endPoint: .bottom))
+                    Spacer()
+                }
+                
+                // 文字层
+                VStack(spacing: 0) {
+                    Spacer().frame(height: 100)
+                    Text("ONews")
+                        .font(.system(size: 60, weight: .black, design: .rounded))
+                        .foregroundColor(.blue)
+                        .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
                     
-                    // 【新增】特效层：放在背景之上，内容之下
-                    // 限制高度，让它只在中间区域显示，不遮挡标题和底部按钮
-                    VStack {
-                        Spacer().frame(height: 180) // 避开顶部标题
-                        FloatingWordsView()
-                            .environmentObject(resourceManager)
-                            .frame(maxHeight: 400) // 限制特效区域高度
-                            .mask(
-                                // 添加渐变遮罩，让文字在上下边缘柔和消失
-                                LinearGradient(
-                                    gradient: Gradient(stops: [
-                                        .init(color: .clear, location: 0),
-                                        .init(color: .black, location: 0.2),
-                                        .init(color: .black, location: 0.8),
-                                        .init(color: .clear, location: 1)
-                                    ]),
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                        Spacer().frame(height: 100) // 避开底部按钮
-                    }
-
-                    VStack {
-                        Spacer()
-                            .frame(height: 50)
-
-                        Text("可以听的海外资讯")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                            // 【修改】使用系统主色（黑/白自动切换）
-                            .foregroundColor(.primary)
-                            .padding(.bottom, 20)
-
-                        Text("点击右下方按钮\n添加您感兴趣的新闻源")
-                            .font(.headline)
-                            // 【修改】使用次级颜色
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(8)
-
-                        Spacer()
-                    }
-                }
-                // 移除 navigationBarHidden(true) 有时能解决布局问题，但在欢迎页隐藏通常没问题
-                // 如果需要显示标题栏颜色，可以移除 .navigationBarHidden(true)
-                .navigationDestination(isPresented: $showAddSourceView) {
-                    AddSourceView(isFirstTimeSetup: true, onComplete: {
-                        self.hasCompletedInitialSetup = true
-                    })
-                    .environmentObject(resourceManager)
-                }
-            }
-            // 【修改】移除 .tint(.white)，使用默认蓝色或自定义主题色
-            .tint(.blue)
-            .alert("获取失败", isPresented: $showErrorAlert, actions: {
-                Button("好的", role: .cancel) { }
-            }, message: {
-                Text(errorMessage)
-            })
-            // 【新增】: 用于显示“已是最新”的弹窗
-            .alert("", isPresented: $showAlreadyUpToDateAlert) {
-                Button("好的", role: .cancel) {}
-            } message: {
-                Text("网络连接正常，请点击右下角“+”按钮来选择你喜欢的新闻源。")
-            }
-            // 【修改】: 使用 onChange 监听 scenePhase 的变化
-            .onChange(of: scenePhase) { oldPhase, newPhase in
-                if newPhase == .active && !hasAttemptedInitialSync {
-                    print("App is now active, attempting initial resource sync.")
-                    hasAttemptedInitialSync = true
-                    Task {
-                        // 自动同步，isManual为false
-                        await syncInitialResources(isManual: false)
-                    }
-                }
-            }
-            // 【新增】: 监听来自 ResourceManager 的弹窗信号
-            .onChange(of: resourceManager.showAlreadyUpToDateAlert) { _, newValue in
-                if newValue {
-                    self.showAlreadyUpToDateAlert = true
-                    // 重置信号，以便下次可以再次触发
-                    resourceManager.showAlreadyUpToDateAlert = false
-                }
-            }
-
-            // 左下角刷新按钮
-            if !resourceManager.isSyncing && !showAddSourceView {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Button(action: {
-                            // 手动同步，isManual为true
-                            Task { await syncInitialResources(isManual: true) }
-                        }) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: fabIconSize, weight: .regular))
-                                .foregroundColor(.white) // 按钮图标保持白色
-                                .frame(width: fabSize, height: fabSize)
-                                .background(Color.blue) // 改为蓝色背景，更符合系统风格
-                                .clipShape(Circle())
-                                .shadow(radius: 5)
-                        }
-                        .padding(.leading, fabPadding)
-                        .padding(.bottom, fabPadding)
-                        Spacer()
-                    }
-                }
-            }
-
-            // 右下角添加按钮 + 光韵动画（逻辑不变）
-            if !showAddSourceView {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Button(action: {
-                            showAddSourceView = true
-                        }) {
-                            ZStack {
-                                Circle()
-                                    .stroke(Color.blue.opacity(ripple ? 0 : 0.8), lineWidth: 2)
-                                    .frame(width: fabSize, height: fabSize)
-                                    .scaleEffect(ripple ? 1.4 : 1.0)
-                                    .opacity(ripple ? 0 : 1)
-
-                                Image(systemName: "plus")
-                                    .font(.system(size: fabIconSize, weight: .light))
-                                    .foregroundColor(.white)
-                                    .frame(width: fabSize, height: fabSize)
-                                    .background(Color.blue)
-                                    .clipShape(Circle())
-                                    .shadow(radius: 5)
-                            }
-                        }
-                        .onAppear {
-                            withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: false)) {
-                                ripple.toggle()
-                            }
-                        }
-                        .padding(.trailing, fabPadding)
-                        .padding(.bottom, fabPadding)
-                    }
-                }
-            }
-
-            // 同步遮罩
-            if resourceManager.isSyncing {
-                VStack(spacing: 15) {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .scaleEffect(1.5)
-
-                    Text(resourceManager.syncMessage)
+                    Text("可以听的海外资讯")
+                        .font(.title2.bold())
+                        .foregroundColor(.primary.opacity(0.8))
                         .padding(.top, 10)
-                        .foregroundColor(.white)
-                        .font(.headline)
+                    
+                    Spacer()
+                    
+                    Text("点击右下角按钮\n定制您的专属新闻源")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.bottom, 140) // 避开底部按钮区域
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // 遮罩层保持半透明黑色，以突显加载状态
-                .background(Color.black.opacity(0.6))
-                .edgesIgnoringSafeArea(.all)
-                .contentShape(Rectangle())
+                
+                // 底部按钮层 (Action Area)
+                if !showAddSourceView {
+                    VStack {
+                        Spacer()
+                        HStack(alignment: .bottom) {
+                            // 刷新按钮 (左下角)
+                            if !resourceManager.isSyncing {
+                                Button(action: { Task { await syncInitialResources(isManual: true) } }) {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 20, weight: .bold))
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 50, height: 50)
+                                        .background(Material.thinMaterial) // 毛玻璃
+                                        .clipShape(Circle())
+                                }
+                                .padding(.leading, 30)
+                            }
+                            
+                            Spacer()
+                            
+                            // 添加按钮 (右下角主操作)
+                            Button(action: { showAddSourceView = true }) {
+                                ZStack {
+                                    // 涟漪效果
+                                    Circle()
+                                        .stroke(Color.blue.opacity(ripple ? 0 : 0.5), lineWidth: 2)
+                                        .frame(width: fabSize, height: fabSize)
+                                        .scaleEffect(ripple ? 1.5 : 1.0)
+                                        .opacity(ripple ? 0 : 1)
+                                    
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 28, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .frame(width: fabSize, height: fabSize)
+                                        .background(
+                                            LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                        )
+                                        .clipShape(Circle())
+                                        .shadow(color: .blue.opacity(0.4), radius: 8, x: 0, y: 4)
+                                }
+                            }
+                            .padding(.trailing, 30)
+                            .onAppear {
+                                withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: false)) { ripple.toggle() }
+                            }
+                        }
+                        .padding(.bottom, 40)
+                    }
+                }
+                
+                // 同步遮罩
+                if resourceManager.isSyncing {
+                    ZStack {
+                        Color.black.opacity(0.4).ignoresSafeArea()
+                        VStack(spacing: 20) {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .scaleEffect(1.5)
+                            Text(resourceManager.syncMessage)
+                                .font(.headline)
+                                .foregroundColor(.white)
+                        }
+                    }
+                }
             }
+            .navigationDestination(isPresented: $showAddSourceView) {
+                AddSourceView(isFirstTimeSetup: true, onComplete: { self.hasCompletedInitialSetup = true })
+                    .environmentObject(resourceManager)
+            }
+        }
+        .tint(.blue)
+        .alert("获取失败", isPresented: $showErrorAlert, actions: { Button("好的", role: .cancel) { } }, message: { Text(errorMessage) })
+        .alert("", isPresented: $showAlreadyUpToDateAlert) { Button("好的", role: .cancel) {} } message: { Text("网络连接正常，请点击右下角“+”按钮来选择你喜欢的新闻源。") }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            if newPhase == .active && !hasAttemptedInitialSync {
+                hasAttemptedInitialSync = true
+                Task { await syncInitialResources(isManual: false) }
+            }
+        }
+        .onChange(of: resourceManager.showAlreadyUpToDateAlert) { _, newValue in
+            if newValue { self.showAlreadyUpToDateAlert = true; resourceManager.showAlreadyUpToDateAlert = false }
         }
     }
 
     // 【修改】: 增加 isManual 参数以区分调用来源
     private func syncInitialResources(isManual: Bool = false) async {
-        do {
-            try await resourceManager.checkAndDownloadAllNewsManifests(isManual: isManual)
-        } catch {
-            self.errorMessage = "下载新闻源失败\n请检查网络连接后，点击左下角刷新↻按钮重试。"
-            self.showErrorAlert = true
-            print("WelcomeView 同步失败: \(error)")
-        }
+        do { try await resourceManager.checkAndDownloadAllNewsManifests(isManual: isManual) }
+        catch { self.errorMessage = "同步失败，请重试。"; self.showErrorAlert = true }
     }
 }

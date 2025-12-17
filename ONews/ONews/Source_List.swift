@@ -62,24 +62,30 @@ struct UserStatusToolbarItem: View {
                     Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
                 }
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
                     Image(systemName: "person.circle.fill")
-                        // 【修改】颜色自适应
-                        .foregroundColor(.primary)
-                    if authManager.isSubscribed {
-                        Image(systemName: "crown.fill")
-                            .foregroundColor(.yellow)
-                            .font(.caption)
-                    }
+                        .font(.body)
+                    Text(authManager.isSubscribed ? "PRO" : "User")
+                        .font(.caption.bold())
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.secondary.opacity(0.15))
+                .clipShape(Capsule())
+                .foregroundColor(.primary)
             }
         } else {
-            Button(action: {
-                showLoginSheet = true
-            }) {
-                Image(systemName: "person.circle")
-                    // 【修改】颜色自适应
-                    .foregroundColor(.primary)
+            Button(action: { showLoginSheet = true }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.circle")
+                    Text("登录")
+                        .font(.caption.bold())
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.secondary.opacity(0.15))
+                .clipShape(Capsule())
+                .foregroundColor(.primary)
             }
             .accessibilityLabel("登录")
         }
@@ -151,6 +157,7 @@ struct SourceListView: View {
         // 【修改】将 NavigationView 升级为 NavigationStack
         NavigationStack {
             VStack(spacing: 0) {
+                // 搜索栏
                 if isSearching {
                     SearchBarInline(
                         text: $searchText,
@@ -166,6 +173,8 @@ struct SourceListView: View {
                             }
                         }
                     )
+                    .padding(.bottom, 8)
+                    .background(Color.viewBackground)
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 
@@ -185,46 +194,33 @@ struct SourceListView: View {
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        withAnimation {
-                            isSearching.toggle()
-                            if !isSearching {
-                                isSearchActive = false
-                                searchText = ""
+                    HStack(spacing: 16) {
+                        Button {
+                            withAnimation {
+                                isSearching.toggle()
+                                if !isSearching { isSearchActive = false; searchText = "" }
                             }
+                        } label: {
+                            Image(systemName: isSearching ? "xmark.circle.fill" : "magnifyingglass")
+                                .font(.system(size: 16, weight: .medium))
                         }
-                    }) {
-                        Image(systemName: isSearching ? "xmark.circle.fill" : "magnifyingglass")
-                            // 【修改】颜色自适应
-                            .foregroundColor(.primary)
-                    }
-                    .accessibilityLabel("搜索")
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        showAddSourceSheet = true
-                    }) {
-                        Image(systemName: "plus")
-                            // 【修改】颜色自适应
-                            .foregroundColor(.primary)
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        Task {
-                            await syncResources(isManual: true)
+                        
+                        Button { showAddSourceSheet = true } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 18, weight: .medium))
                         }
-                    }) {
-                        Image(systemName: "arrow.clockwise")
-                            // 【修改】颜色自适应
-                            .foregroundColor(.primary)
+                        
+                        Button {
+                            Task { await syncResources(isManual: true) }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 16, weight: .medium))
+                        }
+                        .disabled(resourceManager.isSyncing)
                     }
-                    .disabled(resourceManager.isSyncing)
+                    .foregroundColor(.primary)
                 }
             }
-            .navigationTitle(isSearching ? "" : "")
             .navigationDestination(for: NavigationTarget.self) { target in
                 switch target {
                 case .allArticles:
@@ -246,29 +242,15 @@ struct SourceListView: View {
                 }
             }
         }
-        // 【修改】移除 .accentColor(.white) 和 .preferredColorScheme(.dark)
-        .tint(.blue) // 使用标准蓝色作为强调色
+        .tint(.blue)
         .onAppear {
             viewModel.loadNews()
-            Task {
-                await syncResources()
-            }
+            Task { await syncResources() }
         }
-        .sheet(isPresented: $showAddSourceSheet, onDismiss: {
-            print("AddSourceView 已关闭，重新加载新闻...")
-            viewModel.loadNews()
-        }) {
+        .sheet(isPresented: $showAddSourceSheet, onDismiss: { viewModel.loadNews() }) {
             NavigationView {
-                AddSourceView(
-                    isFirstTimeSetup: false,
-                    onConfirm: {
-                        print("AddSourceView 确定：关闭并刷新")
-                        showAddSourceSheet = false
-                    }
-                )
+                AddSourceView(isFirstTimeSetup: false)
             }
-            // 【修改】移除强制深色模式
-            // .preferredColorScheme(.dark)
             .environmentObject(resourceManager)
         }
         .sheet(isPresented: $showLoginSheet) { LoginView() }
@@ -290,84 +272,56 @@ struct SourceListView: View {
             ZStack {
                 // 原有的同步状态遮罩
                 if resourceManager.isSyncing {
+                    // 简单的同步 HUD
                     VStack(spacing: 15) {
-                        if resourceManager.syncMessage == "当前已是最新" || resourceManager.syncMessage == "新闻清单已是最新。" {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.largeTitle)
-                                .foregroundColor(.white)
-                            
-                            Text(resourceManager.syncMessage)
-                                .font(.headline)
-                                .foregroundColor(.white)
-                        }
-                        else if resourceManager.isDownloading {
-                            Text(resourceManager.syncMessage)
-                                .font(.headline)
-                                .foregroundColor(.white)
-                            
+                        if resourceManager.syncMessage.contains("最新") {
+                            Image(systemName: "checkmark.circle.fill").font(.largeTitle).foregroundColor(.white)
+                            Text(resourceManager.syncMessage).font(.headline).foregroundColor(.white)
+                        } else if resourceManager.isDownloading {
+                            Text(resourceManager.syncMessage).font(.headline).foregroundColor(.white)
                             ProgressView(value: resourceManager.downloadProgress)
                                 .progressViewStyle(LinearProgressViewStyle(tint: .white))
                                 .padding(.horizontal, 50)
-                            
-                            Text(resourceManager.progressText)
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.8))
-                            
                         } else {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                .scaleEffect(1.5)
-                            
-                            Text(resourceManager.syncMessage)
-                                .padding(.top, 10)
-                                .foregroundColor(.white.opacity(0.9))
+                            ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white)).scaleEffect(1.2)
+                            Text("正在同步...").foregroundColor(.white.opacity(0.9))
                         }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black.opacity(0.6))
-                    .edgesIgnoringSafeArea(.all)
-                    .contentShape(Rectangle())
+                    .frame(width: 200, height: 160) // 小巧的 HUD 尺寸
+                    .background(Material.ultraThinMaterial)
+                    .background(Color.black.opacity(0.4))
+                    .cornerRadius(20)
                 }
                 
-                // 【新增】图片下载遮罩
-                DownloadOverlay(
-                    isDownloading: isDownloadingImages,
-                    progress: downloadProgress,
-                    progressText: downloadProgressText
-                )
+                DownloadOverlay(isDownloading: isDownloadingImages, progress: downloadProgress, progressText: downloadProgressText)
             }
         )
-        .alert("", isPresented: $showErrorAlert, actions: {
-            Button("好的", role: .cancel) { }
-        }, message: {
-            Text(errorMessage)
-        })
+        .alert("", isPresented: $showErrorAlert, actions: { Button("好的", role: .cancel) { } }, message: { Text(errorMessage) })
     }
     
+    // MARK: - 搜索结果视图 (使用新的卡片)
     private var searchResultsView: some View {
         List {
             let grouped = groupedSearchByTimestamp()
             let timestamps = sortedSearchTimestamps(for: grouped)
-
+            
             if searchResults.isEmpty {
                 Section {
                     Text("未找到匹配的文章")
                         .foregroundColor(.secondary)
-                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 30)
                         .listRowBackground(Color.clear)
-                } header: {
-                    Text("搜索结果")
                 }
             } else {
                 ForEach(timestamps, id: \.self) { timestamp in
                     Section(header:
-                        VStack(alignment: .leading, spacing: 2) {
+                        HStack {
                             Text("搜索结果")
-                                .font(.subheadline)
-                                .foregroundColor(.blue)
-                            Text("\(formatTimestamp(timestamp)) (\(grouped[timestamp]?.count ?? 0))")
-                                .font(.headline)
-                                .foregroundColor(.primary)
+                            Spacer()
+                            Text(formatTimestamp(timestamp))
+                                .font(.caption.bold())
+                                .foregroundColor(.secondary)
                         }
                         .padding(.vertical, 4)
                     ) {
@@ -385,19 +339,17 @@ struct SourceListView: View {
                                     isContentMatch: item.isContentMatch,
                                     isLocked: isLocked
                                 )
-                                // 【修改】移除 .colorScheme(.dark)，让卡片跟随系统
                             }
-                            .buttonStyle(PlainButtonStyle()) // 使用 PlainButtonStyle 避免 List 行的默认按钮样式
-                            .listRowInsets(EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6))
+                            .buttonStyle(PlainButtonStyle())
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .contextMenu {
+                                // 保持原有菜单逻辑
                                 if item.article.isRead {
-                                    Button { viewModel.markAsUnread(articleID: item.article.id) }
-                                    label: { Label("标记为未读", systemImage: "circle") }
+                                    Button { viewModel.markAsUnread(articleID: item.article.id) } label: { Label("标为未读", systemImage: "circle") }
                                 } else {
-                                    Button { viewModel.markAsRead(articleID: item.article.id) }
-                                    label: { Label("标记为已读", systemImage: "checkmark.circle") }
+                                    Button { viewModel.markAsRead(articleID: item.article.id) } label: { Label("标为已读", systemImage: "checkmark.circle") }
                                 }
                             }
                         }
@@ -411,64 +363,132 @@ struct SourceListView: View {
         .transition(.opacity.animation(.easeInOut))
     }
     
+    // MARK: - 主列表视图 (UI核心重构)
     private var sourceAndAllArticlesView: some View {
         Group {
             if SubscriptionManager.shared.subscribedSourceIDs.isEmpty && !resourceManager.isSyncing {
                 VStack(spacing: 20) {
+                    Image(systemName: "newspaper")
+                        .font(.system(size: 60))
+                        .foregroundColor(.secondary.opacity(0.3))
                     Text("您还没有订阅任何新闻源")
                         .font(.headline)
                         .foregroundColor(.secondary)
                     Button(action: { showAddSourceSheet = true }) {
-                        Label("点击这里添加", systemImage: "plus.circle.fill")
-                            .font(.title2)
+                        Text("添加订阅")
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 30)
+                            .padding(.vertical, 12)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(25)
                     }
-                    .buttonStyle(.bordered)
                 }
                 .frame(maxHeight: .infinity)
             } else {
-                List {
-                    // 【修改】使用新的 value-based NavigationLink
-                    NavigationLink(value: NavigationTarget.allArticles) {
+                ScrollView {
+                    LazyVStack(spacing: 16) {
+                        // 1. 顶部大标题
                         HStack {
-                            Text("ALL")
-                                .font(.system(size: 28, weight: .bold))
-                                // 【修改】颜色自适应
+                            Text("我的订阅")
+                                .font(.system(size: 34, weight: .bold))
                                 .foregroundColor(.primary)
                             Spacer()
-                            Text("\(viewModel.totalUnreadCount)")
-                                .font(.system(size: 28, weight: .bold))
-                                .foregroundColor(.secondary)
                         }
-                        .padding()
-                    }
-                    // 【修改】使用卡片背景
-                    .listRowBackground(Color.cardBackground)
-                    // 增加一点间距
-                    .padding(.bottom, 8)
-                    .listRowSeparator(.hidden)
-                    
-                    ForEach(viewModel.sources) { source in
-                        NavigationLink(value: NavigationTarget.source(source.name)) {
+                        .padding(.horizontal, 20)
+                        .padding(.top, 10)
+                        
+                        // 2. "ALL" 聚合大卡片
+                        NavigationLink(value: NavigationTarget.allArticles) {
                             HStack {
-                                Text(source.name)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.primary)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Image(systemName: "square.stack.3d.up.fill")
+                                        .font(.title)
+                                        .foregroundColor(.white)
+                                    Text("全部文章")
+                                        .font(.title2.bold())
+                                        .foregroundColor(.white)
+                                    Text("汇集所有订阅源")
+                                        .font(.caption)
+                                        .foregroundColor(.white.opacity(0.8))
+                                }
                                 Spacer()
-                                Text("\(source.unreadCount)")
-                                    .foregroundColor(.secondary)
+                                VStack(alignment: .trailing) {
+                                    Text("\(viewModel.totalUnreadCount)")
+                                        .font(.system(size: 42, weight: .bold, design: .rounded))
+                                        .foregroundColor(.white)
+                                    Text("未读")
+                                        .font(.caption.bold())
+                                        .foregroundColor(.white.opacity(0.8))
+                                }
                             }
-                            .padding(.vertical, 8)
+                            .padding(24)
+                            .background(
+                                LinearGradient(gradient: Gradient(colors: [Color.blue, Color.purple]), startPoint: .topLeading, endPoint: .bottomTrailing)
+                            )
+                            .cornerRadius(20)
+                            .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
                         }
-                        .listRowBackground(Color.cardBackground)
-                        .listRowSeparator(.hidden)
+                        .padding(.horizontal, 16)
+                        .buttonStyle(ScaleButtonStyle()) // 增加点击缩放效果
+                        
+                        // 3. 分源列表
+                        VStack(spacing: 1) {
+                            ForEach(viewModel.sources) { source in
+                                NavigationLink(value: NavigationTarget.source(source.name)) {
+                                    HStack(spacing: 15) {
+                                        // 源图标占位 (可以使用首字母)
+                                        // 使用新的智能图标组件
+                                        SourceIconView(sourceName: source.name)
+                                        
+                                        Text(source.name)
+                                            .font(.body.weight(.medium))
+                                            .foregroundColor(.primary)
+                                        
+                                        Spacer()
+                                        
+                                        if source.unreadCount > 0 {
+                                            Text("\(source.unreadCount)")
+                                                .font(.caption.bold())
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(Color.blue.opacity(0.1))
+                                                .foregroundColor(.blue)
+                                                .clipShape(Capsule())
+                                        } else {
+                                            Image(systemName: "checkmark")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary.opacity(0.5))
+                                        }
+                                        
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary.opacity(0.3))
+                                    }
+                                    .padding(.vertical, 12)
+                                    .padding(.horizontal, 16)
+                                    .background(Color.cardBackground) // 使用卡片背景
+                                }
+                                
+                                // 自定义分割线 (除了最后一个)
+                                if source.id != viewModel.sources.last?.id {
+                                    Divider()
+                                        .padding(.leading, 70) // 对齐文字
+                                        .background(Color.cardBackground)
+                                }
+                            }
+                        }
+                        .cornerRadius(16) // 列表圆角
+                        .padding(.horizontal, 16)
+                        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                        
+                        // 底部留白
+                        Spacer().frame(height: 40)
                     }
+                    .padding(.top, 10)
                 }
-                // 【修改】使用 insetGrouped 样式，更现代
-                .listStyle(.insetGrouped)
-                // .scrollContentBackground(.hidden)
             }
         }
-        .transition(.opacity.animation(.easeInOut))
     }
     
     // 【新增】处理文章点击和图片下载的函数
@@ -577,5 +597,70 @@ struct SourceListView: View {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy年M月d日, EEEE"
         return formatter.string(from: date)
+    }
+}
+
+// 简单的按钮点击缩放效果
+struct ScaleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
+    }
+}
+
+struct SourceIconView: View {
+    let sourceName: String
+    
+    // 自定义映射表：如果想让某些特定的源显示特定的缩写，可以在这里配置
+    // 例如：["华尔街日报": "WSJ", "New York Times": "NYT"]
+    private let customAbbreviations: [String: String] = [
+        "环球资讯": "WSJ",
+        "一手新闻源": "WSJ",
+        "欧美媒体": "FT",
+        "海外视角": "WP",
+        "最酷最敢说": "B",
+        "时政锐评": "日",
+        "英文期刊": "NYT",
+        "前沿技术": "经",
+        "语音播报": "Reu",
+        "可以听的新闻": "MIT",
+        "麻省理工技术评论": "MIT"
+    ]
+    
+    var body: some View {
+        // 1. 优先尝试加载图片
+        // UIImage(named:) 会在 Assets 中查找完全匹配名字的图片
+        if let _ = UIImage(named: sourceName) {
+            Image(sourceName)
+                .resizable()
+                .scaledToFit() // 保持比例填充
+                .frame(width: 40, height: 40)
+                // 给图片加一点圆角，类似 App 图标的样式（方圆形），比纯圆更现代
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+        } else {
+            // 2. 如果没有图片，回退到文字 Logo
+            ZStack {
+                // 背景色：可以使用随机色，或者根据名字哈希生成固定颜色，这里暂时用统一的高级灰
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.blue.opacity(0.1)) // 淡蓝色背景
+                
+                Text(getDisplayText())
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundColor(.blue) // 蓝色文字
+            }
+            .frame(width: 40, height: 40)
+        }
+    }
+    
+    // 获取要显示的文字
+    private func getDisplayText() -> String {
+        // 如果在自定义字典里有，就用字典的
+        if let abbr = customAbbreviations[sourceName] {
+            return abbr
+        }
+        // 否则取前两个字符（如果只有1个字就取1个），看起来比1个字更丰富
+        return String(sourceName.prefix(1))
     }
 }
