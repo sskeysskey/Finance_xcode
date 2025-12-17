@@ -86,18 +86,18 @@ struct AddSourceView: View {
     }
     
     var body: some View {
-        ZStack(alignment: .bottom) {
-            Color.viewBackground.ignoresSafeArea()
-            
+        // 【修改 1】不再使用 ZStack 包裹，直接使用主容器
+        Group {
             if isLoading {
-                VStack {
+                VStack(spacing: 16) {
                     ProgressView()
+                        .scaleEffect(1.2)
                     Text("正在获取最新源...")
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
-                        .padding(.top, 8)
                 }
                 .frame(maxHeight: .infinity)
+                .background(Color.viewBackground) // 确保加载时也有背景色
             } else if let error = errorMessage {
                 VStack(spacing: 16) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -106,21 +106,27 @@ struct AddSourceView: View {
                     Text(error)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
+                        .foregroundColor(.secondary)
                 }
                 .frame(maxHeight: .infinity)
+                .background(Color.viewBackground)
             } else {
+                // 【修改 2】主列表
                 List {
                     Section {
                         ForEach(allAvailableSources, id: \.id) { source in
                             HStack {
-                                Text(source.name) // 显示名称（如“华尔街日报”）
+                                Text(source.name)
                                     .fontWeight(.medium)
                                     // 【修改】文字颜色自适应
                                     .foregroundColor(.primary)
-
                                 Spacer()
                                 
                                 Button(action: {
+                                    // 震动反馈
+                                    let generator = UIImpactFeedbackGenerator(style: .light)
+                                    generator.impactOccurred()
+                                    
                                     withAnimation(.spring()) {
                                         if subscriptionManager.isSubscribed(sourceId: source.id) {
                                             subscriptionManager.removeSubscription(sourceId: source.id)
@@ -130,94 +136,86 @@ struct AddSourceView: View {
                                     }
                                 }) {
                                     Image(systemName: subscriptionManager.isSubscribed(sourceId: source.id) ? "checkmark.circle.fill" : "plus.circle")
-                                        .font(.system(size: 22))
+                                        .font(.system(size: 24)) // 稍微调大一点更容易点
                                         .foregroundColor(subscriptionManager.isSubscribed(sourceId: source.id) ? .green : .blue)
                                 }
-                                .buttonStyle(PlainButtonStyle())
+                                .buttonStyle(PlainButtonStyle()) // 确保点击只触发按钮，不触发整行
                             }
-                            .padding(.vertical, 4)
+                            .padding(.vertical, 6)
                         }
                     } header: {
                         Text("可用新闻源")
-                    } footer: {
-                        // 底部占位，防止列表被悬浮按钮遮挡
-                        Spacer().frame(height: 100)
                     }
+                    // 【关键点】这里不需要 footer spacer 了，因为 safeAreaInset 会自动处理
                 }
                 .listStyle(.insetGrouped)
-            }
-            
-            // 悬浮底部 Action Bar
-            if !isLoading && errorMessage == nil {
-                VStack(spacing: 0) {
-                    // 顶部添加一根微弱的分割线
-                    Divider()
-                    
-                    VStack(spacing: 12) {
+                // 【修改 3】使用 safeAreaInset 放置底部悬浮栏
+                // 这会让 List 自动感知底部的空间，从而允许最后一行滚动到按钮上方
+                .safeAreaInset(edge: .bottom) {
+                    VStack(spacing: 0) {
+                        Divider() // 顶部分割线
                         
-                        // 【修改】让一键全选按钮变得非常醒目
-                        if !areAllSourcesSubscribed {
-                            Button(action: {
-                                let allIDs = allAvailableSources.map { $0.id }
-                                // 使用震动反馈增加交互感
-                                let generator = UIImpactFeedbackGenerator(style: .medium)
-                                generator.impactOccurred()
-                                
-                                withAnimation(.spring()) {
-                                    subscriptionManager.subscribeToAll(allIDs)
-                                }
-                            }) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "checkmark.rectangle.stack.fill")
-                                        .font(.system(size: 18))
-                                    Text("一键添加所有 (\(allAvailableSources.count))")
-                                        .fontWeight(.bold)
-                                }
-                                .font(.headline)
-                                .foregroundColor(.white) // 白色文字
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 54) // 稍微加高一点
-                                .background(
-                                    // 使用鲜艳的绿色渐变
-                                    LinearGradient(
-                                        gradient: Gradient(colors: [Color.green, Color.mint]),
-                                        startPoint: .leading,
-                                        endPoint: .trailing
+                        VStack(spacing: 12) {
+                            // 一键全选按钮（高亮版）
+                            if !areAllSourcesSubscribed {
+                                Button(action: {
+                                    let allIDs = allAvailableSources.map { $0.id }
+                                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                                    generator.impactOccurred()
+                                    withAnimation(.spring()) {
+                                        subscriptionManager.subscribeToAll(allIDs)
+                                    }
+                                }) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "checkmark.rectangle.stack.fill")
+                                            .font(.system(size: 18))
+                                        Text("一键添加所有 (\(allAvailableSources.count))")
+                                            .fontWeight(.bold)
+                                    }
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 54)
+                                    .background(
+                                        LinearGradient(
+                                            gradient: Gradient(colors: [Color.green, Color.mint]),
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
                                     )
-                                )
-                                .cornerRadius(16) // 更圆润的角
-                                .shadow(color: Color.green.opacity(0.4), radius: 8, x: 0, y: 4) // 漂亮的绿色光晕阴影
+                                    .cornerRadius(16)
+                                    .shadow(color: Color.green.opacity(0.4), radius: 8, x: 0, y: 4)
+                                }
+                                .transition(.scale.combined(with: .opacity))
                             }
-                            .transition(.scale.combined(with: .opacity)) // 添加出现/消失动画
+                            
+                            // 完成设置按钮
+                            Button(action: handleConfirm) {
+                                Text(subscriptionManager.subscribedSourceIDs.isEmpty ? "请至少选择一个" : "完成设置")
+                                    .font(.headline)
+                                    .foregroundColor(subscriptionManager.subscribedSourceIDs.isEmpty ? .secondary : .white)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 50)
+                                    .background(
+                                        subscriptionManager.subscribedSourceIDs.isEmpty
+                                        ? Color.secondary.opacity(0.2)
+                                        : Color.blue
+                                    )
+                                    .cornerRadius(16)
+                            }
+                            .disabled(subscriptionManager.subscribedSourceIDs.isEmpty)
                         }
-                        
-                        // 完成设置按钮
-                        Button(action: handleConfirm) {
-                            Text(subscriptionManager.subscribedSourceIDs.isEmpty ? "请至少选择一个" : "完成设置")
-                                .font(.headline)
-                                .foregroundColor(subscriptionManager.subscribedSourceIDs.isEmpty ? .secondary : .white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 50)
-                                .background(
-                                    subscriptionManager.subscribedSourceIDs.isEmpty 
-                                    ? Color.secondary.opacity(0.2) // 禁用状态
-                                    : Color.blue // 启用状态
-                                )
-                                .cornerRadius(16)
-                        }
-                        .disabled(subscriptionManager.subscribedSourceIDs.isEmpty)
+                        .padding(16)
+                        // 适配 iPhone 底部 Home Indicator 区域
+                        .padding(.bottom, 0)
+                        .background(
+                            Material.regular // 毛玻璃背景，让列表滚动到底下时有模糊效果
+                        )
                     }
-                    .padding(16)
-                    .padding(.bottom, 10) // 适配全面屏底部
-                    .background(
-                        Material.regular // 使用更通透的毛玻璃背景
-                    )
                 }
-                // 确保 Action Bar 始终在最上层
-                .zIndex(2)
             }
         }
-        .navigationTitle("添加新闻源")
+        .navigationTitle("添加内容")
         .navigationBarTitleDisplayMode(.inline)
         // 移除右上角“完成”按钮，保留默认返回按钮
         .onAppear(perform: loadAvailableSources)

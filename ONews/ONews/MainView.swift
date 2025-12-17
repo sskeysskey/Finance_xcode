@@ -185,13 +185,13 @@ struct ArticleRowCardView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) { // 间距稍微加大到 14
             // 1. 顶部元数据行：来源名称 + 锁定状态
             HStack {
                 if let name = sourceName {
                     Text(name.replacingOccurrences(of: "_", with: " ").uppercased())
-                        .font(.system(size: 11, weight: .bold, design: .default))
-                        .tracking(1.0) // 增加字间距，显得更高级
+                        .font(.system(size: 13, weight: .bold, design: .default)) // 【修改】11 -> 13
+                        .tracking(0.5)
                         .foregroundColor(isReadEffective ? .secondary.opacity(0.7) : .blue.opacity(0.8))
                 }
                 
@@ -200,22 +200,23 @@ struct ArticleRowCardView: View {
                 if isLocked {
                     HStack(spacing: 4) {
                         Image(systemName: "lock.fill")
-                            .font(.system(size: 10))
+                            .font(.system(size: 14)) // 【修改】10 -> 12
                         Text("需订阅")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: 14, weight: .medium)) // 【修改】10 -> 12
                     }
-                    .foregroundColor(.yellow.opacity(0.9))
+                    .foregroundColor(.orange.opacity(0.9))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color.yellow.opacity(0.15))
+                    .background(Color.orange.opacity(0.15))
                     .cornerRadius(8)
                 }
             }
             
-            // 2. 标题区域：使用衬线字体增加“报纸/杂志”质感
+            // 2. 标题区域：使用衬线字体
             HStack(alignment: .top) {
                 Text(article.topic)
-                    .font(.system(size: 19, weight: isReadEffective ? .regular : .bold, design: .serif)) // 使用 Serif 字体
+                    // 【修改】核心改动：19 -> 22，字重保持，这样标题更醒目
+                    .font(.system(size: 19, weight: isReadEffective ? .regular : .bold, design: .serif))
                     .foregroundColor(isReadEffective ? .secondary : .primary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true) // 防止截断
@@ -229,17 +230,17 @@ struct ArticleRowCardView: View {
             if isContentMatch {
                 HStack {
                     Label("正文匹配", systemImage: "text.magnifyingglass")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 12, weight: .medium)) // 【修改】10 -> 12
                         .foregroundColor(.secondary)
                     Spacer()
                 }
             }
         }
-        .padding(16) // 内部留白
+        .padding(18) // 【修改】内边距也稍微加大一点，让文字不拥挤
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color.cardBackground)
-                .shadow(color: Color.black.opacity(isReadEffective ? 0.02 : 0.06), radius: 8, x: 0, y: 4) // 柔和的阴影
+                .shadow(color: Color.black.opacity(isReadEffective ? 0.02 : 0.06), radius: 8, x: 0, y: 4)
         )
         // 如果已读，稍微降低整体透明度，让未读内容更突出
         .opacity(isLocked ? 0.7 : 1.0)

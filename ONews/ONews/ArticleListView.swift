@@ -264,13 +264,16 @@ struct TimestampHeader: View {
             HStack(alignment: .center, spacing: 10) {
                 // 日期文字
                 Text(formatTimestamp(timestamp))
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .font(.system(size: 18, weight: .bold, design: .rounded)) // 你修改后的字体大小
                     .foregroundColor(.secondary)
                     .textCase(.uppercase)
-                
+                    // 【新增】强制文本在水平方向上固定大小，不进行压缩或换行
+                    .fixedSize(horizontal: true, vertical: false) 
+
                 // 细分割线
+                // 这个组件会占据剩余的全部水平空间
                 VStack { Divider() }
-                
+
                 // 数量气泡或锁图标
                 HStack(spacing: 4) {
                     if isLocked {
