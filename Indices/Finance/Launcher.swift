@@ -271,6 +271,9 @@ struct MainContentView: View {
     // 【新增】控制个人中心显示
     @State private var showProfileSheet = false
 
+    // 【新增】控制“财经要闻”弹窗显示
+    @State private var showNewsPromoSheet = false 
+
     // 监控 App 的生命周期状态
     @Environment(\.scenePhase) private var scenePhase
 
@@ -286,7 +289,7 @@ struct MainContentView: View {
             return ""
         } else {
             let remaining = max(0, usageManager.maxFreeLimit - usageManager.dailyCount)
-            return "本日限额次数：\(remaining)"
+            return "每日免费限额\(remaining)"
         }
     }
 
@@ -363,33 +366,51 @@ struct MainContentView: View {
                         }
                     }
                     ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack(spacing: 16) { // 使用 HStack 并添加间距，确保按钮并排显示
-                        
-                        // 1. 【新增】“新闻”按钮
-                        Button {
-                            openNewsApp()
-                        } label: {
-                            // 这里使用了系统图标 "newspaper"，你也可以换成文字 Text("新闻")
-                            Image(systemName: "newspaper")
-                        }
-                        
-                        // 2. 原有的刷新按钮 (保持逻辑不变)
-                        Button {
-                            Task {
-                                DatabaseManager.shared.reconnectToLatestDatabase()
-                                let _ = await updateManager.checkForUpdates(isManual: true)
-                                print("User triggered refresh: Forcing data reload.")
-                                dataService.forceReloadData()
-                                await MainActor.run {
-                                    self.isDataReady = true
+                        HStack(spacing: 12) { // 稍微调整间距
+                                
+                            // 1. 【修改】“新闻”按钮 -> “财经要闻”醒目文字按钮
+                            Button {
+                                // 点击不再直接跳转，而是弹出介绍页
+                                showNewsPromoSheet = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    // Image(systemName: "flame.fill") // 加个小火苗图标增加紧迫感/热度
+                                    //     .font(.caption)
+                                    Text("财经要闻")
+                                        .font(.system(size: 14, weight: .bold))
                                 }
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 10)
+                                .foregroundColor(.white)
+                                .background(
+                                    // 醒目的渐变背景 (紫红色调)
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [Color.purple, Color.red]),
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .clipShape(Capsule()) // 胶囊形状
+                                .shadow(color: Color.red.opacity(0.3), radius: 3, x: 0, y: 2) // 阴影增加立体感
                             }
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
+                        
+                            // 2. 原有的刷新按钮 (保持逻辑不变)
+                            Button {
+                                Task {
+                                    DatabaseManager.shared.reconnectToLatestDatabase()
+                                    let _ = await updateManager.checkForUpdates(isManual: true)
+                                    print("User triggered refresh: Forcing data reload.")
+                                    dataService.forceReloadData()
+                                    await MainActor.run {
+                                        self.isDataReady = true
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            .disabled(isUpdateInProgress)
                         }
-                        .disabled(isUpdateInProgress)
                     }
-                }
                 }
             }
             .environmentObject(dataService)
@@ -423,6 +444,22 @@ struct MainContentView: View {
         .sheet(isPresented: $showLoginSheet) { LoginView() }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .sheet(isPresented: $showProfileSheet) { UserProfileView() } // 个人中心
+
+        // 【新增】财经要闻推广弹窗
+        .sheet(isPresented: $showNewsPromoSheet) {
+            NewsPromoView(onOpenAction: {
+                // 关闭弹窗
+                showNewsPromoSheet = false
+                // 执行原来的跳转逻辑
+                // 稍微延迟一下，让弹窗关闭动画看起来顺滑，或者直接跳转也可以
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    openNewsApp()
+                }
+            })
+            // 建议：加上这个可以让弹窗在 iPad 上或其他场景下展示得更自然（可选）
+            .presentationDetents([.large]) 
+        }
+
         .onChange(of: authManager.showSubscriptionSheet) { _, val in showSubscriptionSheet = val }
     }
 
@@ -501,4 +538,149 @@ struct MainContentView: View {
         }
     }
 
+}
+
+// MARK: - 【新增】财经要闻推广页
+struct NewsPromoView: View {
+    // 传入跳转逻辑
+    var onOpenAction: () -> Void
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        ZStack {
+            // 背景：由上至下的微妙渐变
+            LinearGradient(
+                gradient: Gradient(colors: [Color.blue.opacity(0.1), Color(UIColor.systemBackground)]),
+                startPoint: .top,
+                endPoint: .center
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 25) {
+                // 1. 顶部把手（指示可向下滑动关闭）
+                Capsule()
+                    .fill(Color.secondary.opacity(0.3))
+                    .frame(width: 40, height: 5)
+                    .padding(.top, 10)
+
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 25) {
+                        
+                        // 2. 头部 ICON 和 标题
+                        VStack(spacing: 15) {
+                            Image(systemName: "newspaper.circle.fill")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 80, height: 80)
+                                .foregroundStyle(
+                                    .linearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                )
+                                .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
+
+                            Text("全球财经要闻 · 一手掌握")
+                                .font(.system(size: 28, weight: .heavy))
+                                .foregroundColor(.primary)
+                        }
+                        .padding(.top, 20)
+
+                        // 3. 媒体品牌墙 (视觉化展示)
+                        VStack(spacing: 10) {
+                            Text("汇聚国际一线媒体精华")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .textCase(.uppercase)
+                            
+                            // 使用流式布局或简单的多行排列
+                            let brands = ["纽约时报", "金融时报", "华尔街日报", "Bloomberg", "路透社", "日经新闻", "华盛顿邮报", "..."]
+                            
+                            FlowLayoutView(items: brands)
+                        }
+                        .padding(.vertical, 10)
+
+                        // 4. 核心介绍文案
+                        VStack(alignment: .leading, spacing: 15) {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "sparkles")
+                                    .foregroundColor(.orange)
+                                Text("所有内容经翻译和AI总结，完整呈现给各位读者，并配有原版图片，还支持语音播放。欢迎尝试...")
+                            }
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        }
+                        .padding(20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color(UIColor.secondarySystemGroupedBackground))
+                                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                        )
+                        .padding(.horizontal)
+                    }
+                    .padding(.bottom, 100) // 防止内容被按钮遮挡
+                }
+            }
+
+            // 5. 底部悬浮按钮
+            VStack {
+                Spacer()
+                Button(action: {
+                    onOpenAction()
+                }) {
+                    HStack {
+                        Image(systemName: "app.badge.fill")
+                        Text("跳转到商店页面下载")
+                            .fontWeight(.bold)
+                    }
+                    .font(.title3)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .background(
+                        LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing)
+                    )
+                    .cornerRadius(28)
+                    .shadow(color: .blue.opacity(0.4), radius: 8, x: 0, y: 4)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 30)
+            }
+        }
+    }
+}
+
+// 简单的流式布局辅助视图
+struct FlowLayoutView: View {
+    let items: [String]
+    
+    var body: some View {
+        // 简单模拟流式布局，这里用几行 HStack 组合
+        VStack(spacing: 8) {
+            HStack {
+                BrandTag(text: items[0])
+                BrandTag(text: items[1])
+                BrandTag(text: items[2])
+            }
+            HStack {
+                BrandTag(text: items[3])
+                BrandTag(text: items[4])
+            }
+            HStack {
+                BrandTag(text: items[5])
+                BrandTag(text: items[6])
+            }
+        }
+    }
+}
+
+struct BrandTag: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .fontWeight(.semibold)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.blue.opacity(0.1))
+            .foregroundColor(.blue)
+            .cornerRadius(8)
+    }
 }
