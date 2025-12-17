@@ -254,56 +254,74 @@ struct TimestampHeader: View {
     let isExpanded: Bool
     let isLocked: Bool
     let onToggle: () -> Void
-    
+
+    // 定义一个渐变色，让日期看起来更有质感（蓝紫色系）
+    private let dateGradient = LinearGradient(
+        colors: [Color.blue, Color.purple],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
     var body: some View {
         Button(action: {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) { // 更Q弹的动画
                 onToggle()
             }
         }) {
-            HStack(alignment: .center, spacing: 10) {
-                // 日期文字
+            HStack(spacing: 0) {
+                // 1. 左侧装饰条（指示状态）
+                Capsule()
+                    .fill(isExpanded ? Color.blue : Color.secondary.opacity(0.3))
+                    .frame(width: 4, height: 24)
+                    .padding(.leading, 12)
+
+                // 2. 日期文字 (带渐变效果)
                 Text(formatTimestamp(timestamp))
-                    .font(.system(size: 18, weight: .bold, design: .rounded)) // 你修改后的字体大小
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
-                    // 【新增】强制文本在水平方向上固定大小，不进行压缩或换行
-                    .fixedSize(horizontal: true, vertical: false) 
+                    .font(.system(size: 18, weight: .heavy, design: .rounded)) // 更粗的字体
+                    .foregroundStyle(isExpanded ? AnyShapeStyle(dateGradient) : AnyShapeStyle(Color.primary.opacity(0.8)))
+                    .padding(.leading, 12)
+                    .fixedSize(horizontal: true, vertical: false) // 保持你要求的不换行
 
-                // 细分割线
-                // 这个组件会占据剩余的全部水平空间
-                VStack { Divider() }
+                Spacer()
 
-                // 数量气泡或锁图标
-                HStack(spacing: 4) {
+                // 3. 右侧信息区 (数量 + 锁 + 箭头)
+                HStack(spacing: 8) {
                     if isLocked {
                         Image(systemName: "lock.fill")
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.orange)
                     }
+
+                    // 数量胶囊
                     Text("\(count)")
-                        .font(.caption2.bold())
-                        .monospacedDigit()
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundColor(isExpanded ? .white : .secondary)
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 8)
+                        .background(
+                            Capsule()
+                                .fill(isExpanded ? Color.blue.opacity(0.8) : Color.secondary.opacity(0.15))
+                        )
+
+                    // 旋转箭头
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.secondary.opacity(0.5))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.secondary.opacity(0.1))
-                .foregroundColor(.secondary)
-                .clipShape(Capsule())
-                
-                // 指示箭头
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.bold))
-                    .foregroundColor(.secondary.opacity(0.5))
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                .padding(.trailing, 12)
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 4)
-            .background(Color.viewBackground) // 确保吸顶时背景不透明
+            .padding(.vertical, 10)
+            // 4. 背景：毛玻璃效果 + 阴影
+            .background(.ultraThinMaterial) // iOS 系统级毛玻璃
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+            .padding(.horizontal, 16) // 让整个Header左右悬空，不贴边
+            .padding(.vertical, 4)
         }
         .buttonStyle(PlainButtonStyle())
     }
-    
+
     private func formatTimestamp(_ timestamp: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyMMdd"
@@ -485,6 +503,7 @@ struct ArticleListView: View {
                         Task { await syncResources(isManual: true) }
                     } label: {
                         Image(systemName: "arrow.clockwise")
+                            .foregroundColor(.primary) // 【添加这行】强制使用黑白色系
                     }
                     .disabled(resourceManager.isSyncing)
                     .accessibilityLabel("刷新")
@@ -501,6 +520,7 @@ struct ArticleListView: View {
                         }
                     } label: {
                         Image(systemName: "magnifyingglass")
+                            .foregroundColor(.primary) // 【添加这行】强制使用黑白色系
                     }
                     .accessibilityLabel("搜索")
                 }
@@ -785,6 +805,7 @@ struct AllArticlesListView: View {
                     Task { await syncResources(isManual: true) }
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                        .foregroundColor(.primary) 
                 }
                 .disabled(resourceManager.isSyncing)
                 .accessibilityLabel("刷新")
@@ -801,6 +822,7 @@ struct AllArticlesListView: View {
                     }
                 } label: {
                     Image(systemName: "magnifyingglass")
+                        .foregroundColor(.primary) 
                 }
                 .accessibilityLabel("搜索")
             }
