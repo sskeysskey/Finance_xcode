@@ -316,7 +316,7 @@ struct TimestampHeader: View {
             .background(.ultraThinMaterial) // iOS 系统级毛玻璃
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-            .padding(.horizontal, 16) // 让整个Header左右悬空，不贴边
+            .padding(.horizontal, 3) // 让整个Header左右悬空，不贴边
             .padding(.vertical, 4)
         }
         .buttonStyle(PlainButtonStyle())
@@ -658,8 +658,6 @@ struct ArticleListView: View {
     }
 }
 
-// ==================== 所有文章列表 ====================
-// AllArticlesListView 的修改逻辑与 ArticleListView 完全一致，主要是替换锁定判断条件
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager

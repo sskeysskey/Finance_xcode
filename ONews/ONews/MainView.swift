@@ -190,7 +190,7 @@ struct ArticleRowCardView: View {
             HStack {
                 if let name = sourceName {
                     Text(name.replacingOccurrences(of: "_", with: " ").uppercased())
-                        .font(.system(size: 13, weight: .bold, design: .default)) // 【修改】11 -> 13
+                        .font(.system(size: 11, weight: .bold, design: .default)) // 【修改】11 -> 13
                         .tracking(0.5)
                         .foregroundColor(isReadEffective ? .secondary.opacity(0.7) : .blue.opacity(0.8))
                 }
