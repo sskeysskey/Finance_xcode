@@ -832,6 +832,38 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
+        // --- 【新增】处理分数格式 X/Y -> Y分之X ---
+        // 必须在最后的字典替换之前执行，因为字典里有 "/": "每" 的规则
+        // 逻辑：匹配 "数字/数字"，将其转换为 "分母分之分子"
+        let fractionPattern = #"(?<!\d)(\d+)\s*/\s*(\d+)(?!\d)"#
+        if let regex = try? NSRegularExpression(pattern: fractionPattern) {
+            let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
+            var replacements: [(NSRange, String)] = []
+            regex.enumerateMatches(in: processed, options: [], range: nsRange) { match, _, _ in
+                guard let match = match, match.numberOfRanges >= 3 else { return }
+                // 获取分子和分母
+                if let r1 = Range(match.range(at: 1), in: processed),
+                   let r2 = Range(match.range(at: 2), in: processed),
+                   let numerator = Int(processed[r1]),   // 分子 (1)
+                   let denominator = Int(processed[r2]) { // 分母 (6)
+                    
+                    // 转换为中文读法
+                    let denZh = self.readChineseNumber(denominator) // 6 -> 六
+                    let numZh = self.readChineseNumber(numerator)   // 1 -> 一
+                    
+                    // 组合成：六分之一
+                    let replacement = "\(denZh)分之\(numZh)"
+                    replacements.append((match.range, replacement))
+                }
+            }
+            // 倒序替换
+            for (range, rep) in replacements.reversed() {
+                if let r = Range(range, in: processed) {
+                    processed.replaceSubrange(r, with: rep)
+                }
+            }
+        }
+
         // --- 新增：将 20-24岁 这类“年龄段”优先转换为中文大写数字读法（贰十到贰十四岁） ---
         // 支持：20-24岁 / 20 - 24 岁 / 20-24岁龄 / 20-24年龄段（括号内外均可）
         // 只在两端都在 [10, 99] 的场景下处理（避免涉及 100+ 的异常年龄）
