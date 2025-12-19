@@ -267,7 +267,7 @@ struct IndicesContentView: View {
     // 定义分组名称
     private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "ETFs", "Economic_All", "Economics", "Indices"])
     // 【修改点】移除了 "Strategy34"
-    private let strategyGroupNames = Set(["Strategy12", "PE_valid", "PE_invalid", "Must", "Short_Shift", "Over_Sell"])
+    private let strategyGroupNames = Set(["Strategy12", "PE_valid", "PE_invalid", "Must", "Short_Shift", "OverSell"])
     // 这些是放在“52周新低”里面的
     private let weekLowGroupNames = Set(["Basic_Materials", "Communication_Services", "Consumer_Cyclical", "Consumer_Defensive", "Energy", "Financial_Services", "Healthcare", "Industrials", "Real_Estate", "Technology", "Utilities"])
     
@@ -447,7 +447,7 @@ struct IndicesContentView: View {
         case "Economic_All": return "globe"
         case "Short_Shift": return "chart.line.downtrend.xyaxis"
         case "Short": return "arrow.down.circle"
-        case "Over_Sell": return "arrow.up.circle"
+        case "OverSell": return "arrow.up.circle"
         case "PE_invalid": return "1.circle"
         case "PE_valid": return "2.circle"
         case "Strategy12": return "3.circle"
@@ -917,7 +917,7 @@ struct CompactSectorCard: View {
         case "Strategy34": return "逢低追高4"
         case "Short": return "超买"
         case "Short_Shift": return "双峰做空"
-        case "Over_Sell": return "双谷抄底"
+        case "OverSell": return "双谷抄底"
         case "Economics": return "本周经济数据"
         case "Economic_All": return "全部经济数据"
         case "Commodities": return "大宗商品"
