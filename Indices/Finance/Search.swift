@@ -158,7 +158,10 @@ struct SearchContentView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        // 【修改点】将原本的 .padding(.vertical, 8) 改为分别控制
+        // 顶部保持 8，底部改为 0，拉近与下方的距离
+        .padding(.top, 8)
+        .padding(.bottom, 0)
         .background(Color(UIColor.systemGroupedBackground)) // 与整体背景融合
         
         // 导航目标

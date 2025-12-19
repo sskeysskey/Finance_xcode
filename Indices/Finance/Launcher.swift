@@ -307,16 +307,19 @@ struct MainContentView: View {
                             GeometryReader { geometry in
                                 VStack(spacing: 0) {
                                     // 1. 主要的分组区域
+                                    // 【修改点 1】增加高度占比，从 0.75 -> 0.79
                                     IndicesContentView()
-                                        .frame(height: geometry.size.height * 0.75)
+                                        .frame(height: geometry.size.height * 0.79)
                                     
                                     // 2. 搜索/比较/财报 工具栏
+                                    // 【修改点 2】减小高度占比，从 0.13 -> 0.10
                                     SearchContentView()
-                                        .frame(height: geometry.size.height * 0.13)
+                                        .frame(height: geometry.size.height * 0.10)
                                     
                                     // 3. 底部 Tab 栏
+                                    // 【修改点 3】减小高度占比，从 0.12 -> 0.11
                                     TopContentView()
-                                        .frame(height: geometry.size.height * 0.12)
+                                        .frame(height: geometry.size.height * 0.11)
                                 }
                             }
                         } else {
