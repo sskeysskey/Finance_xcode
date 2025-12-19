@@ -162,18 +162,17 @@ typealias ETFListView = MarketListView<ETF>
 // MARK: - 主容器视图
 struct TopContentView: View {
     var body: some View {
-        // 【核心修改】删除外层的 NavigationView
-        // 因为 MainContentView 已经有了 NavigationStack，这里不能再嵌套 NavigationView
-        // 否则会导致约束冲突，使底部栏在首次加载时高度为0或不可见。
+        // 保持 VStack 结构，背景色由内部或父级决定
         VStack {
             // 去掉 Spacer，让它自然填充
             CustomTabBar()
         }
+        // 确保容器背景也是 systemGroupedBackground，与 SearchContentView 一致
         .background(Color(UIColor.systemGroupedBackground))
     }
 }
 
-// MARK: - 自定义底部标签栏 (核心修改：增加点击榜单扣点逻辑)
+// MARK: - 自定义底部标签栏 (核心修改：移除圆角卡片背景，与搜索栏融合)
 struct CustomTabBar: View {
     @StateObject private var dataService = DataService.shared
     
@@ -195,7 +194,7 @@ struct CustomTabBar: View {
     
     // 2. 控制导航跳转的状态
     @State private var activeTab: TabDestination? = nil
-
+    
     var body: some View {
         HStack(spacing: 0) {
             // 均匀分布的四个按钮
@@ -206,9 +205,13 @@ struct CustomTabBar: View {
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 16)
-        .background(Color(UIColor.secondarySystemGroupedBackground)) // 底部栏背景
-        .cornerRadius(20, corners: [.topLeft, .topRight]) // 仅顶部圆角
-        .shadow(color: Color.black.opacity(0.05), radius: 5, y: -2)
+        
+        // 【修改点】：
+        // 1. 移除了 .background(Color(UIColor.secondarySystemGroupedBackground))
+        // 2. 改为 .background(Color(UIColor.systemGroupedBackground)) 或者直接留空（因为父视图已经是这个颜色）
+        // 3. 移除了 .cornerRadius(...)
+        // 4. 移除了 .shadow(...)
+        .background(Color(UIColor.systemGroupedBackground)) 
         
         // 导航逻辑 (保持不变)
         .navigationDestination(isPresented: Binding(
