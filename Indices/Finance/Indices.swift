@@ -267,7 +267,7 @@ struct IndicesContentView: View {
     // 定义分组名称
     private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "ETFs", "Economic_All", "Economics", "Indices"])
     // 【修改点】移除了 "Strategy34"
-    private let strategyGroupNames = Set(["Strategy12", "PE_valid", "PE_invalid", "Must", "Short_Shift", "OverSell"])
+    private let strategyGroupNames = Set(["Strategy12", "PE_valid", "PE_invalid", "Must", "Short_Shift", "OverSell", "PE_Double"])
     // 这些是放在“52周新低”里面的
     private let weekLowGroupNames = Set(["Basic_Materials", "Communication_Services", "Consumer_Cyclical", "Consumer_Defensive", "Energy", "Financial_Services", "Healthcare", "Industrials", "Real_Estate", "Technology", "Utilities"])
     
@@ -450,6 +450,7 @@ struct IndicesContentView: View {
         case "OverSell": return "arrow.up.circle"
         case "PE_invalid": return "1.circle"
         case "PE_valid": return "2.circle"
+        case "PE_Double": return "4.circle"
         case "Strategy12": return "3.circle"
         case "Strategy34": return "4.circle"
         default: return "chart.pie.fill"
@@ -911,10 +912,11 @@ struct CompactSectorCard: View {
         switch sectorName {
         case "Must": return "博主推荐"
         case "Today": return "观察名单"
-        case "PE_invalid": return "逢低追高1"
-        case "PE_valid": return "逢低追高2"
-        case "Strategy12": return "逢低追高3"
-        case "Strategy34": return "逢低追高4"
+        case "PE_invalid": return "逢低建仓-1"
+        case "PE_valid": return "逢低建仓-2"
+        case "PE_Double": return "逢低建仓-双谷底"
+        case "Strategy12": return "逢低建仓-3"
+        case "Strategy34": return "逢低建仓-4"
         case "Short": return "超买"
         case "Short_Shift": return "双峰做空"
         case "OverSell": return "双谷抄底"
