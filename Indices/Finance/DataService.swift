@@ -159,7 +159,21 @@ struct ETF1: Codable, SymbolItem {
 class DataService: ObservableObject {
     // MARK: - Singleton
     static let shared = DataService()
-    private init() {}
+    
+    // 【修改点 1】定义 UserDefaults 的 Key
+    private let strategyGroupsKey = "FinanceAppStrategyGroupsConfig"
+    
+    // 【修改点 2】定义默认的策略组（作为兜底）
+    private let defaultStrategyGroups = ["Strategy12", "PE_valid", "PE_invalid", "Must", "Short_Shift", "OverSell", "PE_Double"]
+
+    private init() {
+        // 【修改点 3】初始化时从 UserDefaults 读取配置
+        if let savedGroups = UserDefaults.standard.array(forKey: strategyGroupsKey) as? [String] {
+            self.strategyGroupNames = Set(savedGroups)
+        } else {
+            self.strategyGroupNames = Set(defaultStrategyGroups)
+        }
+    }
 
     // 【新增】内部状态，标记是否正在加载
     private var isLoading = false 
@@ -214,11 +228,24 @@ class DataService: ObservableObject {
     // MARK: - 【新增】期权数据存储
     // Key 是 Symbol (大写), Value 是该 Symbol 下所有的期权条目
     @Published var optionsData: [String: [OptionItem]] = [:]
+
+    // 【修改点 4】新增：公开的策略组名称集合，供 UI 使用
+    @Published var strategyGroupNames: Set<String> = []
     
     private var isDataLoaded = false
     private var isInitialLoad: Bool {
         let localVersion = UserDefaults.standard.string(forKey: "FinanceAppLocalDataVersion")
         return localVersion == nil || localVersion == "0.0"
+    }
+
+    // MARK: - 【修改点 5】新增：更新策略组配置的方法
+    func updateStrategyGroups(_ groups: [String]) {
+        // 1. 更新内存中的 Published 属性，触发 UI 刷新
+        DispatchQueue.main.async {
+            self.strategyGroupNames = Set(groups)
+        }
+        // 2. 持久化到 UserDefaults
+        UserDefaults.standard.set(groups, forKey: strategyGroupsKey)
     }
 
     // 【核心修改】：将 loadData 改为异步触发，不阻塞主线程

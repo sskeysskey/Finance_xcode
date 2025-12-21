@@ -264,11 +264,10 @@ struct IndicesContentView: View {
     
     // 【新增】控制跳转到期权列表页面
     @State private var navigateToOptionsList = false
+    
     // 定义分组名称
     private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "ETFs", "Economic_All", "Economics", "Indices"])
-    // 【修改点】移除了 "Strategy34"
-    private let strategyGroupNames = Set(["Strategy12", "PE_valid", "PE_invalid", "Must", "Short_Shift", "OverSell", "PE_Double"])
-    // 这些是放在“52周新低”里面的
+    
     private let weekLowGroupNames = Set(["Basic_Materials", "Communication_Services", "Consumer_Cyclical", "Consumer_Defensive", "Energy", "Financial_Services", "Healthcare", "Industrials", "Real_Estate", "Technology", "Utilities"])
     
     
@@ -286,8 +285,10 @@ struct IndicesContentView: View {
                 
                 // 1. 准备数据
                 let economySectors = sectors.filter { economyGroupNames.contains($0.name) }
-                let strategySectors = sectors.filter { strategyGroupNames.contains($0.name) }
-                // 过滤出 52周新低 需要的数据，传递给二级页面
+                
+                // 【修改点 2】使用 dataService 中的动态配置进行过滤
+                let strategySectors = sectors.filter { dataService.strategyGroupNames.contains($0.name) }
+                
                 let weekLowSectors = sectors.filter { weekLowGroupNames.contains($0.name) }
                 
                 ScrollView(showsIndicators: false) {
@@ -332,6 +333,7 @@ struct IndicesContentView: View {
                             SectionHeader(title: "每日荐股", icon: "star.fill", color: .blue)
                             
                             LazyVGrid(columns: gridLayout, spacing: 10) {
+                                // 这里会自动根据 strategySectors 的变化而更新
                                 ForEach(strategySectors) { sector in
                                     Button {
                                         handleSectorClick(sector)
@@ -491,12 +493,41 @@ struct OptionsListView: View {
                             self.showSubscriptionSheet = true
                         }
                     } label: {
+                        // 【修改点 1】获取该 symbol 的详细信息
+                        let info = getInfo(for: symbol)
+                        
                         HStack {
-                            Text(symbol)
-                                .font(.headline)
-                                .fontWeight(.bold)
-                                .foregroundColor(.primary) // 确保按钮样式下文字颜色正确
+                            // 【修改点 2】使用 VStack 模仿搜索结果的布局
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 8) {
+                                    // 1. 代码
+                                    Text(symbol)
+                                        .font(.headline)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.primary)
+                                    
+                                    // 2. 名称 (如果有)
+                                    if !info.name.isEmpty {
+                                        Text(info.name)
+                                            .font(.subheadline)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.tail)
+                                    }
+                                }
+                                
+                                // 3. 标签 (如果有，限制一行，超出显示...)
+                                if !info.tags.isEmpty {
+                                    Text(info.tags.joined(separator: ", "))
+                                        .font(.caption) // 字体稍小
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)   // 限制一行
+                                        .truncationMode(.tail) // 超出部分用省略号
+                                }
+                            }
+                            
                             Spacer()
+                            
                             Image(systemName: "chevron.right")
                                 .font(.caption)
                                 .foregroundColor(.gray)
@@ -515,6 +546,24 @@ struct OptionsListView: View {
             }
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+    }
+    
+    // 【修改点 3】新增辅助函数：查找名称和标签
+    private func getInfo(for symbol: String) -> (name: String, tags: [String]) {
+        let upperSymbol = symbol.uppercased()
+        
+        // 1. 先在股票列表中查找
+        if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == upperSymbol }) {
+            return (stock.name, stock.tag)
+        }
+        
+        // 2. 如果没找到，去 ETF 列表中查找
+        if let etf = dataService.descriptionData?.etfs.first(where: { $0.symbol.uppercased() == upperSymbol }) {
+            return (etf.name, etf.tag)
+        }
+        
+        // 3. 实在找不到，返回空
+        return ("", [])
     }
 }
 
@@ -717,6 +766,26 @@ struct CollapsibleSectorSection: View {
     // 默认展开
     @State private var isExpanded: Bool = false
     
+    // 【新增】名称映射逻辑
+    private var displayName: String {
+        switch sector.name {
+        case "Basic_Materials": return "原材料&金属"
+        case "Communication_Services": return "通信服务"
+        case "Consumer_Cyclical": return "非必需消费品"
+        case "Consumer_Defensive": return "必需消费品"
+        case "Energy": return "能源行业"
+        case "Financial_Services": return "金融服务"
+        case "Healthcare": return "医疗保健"
+        case "Industrials": return "工业领域"
+        case "Real_Estate": return "房地产行业"
+        case "Technology": return "技术与科技"
+        case "Utilities": return "公共事业&基础设施"
+        default:
+            // 默认处理：将下划线替换为空格
+            return sector.name.replacingOccurrences(of: "_", with: " ")
+        }
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // 1. 头部 (点击可折叠/展开)
@@ -726,8 +795,8 @@ struct CollapsibleSectorSection: View {
                 }
             }) {
                 HStack {
-                    // 处理下划线显示
-                    Text(sector.name.replacingOccurrences(of: "_", with: " "))
+                    // 【修改点】这里使用计算属性 displayName 代替原来的直接替换逻辑
+                    Text(displayName)
                         .font(.headline)
                         .foregroundColor(.primary)
                     
@@ -752,8 +821,7 @@ struct CollapsibleSectorSection: View {
                     Divider() // 分隔线
                     
                     ForEach(sector.symbols) { symbol in
-                        // 复用现有的 SymbolItemView，它已经包含了点击跳转图表、权限检查、样式等逻辑
-                        // 注意：SymbolItemView 内部有 padding，这里为了列表紧凑，可以稍微调整外层容器
+                        // 复用现有的 SymbolItemView
                         SymbolItemView(symbol: symbol, sectorName: sector.name)
                             .padding(.horizontal, 8) // 稍微内缩一点
                             .padding(.vertical, 2)

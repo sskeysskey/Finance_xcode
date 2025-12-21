@@ -430,9 +430,11 @@ struct ChartView: View {
             HStack(spacing: 20) {
                 NavigationLink(destination: {
                     if let descriptions = getDescriptions(for: symbol) {
-                        DescriptionView(descriptions: descriptions, isDarkMode: isDarkMode)
+                        // 【修改】: 删除了 isDarkMode: isDarkMode
+                        DescriptionView(descriptions: descriptions)
                     } else {
-                        DescriptionView(descriptions: ("No description available.", ""), isDarkMode: isDarkMode)
+                        // 【修改】: 删除了 isDarkMode: isDarkMode
+                        DescriptionView(descriptions: ("No description available.", ""))
                     }
                 }) {
                     Text("简介").font(.system(size: 22, weight: .medium)).foregroundColor(.blue)

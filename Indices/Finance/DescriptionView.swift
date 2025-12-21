@@ -3,7 +3,9 @@ import SwiftUI
 // MARK: - DescriptionView
 struct DescriptionView: View {
     let descriptions: (String, String) // (description1, description2)
-    let isDarkMode: Bool
+    
+    // 【修改 1】: 移除 let isDarkMode: Bool
+    // 不需要显式传入，SwiftUI 会自动处理
     
     private func formatDescription(_ text: String) -> String {
         var formattedText = text
@@ -47,22 +49,23 @@ struct DescriptionView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(formatDescription(descriptions.0))
                         .font(.title2)
-                        .foregroundColor(isDarkMode ? .white : .black)
+                        // 【修改 2】: 使用 .primary
+                        // .primary 在浅色模式下是黑色，深色模式下是白色
+                        .foregroundColor(.primary)
                         .padding(.bottom, 18)
                     
                     Text(formatDescription(descriptions.1))
                         .font(.title2)
-                        .foregroundColor(isDarkMode ? .white : .black)
+                        // 【修改 3】: 同上
+                        .foregroundColor(.primary)
                 }
                 .padding()
             }
             Spacer()
         }
         .navigationBarTitle("Description", displayMode: .inline)
-        .background(
-            isDarkMode ?
-                Color.black.edgesIgnoringSafeArea(.all) :
-                Color.white.edgesIgnoringSafeArea(.all)
-        )
+        // 【修改 4】: 使用系统背景色
+        // systemBackground 在浅色模式下是白色，深色模式下是黑色
+        .background(Color(UIColor.systemBackground).edgesIgnoringSafeArea(.all))
     }
 }

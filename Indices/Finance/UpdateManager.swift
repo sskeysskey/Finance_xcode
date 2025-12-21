@@ -7,6 +7,8 @@ struct VersionResponse: Codable {
     let daily_free_limit: Int?
     // 【新增】扣点配置字典
     let cost_config: [String: Int]?
+    // 【修改点 1】新增策略分组配置字段
+    let strategy_groups: [String]?
     let files: [FileInfo]
 }
 
@@ -107,10 +109,18 @@ class UpdateManager: ObservableObject {
                 print("UpdateManager: 已更新每日免费次数限制为 \(limit)")
             }
             
-            // 【新增】2. 更新扣点配置
+            // 2. 更新扣点配置
             if let costs = serverVersionResponse.cost_config {
                 UsageManager.shared.updateCosts(costs)
                 print("UpdateManager: 已更新扣点规则: \(costs)")
+            }
+            
+            // 【新增 2】更新策略分组配置
+            // 如果服务器返回了配置，就更新；否则保持默认
+            if let strategies = serverVersionResponse.strategy_groups {
+                // 调用 DataService 更新配置并持久化
+                DataService.shared.updateStrategyGroups(strategies)
+                print("UpdateManager: 已更新策略分组配置: \(strategies)")
             }
             
             let localVersion = UserDefaults.standard.string(forKey: localVersionKey) ?? "0.0"

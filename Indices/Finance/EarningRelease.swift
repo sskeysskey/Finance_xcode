@@ -36,6 +36,9 @@ struct EarningReleaseView: View {
 
     @State private var expandedSections: [String: Bool] = [:]
     @State private var showSearchView = false
+    
+    // 【新增】用于控制自动滚动的状态，防止重复滚动
+    @State private var hasScrolledToToday = false
 
     private var groupedReleases: [DateGroup] {
         // 1. 【新增】定义一个格式化器，生成 "yyyy-MM-dd" 格式的字符串
@@ -75,40 +78,94 @@ struct EarningReleaseView: View {
     }
 
     var body: some View {
-        List {
-            ForEach(groupedReleases) { dateGroup in
-                Section(header: Text(dateGroup.date).font(.headline).foregroundColor(.primary).padding(.vertical, 5)) {
-                    ForEach(dateGroup.timingGroups) { timingGroup in
-                        timingGroupHeader(for: timingGroup)
-                        if expandedSections[timingGroup.id] ?? true {
-                            ForEach(timingGroup.items) { item in
-                                sectionRow(for: item)
+        // 【核心修改 1】引入 ScrollViewReader
+        ScrollViewReader { proxy in
+            List {
+                ForEach(groupedReleases) { dateGroup in
+                    Section(header: Text(dateGroup.date).font(.headline).foregroundColor(.primary).padding(.vertical, 5)) {
+                        ForEach(dateGroup.timingGroups) { timingGroup in
+                            timingGroupHeader(for: timingGroup)
+                            // 这里使用了 expandedSections 的状态
+                            if expandedSections[timingGroup.id] ?? true {
+                                ForEach(timingGroup.items) { item in
+                                    sectionRow(for: item)
+                                }
                             }
                         }
                     }
+                    // 【核心修改 2】给每个 Section 头部绑定 ID，方便定位
+                    .id(dateGroup.id)
                 }
             }
-        }
-        .listStyle(.plain)
-        .navigationTitle("财报发布")
-        .onAppear { initializeExpandedStates() }
-        .onReceive(dataService.$earningReleases) { _ in initializeExpandedStates() }
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: { showSearchView = true }) { Image(systemName: "magnifyingglass") }
+            .listStyle(.plain)
+            .navigationTitle("财报发布")
+            .onAppear {
+                initializeExpandedStates()
+                // 【核心修改 3】视图出现时执行滚动逻辑
+                scrollToTargetDate(proxy: proxy)
             }
-        }
-        .navigationDestination(isPresented: $showSearchView) {
-            SearchView(isSearchActive: true, dataService: dataService)
-        }
-        // 【新增】程序化导航与弹窗
-        .navigationDestination(isPresented: $isNavigationActive) {
-            if let item = selectedItem {
-                ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Stocks")
+            // 【修复警告】适配 iOS 17 新语法
+            // 旧写法: .onChange(of: value) { _ in ... }
+            // 新写法: .onChange(of: value) { ... } (如果是0个参数)
+            // 或者: .onChange(of: value) { oldValue, newValue in ... } (如果是2个参数)
+            .onChange(of: dataService.earningReleases.count) { 
+                // 这里不需要参数，直接执行逻辑
+                initializeExpandedStates()
+                scrollToTargetDate(proxy: proxy)
             }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: { showSearchView = true }) { Image(systemName: "magnifyingglass") }
+                }
+            }
+            .navigationDestination(isPresented: $showSearchView) {
+                SearchView(isSearchActive: true, dataService: dataService)
+            }
+            .navigationDestination(isPresented: $isNavigationActive) {
+                if let item = selectedItem {
+                    ChartView(symbol: item.symbol, groupName: dataService.getCategory(for: item.symbol) ?? "Stocks")
+                }
+            }
+            .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         }
-        // 【修改】移除了 LoginView 的 sheet
-        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+    }
+
+    // 【核心修改 4】计算日期并滚动的逻辑函数
+    private func scrollToTargetDate(proxy: ScrollViewProxy) {
+        // 防止重复滚动，或者数据还没加载完就滚动
+        guard !hasScrolledToToday, !groupedReleases.isEmpty else { return }
+        
+        // 1. 获取当前系统日期
+        let today = Date()
+        // 2. 计算前一天
+        guard let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: today) else { return }
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let targetDateString = formatter.string(from: yesterday)
+        
+        // 3. 寻找最合适的滚动目标
+        // 我们需要找到列表中日期 >= 目标日期(昨天) 的第一个分组
+        // 这样如果昨天没有财报，它会停在昨天之后最近的一天（比如今天或明天），保证用户看到的是最新的未过期数据
+        // 如果你严格想要“昨天”那个组，如果没有就不跳，可以用 first(where: { $0.date == targetDateString })
+        
+        if let targetGroup = groupedReleases.first(where: { $0.date >= targetDateString }) {
+            // 稍微延迟一点执行，确保 List 渲染完成，避免滚动失效
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                withAnimation {
+                    proxy.scrollTo(targetGroup.id, anchor: .top)
+                }
+                hasScrolledToToday = true
+            }
+        } else {
+            // 如果所有数据都比昨天早（全是历史数据），则滚动到底部（可选）
+             if let lastGroup = groupedReleases.last {
+                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                     proxy.scrollTo(lastGroup.id, anchor: .top)
+                     hasScrolledToToday = true
+                 }
+             }
+        }
     }
 
     @ViewBuilder
@@ -173,11 +230,14 @@ struct EarningReleaseView: View {
         }
     }
 
+    // 【修改】这里是修改后的初始化状态方法
     private func initializeExpandedStates() {
         for dateGroup in groupedReleases {
             for timingGroup in dateGroup.timingGroups {
+                // 如果该组的状态还未被记录，则将其初始化为 true (展开)
                 if expandedSections[timingGroup.id] == nil {
-                    expandedSections[timingGroup.id] = (timingGroup.items.count <= 5)
+                    // 【修改】不再判断数量，直接设置为 false，即默认全部折叠
+                    expandedSections[timingGroup.id] = false
                 }
             }
         }

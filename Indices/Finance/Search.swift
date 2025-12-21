@@ -206,6 +206,8 @@ struct ToolButton: View {
 // MARK: - 搜索页面
 struct SearchView: View {
     @Environment(\.dismiss) private var dismiss
+    // 【新增】引入系统颜色模式环境
+    @Environment(\.colorScheme) var colorScheme 
     @State private var searchText: String = ""
     @State private var showClearButton: Bool = false
     @State private var showSearchHistory: Bool = false
@@ -486,9 +488,11 @@ struct SearchView: View {
         .scrollContentBackground(.hidden)
         .sheet(item: $selectedSymbolForDescription) { selected in
             if let descriptions = getDescriptions(for: selected.result.symbol) {
-                DescriptionView(descriptions: descriptions, isDarkMode: true)
+                // 【修改】: 删除了 isDarkMode 参数
+                DescriptionView(descriptions: descriptions)
             } else {
-                DescriptionView(descriptions: ("No description available.", ""), isDarkMode: true)
+                // 【修改】: 删除了 isDarkMode 参数
+                DescriptionView(descriptions: ("No description available.", ""))
             }
         }
         .navigationDestination(isPresented: $showChartView) {
