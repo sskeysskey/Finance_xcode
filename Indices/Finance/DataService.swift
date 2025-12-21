@@ -61,6 +61,7 @@ struct OptionItem: Identifiable, Hashable {
     let type: String       // Calls / Puts
     let expiryDate: String // Expiry Date
     let strike: String     // Strike
+    let distance: String   // 【新增】Distance
     let openInterest: String // Open Interest
     let change: String     // 1-Day Chg
 }
@@ -484,18 +485,26 @@ class DataService: ObservableObject {
                 // 去除每个部分的空白
                 parts = parts.map { $0.trimmingCharacters(in: .whitespaces) }
                 
-                // 3. 解析列 (根据样本: Symbol, Type, Expiry Date, Strike, Open Interest, 1-Day Chg)
-                if parts.count >= 6 {
+                // 3. 解析列 (新格式 7列: Symbol, Type, Expiry, Strike, Distance, OI, Chg)
+                if parts.count >= 7 {
                     let symbol = parts[0].uppercased()
                     let type = parts[1]
                     let expiry = parts[2]
                     let strike = parts[3]
                     
-                    // 【修改点 1：去除小数点】
-                    // 读取原始字符串 -> 转为 Double -> 格式化为无小数点的 String
-                    let rawOi = parts[4]
-                    let rawChg = parts[5]
+                    //Args: [原来的代码]
+                    // let distance = parts[4] 
+
+                    // 【修改点】格式化 distance：去除可能存在的 %，转 Double，保留1位小数并加回 %
+                    let rawDistance = parts[4].replacingOccurrences(of: "%", with: "")
+                    let distanceVal = Double(rawDistance) ?? 0.0
+                    let distance = String(format: "%.1f%%", distanceVal)
+
+                    // 【注意】原来的 OI 和 Chg 索引顺延了
+                    let rawOi = parts[5]    // 原来是 4，现在是 5
+                    let rawChg = parts[6]   // 原来是 5，现在是 6
                     
+                    // 去除小数点处理
                     let oi = String(format: "%.0f", Double(rawOi) ?? 0)
                     let chg = String(format: "%.0f", Double(rawChg) ?? 0)
                     
@@ -504,15 +513,18 @@ class DataService: ObservableObject {
                         type: type,
                         expiryDate: expiry,
                         strike: strike,
-                        openInterest: oi, // 存入处理后的整数
-                        change: chg      // 存入处理后的整数
+                        distance: distance, // 传入格式化后的 distance
+                        openInterest: oi,
+                        change: chg
                     )
                     
                     if tempOptions[symbol] == nil {
                         tempOptions[symbol] = []
                     }
                     tempOptions[symbol]?.append(item)
-                }
+                } 
+                // 【可选】为了兼容旧格式（防止文件还没更新导致崩溃），可以保留一个 else if parts.count >= 6 的判断
+                // 但既然你已经确定格式变了，这里直接用 >= 7 即可。
             }
             
             // 【修复 Swift 6 错误】

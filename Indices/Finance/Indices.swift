@@ -611,12 +611,13 @@ struct OptionsDetailView: View {
             .padding()
             .background(Color(UIColor.systemBackground))
             
-            // 2. 表格头 (根据 CSV 样本调整顺序)
-            HStack {
+            // 2. 表格头 (调整宽度以容纳 Distance)
+            HStack(spacing: 4) { // 减小默认间距
                 Text("Expiry").frame(maxWidth: .infinity, alignment: .leading)
-                Text("Strike").frame(width: 80, alignment: .center)
-                Text("Open Int").frame(width: 70, alignment: .trailing)
-                Text("1-Day Chg").frame(width: 70, alignment: .trailing)
+                Text("Strike").frame(width: 55, alignment: .trailing) // 稍微缩小
+                Text("Dist").frame(width: 55, alignment: .trailing)   // 【新增】Distance 表头
+                Text("Open Int").frame(width: 65, alignment: .trailing)
+                Text("1-Day").frame(width: 60, alignment: .trailing) // 稍微缩短文字
             }
             .font(.caption)
             .foregroundColor(.secondary)
@@ -626,14 +627,11 @@ struct OptionsDetailView: View {
             
             Divider()
             
-            // 3. 数据列表 【修改由此开始】
-            ScrollViewReader { proxy in // 1. 引入 Reader
+            // 3. 数据列表
+            ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        // 2. 添加顶部锚点 (不可见视图)
-                        Color.clear
-                            .frame(height: 0)
-                            .id("TopAnchor")
+                        Color.clear.frame(height: 0).id("TopAnchor")
                         
                         if filteredData.isEmpty {
                             Text("暂无数据")
@@ -641,19 +639,28 @@ struct OptionsDetailView: View {
                                 .padding(.top, 20)
                         } else {
                             ForEach(filteredData) { item in
-                                HStack {
-                                    // ... (内容保持不变) ...
+                                HStack(spacing: 4) {
+                                    // Expiry
                                     OptionCellView(text: item.expiryDate, alignment: .leading)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                     
-                                    OptionCellView(text: item.strike, alignment: .center)
-                                        .frame(width: 80, alignment: .center)
+                                    // Strike
+                                    OptionCellView(text: item.strike, alignment: .trailing)
+                                        .frame(width: 55, alignment: .trailing)
                                     
+                                    // 【新增】Distance
+                                    // 这里可以根据正负值给个颜色，或者直接显示
+                                    OptionCellView(text: item.distance, alignment: .trailing)
+                                        .frame(width: 55, alignment: .trailing)
+                                        .font(.system(size: 12)) // 字体可以稍微小一点
+                                    
+                                    // Open Interest
                                     OptionCellView(text: item.openInterest, alignment: .trailing)
-                                        .frame(width: 70, alignment: .trailing)
+                                        .frame(width: 65, alignment: .trailing)
                                     
+                                    // Change
                                     OptionCellView(text: item.change, alignment: .trailing)
-                                        .frame(width: 70, alignment: .trailing)
+                                        .frame(width: 60, alignment: .trailing)
                                 }
                                 .padding(.vertical, 10)
                                 .padding(.horizontal)
