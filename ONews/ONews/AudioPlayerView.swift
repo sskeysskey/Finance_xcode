@@ -1104,6 +1104,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "JS": "J.S",
             "AI": "A.I",
             "OpenAI": "Open.A.I",
+            "openAI": "open.A.I",
             "SDK": "S.D.K",
             "iOS": "i O S",
             "PSA": "P.S.A",

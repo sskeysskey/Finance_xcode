@@ -31,7 +31,7 @@ struct SubscriptionView: View {
             VStack(spacing: 25) {
                 // 标题
                 VStack(spacing: 10) {
-                    Text("请选择订阅套餐")
+                    Text("今日免费点数已用完😭")
                         .font(.largeTitle.bold())
                         // 2. 自动适配文字颜色
                         .foregroundColor(.primary)
@@ -43,7 +43,7 @@ struct SubscriptionView: View {
                             }
                         }
                     
-                    Text("订阅后您将获得无限查询权限")
+                    Text("请选择“专业版”订阅\n订阅成功后一个月内您将获得无限查询权限")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -56,8 +56,8 @@ struct SubscriptionView: View {
                 }) {
                     HStack {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("免费版")
-                                .font(.title2.bold())
+                            Text("【当前】免费版")
+//                                .font(.title2.bold())
                                 .foregroundColor(.primary) // 适配颜色
                             Text("仅能使用 \(authManager.isSubscribed ? "每日受限" : "每日有限次数") 查询")
                                 .font(.subheadline)

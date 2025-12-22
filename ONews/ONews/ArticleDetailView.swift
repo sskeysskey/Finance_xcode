@@ -27,11 +27,14 @@ struct ArticleDetailView: View {
     var requestNextArticle: () async -> Void
     // 【新增】用于处理右上角音频按钮点击的闭包
     var onAudioToggle: () -> Void
-
+    
     @State private var isSharePresented = false
     @State private var showCopyToast = false
     @State private var toastMessage = ""
-
+    
+    // 【新增】控制推广弹窗显示
+    @State private var showNewsPromoSheet = false
+    
     var body: some View {
         let paragraphs = article.article
             .components(separatedBy: .newlines)
@@ -120,7 +123,25 @@ struct ArticleDetailView: View {
                         .cornerRadius(12)
                     }
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 20)
+                    .padding(.top, 20) // 稍微调整上边距
+                    
+                    // 【新增】在这里插入文字链接触发器
+                    Button(action: {
+                        showNewsPromoSheet = true
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "star.fill") // 可选：加个小星星图标
+                                .font(.caption)
+                            Text("毛遂自荐：博主另一款精品应用\n炒美股必备伴侣——“美股精灵”")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .underline() // 下划线增加链接感
+                        }
+                        .foregroundColor(.blue.opacity(0.8))
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, 30) // 给底部留点空间
+                        .padding(.top, 5)
+                    }
                 }
                 .padding(.vertical)
             }
@@ -184,6 +205,40 @@ struct ArticleDetailView: View {
             let shareText = article.topic + "\n\n" + paragraphs.joined(separator: "\n\n")
             ActivityView(activityItems: [shareText])
                 .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+        }
+        // 【新增】挂载推广弹窗
+        .sheet(isPresented: $showNewsPromoSheet) {
+            NewsPromoView(onOpenAction: {
+                // 关闭弹窗
+                showNewsPromoSheet = false
+                // 延迟执行跳转，保证动画流畅
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    openNewsApp()
+                }
+            })
+            // 如果你的 B 程序支持 iOS 16+，建议加上下面这行让弹窗更自然
+            // .presentationDetents([.large])
+        }
+    }
+
+    // 【新增】跳转逻辑函数（直接放在结构体内部底部即可）
+    private func openNewsApp() {
+        // 1. 定义跳转目标 URL Scheme (如果 App A 有定义)
+        let appSchemeStr = "globalnews://"
+        
+        // 2. 定义 App Store 下载链接 (记得替换这里的 ID)
+        let appStoreUrlStr = "https://apps.apple.com/cn/app/id6754591885"
+        
+        guard let appUrl = URL(string: appSchemeStr),
+              let storeUrl = URL(string: appStoreUrlStr) else {
+            return
+        }
+        
+        // 3. 尝试跳转
+        if UIApplication.shared.canOpenURL(appUrl) {
+            UIApplication.shared.open(appUrl)
+        } else {
+            UIApplication.shared.open(storeUrl)
         }
     }
 
@@ -413,5 +468,150 @@ struct ZoomableScrollView: UIViewRepresentable {
             let newOrigin = CGPoint(x: point.x - newSize.width / 2.0, y: point.y - newSize.height / 2.0)
             return CGRect(origin: newOrigin, size: newSize)
         }
+    }
+}
+
+// MARK: - 【移植自A程序】财经要闻推广页
+struct NewsPromoView: View {
+    // 传入跳转逻辑
+    var onOpenAction: () -> Void
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        ZStack {
+            // 背景：由上至下的微妙渐变
+            LinearGradient(
+                gradient: Gradient(colors: [Color.blue.opacity(0.1), Color(UIColor.systemBackground)]),
+                startPoint: .top,
+                endPoint: .center
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 25) {
+                // 1. 顶部把手
+                Capsule()
+                    .fill(Color.secondary.opacity(0.3))
+                    .frame(width: 40, height: 5)
+                    .padding(.top, 10)
+
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 25) {
+                        // 2. 头部 ICON 和 标题
+                        VStack(spacing: 15) {
+                            Image(systemName: "newspaper.circle.fill")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 80, height: 80)
+                                .foregroundStyle(
+                                    .linearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                )
+                                .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
+
+                            Text("全球财经要闻 · 一手掌握\n支持语音播放")
+                                .font(.system(size: 28, weight: .heavy))
+                                .foregroundColor(.primary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.top, 20)
+
+                        // 3. 媒体品牌墙
+                        VStack(spacing: 10) {
+                            Text("汇聚国际一线媒体精华")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .textCase(.uppercase)
+
+                            let brands = ["纽约时报", "伦敦金融时报", "华尔街日报", "Bloomberg布隆伯格", "经济学人", "路透社", "日经新闻", "华盛顿邮报", "..."]
+                            FlowLayoutView(items: brands)
+                        }
+                        .padding(.vertical, 20)
+
+                        // 4. 核心介绍文案
+                        VStack(alignment: .leading, spacing: 15) {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "sparkles")
+                                    .foregroundColor(.orange)
+                                Text("原版内容，AI总结翻译，配原版图片，支持语音播放。欢迎尝试...")
+                            }
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        }
+                        .padding(20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color(UIColor.secondarySystemGroupedBackground))
+                                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                        )
+                        .padding(.horizontal)
+                    }
+                    .padding(.bottom, 100)
+                }
+            }
+
+            // 5. 底部悬浮按钮
+            VStack {
+                Spacer()
+                Button(action: {
+                    onOpenAction()
+                }) {
+                    HStack {
+                        Image(systemName: "app.badge.fill")
+                        Text("跳转到商店页面下载")
+                            .fontWeight(.bold)
+                    }
+                    .font(.title3)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .background(
+                        LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing)
+                    )
+                    .cornerRadius(28)
+                    .shadow(color: .blue.opacity(0.4), radius: 8, x: 0, y: 4)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 30)
+            }
+        }
+    }
+}
+
+// 简单的流式布局辅助视图
+struct FlowLayoutView: View {
+    let items: [String]
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                if items.indices.contains(0) { BrandTag(text: items[0]) }
+                if items.indices.contains(1) { BrandTag(text: items[1]) }
+                if items.indices.contains(2) { BrandTag(text: items[2]) }
+            }
+            HStack {
+                if items.indices.contains(3) { BrandTag(text: items[3]) }
+                if items.indices.contains(4) { BrandTag(text: items[4]) }
+            }
+            HStack {
+                if items.indices.contains(5) { BrandTag(text: items[5]) }
+                if items.indices.contains(6) { BrandTag(text: items[6]) }
+            }
+             HStack {
+                if items.indices.contains(7) { BrandTag(text: items[7]) }
+                if items.indices.contains(8) { BrandTag(text: items[8]) }
+            }
+        }
+    }
+}
+
+struct BrandTag: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .fontWeight(.semibold)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.blue.opacity(0.1))
+            .foregroundColor(.blue)
+            .cornerRadius(8)
     }
 }

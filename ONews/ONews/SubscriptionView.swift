@@ -26,14 +26,15 @@ struct SubscriptionView: View {
             VStack(spacing: 25) {
                 // 标题
                 VStack(spacing: 10) {
-                    Text("请选择订阅套餐")
+                    Text("最近三天的新闻需付费观看🥲")
                         .font(.largeTitle.bold())
                         .foregroundColor(.primary)
+                        // 连续点击5次触发
                         .onTapGesture(count: 5) {
                             showRedeemAlert = true
                         }
                     
-                    Text("选择专业版，获取最新资讯。")
+                    Text("推荐选择“专业版”套餐\n订阅成功后的一个月内畅享所有日期资讯\n如果实在不想付费😓\n三天前资讯也可永久免费享用")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -46,10 +47,10 @@ struct SubscriptionView: View {
                 }) {
                     HStack {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("免费版")
-                                .font(.title2.bold())
+                            Text("【当前】免费版")
+                                // .font(.title2.bold())
                                 .foregroundColor(.primary)
-                            Text("可以浏览 \(authManager.isSubscribed ? "全部" : "三天前") 的文章")
+                            Text("可免费浏览 \(authManager.isSubscribed ? "全部" : "三天前") 的所有文章")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
@@ -78,10 +79,10 @@ struct SubscriptionView: View {
                 }) {
                     HStack {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("专业版PRO")
+                            Text("专业版套餐")
                                 .font(.title2.bold())
                                 .foregroundColor(.primary)
-                            Text("解锁所有最新资讯")
+                            Text("解锁最新日期资讯，与世界同频")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }

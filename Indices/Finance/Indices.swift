@@ -575,10 +575,13 @@ struct OptionsDetailView: View {
     // 0 = Calls, 1 = Puts
     @State private var selectedTypeIndex = 0
     
+    // 【新增 1】控制跳转到 ChartView 的状态
+    @State private var navigateToChart = false
+    
     var filteredData: [OptionItem] {
+        // ... (保持原有的筛选排序逻辑不变) ...
         guard let items = dataService.optionsData[symbol] else { return [] }
         
-        // 筛选 Calls 或 Puts (保持不变)
         let filtered = items.filter { item in
             let itemType = item.type.uppercased()
             if selectedTypeIndex == 0 {
@@ -588,20 +591,17 @@ struct OptionsDetailView: View {
             }
         }
         
-        // 【修改点 2：按 1-Day Chg 绝对值排序】
         return filtered.sorted { item1, item2 in
-            // 将字符串转为 Double 进行比较，如果转换失败默认为 0
             let val1 = Double(item1.change) ?? 0
             let val2 = Double(item2.change) ?? 0
-            
-            // abs() 取绝对值
-            // > 表示降序 (大的在前)
             return abs(val1) > abs(val2)
         }
     }
     
     var body: some View {
         VStack(spacing: 0) {
+            // ... (保持原本的 Picker, Header, List 视图内容不变) ...
+            
             // 1. 顶部切换开关
             Picker("Type", selection: $selectedTypeIndex) {
                 Text("Calls").tag(0)
@@ -611,13 +611,13 @@ struct OptionsDetailView: View {
             .padding()
             .background(Color(UIColor.systemBackground))
             
-            // 2. 表格头 (调整宽度以容纳 Distance)
-            HStack(spacing: 4) { // 减小默认间距
+            // 2. 表格头
+            HStack(spacing: 4) {
                 Text("Expiry").frame(maxWidth: .infinity, alignment: .leading)
-                Text("Strike").frame(width: 55, alignment: .trailing) // 稍微缩小
-                Text("Dist").frame(width: 55, alignment: .trailing)   // 【新增】Distance 表头
+                Text("Strike").frame(width: 55, alignment: .trailing)
+                Text("Dist").frame(width: 55, alignment: .trailing)
                 Text("Open Int").frame(width: 65, alignment: .trailing)
-                Text("1-Day").frame(width: 60, alignment: .trailing) // 稍微缩短文字
+                Text("1-Day").frame(width: 60, alignment: .trailing)
             }
             .font(.caption)
             .foregroundColor(.secondary)
@@ -627,7 +627,7 @@ struct OptionsDetailView: View {
             
             Divider()
             
-            // 3. 数据列表
+            // 3. 数据列表 (保持不变)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -640,47 +640,59 @@ struct OptionsDetailView: View {
                         } else {
                             ForEach(filteredData) { item in
                                 HStack(spacing: 4) {
-                                    // Expiry
                                     OptionCellView(text: item.expiryDate, alignment: .leading)
                                         .frame(maxWidth: .infinity, alignment: .leading)
-                                    
-                                    // Strike
                                     OptionCellView(text: item.strike, alignment: .trailing)
                                         .frame(width: 55, alignment: .trailing)
-                                    
-                                    // 【新增】Distance
-                                    // 这里可以根据正负值给个颜色，或者直接显示
                                     OptionCellView(text: item.distance, alignment: .trailing)
                                         .frame(width: 55, alignment: .trailing)
-                                        .font(.system(size: 12)) // 字体可以稍微小一点
-                                    
-                                    // Open Interest
+                                        .font(.system(size: 12))
                                     OptionCellView(text: item.openInterest, alignment: .trailing)
                                         .frame(width: 65, alignment: .trailing)
-                                    
-                                    // Change
                                     OptionCellView(text: item.change, alignment: .trailing)
                                         .frame(width: 60, alignment: .trailing)
                                 }
                                 .padding(.vertical, 10)
                                 .padding(.horizontal)
                                 .background(Color(UIColor.systemBackground))
-                                
                                 Divider().padding(.leading)
                             }
                         }
                     }
                 }
-                // 3. 监听 Tab 切换，强制滚动回顶部
                 .onChange(of: selectedTypeIndex) { oldValue, newValue in
                     proxy.scrollTo("TopAnchor", anchor: .top)
                 }
             }
-            // 【修改结束】
         }
         .navigationTitle(symbol)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(UIColor.systemGroupedBackground))
+        // 【新增 2】添加导航栏右侧按钮
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    navigateToChart = true
+                }) {
+                    Text("切换到股价模式")
+                        .font(.system(size: 13, weight: .bold)) // 字体稍微加粗
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.blue) // 彩色背景 (你可以改成 .purple 或 .orange)
+                        .cornerRadius(14)       // 圆角胶囊样式
+                        .shadow(color: Color.blue.opacity(0.3), radius: 2, x: 0, y: 1)
+                }
+            }
+        }
+        // 【新增 3】处理跳转逻辑
+        .navigationDestination(isPresented: $navigateToChart) {
+            // ChartView 需要 groupName 来查找数据库表
+            // 我们尝试从 DataService 获取分类，如果找不到(比如纯期权标的)，给一个默认值 "US" 或 "Indices"
+            let groupName = dataService.getCategory(for: symbol) ?? "US"
+            
+            ChartView(symbol: symbol, groupName: groupName)
+        }
     }
 }
 

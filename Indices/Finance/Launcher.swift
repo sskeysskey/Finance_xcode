@@ -27,6 +27,108 @@ struct Finance: App {
     }
 }
 
+// MARK: - 【修改后】开屏马赛克加载视图 (聚拢版)
+struct MosaicLoadingView: View {
+    // 控制动画状态
+    @State private var isAnimating = false
+    
+    var body: some View {
+        ZStack {
+            // 背景色
+            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+            
+            GeometryReader { geo in
+                // 1. 获取屏幕中心点
+                let centerX = geo.size.width / 2
+                let centerY = geo.size.height / 2
+                
+                // 2. 定义偏移量 (控制聚拢程度)
+                // xOffset: 水平距离中心的距离 (数值越小越聚拢)
+                // yOffset: 垂直距离中心的距离
+                let xOffset: CGFloat = 90  
+                let yOffset: CGFloat = 140 
+                
+                ZStack {
+                    // 左上：美 (红色系) -> 中心向左上偏移
+                    MosaicCharacter(char: "美", colors: [.red, .orange, .pink])
+                        .position(x: centerX - xOffset, y: centerY - yOffset)
+                    
+                    // 右上：股 (蓝色系) -> 中心向右上偏移
+                    MosaicCharacter(char: "股", colors: [.blue, .cyan, .mint])
+                        .position(x: centerX + xOffset, y: centerY - yOffset)
+                    
+                    // 左下：精 (紫色系) -> 中心向左下偏移
+                    MosaicCharacter(char: "精", colors: [.purple, .indigo, .blue])
+                        .position(x: centerX - xOffset, y: centerY + yOffset)
+                    
+                    // 右下：灵 (绿色系) -> 中心向右下偏移
+                    MosaicCharacter(char: "灵", colors: [.green, .yellow, .orange])
+                        .position(x: centerX + xOffset, y: centerY + yOffset)
+                }
+            }
+            
+            // 3. 中心加载内容 (保持不变)
+            VStack(spacing: 20) {
+                ProgressView()
+                    .scaleEffect(1.5)
+                    .progressViewStyle(CircularProgressViewStyle(tint: .blue))
+                
+                Text("正在准备数据...")
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+            }
+            .padding(30)
+            .background(.regularMaterial) // 毛玻璃背景，防止文字重叠看不清
+            .cornerRadius(16)
+            .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 5)
+        }
+    }
+}
+
+
+// 单个马赛克文字组件
+struct MosaicCharacter: View {
+    let char: String
+    let colors: [Color]
+    @State private var animate = false
+    
+    var body: some View {
+        Text(char)
+            .font(.system(size: 80, weight: .heavy, design: .monospaced)) // 使用等宽字体更有像素感
+            .foregroundStyle(
+                // 文字填充渐变色
+                LinearGradient(
+                    colors: colors,
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                // 叠加网格纹理，模拟马赛克效果
+                Image(systemName: "square.grid.3x3.fill") // 使用系统网格图标作为纹理
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .foregroundColor(.white)
+                    .opacity(0.15) // 半透明白色覆盖
+                    .blendMode(.overlay)
+            )
+            // 呼吸动画
+            .scaleEffect(animate ? 1.05 : 0.95)
+            .opacity(animate ? 1.0 : 0.6)
+            .blur(radius: 0.5) // 轻微模糊，增加梦幻感
+            .onAppear {
+                withAnimation(
+                    .easeInOut(duration: 2.0)
+                    .repeatForever(autoreverses: true)
+                ) {
+                    animate = true
+                }
+            }
+    }
+}
+
+
 // MARK: - 更新状态视图
 struct UpdateOverlayView: View {
     @ObservedObject var updateManager: UpdateManager
@@ -323,14 +425,8 @@ struct MainContentView: View {
                                 }
                             }
                         } else {
-                            VStack(spacing: 20) {
-                                Spacer()
-                                ProgressView()
-                                    .scaleEffect(1.5)
-                                Text("正在准备数据...")
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                            }
+                            // 【修改点】使用新的马赛克加载视图
+                            MosaicLoadingView()
                         }
                     }
                 }
@@ -614,9 +710,10 @@ struct NewsPromoView: View {
                                 )
                                 .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
 
-                            Text("全球财经要闻 · 一手掌握")
+                            Text("全球财经要闻 · 一手掌握\n支持语音播放")
                                 .font(.system(size: 28, weight: .heavy))
                                 .foregroundColor(.primary)
+                                .multilineTextAlignment(.center) // ✅ 加这一行
                         }
                         .padding(.top, 20)
 
@@ -628,18 +725,18 @@ struct NewsPromoView: View {
                                 .textCase(.uppercase)
                             
                             // 使用流式布局或简单的多行排列
-                            let brands = ["纽约时报", "金融时报", "华尔街日报", "Bloomberg", "路透社", "日经新闻", "华盛顿邮报", "..."]
+                            let brands = ["纽约时报", "伦敦金融时报", "华尔街日报", "Bloomberg布隆伯格", "经济学人", "路透社", "日经新闻", "华盛顿邮报", "..."]
                             
                             FlowLayoutView(items: brands)
                         }
-                        .padding(.vertical, 10)
+                        .padding(.vertical, 20)
 
                         // 4. 核心介绍文案
                         VStack(alignment: .leading, spacing: 15) {
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: "sparkles")
                                     .foregroundColor(.orange)
-                                Text("所有内容经翻译和AI总结，完整呈现给各位读者，并配有原版图片，还支持语音播放。欢迎尝试...")
+                                Text("原版内容，AI总结翻译，配原版图片，支持语音播放。欢迎尝试...")
                             }
                             .font(.subheadline)
                             .foregroundColor(.secondary)
@@ -692,17 +789,23 @@ struct FlowLayoutView: View {
         // 简单模拟流式布局，这里用几行 HStack 组合
         VStack(spacing: 8) {
             HStack {
-                BrandTag(text: items[0])
-                BrandTag(text: items[1])
-                BrandTag(text: items[2])
+                // 安全检查：防止数组越界崩溃 (虽然你现在数据是固定的)
+                if items.indices.contains(0) { BrandTag(text: items[0]) }
+                if items.indices.contains(1) { BrandTag(text: items[1]) }
+                if items.indices.contains(2) { BrandTag(text: items[2]) }
             }
             HStack {
-                BrandTag(text: items[3])
-                BrandTag(text: items[4])
+                if items.indices.contains(3) { BrandTag(text: items[3]) }
+                if items.indices.contains(4) { BrandTag(text: items[4]) }
             }
             HStack {
-                BrandTag(text: items[5])
-                BrandTag(text: items[6])
+                if items.indices.contains(5) { BrandTag(text: items[5]) }
+                if items.indices.contains(6) { BrandTag(text: items[6]) }
+            }
+            // MARK: - 新增这一行来显示被遗漏的内容
+            HStack {
+                if items.indices.contains(7) { BrandTag(text: items[7]) } // 华盛顿邮报
+                if items.indices.contains(8) { BrandTag(text: items[8]) } // ...
             }
         }
     }
