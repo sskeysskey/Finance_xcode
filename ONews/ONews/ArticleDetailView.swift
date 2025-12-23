@@ -15,6 +15,42 @@ struct ActivityView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
+@MainActor
+final class ImageLoader: ObservableObject {
+    @Published var image: UIImage?
+    @Published var isLoading = false
+    
+    private static var cache = NSCache<NSString, UIImage>()
+    
+    func load(from path: String) {
+        let cacheKey = path as NSString
+        
+        // 1. 先检查内存缓存
+        if let cached = Self.cache.object(forKey: cacheKey) {
+            self.image = cached
+            return
+        }
+        
+        // 2. 异步加载
+        isLoading = true
+        Task.detached(priority: .userInitiated) {
+            let loadedImage = UIImage(contentsOfFile: path)
+            
+            await MainActor.run {
+                self.isLoading = false
+                if let img = loadedImage {
+                    Self.cache.setObject(img, forKey: cacheKey)
+                    self.image = img
+                }
+            }
+        }
+    }
+    
+    static func clearCache() {
+        cache.removeAllObjects()
+    }
+}
+
 struct ArticleDetailView: View {
     let article: Article
     let sourceName: String
@@ -35,18 +71,34 @@ struct ArticleDetailView: View {
     // 【新增】控制推广弹窗显示
     @State private var showNewsPromoSheet = false
     
+    // 【优化】使用 @State 缓存耗时计算的结果，避免 body 每次刷新都重算
+    @State private var cachedParagraphs: [String] = []
+    @State private var cachedRemainingImages: [String] = []
+    @State private var cachedInsertionInterval: Int = 1
+    @State private var cachedDistributeEvenly: Bool = false
+    
+    // 【优化】静态 Formatter
+    private static let parsingFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyMMdd"
+        return f
+    }()
+    
+    private static let monthDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "M月d日"
+        f.locale = Locale(identifier: "zh_CN")
+        return f
+    }()
+    
+    private static let longDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, MMMM d, yyyy"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+    
     var body: some View {
-        let paragraphs = article.article
-            .components(separatedBy: .newlines)
-            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        
-        let remainingImages = Array(article.images.dropFirst())
-        
-        let distributeEvenly = !remainingImages.isEmpty && remainingImages.count < paragraphs.count
-        let insertionInterval = distributeEvenly
-            ? paragraphs.count / (remainingImages.count + 1)
-            : 1
-
         ZStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -66,16 +118,17 @@ struct ArticleDetailView: View {
                     if let firstImage = article.images.first {
                         ArticleImageView(imageName: firstImage, timestamp: article.timestamp)
                     }
-
-                    ForEach(paragraphs.indices, id: \.self) { pIndex in
-                        Text(paragraphs[pIndex])
+                    
+                    // 使用缓存的段落
+                    ForEach(cachedParagraphs.indices, id: \.self) { pIndex in
+                        Text(cachedParagraphs[pIndex])
                             .font(.custom("NewYork-Regular", size: 21))
                             .lineSpacing(15)
                             .padding(.horizontal, 18)
                             .gesture(
                                 LongPressGesture()
                                     .onEnded { _ in
-                                        UIPasteboard.general.string = paragraphs[pIndex]
+                                        UIPasteboard.general.string = cachedParagraphs[pIndex]
                                         self.toastMessage = "选中段落已复制"
                                         withAnimation(.spring()) {
                                             self.showCopyToast = true
@@ -87,20 +140,19 @@ struct ArticleDetailView: View {
                                         }
                                     }
                             )
-
-                        if (pIndex + 1) % insertionInterval == 0 {
-                            let imageIndexToInsert = (pIndex + 1) / insertionInterval - 1
-                            if imageIndexToInsert < remainingImages.count {
+                        if (pIndex + 1) % cachedInsertionInterval == 0 {
+                            let imageIndexToInsert = (pIndex + 1) / cachedInsertionInterval - 1
+                            if imageIndexToInsert < cachedRemainingImages.count {
                                 ArticleImageView(
-                                    imageName: remainingImages[imageIndexToInsert],
+                                    imageName: cachedRemainingImages[imageIndexToInsert],
                                     timestamp: article.timestamp
                                 )
                             }
                         }
                     }
-
-                    if !distributeEvenly && remainingImages.count > paragraphs.count {
-                        let extraImages = remainingImages.dropFirst(paragraphs.count)
+                    
+                    if !cachedDistributeEvenly && cachedRemainingImages.count > cachedParagraphs.count {
+                        let extraImages = cachedRemainingImages.dropFirst(cachedParagraphs.count)
                         ForEach(Array(extraImages), id: \.self) { imageName in
                             ArticleImageView(imageName: imageName, timestamp: article.timestamp)
                         }
@@ -168,6 +220,12 @@ struct ArticleDetailView: View {
                 .zIndex(1)
             }
         }
+        .onAppear {
+            prepareContent()
+        }
+        .onChange(of: article) { _, _ in
+            prepareContent()
+        }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 2) {
@@ -202,7 +260,7 @@ struct ArticleDetailView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isSharePresented) {
-            let shareText = article.topic + "\n\n" + paragraphs.joined(separator: "\n\n")
+            let shareText = article.topic + "\n\n" + cachedParagraphs.joined(separator: "\n\n")
             ActivityView(activityItems: [shareText])
                 .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
         }
@@ -216,12 +274,25 @@ struct ArticleDetailView: View {
                     openNewsApp()
                 }
             })
-            // 如果你的 B 程序支持 iOS 16+，建议加上下面这行让弹窗更自然
-            // .presentationDetents([.large])
         }
     }
-
-    // 【新增】跳转逻辑函数（直接放在结构体内部底部即可）
+    
+    // 【优化】计算逻辑提取
+    private func prepareContent() {
+        let paras = article.article
+            .components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        
+        let imgs = Array(article.images.dropFirst())
+        let distribute = !imgs.isEmpty && imgs.count < paras.count
+        let interval = distribute ? paras.count / (imgs.count + 1) : 1
+        
+        self.cachedParagraphs = paras
+        self.cachedRemainingImages = imgs
+        self.cachedDistributeEvenly = distribute
+        self.cachedInsertionInterval = interval
+    }
+    
     private func openNewsApp() {
         // 1. 定义跳转目标 URL Scheme (如果 App A 有定义)
         let appSchemeStr = "globalnews://"
@@ -241,40 +312,29 @@ struct ArticleDetailView: View {
             UIApplication.shared.open(storeUrl)
         }
     }
-
-    // 【修改需求1】修改日期格式化函数
+    
+    // 【优化】使用静态 Formatter
     private func formatMonthDay(from timestamp: String) -> String {
-        let input = DateFormatter()
-        input.dateFormat = "yyMMdd"
-        guard let date = input.date(from: timestamp) else {
+        guard let date = Self.parsingFormatter.date(from: timestamp) else {
             return timestamp
         }
-        let output = DateFormatter()
-        // 修改为中文格式：11月29日
-        output.dateFormat = "M月d日"
-        output.locale = Locale(identifier: "zh_CN")
-        return output.string(from: date)
+        return Self.monthDayFormatter.string(from: date)
     }
-
+    
     private func formatDate(from timestamp: String) -> String {
-        let inputFormatter = DateFormatter()
-        inputFormatter.dateFormat = "yyMMdd"
-
-        guard let date = inputFormatter.date(from: timestamp) else {
+        guard let date = Self.parsingFormatter.date(from: timestamp) else {
             return timestamp.uppercased()
         }
-
-        let outputFormatter = DateFormatter()
-        outputFormatter.dateFormat = "EEEE, MMMM d, yyyy"
-        outputFormatter.locale = Locale(identifier: "en_US_POSIX")
-
-        return outputFormatter.string(from: date).uppercased()
+        return Self.longDateFormatter.string(from: date).uppercased()
     }
 }
 
+// ===== 优化后的 ArticleImageView =====
 struct ArticleImageView: View {
     let imageName: String
     let timestamp: String
+    
+    @StateObject private var imageLoader = ImageLoader()
     @State private var isShowingZoomView = false
 
     private let horizontalPadding: CGFloat = 20
@@ -283,39 +343,57 @@ struct ArticleImageView: View {
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
     }
-
-    private func loadImage() -> UIImage? {
-        return UIImage(contentsOfFile: imagePath)
-    }
-
+    
     var body: some View {
         VStack(spacing: 8) {
-            if let uiImage = loadImage() {
-                Button(action: { self.isShowingZoomView = true }) {
-                    Image(uiImage: uiImage)
-                        .resizable().scaledToFit()
-                        .frame(maxWidth: .infinity).clipped()
+            Group {
+                if let uiImage = imageLoader.image {
+                    Button(action: { self.isShowingZoomView = true }) {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity)
+                            .clipped()
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                } else if imageLoader.isLoading {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 150)
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .cornerRadius(12)
+                        .padding(.horizontal, horizontalPadding)
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "photo.fill")
+                            .font(.largeTitle)
+                            .foregroundColor(.gray)
+                        Text("图片加载失败")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 150)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .cornerRadius(12)
+                    .padding(.horizontal, horizontalPadding)
                 }
-                .buttonStyle(PlainButtonStyle())
-
+            }
+            
+            if imageLoader.image != nil {
                 Text((imageName as NSString).deletingPathExtension)
-                    .font(.caption).foregroundColor(.secondary)
-                    .multilineTextAlignment(.center).padding(.horizontal, horizontalPadding)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, horizontalPadding)
                     .textSelection(.enabled)
-            } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "photo.fill").font(.largeTitle).foregroundColor(.gray)
-                    Text("图片加载失败: \(imagePath)").font(.caption).foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, minHeight: 150)
-                .background(Color(UIColor.secondarySystemBackground)).cornerRadius(12)
-                .padding(.horizontal, horizontalPadding)
             }
         }
         .fullScreenCover(isPresented: $isShowingZoomView) {
             ZoomableImageView(imageName: imageName, timestamp: timestamp, isPresented: $isShowingZoomView)
         }
         .padding(.vertical, 10)
+        .onAppear {
+            imageLoader.load(from: imagePath)
+        }
     }
 }
 

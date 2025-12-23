@@ -450,9 +450,10 @@ struct IndicesContentView: View {
         case "Short_Shift": return "chart.line.downtrend.xyaxis"
         case "Short": return "arrow.down.circle"
         case "OverSell": return "arrow.up.circle"
+        case "OverSell_W": return "flame.fill"
         case "PE_invalid": return "1.circle"
         case "PE_valid": return "2.circle"
-        case "PE_Double": return "4.circle"
+        case "PE_W": return "4.circle"
         case "Strategy12": return "3.circle"
         case "Strategy34": return "4.circle"
         default: return "chart.pie.fill"
@@ -784,9 +785,15 @@ struct CollapsibleSectorSection: View {
     let sector: IndicesSector
     // 默认展开
     @State private var isExpanded: Bool = false
+    @EnvironmentObject var dataService: DataService // 新增
     
     // 【新增】名称映射逻辑
     private var displayName: String {
+        // 优先用服务器给的中文名
+        if let remoteName = dataService.groupDisplayMap[sector.name] {
+            return remoteName
+        }
+        // 兜底：处理常见的行业分组
         switch sector.name {
         case "Basic_Materials": return "原材料&金属"
         case "Communication_Services": return "通信服务"
@@ -993,29 +1000,21 @@ struct CompactSectorCard: View {
     let icon: String
     let baseColor: Color
     var isSpecial: Bool = false
-    
+    @EnvironmentObject var dataService: DataService // 确保能拿到 dataService
+
     private var displayName: String {
         if isSpecial { return sectorName }
+        
+        // 【核心逻辑】优先从服务器配置的字典里找
+        if let remoteName = dataService.groupDisplayMap[sectorName] {
+            return remoteName
+        }
+        
+        // 兜底逻辑：如果服务器没配，则走原来的 switch 或 格式化
         switch sectorName {
-        case "Must": return "博主推荐"
-        case "Today": return "观察名单"
-        case "PE_invalid": return "逢低建仓-1"
-        case "PE_valid": return "逢低建仓-2"
-        case "PE_Double": return "逢低建仓-双谷底"
-        case "Strategy12": return "逢低建仓-3"
-        case "Strategy34": return "逢低建仓-4"
-        case "Short": return "超买"
-        case "Short_Shift": return "双峰做空"
-        case "OverSell": return "双谷抄底"
-        case "Economics": return "本周经济数据"
-        case "Economic_All": return "全部经济数据"
-        case "Commodities": return "大宗商品"
-        case "Currencies": return "货币汇率"
-        case "Bonds": return "债券收益率"
-        case "ETFs": return "Top ETFs"
-        case "Indices": return "各国交易所"
-        case "Crypto": return "加密货币"
-        default: return sectorName.replacingOccurrences(of: "_", with: " ")
+        // 这里的硬编码可以逐渐删掉，只保留一些特殊的转换
+        default: 
+            return sectorName.replacingOccurrences(of: "_", with: " ")
         }
     }
     

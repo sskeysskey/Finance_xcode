@@ -26,25 +26,6 @@ struct ArticleItem: Identifiable {
     }
 }
 
-extension ArticleListDataSource {
-    func groupedByTimestamp(_ items: [ArticleItem]) -> [String: [ArticleItem]] {
-        let initial = Dictionary(grouping: items, by: { $0.article.timestamp })
-        // 【修改】对于未读列表，内部文章顺序保持不变（通常是按 topic 字母序）；对于已读列表，反转顺序以将最新阅读的放在分组顶部。
-        if filterMode == .read {
-            return initial.mapValues { Array($0.reversed()) }
-        } else {
-            return initial
-        }
-    }
-    
-    func sortedTimestamps(for groups: [String: [ArticleItem]]) -> [String] {
-        // 【修改】统一将日期分组排序改为降序（新->旧）。
-        // 无论是在 'read' 还是 'unread' 模式下，都显示最新的日期分组在最上方。
-        return groups.keys.sorted(by: >)
-    }
-}
-
-// ==================== 共享组件 ====================
 struct ArticleListContent: View {
     let items: [ArticleItem]
     let filterMode: ArticleFilterMode
@@ -108,6 +89,20 @@ struct SearchResultsList: View {
     let authManager: AuthManager
     let onArticleTap: (ArticleItem) async -> Void
     
+    // 【优化】静态 formatter
+    private static let parsingFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyMMdd"
+        return f
+    }()
+    
+    private static let displayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy年M月d日, EEEE"
+        return f
+    }()
+    
     var groupedResults: [String: [ArticleItem]] {
         var initial = Dictionary(grouping: results, by: { $0.article.timestamp })
         initial = initial.mapValues { Array($0.reversed()) }
@@ -169,12 +164,8 @@ struct SearchResultsList: View {
     }
     
     private func formatTimestamp(_ timestamp: String) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyMMdd"
-        guard let date = formatter.date(from: timestamp) else { return timestamp }
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy年M月d日, EEEE"
-        return formatter.string(from: date)
+        guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp }
+        return Self.displayFormatter.string(from: date)
     }
 }
 
@@ -261,7 +252,21 @@ struct TimestampHeader: View {
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
-
+    
+    // 【优化】静态 formatter
+    private static let parsingFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyMMdd"
+        return f
+    }()
+    
+    private static let displayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "M月d日 EEEE"
+        f.locale = Locale(identifier: "zh_CN")
+        return f
+    }()
+    
     var body: some View {
         Button(action: {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) { // 更Q弹的动画
@@ -321,15 +326,10 @@ struct TimestampHeader: View {
         }
         .buttonStyle(PlainButtonStyle())
     }
-
+    
     private func formatTimestamp(_ timestamp: String) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyMMdd"
-        guard let date = formatter.date(from: timestamp) else { return timestamp }
-        formatter.locale = Locale(identifier: "zh_CN")
-        // 更现代的日期格式
-        formatter.dateFormat = "M月d日 EEEE" 
-        return formatter.string(from: date)
+        guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp }
+        return Self.displayFormatter.string(from: date)
     }
 }
 
@@ -712,7 +712,7 @@ struct AllArticlesListView: View {
             return nil
         }
     }
-
+    
     var body: some View {
         ZStack {
             VStack(spacing: 0) {

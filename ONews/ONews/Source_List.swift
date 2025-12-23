@@ -119,7 +119,20 @@ struct SourceListView: View {
     @State private var selectedArticleItem: (article: Article, sourceName: String)?
     @State private var isNavigationActive = false
     
-    // 【修改】更新 searchResults 的数据结构和搜索逻辑
+    // 【优化】静态 formatter
+    private static let parsingFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyMMdd"
+        return f
+    }()
+    
+    private static let displayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy年M月d日, EEEE"
+        f.locale = Locale(identifier: "zh_CN")
+        return f
+    }()
+    
     private var searchResults: [(article: Article, sourceName: String, isContentMatch: Bool)] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return []
@@ -591,12 +604,8 @@ struct SourceListView: View {
     }
     
     private func formatTimestamp(_ timestamp: String) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyMMdd"
-        guard let date = formatter.date(from: timestamp) else { return timestamp }
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy年M月d日, EEEE"
-        return formatter.string(from: date)
+        guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp }
+        return Self.displayFormatter.string(from: date)
     }
 }
 

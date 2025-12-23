@@ -9,6 +9,8 @@ struct VersionResponse: Codable {
     let cost_config: [String: Int]?
     // 【修改点 1】新增策略分组配置字段
     let strategy_groups: [String]?
+    // 【新增】显示名称映射字典
+    let group_display_names: [String: String]? 
     let files: [FileInfo]
 }
 
@@ -119,8 +121,11 @@ class UpdateManager: ObservableObject {
             // 如果服务器返回了配置，就更新；否则保持默认
             if let strategies = serverVersionResponse.strategy_groups {
                 // 调用 DataService 更新配置并持久化
-                DataService.shared.updateStrategyGroups(strategies)
-                print("UpdateManager: 已更新策略分组配置: \(strategies)")
+                // 同时也把 display_names 传过去
+                DataService.shared.updateStrategyConfig(
+                    groups: strategies, 
+                    names: serverVersionResponse.group_display_names ?? [:]
+                )
             }
             
             let localVersion = UserDefaults.standard.string(forKey: localVersionKey) ?? "0.0"

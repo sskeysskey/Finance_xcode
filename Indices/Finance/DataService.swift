@@ -163,16 +163,20 @@ class DataService: ObservableObject {
     
     // 【修改点 1】定义 UserDefaults 的 Key
     private let strategyGroupsKey = "FinanceAppStrategyGroupsConfig"
-    
-    // 【修改点 2】定义默认的策略组（作为兜底）
-    private let defaultStrategyGroups = ["Strategy12", "PE_valid", "PE_invalid", "Must", "Short_Shift", "OverSell", "PE_Double"]
+    private let groupNamesKey = "FinanceAppGroupNamesConfig" // 新增
+
+    // 【修改点】存储映射表
+    @Published var strategyGroupNames: Set<String> = []
+    @Published var groupDisplayMap: [String: String] = [:] // 新增：Key 为英文，Value 为中文
 
     private init() {
         // 【修改点 3】初始化时从 UserDefaults 读取配置
         if let savedGroups = UserDefaults.standard.array(forKey: strategyGroupsKey) as? [String] {
             self.strategyGroupNames = Set(savedGroups)
-        } else {
-            self.strategyGroupNames = Set(defaultStrategyGroups)
+        }
+        // 【新增】读取名称映射
+        if let savedNames = UserDefaults.standard.dictionary(forKey: groupNamesKey) as? [String: String] {
+            self.groupDisplayMap = savedNames
         }
     }
 
@@ -229,9 +233,6 @@ class DataService: ObservableObject {
     // MARK: - 【新增】期权数据存储
     // Key 是 Symbol (大写), Value 是该 Symbol 下所有的期权条目
     @Published var optionsData: [String: [OptionItem]] = [:]
-
-    // 【修改点 4】新增：公开的策略组名称集合，供 UI 使用
-    @Published var strategyGroupNames: Set<String> = []
     
     private var isDataLoaded = false
     private var isInitialLoad: Bool {
@@ -240,13 +241,18 @@ class DataService: ObservableObject {
     }
 
     // MARK: - 【修改点 5】新增：更新策略组配置的方法
-    func updateStrategyGroups(_ groups: [String]) {
-        // 1. 更新内存中的 Published 属性，触发 UI 刷新
+    func updateStrategyConfig(groups: [String], names: [String: String]) {
         DispatchQueue.main.async {
             self.strategyGroupNames = Set(groups)
+            self.groupDisplayMap = names
         }
-        // 2. 持久化到 UserDefaults
         UserDefaults.standard.set(groups, forKey: strategyGroupsKey)
+        UserDefaults.standard.set(names, forKey: groupNamesKey)
+    }
+    
+    // 兼容之前的调用名（可选）
+    func updateStrategyGroups(_ groups: [String]) {
+        self.updateStrategyConfig(groups: groups, names: self.groupDisplayMap)
     }
 
     // 【核心修改】：将 loadData 改为异步触发，不阻塞主线程
