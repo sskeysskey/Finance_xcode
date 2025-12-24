@@ -296,7 +296,13 @@ struct IndicesContentView: View {
                         
                         // MARK: - 第一组：经济数据
                         VStack(alignment: .leading, spacing: 10) {
-                            SectionHeader(title: "经济数据", icon: "globe.asia.australia.fill", color: .purple)
+                            // 【修改】传入时间戳
+                            SectionHeader(
+                                title: "经济数据", 
+                                icon: "globe.asia.australia.fill", 
+                                color: .purple,
+                                trailingText: dataService.ecoDataTimestamp.map { "Updated：\($0)" }
+                            )
                             LazyVGrid(columns: gridLayout, spacing: 10) {
                                 ForEach(economySectors) { sector in
                                     Button {
@@ -330,7 +336,13 @@ struct IndicesContentView: View {
                         
                         // MARK: - 第二组：每日荐股 (在此处添加按钮)
                         VStack(alignment: .leading, spacing: 10) {
-                            SectionHeader(title: "每日荐股", icon: "star.fill", color: .blue)
+                            // 【修改】传入时间戳
+                            SectionHeader(
+                                title: "每日荐股", 
+                                icon: "star.fill", 
+                                color: .blue,
+                                trailingText: dataService.introSymbolTimestamp.map { "Updated：\($0)" }
+                            )
                             
                             LazyVGrid(columns: gridLayout, spacing: 10) {
                                 // 这里会自动根据 strategySectors 的变化而更新
@@ -978,6 +990,8 @@ struct SectionHeader: View {
     let title: String
     let icon: String
     let color: Color
+    // 【新增】可选的尾部文字
+    var trailingText: String? = nil 
     
     var body: some View {
         HStack(spacing: 6) {
@@ -987,7 +1001,16 @@ struct SectionHeader: View {
                 .font(.headline)
                 .fontWeight(.bold)
                 .foregroundColor(.primary)
+            
             Spacer()
+            
+            // 【新增】如果有文字则显示
+            if let text = trailingText {
+                Text(text)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.trailing, 8)
+            }
         }
         .padding(.leading, 4)
     }

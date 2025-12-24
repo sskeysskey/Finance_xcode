@@ -298,7 +298,7 @@ struct ArticleDetailView: View {
         let appSchemeStr = "globalnews://"
         
         // 2. 定义 App Store 下载链接 (记得替换这里的 ID)
-        let appStoreUrlStr = "https://apps.apple.com/cn/app/id6754591885"
+        let appStoreUrlStr = "https://apps.apple.com/cn/app/id6754904170"
         
         guard let appUrl = URL(string: appSchemeStr),
               let storeUrl = URL(string: appStoreUrlStr) else {
@@ -576,7 +576,7 @@ struct NewsPromoView: View {
                     VStack(spacing: 25) {
                         // 2. 头部 ICON 和 标题
                         VStack(spacing: 15) {
-                            Image(systemName: "newspaper.circle.fill")
+                            Image(systemName: "chart.line.uptrend.xyaxis.circle.fill")
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
                                 .frame(width: 80, height: 80)
@@ -585,7 +585,7 @@ struct NewsPromoView: View {
                                 )
                                 .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
 
-                            Text("全球财经要闻 · 一手掌握\n支持语音播放")
+                            Text("每日AI大模型算法荐股\n全球财经数据一站搞定")
                                 .font(.system(size: 28, weight: .heavy))
                                 .foregroundColor(.primary)
                                 .multilineTextAlignment(.center)
@@ -594,12 +594,13 @@ struct NewsPromoView: View {
 
                         // 3. 媒体品牌墙
                         VStack(spacing: 10) {
-                            Text("汇聚国际一线媒体精华")
+                            Text("「美股精灵」 特色介绍：")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                                 .textCase(.uppercase)
 
-                            let brands = ["纽约时报", "伦敦金融时报", "华尔街日报", "Bloomberg布隆伯格", "经济学人", "路透社", "日经新闻", "华盛顿邮报", "..."]
+                            let brands = ["美股财报", "美国经济数据", "期权分析", "ETF榜单", "大宗商品", "货币汇率",
+                                          "全球交易所", "各国债券", "..."]
                             FlowLayoutView(items: brands)
                         }
                         .padding(.vertical, 20)
@@ -609,7 +610,7 @@ struct NewsPromoView: View {
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: "sparkles")
                                     .foregroundColor(.orange)
-                                Text("原版内容，AI总结翻译，配原版图片，支持语音播放。欢迎尝试...")
+                                Text("业界首创财报和价格线完美结合。无论你是擅长抄底还是做空抑或追高，总有一种荐股分类适合你。通过期权数据对AI算法结果做二次验证，确保成功率...")
                             }
                             .font(.subheadline)
                             .foregroundColor(.secondary)

@@ -9,8 +9,12 @@ struct VersionResponse: Codable {
     let cost_config: [String: Int]?
     // 【修改点 1】新增策略分组配置字段
     let strategy_groups: [String]?
-    // 【新增】显示名称映射字典
-    let group_display_names: [String: String]? 
+    let group_display_names: [String: String]?
+    
+    // 【新增】解析新字段
+    let Eco_Data: String?
+    let Intro_Symbol: String?
+    
     let files: [FileInfo]
 }
 
@@ -127,6 +131,12 @@ class UpdateManager: ObservableObject {
                     names: serverVersionResponse.group_display_names ?? [:]
                 )
             }
+
+            // 【新增】更新界面显示的时间戳
+            DataService.shared.updateTimestamps(
+                eco: serverVersionResponse.Eco_Data,
+                intro: serverVersionResponse.Intro_Symbol
+            )
             
             let localVersion = UserDefaults.standard.string(forKey: localVersionKey) ?? "0.0"
             print("服务器版本: \(serverVersionResponse.version), 本地版本: \(localVersion)")

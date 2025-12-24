@@ -169,6 +169,14 @@ class DataService: ObservableObject {
     @Published var strategyGroupNames: Set<String> = []
     @Published var groupDisplayMap: [String: String] = [:] // 新增：Key 为英文，Value 为中文
 
+    // 【新增】存储更新时间文案
+    @Published var ecoDataTimestamp: String? = nil
+    @Published var introSymbolTimestamp: String? = nil
+    
+    // 【新增】UserDefaults Keys
+    private let ecoDataKey = "FinanceAppEcoDataTime"
+    private let introSymbolKey = "FinanceAppIntroSymbolTime"
+
     private init() {
         // 【修改点 3】初始化时从 UserDefaults 读取配置
         if let savedGroups = UserDefaults.standard.array(forKey: strategyGroupsKey) as? [String] {
@@ -178,6 +186,9 @@ class DataService: ObservableObject {
         if let savedNames = UserDefaults.standard.dictionary(forKey: groupNamesKey) as? [String: String] {
             self.groupDisplayMap = savedNames
         }
+        // 【新增】初始化时读取时间戳缓存
+        self.ecoDataTimestamp = UserDefaults.standard.string(forKey: ecoDataKey)
+        self.introSymbolTimestamp = UserDefaults.standard.string(forKey: introSymbolKey)
     }
 
     // 【新增】内部状态，标记是否正在加载
@@ -248,6 +259,21 @@ class DataService: ObservableObject {
         }
         UserDefaults.standard.set(groups, forKey: strategyGroupsKey)
         UserDefaults.standard.set(names, forKey: groupNamesKey)
+    }
+
+    // 【新增】更新时间戳并持久化
+    func updateTimestamps(eco: String?, intro: String?) {
+        DispatchQueue.main.async {
+            self.ecoDataTimestamp = eco
+            self.introSymbolTimestamp = intro
+        }
+        
+        if let eco = eco {
+            UserDefaults.standard.set(eco, forKey: ecoDataKey)
+        }
+        if let intro = intro {
+            UserDefaults.standard.set(intro, forKey: introSymbolKey)
+        }
     }
     
     // 兼容之前的调用名（可选）
