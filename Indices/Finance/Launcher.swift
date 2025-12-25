@@ -295,6 +295,44 @@ struct UserProfileView: View {
                     }
                     .disabled(isRestoring)
                 }
+
+                // MARK: - 【新增】问题反馈部分
+                Section(header: Text("支持与反馈")) {
+                    Button {
+                        let email = "728308386@qq.com"
+                        // 使用 mailto 协议唤起邮件客户端
+                        if let url = URL(string: "mailto:\(email)") {
+                            if UIApplication.shared.canOpenURL(url) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "envelope.fill")
+                                .foregroundColor(.blue)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("问题反馈")
+                                    .foregroundColor(.primary)
+                                Text("728308386@qq.com")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            // 加一个复制图标提示用户可以点击
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    .contextMenu {
+                        // 长按复制邮箱，防止用户没装邮件App
+                        Button {
+                            UIPasteboard.general.string = "728308386@qq.com"
+                        } label: {
+                            Label("复制邮箱地址", systemImage: "doc.on.doc")
+                        }
+                    }
+                }
                 
                 // 退出登录部分
                 Section {
@@ -376,6 +414,8 @@ struct MainContentView: View {
     // 【新增】控制“财经要闻”弹窗显示
     @State private var showNewsPromoSheet = false 
 
+    @State private var showGuestMenu = false        // 【新增】：控制未登录用户的菜单
+
     // 监控 App 的生命周期状态
     @Environment(\.scenePhase) private var scenePhase
 
@@ -447,18 +487,14 @@ struct MainContentView: View {
                                 }
                             }
                         } else {
-                            // 未登录：显示菜单，提供登录选项
-                            Menu {
-                                Button {
-                                    showLoginSheet = true
-                                } label: {
-                                    Label("登录", systemImage: "person.crop.circle")
-                                }
+                            // MARK: - 【修改】未登录状态：点击弹出底部菜单
+                            Button {
+                                showGuestMenu = true // 触发底部弹窗
                             } label: {
                                 HStack {
                                     Image(systemName: "person.circle")
+                                    // 即使是匿名购买的会员也显示皇冠
                                     if authManager.isSubscribed {
-                                        // 即使未登录，如果是订阅状态（匿名购买），也显示皇冠
                                         Image(systemName: "crown.fill").foregroundColor(.yellow).font(.caption)
                                     }
                                 }
@@ -577,6 +613,80 @@ struct MainContentView: View {
         .sheet(isPresented: $showLoginSheet) { LoginView() }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .sheet(isPresented: $showProfileSheet) { UserProfileView() } // 个人中心
+
+        // 【新增】未登录用户的底部菜单
+        .sheet(isPresented: $showGuestMenu) {
+            VStack(spacing: 20) {
+                // 顶部小横条
+                Capsule()
+                    .fill(Color.secondary.opacity(0.3))
+                    .frame(width: 40, height: 5)
+                    .padding(.top, 10)
+                
+                Text("欢迎使用美股精灵")
+                    .font(.headline)
+                
+                VStack(spacing: 0) {
+                    // 选项 1：登录
+                    Button {
+                        showGuestMenu = false // 先关闭菜单
+                        // 延迟一点点再打开登录页，体验更流畅
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            showLoginSheet = true
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "person.crop.circle")
+                                .font(.title3)
+                                .frame(width: 30)
+                            Text("登录账户")
+                                .font(.body)
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
+                        }
+                        .padding()
+                        .background(Color(UIColor.secondarySystemGroupedBackground))
+                    }
+                    
+                    Divider().padding(.leading, 50) // 分割线
+                    
+                    // 选项 2：问题反馈 (这里空间很大，可以随便放邮箱)
+                    Button {
+                        let email = "728308386@qq.com"
+                        if let url = URL(string: "mailto:\(email)") {
+                            if UIApplication.shared.canOpenURL(url) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "envelope")
+                                .font(.title3)
+                                .frame(width: 30)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("问题反馈")
+                                    .foregroundColor(.primary)
+                                Text("728308386@qq.com") // 邮箱显示在这里非常清晰
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "arrow.up.right").font(.caption).foregroundColor(.gray)
+                        }
+                        .padding()
+                        .background(Color(UIColor.secondarySystemGroupedBackground))
+                    }
+                }
+                .cornerRadius(12)
+                .padding(.horizontal)
+                
+                Spacer()
+            }
+            .background(Color(UIColor.systemGroupedBackground))
+            // 【关键】限制高度：只占据屏幕底部约 25%~30% 的高度，不像全屏那么重
+            .presentationDetents([.fraction(0.30)]) 
+            .presentationDragIndicator(.hidden)
+        }
 
         // 【新增】财经要闻推广弹窗
         .sheet(isPresented: $showNewsPromoSheet) {

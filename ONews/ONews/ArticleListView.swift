@@ -334,6 +334,7 @@ struct TimestampHeader: View {
 }
 
 // ==================== 单一来源列表 ====================
+
 struct ArticleListView: View {
     let sourceName: String
     @ObservedObject var viewModel: NewsViewModel
@@ -357,7 +358,10 @@ struct ArticleListView: View {
     // 【新增】控制订阅弹窗
     @State private var showSubscriptionSheet = false
     
-    // 【修复需求】新增一个状态变量，用于记录是否已经执行过初始的自动展开逻辑
+    // 【新增】控制未登录 Guest 菜单和已登录 Profile
+    @State private var showGuestMenu = false
+    @State private var showProfileSheet = false
+    
     @State private var hasPerformedAutoExpansion = false
     
     private var source: NewsSource? {
@@ -493,9 +497,12 @@ struct ArticleListView: View {
             .navigationTitle(sourceName.replacingOccurrences(of: "_", with: " "))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // 【新增】用户状态工具栏按钮
+                // 【修改】调用更新后的 UserStatusToolbarItem
                 ToolbarItem(placement: .topBarLeading) {
-                    UserStatusToolbarItem(showLoginSheet: $showLoginSheet)
+                    UserStatusToolbarItem(
+                        showGuestMenu: $showGuestMenu,
+                        showProfileSheet: $showProfileSheet
+                    )
                 }
                 
                 ToolbarItem(placement: .topBarTrailing) {
@@ -536,7 +543,52 @@ struct ArticleListView: View {
             .sheet(isPresented: $showLoginSheet) { LoginView() }
             // 【新增】订阅弹窗
             .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
-            // 【修改】监听 AuthManager 的 showSubscriptionSheet 信号
+            // 【新增】个人中心 Sheet
+            .sheet(isPresented: $showProfileSheet) { UserProfileView() }
+            // 【新增】未登录底部菜单 Sheet
+            .sheet(isPresented: $showGuestMenu) {
+                VStack(spacing: 20) {
+                    Capsule().fill(Color.secondary.opacity(0.3)).frame(width: 40, height: 5).padding(.top, 10)
+                    Text("欢迎使用 ONews").font(.headline)
+                    VStack(spacing: 0) {
+                        Button {
+                            showGuestMenu = false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showLoginSheet = true }
+                        } label: {
+                            HStack {
+                                Image(systemName: "person.crop.circle").font(.title3).frame(width: 30)
+                                Text("登录账户").font(.body)
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
+                            }
+                            .padding().background(Color(UIColor.secondarySystemGroupedBackground))
+                        }
+                        Divider().padding(.leading, 50)
+                        Button {
+                            let email = "728308386@qq.com"
+                            if let url = URL(string: "mailto:\(email)"), UIApplication.shared.canOpenURL(url) {
+                                UIApplication.shared.open(url)
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: "envelope").font(.title3).frame(width: 30)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("问题反馈").foregroundColor(.primary)
+                                    Text("728308386@qq.com").font(.caption).foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "arrow.up.right").font(.caption).foregroundColor(.gray)
+                            }
+                            .padding().background(Color(UIColor.secondarySystemGroupedBackground))
+                        }
+                    }
+                    .cornerRadius(12).padding(.horizontal)
+                    Spacer()
+                }
+                .background(Color(UIColor.systemGroupedBackground))
+                .presentationDetents([.fraction(0.30)])
+                .presentationDragIndicator(.hidden)
+            }
             .onChange(of: authManager.showSubscriptionSheet) { _, newValue in
                 self.showSubscriptionSheet = newValue
             }
@@ -658,6 +710,8 @@ struct ArticleListView: View {
     }
 }
 
+// ==================== 全部文章列表 ====================
+
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager
@@ -680,7 +734,10 @@ struct AllArticlesListView: View {
     // 【新增】
     @State private var showSubscriptionSheet = false
     
-    // 【修复需求】新增一个状态变量，用于记录是否已经执行过初始的自动展开逻辑
+    // 【新增】状态
+    @State private var showGuestMenu = false
+    @State private var showProfileSheet = false
+    
     @State private var hasPerformedAutoExpansion = false
     
     private var baseFilteredArticles: [ArticleItem] {
@@ -793,9 +850,12 @@ struct AllArticlesListView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // 【新增】用户状态工具栏按钮
+            // 【修改】调用更新后的 UserStatusToolbarItem
             ToolbarItem(placement: .topBarLeading) {
-                UserStatusToolbarItem(showLoginSheet: $showLoginSheet)
+                UserStatusToolbarItem(
+                    showGuestMenu: $showGuestMenu,
+                    showProfileSheet: $showProfileSheet
+                )
             }
             
             ToolbarItem(placement: .topBarTrailing) {
@@ -836,6 +896,51 @@ struct AllArticlesListView: View {
         .sheet(isPresented: $showLoginSheet) { LoginView() }
         // 【新增】
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        // 【新增】Sheet
+        .sheet(isPresented: $showProfileSheet) { UserProfileView() }
+        .sheet(isPresented: $showGuestMenu) {
+            VStack(spacing: 20) {
+                Capsule().fill(Color.secondary.opacity(0.3)).frame(width: 40, height: 5).padding(.top, 10)
+                Text("欢迎使用 ONews").font(.headline)
+                VStack(spacing: 0) {
+                    Button {
+                        showGuestMenu = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showLoginSheet = true }
+                    } label: {
+                        HStack {
+                            Image(systemName: "person.crop.circle").font(.title3).frame(width: 30)
+                            Text("登录账户").font(.body)
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
+                        }
+                        .padding().background(Color(UIColor.secondarySystemGroupedBackground))
+                    }
+                    Divider().padding(.leading, 50)
+                    Button {
+                        let email = "728308386@qq.com"
+                        if let url = URL(string: "mailto:\(email)"), UIApplication.shared.canOpenURL(url) {
+                            UIApplication.shared.open(url)
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "envelope").font(.title3).frame(width: 30)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("问题反馈").foregroundColor(.primary)
+                                Text("728308386@qq.com").font(.caption).foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "arrow.up.right").font(.caption).foregroundColor(.gray)
+                        }
+                        .padding().background(Color(UIColor.secondarySystemGroupedBackground))
+                    }
+                }
+                .cornerRadius(12).padding(.horizontal)
+                Spacer()
+            }
+            .background(Color(UIColor.systemGroupedBackground))
+            .presentationDetents([.fraction(0.30)])
+            .presentationDragIndicator(.hidden)
+        }
         .onChange(of: authManager.showSubscriptionSheet) { _, newValue in
             self.showSubscriptionSheet = newValue
         }

@@ -34,34 +34,136 @@ struct DownloadOverlay: View {
     }
 }
 
-// 【新增】导航栏用户状态视图
-struct UserStatusToolbarItem: View {
+// MARK: - 【新增】个人中心视图 (User Profile)
+struct UserProfileView: View {
     @EnvironmentObject var authManager: AuthManager
-    @Binding var showLoginSheet: Bool
+    @Environment(\.dismiss) var dismiss
     
     var body: some View {
-        if authManager.isLoggedIn {
-            Menu {
-                // 显示订阅状态
-                if authManager.isSubscribed {
-                    Label("专业版会员", systemImage: "crown.fill")
-                } else {
-                    Label("免费版用户", systemImage: "person")
+        NavigationView {
+            List {
+                // 1. 用户信息部分
+                Section {
+                    HStack {
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 60))
+                            .foregroundColor(.gray)
+                        VStack(alignment: .leading, spacing: 4) {
+                            if authManager.isSubscribed {
+                                Text("专业版会员")
+                                    .font(.subheadline)
+                                    .foregroundColor(.yellow)
+                                    .bold()
+                                if let date = authManager.subscriptionExpiryDate {
+                                    Text("有效期至: \(date.prefix(10))")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            } else {
+                                Text("免费版用户")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            if let userId = authManager.userIdentifier {
+                                Text("ID: \(userId.prefix(6))...")
+                                    .font(.caption2)
+                                    .foregroundColor(.gray)
+                            } else {
+                                Text("未登录")
+                                    .font(.caption2)
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        .padding(.leading, 8)
+                    }
+                    .padding(.vertical, 10)
                 }
                 
-                if let date = authManager.subscriptionExpiryDate {
-                    Text("有效期至: \(date.prefix(10))")
-                        .font(.caption)
+                // 2. 支持与反馈部分 (类似 Finance App)
+                Section(header: Text("支持与反馈")) {
+                    Button {
+                        let email = "728308386@qq.com"
+                        // 使用 mailto 协议唤起邮件客户端
+                        if let url = URL(string: "mailto:\(email)") {
+                            if UIApplication.shared.canOpenURL(url) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "envelope.fill")
+                                .foregroundColor(.blue)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("问题反馈")
+                                    .foregroundColor(.primary)
+                                Text("728308386@qq.com")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            // 加一个图标提示用户可以点击
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    .contextMenu {
+                        // 长按复制邮箱
+                        Button {
+                            UIPasteboard.general.string = "728308386@qq.com"
+                        } label: {
+                            Label("复制邮箱地址", systemImage: "doc.on.doc")
+                        }
+                    }
                 }
                 
-                Divider()
-                
-                Button(role: .destructive) {
-                    authManager.signOut()
-                } label: {
-                    Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
+                // 3. 退出登录部分
+                Section {
+                    if authManager.isLoggedIn {
+                        Button(role: .destructive) {
+                            authManager.signOut()
+                            dismiss()
+                        } label: {
+                            HStack {
+                                Image(systemName: "rectangle.portrait.and.arrow.right")
+                                Text("退出登录")
+                            }
+                        }
+                    }
                 }
-            } label: {
+            }
+            .navigationTitle("账户")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 【修改】导航栏用户状态视图
+// 修改逻辑：不再直接传入 showLoginSheet，而是传入两个 Sheet 的控制状态
+struct UserStatusToolbarItem: View {
+    @EnvironmentObject var authManager: AuthManager
+    
+    // 接收两个绑定的状态
+    @Binding var showGuestMenu: Bool
+    @Binding var showProfileSheet: Bool
+    
+    var body: some View {
+        Button(action: {
+            if authManager.isLoggedIn {
+                // 已登录：显示个人中心
+                showProfileSheet = true
+            } else {
+                // 未登录：显示底部 Guest 菜单
+                showGuestMenu = true
+            }
+        }) {
+            if authManager.isLoggedIn {
                 HStack(spacing: 6) {
                     Image(systemName: "person.circle.fill")
                         .font(.body)
@@ -73,9 +175,7 @@ struct UserStatusToolbarItem: View {
                 .background(Color.secondary.opacity(0.15))
                 .clipShape(Capsule())
                 .foregroundColor(.primary)
-            }
-        } else {
-            Button(action: { showLoginSheet = true }) {
+            } else {
                 HStack(spacing: 6) {
                     Image(systemName: "person.circle")
                     Text("登录")
@@ -87,11 +187,10 @@ struct UserStatusToolbarItem: View {
                 .clipShape(Capsule())
                 .foregroundColor(.primary)
             }
-            .accessibilityLabel("登录")
         }
+        .accessibilityLabel(authManager.isLoggedIn ? "个人中心" : "登录或反馈")
     }
 }
-
 
 struct SourceListView: View {
     @EnvironmentObject var viewModel: NewsViewModel
@@ -108,18 +207,23 @@ struct SourceListView: View {
     // 【新增】
     @State private var showSubscriptionSheet = false
     
+    // 【新增】控制未登录用户的底部菜单
+    @State private var showGuestMenu = false
+    // 【新增】控制已登录用户的个人中心
+    @State private var showProfileSheet = false
+    
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
     
-    // 【新增】用于程序化导航和图片下载的状态变量
+    // 用于程序化导航和图片下载的状态变量
     @State private var isDownloadingImages = false
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
     @State private var selectedArticleItem: (article: Article, sourceName: String)?
     @State private var isNavigationActive = false
     
-    // 【优化】静态 formatter
+    // 静态 formatter
     private static let parsingFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyMMdd"
@@ -201,9 +305,12 @@ struct SourceListView: View {
             .background(Color.viewBackground.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // 【新增】将用户状态按钮放在最左边
+                // 【修改】将用户状态按钮更新为新的逻辑
                 ToolbarItem(placement: .navigationBarLeading) {
-                    UserStatusToolbarItem(showLoginSheet: $showLoginSheet)
+                    UserStatusToolbarItem(
+                        showGuestMenu: $showGuestMenu,
+                        showProfileSheet: $showProfileSheet
+                    )
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -269,6 +376,80 @@ struct SourceListView: View {
         .sheet(isPresented: $showLoginSheet) { LoginView() }
         // 【新增】
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        // 【新增】个人中心 Sheet
+        .sheet(isPresented: $showProfileSheet) { UserProfileView() }
+        // 【新增】未登录底部菜单 Sheet (仿 Finance)
+        .sheet(isPresented: $showGuestMenu) {
+            VStack(spacing: 20) {
+                // 顶部小横条
+                Capsule()
+                    .fill(Color.secondary.opacity(0.3))
+                    .frame(width: 40, height: 5)
+                    .padding(.top, 10)
+                
+                Text("欢迎使用 ONews")
+                    .font(.headline)
+                
+                VStack(spacing: 0) {
+                    // 选项 1：登录
+                    Button {
+                        showGuestMenu = false // 先关闭菜单
+                        // 延迟一点点再打开登录页
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            showLoginSheet = true
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "person.crop.circle")
+                                .font(.title3)
+                                .frame(width: 30)
+                            Text("登录账户")
+                                .font(.body)
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
+                        }
+                        .padding()
+                        .background(Color(UIColor.secondarySystemGroupedBackground))
+                    }
+                    
+                    Divider().padding(.leading, 50)
+                    
+                    // 选项 2：问题反馈
+                    Button {
+                        let email = "728308386@qq.com"
+                        if let url = URL(string: "mailto:\(email)") {
+                            if UIApplication.shared.canOpenURL(url) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "envelope")
+                                .font(.title3)
+                                .frame(width: 30)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("问题反馈")
+                                    .foregroundColor(.primary)
+                                Text("728308386@qq.com")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "arrow.up.right").font(.caption).foregroundColor(.gray)
+                        }
+                        .padding()
+                        .background(Color(UIColor.secondarySystemGroupedBackground))
+                    }
+                }
+                .cornerRadius(12)
+                .padding(.horizontal)
+                
+                Spacer()
+            }
+            .background(Color(UIColor.systemGroupedBackground))
+            .presentationDetents([.fraction(0.30)]) // 只占据底部 30%
+            .presentationDragIndicator(.hidden)
+        }
         .onChange(of: authManager.showSubscriptionSheet) { _, newValue in
             self.showSubscriptionSheet = newValue
         }
