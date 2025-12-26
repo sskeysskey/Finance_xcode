@@ -383,8 +383,6 @@ struct ChartView: View {
                             }
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        // iOS 16+ API, 延迟系统手势 (如底部Home条)
-                        .defersSystemGestures(on: .all)
                     )
                 }
                 .frame(height: 320)
@@ -1154,7 +1152,7 @@ extension UIView {
     }
 }
 
-// MARK: - 优化的多触控处理
+// MARK: - 优化的多触控处理 (支持方向性判断、状态无缝切换、底部防误触)
 struct OptimizedTouchHandler: UIViewRepresentable {
     var onSingleTouchChanged: (CGPoint) -> Void
     var onMultiTouchChanged: (CGPoint, CGPoint) -> Void
@@ -1175,111 +1173,222 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         uiView.onTouchesEnded = onTouchesEnded
     }
     
-    class OptimizedMultitouchView: UIView, UIGestureRecognizerDelegate {
+    class OptimizedMultitouchView: UIView {
         var onSingleTouchChanged: ((CGPoint) -> Void)?
         var onMultiTouchChanged: ((CGPoint, CGPoint) -> Void)?
         var onTouchesEnded: (() -> Void)?
         
+        // 状态管理
         private var activeTouches: [UITouch: CGPoint] = [:]
-        private var lastUpdateTime: TimeInterval = 0
-        private let throttleInterval: TimeInterval = 0.016
         
-        // 记录原始状态
+        // 标记当前是否已经“夺取”了控制权（即正在查阅图表）
+        private var isChartInteracting: Bool = false
+        
+        // 记录单指起始点，用于判断左划还是右划
+        private var startLocation: CGPoint?
+        
+        // 长按计时任务
+        private var longPressTask: DispatchWorkItem?
+        
+        // 原始导航手势状态记录
         private var originalPopGestureEnabled: Bool = true
+        
+        // 底部边缘保护阈值 (Home Indicator 区域)
+        private let bottomEdgeThreshold: CGFloat = 30.0
         
         override init(frame: CGRect) {
             super.init(frame: frame)
             isMultipleTouchEnabled = true
-            isUserInteractionEnabled = true
         }
         
         required init?(coder: NSCoder) {
             fatalError("init(coder:) has not been implemented")
         }
-
-        // 核心修复逻辑：当触摸开始时，禁用导航控制器的手势
+        
+        // MARK: - 导航手势控制
         private func disableNavGesture() {
+            guard !isChartInteracting else { return } // 防止重复调用
             if let nav = findNavigationController(), let gesture = nav.interactivePopGestureRecognizer {
                 if gesture.isEnabled {
                     originalPopGestureEnabled = true
                     gesture.isEnabled = false
                 }
             }
+            isChartInteracting = true
         }
         
-        // 核心修复逻辑：当触摸结束时，恢复导航控制器的手势
         private func restoreNavGesture() {
             if let nav = findNavigationController(), let gesture = nav.interactivePopGestureRecognizer {
                 if originalPopGestureEnabled {
                     gesture.isEnabled = true
                 }
             }
+            isChartInteracting = false
         }
-
+        
+        // MARK: - 触摸事件处理
+        
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-            disableNavGesture() // 禁用侧滑返回
-            
+            // 1. 记录所有触摸点
             for touch in touches {
-                activeTouches[touch] = touch.location(in: self)
-            }
-            updateTouches(force: true)
-        }
-        
-        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-            // 确保在移动过程中也是禁用的
-            if let nav = findNavigationController(),
-               let gesture = nav.interactivePopGestureRecognizer,
-               gesture.isEnabled {
-                gesture.isEnabled = false
-            }
-            
-            for touch in touches {
-                activeTouches[touch] = touch.location(in: self)
+                let location = touch.location(in: self)
+                
+                // 【修复3】底部边缘防误触
+                // 如果触摸点在视图最底部（Home条区域），直接忽略，不存入 activeTouches
+                // 这样系统就会处理App切换，而不是被我们拦截
+                if location.y > self.bounds.height - bottomEdgeThreshold {
+                    continue
+                }
+                
+                activeTouches[touch] = location
             }
             
-            let currentTime = CACurrentMediaTime()
-            if currentTime - lastUpdateTime > throttleInterval {
-                updateTouches()
-                lastUpdateTime = currentTime
-            }
-        }
-        
-        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-            for touch in touches {
-                activeTouches.removeValue(forKey: touch)
-            }
+            // 如果没有有效触摸（比如点到底部去了），直接返回
+            if activeTouches.isEmpty { return }
             
-            if activeTouches.isEmpty {
-                onTouchesEnded?()
-                restoreNavGesture() // 恢复侧滑返回
-            } else {
-                updateTouches(force: true)
-            }
-        }
-        
-        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-            activeTouches.removeAll()
-            onTouchesEnded?()
-            restoreNavGesture() // 恢复侧滑返回
-        }
-        
-        private func updateTouches(force: Bool = false) {
-            let touchCount = activeTouches.count
-            
-            if touchCount >= 2 {
-                let touchPoints = Array(activeTouches.values)
-                onMultiTouchChanged?(touchPoints[0], touchPoints[1])
-            } else if touchCount == 1 {
-                if let location = activeTouches.values.first {
-                    onSingleTouchChanged?(location)
+            // 2. 根据手指数量处理
+            if activeTouches.count >= 2 {
+                // 双指模式：立即夺取控制权
+                cancelLongPressTask() // 取消单指的长按检测
+                disableNavGesture()
+                updateMultiTouch()
+            } else if activeTouches.count == 1 {
+                // 单指模式：启动长按检测，暂不夺取控制权
+                if let touch = activeTouches.keys.first {
+                    startLocation = activeTouches[touch]
+                    
+                    // 创建长按计时器 (0.5秒)
+                    let task = DispatchWorkItem { [weak self] in
+                        guard let self = self else { return }
+                        // 时间到，手指未抬起且未发生大幅度位移 -> 激活查阅模式
+                        // 此时即使是右划，也已经进入了查阅模式
+                        self.activateSingleTouchMode()
+                    }
+                    self.longPressTask = task
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: task)
                 }
             }
         }
         
-        // UIGestureRecognizerDelegate 方法
-        // 强制让我们的视图优先识别触摸，而不是系统的手势
-        override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            return false
+        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+            // 更新触摸点位置
+            for touch in touches {
+                if activeTouches[touch] != nil {
+                   activeTouches[touch] = touch.location(in: self)
+                }
+            }
+            
+            if activeTouches.count >= 2 {
+                // 双指模式：持续更新
+                updateMultiTouch()
+            } else if activeTouches.count == 1 {
+                // 单指模式
+                handleSingleTouchMove()
+            }
+        }
+        
+        private func handleSingleTouchMove() {
+            guard let touch = activeTouches.keys.first,
+                  let currentLocation = activeTouches[touch] else { return }
+            
+            // 如果已经激活了查阅模式，直接回调位置
+            if isChartInteracting {
+                onSingleTouchChanged?(currentLocation)
+                return
+            }
+            
+            // 如果还没激活，判断移动意图
+            guard let start = startLocation else { return }
+            let deltaX = currentLocation.x - start.x
+            let deltaY = currentLocation.y - start.y
+            
+            // 简单的防抖动阈值
+            if abs(deltaX) < 10 && abs(deltaY) < 10 { return }
+            
+            // 【修复1】判断方向
+            if deltaX < 0 {
+                // 向左滑动：立即取消长按等待，激活查阅模式
+                cancelLongPressTask()
+                activateSingleTouchMode()
+                // 立即更新一次位置，避免顿挫
+                onSingleTouchChanged?(currentLocation)
+            } else if deltaX > 0 {
+                // 向右滑动：
+                // 此时还未激活(isChartInteracting == false)
+                // 我们什么都不做，让系统手势去响应“返回上一页”
+                // 同时取消长按任务，因为用户明显是在进行滑动手势而不是长按
+                cancelLongPressTask()
+            }
+        }
+        
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+            handleTouchesEnd(touches)
+        }
+        
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+            handleTouchesEnd(touches)
+        }
+        
+        private func handleTouchesEnd(_ touches: Set<UITouch>) {
+            // 移除已结束的触摸
+            for touch in touches {
+                activeTouches.removeValue(forKey: touch)
+            }
+            
+            cancelLongPressTask() // 安全清理
+            
+            if activeTouches.isEmpty {
+                // 所有手指离开：结束交互，恢复系统手势
+                onTouchesEnded?()
+                restoreNavGesture()
+                startLocation = nil
+                
+            } else if activeTouches.count == 1 {
+                // 【修复2】双指变单指：保持交互状态
+                // 此时 isChartInteracting 应该已经是 true 了（因为之前是双指）
+                // 我们直接查找剩下的那一根手指，并作为单指模式继续
+                if let remainingTouch = activeTouches.keys.first {
+                    let location = activeTouches[remainingTouch]!
+                    // 确保进入单指回调
+                    onSingleTouchChanged?(location)
+                    // 重置 startLocation，防止逻辑混乱，虽然此时已经在 interacting 模式下不太会用到它
+                    startLocation = location
+                }
+            } else if activeTouches.count >= 2 {
+                // 假如之前是3指，变成2指，继续双指逻辑
+                updateMultiTouch()
+            }
+        }
+        
+        // MARK: - 辅助逻辑
+        
+        private func activateSingleTouchMode() {
+            disableNavGesture() // 禁用系统返回，独占触摸
+            
+            // 触发一次震动反馈告诉用户“已激活”
+            if activeTouches.count == 1 {
+                 let impact = UIImpactFeedbackGenerator(style: .light)
+                 impact.impactOccurred()
+            }
+            
+            // 立即触发一次当前位置的回调
+            if let touch = activeTouches.keys.first, let loc = activeTouches[touch] {
+                onSingleTouchChanged?(loc)
+            }
+        }
+        
+        private func cancelLongPressTask() {
+            longPressTask?.cancel()
+            longPressTask = nil
+        }
+        
+        private func updateMultiTouch() {
+            let touchPoints = Array(activeTouches.values)
+            if touchPoints.count >= 2 {
+                // 排序或固定取前两个，保证平滑
+                // 这里简单取前两个
+                onMultiTouchChanged?(touchPoints[0], touchPoints[1])
+            }
         }
     }
 }
