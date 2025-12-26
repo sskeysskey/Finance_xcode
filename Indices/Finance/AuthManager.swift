@@ -189,37 +189,34 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
     
-    // 【修改】购买订阅 - 支持匿名购买
+    // 【修改】购买订阅 - 强制要求登录
     func purchaseSubscription() async throws {
-        // 移除强制登录检查，允许匿名购买
-        // guard let userId = userIdentifier else { throw URLError(.userAuthenticationRequired) }
+        // 1. 【核心修改】恢复强制登录检查
+        guard let userId = userIdentifier else {
+            throw URLError(.userAuthenticationRequired)
+        }
         
-        // 1. 获取商品信息
+        // 2. 获取商品信息
         let products = try await Product.products(for: [subscriptionProductID])
         guard let product = products.first else {
             throw NSError(domain: "StoreError", code: 404, userInfo: [NSLocalizedDescriptionKey: "未找到商品信息，请检查 App Store Connect 配置"])
         }
         
-        // 2. 发起购买
+        // 3. 发起购买
         let result = try await product.purchase()
         
         switch result {
         case .success(let verification):
-            // 3. 验证交易
-            // 修复点：调用实例方法 checkVerified
+            // 验证交易
             let transaction = try checkVerified(verification)
             
-            // 4. 购买成功，更新本地状态
+            // 购买成功，更新本地状态
             await updateSubscriptionStatus()
             
-            // 5. (可选) 如果用户已登录，将收据或状态同步给 Python 服务器
-            if let userId = userIdentifier {
-                try await syncPurchaseToServer(userId: userId)
-            } else {
-                print("AuthManager: 用户未登录，仅进行本地解锁，跳过服务器同步。")
-            }
+            // 【重要】同步给服务器 (现在 userId 必定存在)
+            try await syncPurchaseToServer(userId: userId)
             
-            // 6. 完成交易
+            // 完成交易
             await transaction.finish()
             
             await MainActor.run {
@@ -235,17 +232,21 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
 
-    // 【新增】恢复购买功能 (App Store 要求)
+    // 【修改】恢复购买功能 - 强制要求登录
     func restorePurchases() async throws {
-        // 1. 强制同步 App Store 交易信息 (StoreKit 2)
-        // 这会弹出 Apple ID 密码输入框（如果是沙盒环境或长时间未操作）
+        // 1. 【核心修改】为了数据同步，强制要求先登录才能恢复
+        guard let userId = userIdentifier else {
+            throw URLError(.userAuthenticationRequired)
+        }
+
+        // 2. 强制同步 App Store 交易信息
         try await AppStore.sync()
         
-        // 2. 重新检查所有权限
+        // 3. 重新检查所有权限
         await updateSubscriptionStatus()
         
-        // 3. 如果需要，可以在这里再次同步到 Python 服务器 (可选)
-        if let userId = userIdentifier, isSubscribed {
+        // 4. 同步到服务器
+        if isSubscribed {
             try await syncPurchaseToServer(userId: userId)
         }
     }
@@ -416,8 +417,20 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        // 告诉服务器充值 30 天 (或者根据 transaction.expirationDate 计算)
-        let body: [String: Any] = ["user_id": userId, "days": 30]
+        // 【核心修改】构建请求体
+        var body: [String: Any] = ["user_id": userId]
+        
+        // 检查 AuthManager 中是否已经有了从 Apple 获取的过期时间
+        // 注意：purchaseSubscription 和 restorePurchases 都会先调用 updateSubscriptionStatus
+        // 所以此时 self.subscriptionExpiryDate 应该是最新的真实时间
+        if let realExpiryDate = self.subscriptionExpiryDate {
+            // 传给服务器字段：explicit_expiry
+            body["explicit_expiry"] = realExpiryDate
+        } else {
+            // 如果实在拿不到时间（极少情况），再回退到加30天
+            body["days"] = 30
+        }
+        
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
         let (_, response) = try await URLSession.shared.data(for: request)

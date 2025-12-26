@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SubscriptionView: View {
+
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
     @Environment(\.colorScheme) var colorScheme // 获取系统模式
@@ -14,6 +15,9 @@ struct SubscriptionView: View {
     @State private var isRestoring = false
     @State private var showRestoreAlert = false
     @State private var restoreMessage = ""
+    
+    // 【新增】控制登录弹窗显示
+    @State private var showLoginSheet = false
     
     // 【新增】后门/内部通道相关状态
     @State private var tapCount = 0             // 点击计数器
@@ -137,7 +141,6 @@ struct SubscriptionView: View {
                     Link("隐私政策", destination: URL(string: "https://sskeysskey.github.io/website/privacy.html")!)
                         .font(.footnote)
                         .foregroundColor(.secondary)
-
                     Text("|").foregroundColor(.secondary.opacity(0.5))
                     
                     Link("使用条款 (EULA)", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
@@ -226,19 +229,42 @@ struct SubscriptionView: View {
         } message: {
             Text(redeemMessage)
         }
+        // 【新增】登录弹窗
+        .sheet(isPresented: $showLoginSheet) {
+            LoginView()
+        }
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
+            // 当监测到登录状态变为 true，且当前登录弹窗是打开的，则自动关闭它
+            if newValue == true && showLoginSheet {
+                showLoginSheet = false
+            }
+        }
     }
     
-    // 处理购买
+    // 【修改】处理购买：先检查登录
     private func handlePurchase() {
+        // 1. 检查是否已登录
+        guard authManager.isLoggedIn else {
+            // 未登录 -> 弹出登录页
+            showLoginSheet = true
+            return
+        }
+        
+        // 2. 已登录 -> 执行原有购买逻辑
         isPurchasing = true
         Task {
             do {
                 try await authManager.purchaseSubscription()
                 await MainActor.run {
                     isPurchasing = false
-                    // 购买成功后，AuthManager 会更新状态并可能自动关闭 Sheet，
-                    // 或者我们在这里手动关闭
-                    dismiss()
+                    // 【核心修改】
+                    // 只有当订阅状态确实变为 true (购买成功) 时，才关闭弹窗。
+                    // 如果用户取消了支付 (isSubscribed 仍为 false)，则不关闭，保留在当前页面。
+                    if authManager.isSubscribed {
+                        dismiss()
+                    } else {
+                        print("用户取消或未完成支付，保留订阅页面")
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -250,8 +276,16 @@ struct SubscriptionView: View {
         }
     }
     
-    // 处理恢复购买
+    // 【修改】处理恢复购买：先检查登录
     private func performRestore() {
+        // 1. 检查是否已登录
+        guard authManager.isLoggedIn else {
+            // 未登录 -> 弹出登录页
+            showLoginSheet = true
+            return
+        }
+        
+        // 2. 已登录 -> 执行原有恢复逻辑
         isRestoring = true
         Task {
             do {
@@ -280,6 +314,12 @@ struct SubscriptionView: View {
     private func performRedeem() {
         // 简单的本地判空
         guard !redeemCodeInput.isEmpty else { return }
+        
+        // 2. 【新增】检查是否已登录 (如果服务器需要绑定User ID)
+        guard authManager.isLoggedIn else {
+            showLoginSheet = true
+            return
+        }
         
         isRedeeming = true
         

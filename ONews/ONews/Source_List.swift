@@ -525,7 +525,8 @@ struct SourceListView: View {
                                 Task { await handleArticleTap(item) }
                             }) {
                                 // 【修改】传递锁定状态
-                                let isLocked = !authManager.isLoggedIn && viewModel.isTimestampLocked(timestamp: item.article.timestamp)
+                                // 应该判断是否订阅 (!isSubscribed)
+                                let isLocked = !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: item.article.timestamp)
                                 ArticleRowCardView(
                                     article: item.article,
                                     sourceName: item.sourceName,
@@ -690,13 +691,9 @@ struct SourceListView: View {
         let article = item.article
         let sourceName = item.sourceName
         
-        // 【修改】锁定检查：未订阅 且 被锁定
+        // 【修改后】简化逻辑：只要被锁定，就显示 SubscriptionView
         if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
-            if !authManager.isLoggedIn {
-                showLoginSheet = true
-            } else {
-                showSubscriptionSheet = true
-            }
+            showSubscriptionSheet = true
             return
         }
         

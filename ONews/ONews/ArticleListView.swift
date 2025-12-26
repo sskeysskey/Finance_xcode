@@ -606,15 +606,11 @@ struct ArticleListView: View {
     private func handleArticleTap(_ item: ArticleItem) async {
         let article = item.article
         
-        // 【修改】点击文章时的锁定检查：未订阅 且 被锁定
+        // --- ✅ 修正后的代码 (中心化逻辑) ---
+        // 只要没订阅且被锁定，直接弹订阅页。
+        // 如果用户没登录，SubscriptionView 会自己弹登录窗，这里不用管。
         if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
-            if !authManager.isLoggedIn {
-                // 如果没登录，先登录
-                showLoginSheet = true
-            } else {
-                // 如果已登录但没订阅，显示订阅页
-                showSubscriptionSheet = true
-            }
+            showSubscriptionSheet = true
             return
         }
         
@@ -958,13 +954,9 @@ struct AllArticlesListView: View {
         let article = item.article
         guard let sourceName = item.sourceName else { return }
         
-        // 【修改】锁定检查
+        // 【修改后】简化逻辑：只要被锁定，就显示 SubscriptionView
         if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
-            if !authManager.isLoggedIn {
-                showLoginSheet = true
-            } else {
-                showSubscriptionSheet = true
-            }
+            showSubscriptionSheet = true
             return
         }
         

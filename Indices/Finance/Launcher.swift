@@ -229,11 +229,6 @@ struct UserProfileView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
     
-    // 新增状态用于控制恢复购买的反馈
-    @State private var isRestoring = false
-    @State private var restoreMessage = ""
-    @State private var showRestoreAlert = false
-    
     var body: some View {
         NavigationView {
             List {
@@ -275,28 +270,7 @@ struct UserProfileView: View {
                     .padding(.vertical, 10)
                 }
                 
-                // 订阅管理部分
-                Section(header: Text("订阅管理")) {
-                    // 恢复购买按钮
-                    Button {
-                        performRestore()
-                    } label: {
-                        HStack {
-                            if isRestoring {
-                                ProgressView()
-                                    .padding(.trailing, 5)
-                            } else {
-                                Image(systemName: "arrow.clockwise.circle")
-                                    .foregroundColor(.blue)
-                            }
-                            Text(isRestoring ? "正在恢复..." : "恢复购买")
-                                .foregroundColor(isRestoring ? .secondary : .primary)
-                        }
-                    }
-                    .disabled(isRestoring)
-                }
-
-                // MARK: - 【新增】问题反馈部分
+                // MARK: - 问题反馈部分
                 Section(header: Text("支持与反馈")) {
                     Button {
                         let email = "728308386@qq.com"
@@ -347,7 +321,7 @@ struct UserProfileView: View {
                             }
                         }
                     } else {
-                        // 如果未登录，这里可以提供登录入口，或者直接不显示此 Section
+                        // 未登录时的提示（可选）
                         Text("您当前使用的是匿名模式")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -359,39 +333,6 @@ struct UserProfileView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("关闭") { dismiss() }
-                }
-            }
-            // 恢复结果弹窗
-            .alert("恢复结果", isPresented: $showRestoreAlert) {
-                Button("确定", role: .cancel) { }
-            } message: {
-                Text(restoreMessage)
-            }
-        }
-    }
-    
-    // 执行恢复逻辑
-    private func performRestore() {
-        isRestoring = true
-        Task {
-            do {
-                // 调用 AuthManager 的恢复方法
-                try await authManager.restorePurchases()
-                
-                await MainActor.run {
-                    isRestoring = false
-                    if authManager.isSubscribed {
-                        restoreMessage = "成功恢复订阅！您现在可以无限制访问数据。"
-                    } else {
-                        restoreMessage = "未发现有效的订阅记录。"
-                    }
-                    showRestoreAlert = true
-                }
-            } catch {
-                await MainActor.run {
-                    isRestoring = false
-                    restoreMessage = "恢复失败: \(error.localizedDescription)"
-                    showRestoreAlert = true
                 }
             }
         }

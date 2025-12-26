@@ -176,48 +176,59 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
     
-    // 【修改】购买订阅
-    func purchaseSubscription() async throws {
-        guard let userId = userIdentifier else { throw URLError(.userAuthenticationRequired) }
-        
-        // 1. 获取商品信息
-        let products = try await Product.products(for: [subscriptionProductID])
-        guard let product = products.first else {
-            throw NSError(domain: "StoreError", code: 404, userInfo: [NSLocalizedDescriptionKey: "未找到商品信息，请检查 App Store Connect 配置"])
+    // 【修改】购买订阅 - 返回 Bool 表示是否购买成功
+    // 返回 true: 购买成功
+    // 返回 false: 用户取消或挂起
+    func purchaseSubscription() async throws -> Bool {
+        // 1. 检查登录
+        guard let userId = userIdentifier else {
+            throw URLError(.userAuthenticationRequired)
         }
         
-        // 2. 发起购买
+        // 2. 获取商品信息
+        let products = try await Product.products(for: [subscriptionProductID])
+        guard let product = products.first else {
+            throw NSError(domain: "StoreError", code: 404, userInfo: [NSLocalizedDescriptionKey: "未找到商品信息"])
+        }
+        
+        // 3. 发起购买
         let result = try await product.purchase()
         
         switch result {
         case .success(let verification):
-            // 3. 验证交易
+            // 验证交易
             let transaction = try checkVerified(verification)
             
-            // 4. 购买成功，更新本地状态
+            // 购买成功，更新本地状态
             await updateSubscriptionStatus()
             
-            // 5. (可选) 将收据或状态同步给 Python 服务器
-            // 注意：StoreKit 2 推荐在本地验证，但为了多端同步，你可以告诉服务器“我买了”
-            // 服务器端最好也做 receipt 验证，但这里为了简单，我们复用你之前的逻辑，
-            // 只是现在是在 Apple 扣费成功后才调用。
+            // 同步给服务器
             try await syncPurchaseToServer(userId: userId)
             
-            // 6. 完成交易
+            // 完成交易
             await transaction.finish()
             
             await MainActor.run {
+                // 如果是 MainContentView 通过这个变量控制的弹窗，这里关闭它
                 self.showSubscriptionSheet = false
             }
             
+            return true // ✅ 返回成功
+            
         case .userCancelled:
             print("用户取消支付")
+            return false // ❌ 返回失败（取消）
+            
         case .pending:
-            print("交易挂起（如家长控制）")
+            print("交易挂起")
+            return false // ❌ 返回失败（挂起）
+            
         @unknown default:
             print("未知状态")
+            return false
         }
     }
+
     
     // 【新增】恢复购买功能 (从 Finance 移植)
     func restorePurchases() async throws {
@@ -264,10 +275,6 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                         self.isLoggedIn = true
                         self.isLoggingIn = false
                         
-                        // 【核心逻辑】如果未订阅，则触发显示订阅页面
-                        if !self.isSubscribed {
-                            self.showSubscriptionSheet = true
-                        }
                         print("AuthManager: 登录成功。订阅状态: \(self.isSubscribed)")
                     }
                 } catch {
@@ -400,8 +407,20 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        // 告诉服务器充值 30 天 (或者根据 transaction.expirationDate 计算)
-        let body: [String: Any] = ["user_id": userId, "days": 30]
+        // 【核心修改】构建请求体
+        var body: [String: Any] = ["user_id": userId]
+        
+        // 检查 AuthManager 中是否已经有了从 Apple 获取的过期时间
+        // 注意：purchaseSubscription 和 restorePurchases 都会先调用 updateSubscriptionStatus
+        // 所以此时 self.subscriptionExpiryDate 应该是最新的真实时间
+        if let realExpiryDate = self.subscriptionExpiryDate {
+            // 传给服务器字段：explicit_expiry
+            body["explicit_expiry"] = realExpiryDate
+        } else {
+            // 如果实在拿不到时间（极少情况），再回退到加30天
+            body["days"] = 30
+        }
+        
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
         let (_, response) = try await URLSession.shared.data(for: request)

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SubscriptionView: View {
+
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
     
@@ -8,19 +9,22 @@ struct SubscriptionView: View {
     @State private var showError = false
     @State private var errorMessage = ""
     
-    // 【新增】控制隐藏输入框的显示
+    // 控制隐藏输入框的显示
     @State private var showRedeemAlert = false
     @State private var inviteCode = ""
     @State private var isRedeeming = false
     
-    // 【新增】恢复购买相关状态
+    // 恢复购买相关状态
     @State private var isRestoring = false
     @State private var showRestoreAlert = false
     @State private var restoreMessage = ""
     
+    // 【新增 1】控制登录弹窗显示
+    @State private var showLoginSheet = false
+    
     var body: some View {
         ZStack {
-            // 【修改】使用系统背景色
+            // 使用系统背景色
             Color.viewBackground.ignoresSafeArea()
             
             VStack(spacing: 25) {
@@ -90,10 +94,7 @@ struct SubscriptionView: View {
                         VStack(alignment: .trailing) {
                             Text("¥12/月")
                                 .font(.title2.bold())
-                                .foregroundColor(.orange) // 橙色在深浅模式下都比较醒目
-                            // Text("/月")
-                            //     .font(.caption)
-                            //     .foregroundColor(.secondary)
+                                .foregroundColor(.orange)
                         }
                     }
                     .padding()
@@ -131,7 +132,6 @@ struct SubscriptionView: View {
                         .foregroundColor(.secondary)
 
                     Text("|").foregroundColor(.secondary)
-                    
                     Link("使用条款 (EULA)", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
                         .font(.footnote)
                         .foregroundColor(.secondary)
@@ -212,19 +212,49 @@ struct SubscriptionView: View {
         } message: {
             Text(restoreMessage)
         }
+        // 【新增 2】绑定登录弹窗
+        .sheet(isPresented: $showLoginSheet) {
+            LoginView()
+        }
+        // ================== 【新增修复代码开始】 ==================
+        // 监听登录状态，登录成功后自动关闭当前视图弹出的 LoginView
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
+            if newValue == true && showLoginSheet {
+                showLoginSheet = false
+                // 可选：如果需要在登录后自动继续购买流程，可以在这里再次调用 handlePurchase()
+                // handlePurchase() 
+            }
+        }
     }
     
-    // 处理购买
+    // 【修改】处理购买：先检查登录
     private func handlePurchase() {
+        // 1. 检查是否已登录
+        guard authManager.isLoggedIn else {
+            showLoginSheet = true
+            return
+        }
+        
+        // 2. 开始购买流程
         isPurchasing = true
+        
         Task {
             do {
-                try await authManager.purchaseSubscription()
+                // 【核心修改】获取购买结果 (true/false)
+                let isSuccess = try await authManager.purchaseSubscription()
+                
                 await MainActor.run {
                     isPurchasing = false
-                    // 购买成功后，AuthManager 会更新状态并可能自动关闭 Sheet，
-                    // 或者我们在这里手动关闭
-                    dismiss()
+                    
+                    if isSuccess {
+                        // 只有明确成功时，才关闭页面
+                        print("支付成功，关闭订阅页面")
+                        dismiss()
+                    } else {
+                        // 如果是取消(.userCancelled)或挂起，保持页面打开
+                        print("用户取消或未完成支付，保留订阅页面")
+                        // 这里不需要做任何操作，SubscriptionView 会继续显示
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -236,39 +266,19 @@ struct SubscriptionView: View {
         }
     }
     
-    // 【新增】处理兑换逻辑
-    private func handleRedeem() {
-        guard !inviteCode.isEmpty else { return }
-        isRedeeming = true
-        
-        Task {
-            do {
-                try await authManager.redeemInviteCode(inviteCode)
-                await MainActor.run {
-                    isRedeeming = false
-                    inviteCode = ""
-                    // 兑换成功，关闭页面
-                    dismiss()
-                }
-            } catch {
-                await MainActor.run {
-                    isRedeeming = false
-                    inviteCode = ""
-                    errorMessage = "兑换失败: \(error.localizedDescription)"
-                    showError = true
-                }
-            }
-        }
-    }
-    
-    // 【新增】处理恢复购买
+    // 【修改】处理恢复购买：先检查登录
     private func performRestore() {
+        // 1. 检查是否已登录
+        guard authManager.isLoggedIn else {
+            showLoginSheet = true
+            return
+        }
+        
+        // 2. 已登录 -> 执行原有恢复逻辑
         isRestoring = true
         Task {
             do {
-                // 调用 AuthManager 的恢复方法
                 try await authManager.restorePurchases()
-                
                 await MainActor.run {
                     isRestoring = false
                     if authManager.isSubscribed {
@@ -283,6 +293,37 @@ struct SubscriptionView: View {
                     isRestoring = false
                     restoreMessage = "恢复失败: \(error.localizedDescription)"
                     showRestoreAlert = true
+                }
+            }
+        }
+    }
+    
+    // 【修改】处理兑换逻辑：建议也加上登录检查
+    private func handleRedeem() {
+        guard !inviteCode.isEmpty else { return }
+        
+        // 建议加上：确保有 UserID 绑定
+        guard authManager.isLoggedIn else {
+            showLoginSheet = true
+            return
+        }
+        
+        isRedeeming = true
+        Task {
+            // ... (原有兑换逻辑保持不变)
+            do {
+                try await authManager.redeemInviteCode(inviteCode)
+                await MainActor.run {
+                    isRedeeming = false
+                    inviteCode = ""
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isRedeeming = false
+                    inviteCode = ""
+                    errorMessage = "兑换失败: \(error.localizedDescription)"
+                    showError = true
                 }
             }
         }

@@ -165,6 +165,9 @@ class DataService: ObservableObject {
     private let strategyGroupsKey = "FinanceAppStrategyGroupsConfig"
     private let groupNamesKey = "FinanceAppGroupNamesConfig" // 新增
 
+    // 【修改 1：添加一个数组属性来存储顺序】
+    @Published var orderedStrategyGroups: [String] = [] 
+    
     // 【修改点】存储映射表
     @Published var strategyGroupNames: Set<String> = []
     @Published var groupDisplayMap: [String: String] = [:] // 新增：Key 为英文，Value 为中文
@@ -178,9 +181,10 @@ class DataService: ObservableObject {
     private let introSymbolKey = "FinanceAppIntroSymbolTime"
 
     private init() {
-        // 【修改点 3】初始化时从 UserDefaults 读取配置
+        // 【修改点 3】初始化时从 UserDefaults 读取配置，同时读取到 orderedStrategyGroups】
         if let savedGroups = UserDefaults.standard.array(forKey: strategyGroupsKey) as? [String] {
             self.strategyGroupNames = Set(savedGroups)
+            self.orderedStrategyGroups = savedGroups // <--- 新增这行
         }
         // 【新增】读取名称映射
         if let savedNames = UserDefaults.standard.dictionary(forKey: groupNamesKey) as? [String: String] {
@@ -255,6 +259,7 @@ class DataService: ObservableObject {
     func updateStrategyConfig(groups: [String], names: [String: String]) {
         DispatchQueue.main.async {
             self.strategyGroupNames = Set(groups)
+            self.orderedStrategyGroups = groups // <--- 【修改 3：更新时保存顺序】
             self.groupDisplayMap = names
         }
         UserDefaults.standard.set(groups, forKey: strategyGroupsKey)

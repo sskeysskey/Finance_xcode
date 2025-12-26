@@ -154,7 +154,7 @@ struct SectorsPanel: Decodable {
                 // Currencies 分组特殊处理：添加“重要”子分组，把 USDJPY 和 USDCNY 和 DXY 和 CNYI 放到其中
                 var importantSymbols: [IndicesSymbol] = []
                 var normalSymbols: [IndicesSymbol] = []
-                let importantKeys = ["USDJPY", "USDCNY", "DXY", "CNYI", "JPYI", "CHFI", "EURI", "CNYUSD"]
+                let importantKeys = ["USDJPY", "USDCNY", "DXY", "CNYI", "JPYI", "CHFI", "EURI"]
                 for symbolKey in orderedSymbolKeys {
                     let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
                     let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
@@ -285,10 +285,6 @@ struct IndicesContentView: View {
                 
                 // 1. 准备数据
                 let economySectors = sectors.filter { economyGroupNames.contains($0.name) }
-                
-                // 【修改点 2】使用 dataService 中的动态配置进行过滤
-                let strategySectors = sectors.filter { dataService.strategyGroupNames.contains($0.name) }
-                
                 let weekLowSectors = sectors.filter { weekLowGroupNames.contains($0.name) }
                 
                 ScrollView(showsIndicators: false) {
@@ -345,52 +341,64 @@ struct IndicesContentView: View {
                             )
                             
                             LazyVGrid(columns: gridLayout, spacing: 10) {
-                                // 这里会自动根据 strategySectors 的变化而更新
-                                ForEach(strategySectors) { sector in
-                                    Button {
-                                        handleSectorClick(sector)
-                                    } label: {
-                                        CompactSectorCard(
-                                            sectorName: sector.name,
-                                            icon: getIcon(for: sector.name),
-                                            baseColor: .blue
-                                        )
-                                    }
-                                }
                                 
-                                // 【修改点 1】52周新低按钮
-                                // 逻辑修改：点击按钮时直接扣除 openSpecialList (10点)
-                                Button {
-                                    if usageManager.canProceed(authManager: authManager, action: .openSpecialList) {
-                                        self.weekLowSectorsData = weekLowSectors
-                                        self.navigateToWeekLow = true
-                                    } else {
-                                        self.showSubscriptionSheet = true
+                                // 【核心修改】遍历服务器下发的 orderedStrategyGroups 字符串数组
+                                // 这样顺序完全由 JSON 决定
+                                ForEach(dataService.orderedStrategyGroups, id: \.self) { groupName in
+                                    
+                                    // 1. 判断是否是【52周新低】
+                                    if groupName == "WeekLow" {
+                                        Button {
+                                            // 逻辑：使用 openSpecialList 权限，跳转 navigateToWeekLow
+                                            if usageManager.canProceed(authManager: authManager, action: .openSpecialList) {
+                                                self.weekLowSectorsData = weekLowSectors
+                                                self.navigateToWeekLow = true
+                                            } else {
+                                                self.showSubscriptionSheet = true
+                                            }
+                                        } label: {
+                                            CompactSectorCard(
+                                                sectorName: groupName, // 会自动去 groupDisplayMap 找中文名
+                                                icon: getIcon(for: groupName),
+                                                baseColor: .blue,
+                                                isSpecial: false
+                                            )
+                                        }
+                                        
+                                    // 2. 判断是否是【10年新高】
+                                    } else if groupName == "TenYearHigh" {
+                                        Button {
+                                            // 逻辑：使用 openSpecialList 权限，跳转 navigateToTenYearHigh
+                                            if usageManager.canProceed(authManager: authManager, action: .openSpecialList) {
+                                                self.navigateToTenYearHigh = true
+                                            } else {
+                                                self.showSubscriptionSheet = true
+                                            }
+                                        } label: {
+                                            CompactSectorCard(
+                                                sectorName: groupName, // 会自动去 groupDisplayMap 找中文名
+                                                icon: getIcon(for: groupName),
+                                                baseColor: .blue,
+                                                isSpecial: false
+                                            )
+                                        }
+                                        
+                                    // 3. 判断是否是【普通板块】(在 sectors 数据中存在)
+                                    } else if let sector = sectors.first(where: { $0.name == groupName }) {
+                                        // 渲染普通板块
+                                        Button {
+                                            handleSectorClick(sector)
+                                        } label: {
+                                            CompactSectorCard(
+                                                sectorName: sector.name,
+                                                icon: getIcon(for: sector.name),
+                                                baseColor: .blue
+                                            )
+                                        }
                                     }
-                                } label: {
-                                    CompactSectorCard(
-                                        sectorName: "52周新低",
-                                        icon: "arrow.down.right.circle.fill",
-                                        baseColor: .blue,
-                                        isSpecial: false       // 【修改】改为 false，使其应用透明度渐变，与系统1/2/3一致
-                                    )
-                                }
-                                
-                                // 【修改点 2】10年新高按钮
-                                // 逻辑修改：点击按钮时直接扣除 openSpecialList (10点)
-                                Button {
-                                    if usageManager.canProceed(authManager: authManager, action: .openSpecialList) {
-                                        self.navigateToTenYearHigh = true
-                                    } else {
-                                        self.showSubscriptionSheet = true
-                                    }
-                                } label: {
-                                    CompactSectorCard(
-                                        sectorName: "10年新高",
-                                        icon: "arrow.up.right.circle.fill", // 上升图标
-                                        baseColor: .blue,      // 【修改】由 .red 改为 .blue，统一色调
-                                        isSpecial: false       // 【修改】改为 false，使其应用透明度渐变，与系统1/2/3一致
-                                    )
+                                    
+                                    // 4. 如果 JSON 里配置了名字，但本地 sectors 里找不到数据，也没有匹配到特殊逻辑
+                                    // 则自动隐藏，不显示空白
                                 }
                             }
                         }
@@ -468,6 +476,8 @@ struct IndicesContentView: View {
         case "PE_W": return "4.circle"
         case "Strategy12": return "3.circle"
         case "Strategy34": return "4.circle"
+        case "WeekLow": return "arrow.down.right.circle.fill"
+        case "TenYearHigh": return "arrow.up.right.circle.fill"
         default: return "chart.pie.fill"
         }
     }
