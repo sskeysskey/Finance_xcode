@@ -535,11 +535,11 @@ struct LoginView: View {
                         // 【修改】颜色自适应
                         .foregroundColor(.primary)
                     
-                    Text("登录 ONews 账号")
+                    Text("登录【环球要闻】")
                         .font(.largeTitle.bold())
                         .foregroundColor(.primary)
                     
-                    Text("登录后\n可在不同设备间同步您的订阅")
+                    Text("成功登录后\n即使更换设备\n也可以同步您的订阅状态")
                         .font(.headline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)

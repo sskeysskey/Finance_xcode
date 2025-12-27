@@ -469,7 +469,7 @@ struct IndicesContentView: View {
         case "Economic_All": return "globe"
         case "Short_Shift": return "chart.line.downtrend.xyaxis"
         case "Short": return "arrow.down.circle"
-        case "OverSell": return "arrow.up.circle"
+        case "PE_Deep": return "arrow.up.circle"
         case "OverSell_W": return "flame.fill"
         case "PE_invalid": return "1.circle"
         case "PE_valid": return "2.circle"

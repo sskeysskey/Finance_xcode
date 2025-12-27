@@ -546,12 +546,12 @@ struct LoginView: View {
                         // 2. 使用主色调或 Primary 颜色
                         .foregroundColor(.blue)
                     
-                    Text("登录 【美股精灵】 账号")
+                    Text("登录 【美股精灵】")
                         .font(.largeTitle.bold())
                         // 3. 使用系统主文本颜色 (自动黑/白)
                         .foregroundColor(.primary)
                     
-                    Text("登录后\n不同设备间可以同步您的订阅")
+                    Text("成功登录后\n即使更换了设备\n也可以同步您的订阅状态")
                         .font(.headline)
                         // 4. 使用系统次级文本颜色 (灰色)
                         .foregroundColor(.secondary)

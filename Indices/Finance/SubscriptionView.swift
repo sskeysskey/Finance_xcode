@@ -26,7 +26,10 @@ struct SubscriptionView: View {
     @State private var redeemMessage = ""       // 验证结果消息
     @State private var showRedeemResultAlert = false // 控制结果弹窗
     @State private var isRedeeming = false      // 控制验证过程中的加载状态
-    
+    // =========== 【1. 新增】状态变量 ===========
+    // 用来标记：用户是否是因为想输入验证码而被强制去登录的
+    @State private var pendingRedeemAfterLogin = false 
+
     var body: some View {
         ZStack {
             // 1. 使用系统分组背景色 (Light: 浅灰, Dark: 纯黑)
@@ -43,7 +46,8 @@ struct SubscriptionView: View {
                             tapCount += 1
                             if tapCount >= 5 { // 连续点击5次触发
                                 tapCount = 0
-                                showRedeemSheet = true
+                                // =========== 【2. 修改】这里改为调用处理函数 ===========
+                                handleSecretTrigger()
                             }
                         }
                     
@@ -234,10 +238,38 @@ struct SubscriptionView: View {
             LoginView()
         }
         .onChange(of: authManager.isLoggedIn) { _, newValue in
-            // 当监测到登录状态变为 true，且当前登录弹窗是打开的，则自动关闭它
-            if newValue == true && showLoginSheet {
-                showLoginSheet = false
+            // 当监测到登录状态变为 true
+            if newValue == true {
+                // 1. 关闭登录弹窗
+                if showLoginSheet {
+                    showLoginSheet = false
+                }
+                
+                // =========== 【4. 新增】登录成功后的自动跳转逻辑 ===========
+                if pendingRedeemAfterLogin {
+                    print("登录成功，检测到待处理的兑换请求，延迟弹出输入框...")
+                    pendingRedeemAfterLogin = false // 重置标记
+                    
+                    // 【关键】必须加一点延迟，等待 LoginView 的关闭动画完成
+                    // 否则 Sheet 关闭和 Alert 弹出同时发生可能会冲突导致 Alert 弹不出来
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        showRedeemSheet = true
+                    }
+                }
             }
+        }
+    }
+
+    // =========== 【3. 新增】处理连按触发逻辑 ===========
+    private func handleSecretTrigger() {
+        if authManager.isLoggedIn {
+            // 如果已登录，直接显示兑换输入框
+            showRedeemSheet = true
+        } else {
+            // 如果未登录，先标记“待兑换”，然后弹出登录页
+            print("触发彩蛋：未登录，跳转登录页")
+            pendingRedeemAfterLogin = true
+            showLoginSheet = true
         }
     }
     
