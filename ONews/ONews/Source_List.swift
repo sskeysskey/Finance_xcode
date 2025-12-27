@@ -54,8 +54,8 @@ struct UserProfileView: View {
                                     .font(.subheadline)
                                     .foregroundColor(.yellow)
                                     .bold()
-                                if let date = authManager.subscriptionExpiryDate {
-                                    Text("有效期至: \(date.prefix(10))")
+                                if let dateStr = authManager.subscriptionExpiryDate {
+                                    Text("有效期至: \(formatDateLocal(dateStr))")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
@@ -144,6 +144,31 @@ struct UserProfileView: View {
     }
 }
 
+// 辅助函数：放在 View 结构体外面或内部
+func formatDateLocal(_ isoString: String) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds] // 兼容带毫秒的情况
+    // 尝试解析带 Z 的标准格式
+    if let date = formatter.date(from: isoString) {
+        // 转为本地显示格式
+        let displayFormatter = DateFormatter()
+        displayFormatter.dateStyle = .medium // 显示如：2025年12月29日
+        displayFormatter.timeStyle = .short  // 显示如：11:02
+        displayFormatter.locale = Locale.current // 使用用户当前的语言和地区
+        return displayFormatter.string(from: date)
+    }
+    
+    // 兜底：如果解析失败（比如老数据没Z），尝试不带Z的解析或直接截取
+    let fallbackFormatter = ISO8601DateFormatter()
+    if let date = fallbackFormatter.date(from: isoString) {
+        let displayFormatter = DateFormatter()
+        displayFormatter.dateStyle = .medium
+        return displayFormatter.string(from: date)
+    }
+    
+    return String(isoString.prefix(10)) // 最后的兜底
+}
+
 // MARK: - 【修改】导航栏用户状态视图
 // 修改逻辑：不再直接传入 showLoginSheet，而是传入两个 Sheet 的控制状态
 struct UserStatusToolbarItem: View {
@@ -166,13 +191,12 @@ struct UserStatusToolbarItem: View {
             if authManager.isLoggedIn {
                 HStack(spacing: 6) {
                     Image(systemName: "person.circle.fill")
-                        .font(.body)
-                    Text(authManager.isSubscribed ? "PRO" : "User")
-                        .font(.caption.bold())
+                    if authManager.isSubscribed {
+                        Image(systemName: "crown.fill").foregroundColor(.yellow).font(.caption)
+                    }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Color.secondary.opacity(0.15))
                 .clipShape(Capsule())
                 .foregroundColor(.primary)
             } else {
@@ -183,7 +207,6 @@ struct UserStatusToolbarItem: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Color.secondary.opacity(0.15))
                 .clipShape(Capsule())
                 .foregroundColor(.primary)
             }
