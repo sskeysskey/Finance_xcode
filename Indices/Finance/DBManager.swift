@@ -15,7 +15,11 @@ class DatabaseManager {
     }
     
     // MARK: - Models
-    
+    struct OptionsSummary: Codable {
+        let call: String?
+        let put: String?
+    }
+
     struct MarketCapInfo: Codable {
         let symbol: String
         let marketCap: Double
@@ -215,4 +219,22 @@ class DatabaseManager {
     func checkIfTableHasVolume(tableName: String) async -> Bool {
         return true 
     }
+
+    // 7. 获取期权汇总数据 (Async) - 新增
+    func fetchOptionsSummary(forSymbol symbol: String) async -> OptionsSummary? {
+        guard var components = URLComponents(string: "\(serverBaseURL)/query/options_summary") else { return nil }
+        components.queryItems = [URLQueryItem(name: "symbol", value: symbol)]
+        
+        guard let url = components.url else { return nil }
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let result = try JSONDecoder().decode(OptionsSummary.self, from: data)
+            return result
+        } catch {
+            print("Network error fetching options summary: \(error)")
+            return nil
+        }
+    }
+
 }

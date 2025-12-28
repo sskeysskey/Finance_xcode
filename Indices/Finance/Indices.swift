@@ -621,8 +621,12 @@ struct OptionsDetailView: View {
     // 0 = Calls, 1 = Puts
     @State private var selectedTypeIndex = 0
     
-    // 【新增 1】控制跳转到 ChartView 的状态
+    // 控制跳转到 ChartView 的状态
     @State private var navigateToChart = false
+    
+    // 存储从服务器获取的汇总数据
+    @State private var summaryCall: String = ""
+    @State private var summaryPut: String = ""
     
     var filteredData: [OptionItem] {
         // ... (保持原有的筛选排序逻辑不变) ...
@@ -650,8 +654,11 @@ struct OptionsDetailView: View {
             
             // 1. 顶部切换开关
             Picker("Type", selection: $selectedTypeIndex) {
-                Text("Calls").tag(0)
-                Text("Puts").tag(1)
+                // 如果有数据，显示 "Calls 4.74%"，否则只显示 "Calls"
+                Text(summaryCall.isEmpty ? "Calls" : "Calls  \(summaryCall)").tag(0)
+                
+                // 如果有数据，显示 "Puts -3.26%"，否则只显示 "Puts"
+                Text(summaryPut.isEmpty ? "Puts" : "Puts  \(summaryPut)").tag(1)
             }
             .pickerStyle(SegmentedPickerStyle())
             .padding()
@@ -738,6 +745,18 @@ struct OptionsDetailView: View {
             let groupName = dataService.getCategory(for: symbol) ?? "US"
             
             ChartView(symbol: symbol, groupName: groupName)
+        }
+        // 【在此处添加代码】 👇
+        .task {
+            print("正在获取 \(symbol) 的期权汇总数据...") // 调试日志
+            // 异步请求数据
+            if let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol) {
+                // 回到主线程更新 UI
+                await MainActor.run {
+                    if let c = summary.call { self.summaryCall = c }
+                    if let p = summary.put { self.summaryPut = p }
+                }
+            }
         }
     }
 }
