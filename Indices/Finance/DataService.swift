@@ -96,10 +96,14 @@ struct SearchETF: Identifiable, Codable, SearchDescribableItem {
 
 struct MarketCapDataItem {
     let marketCap: String
+    // 【修改点 1】新增：存储原始数值用于排序
+    let rawMarketCap: Double 
     let peRatio: Double?
     let pb: Double?
 
     init(marketCap: Double, peRatio: Double?, pb: Double?) {
+        // 【修改点 2】保存原始值
+        self.rawMarketCap = marketCap 
         self.marketCap = Self.formatMarketCap(marketCap)
         self.peRatio = peRatio
         self.pb = pb

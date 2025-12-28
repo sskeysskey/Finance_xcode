@@ -146,27 +146,37 @@ struct UserProfileView: View {
 
 // 辅助函数：放在 View 结构体外面或内部
 func formatDateLocal(_ isoString: String) -> String {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds] // 兼容带毫秒的情况
-    // 尝试解析带 Z 的标准格式
-    if let date = formatter.date(from: isoString) {
-        // 转为本地显示格式
-        let displayFormatter = DateFormatter()
-        displayFormatter.dateStyle = .medium // 显示如：2025年12月29日
-        displayFormatter.timeStyle = .short  // 显示如：11:02
-        displayFormatter.locale = Locale.current // 使用用户当前的语言和地区
+    // 1. 创建解析器 (用于读取服务器返回的 ISO8601 字符串)
+    let isoFormatter = ISO8601DateFormatter()
+    // 增加对毫秒和各种网络时间格式的支持
+    isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds, .withTimeZone]
+    
+    // 2. 创建显示格式化器 (用于输出给用户看)
+    let displayFormatter = DateFormatter()
+    displayFormatter.locale = Locale(identifier: "zh_CN") // ⚡️ 核心：强制指定为中文区域
+    displayFormatter.dateStyle = .medium  // 显示如：2026年1月20日
+    displayFormatter.timeStyle = .short   // 显示如：11:02 (如果不需要时间，可以改为 .none)
+    
+    // 尝试解析标准 ISO 格式 (带 Z 或偏移量)
+    if let date = isoFormatter.date(from: isoString) {
         return displayFormatter.string(from: date)
     }
     
-    // 兜底：如果解析失败（比如老数据没Z），尝试不带Z的解析或直接截取
-    let fallbackFormatter = ISO8601DateFormatter()
-    if let date = fallbackFormatter.date(from: isoString) {
-        let displayFormatter = DateFormatter()
-        displayFormatter.dateStyle = .medium
+    // 兜底方案 A：尝试解析不带 Z 的简单 ISO 格式
+    let fallbackISO = ISO8601DateFormatter()
+    fallbackISO.formatOptions = [.withFullDate, .withDashSeparatorInDate]
+    if let date = fallbackISO.date(from: isoString) {
         return displayFormatter.string(from: date)
     }
     
-    return String(isoString.prefix(10)) // 最后的兜底
+    // 兜底方案 B：如果解析彻底失败，直接处理字符串 (处理 2026-01-20 这种格式)
+    if isoString.contains("-") && isoString.count >= 10 {
+        let datePart = String(isoString.prefix(10))
+        return datePart.replacingOccurrences(of: "-", with: "年", range: datePart.range(of: "-"))
+                       .replacingOccurrences(of: "-", with: "月") + "日"
+    }
+    
+    return isoString // 原样返回
 }
 
 // MARK: - 【修改】导航栏用户状态视图

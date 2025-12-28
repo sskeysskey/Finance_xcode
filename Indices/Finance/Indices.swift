@@ -496,7 +496,30 @@ struct OptionsListView: View {
     @State private var showSubscriptionSheet = false
     
     var sortedSymbols: [String] {
-        dataService.optionsData.keys.sorted()
+        let allSymbols = dataService.optionsData.keys
+        
+        // 1. 筛选出没有市值数据的（或市值 <= 0），按字母顺序排序
+        let noCapSymbols = allSymbols.filter { symbol in
+            guard let item = dataService.marketCapData[symbol.uppercased()] else {
+                return true // 字典里找不到，视为无市值
+            }
+            return item.rawMarketCap <= 0 // 或者是数据异常导致为0
+        }.sorted()
+        
+        // 2. 筛选出有市值数据的，按 rawMarketCap 从大到小排序
+        let hasCapSymbols = allSymbols.filter { symbol in
+            guard let item = dataService.marketCapData[symbol.uppercased()] else {
+                return false
+            }
+            return item.rawMarketCap > 0
+        }.sorted { s1, s2 in
+            let cap1 = dataService.marketCapData[s1.uppercased()]?.rawMarketCap ?? 0
+            let cap2 = dataService.marketCapData[s2.uppercased()]?.rawMarketCap ?? 0
+            return cap1 > cap2 // 降序：大 -> 小
+        }
+        
+        // 3. 将无市值的放在前面，有市值的放在后面
+        return noCapSymbols + hasCapSymbols
     }
     
     var body: some View {
