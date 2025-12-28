@@ -61,6 +61,32 @@ class DatabaseManager {
             }
         }
     }
+
+    // MARK: - Models (追加新的模型)
+    struct OptionHistoryItem: Codable, Identifiable {
+        let id = UUID() //以此符合 Identifiable
+        let date: Date
+        let price: Double
+        
+        enum CodingKeys: String, CodingKey {
+            case date, price
+        }
+        
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            price = try container.decode(Double.self, forKey: .price)
+            
+            let dateString = try container.decode(String.self, forKey: .date)
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            // 容错处理
+            if let date = formatter.date(from: dateString) {
+                self.date = date
+            } else {
+                self.date = Date.distantPast
+            }
+        }
+    }
     
     struct EarningData: Codable {
         let date: Date
@@ -236,5 +262,21 @@ class DatabaseManager {
             return nil
         }
     }
-
+    
+    // 8. 获取期权历史价格数据 (Async) - 新增
+    func fetchOptionsHistory(forSymbol symbol: String) async -> [OptionHistoryItem] {
+        guard var components = URLComponents(string: "\(serverBaseURL)/query/options_price_history") else { return [] }
+        components.queryItems = [URLQueryItem(name: "symbol", value: symbol)]
+        
+        guard let url = components.url else { return [] }
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let results = try JSONDecoder().decode([OptionHistoryItem].self, from: data)
+            return results
+        } catch {
+            print("Network error fetching options history: \(error)")
+            return []
+        }
+    }
 }
