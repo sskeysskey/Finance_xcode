@@ -103,17 +103,28 @@ struct ArticleDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(formatDate(from: article.timestamp))
-                            .font(.caption).foregroundColor(.gray)
-                        
-                        Text(article.topic)
-                            .font(.system(.title, design: .serif)).fontWeight(.bold)
-                        
-                        // 【修改需求2】此处原有的 sourceName 代码已被移除
-                        // Text(sourceName.replacingOccurrences(of: "_", with: " "))
-                        //    .font(.subheadline).foregroundColor(.gray)
-                    }
-                    .padding(.horizontal, 20)
+                        // --- 修改开始 ---
+                        HStack(alignment: .center, spacing: 10) {
+                            Text(formatDate(from: article.timestamp))
+                                .font(.caption).foregroundColor(.gray)
+
+                                // 如果存在 url 且格式正确，则显示超链接
+                            if let urlString = article.url, let url = URL(string: urlString) {
+                                Link(destination: url) {
+                                    HStack(spacing: 2) {
+                                        Text("原文链接")
+                                        Image(systemName: "arrow.up.right") // 加一个小图标增加辨识度
+                                    }
+                                    .font(.caption)
+                                    .foregroundColor(.blue) // 经典的链接蓝色
+                                }
+                            }
+                        }
+                            
+                            Text(article.topic)
+                                .font(.system(.title, design: .serif)).fontWeight(.bold)
+                        }
+                        .padding(.horizontal, 20)
                     
                     if let firstImage = article.images.first {
                         ArticleImageView(imageName: firstImage, timestamp: article.timestamp)

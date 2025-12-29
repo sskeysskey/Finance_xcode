@@ -245,6 +245,9 @@ struct IndicesContentView: View {
     
     // 【新增】控制跳转到“10年新高”页面
     @State private var navigateToTenYearHigh = false
+
+    // 【新增】控制跳转到期权预测 (OptionRank) 页面
+    @State private var navigateToOptionRank = false 
     
     // 【新增】控制跳转到期权列表页面
     @State private var navigateToOptionsList = false
@@ -343,6 +346,10 @@ struct IndicesContentView: View {
                 .navigationDestination(isPresented: $navigateToTenYearHigh) {
                     TenYearHighView()
                 }
+                // 【新增】处理 OptionRank 跳转
+                .navigationDestination(isPresented: $navigateToOptionRank) {
+                    OptionsRankView()
+                }
                 // 【新增】跳转到期权列表 (现在这部分代码在 Options.swift 中)
                 .navigationDestination(isPresented: $navigateToOptionsList) {
                     OptionsListView()
@@ -396,6 +403,24 @@ struct IndicesContentView: View {
                     isSpecial: false
                 )
             }
+            } else if groupName == "OptionRank" {
+            // 【新增】期权预测按钮逻辑
+            Button {
+                // 这里假设你的 UsageManager 有对应的枚举 .viewOptionsRank
+                // 如果没有，请确保在 UsageManager 中添加，或者复用 .openSpecialList
+                if usageManager.canProceed(authManager: authManager, action: .viewOptionsRank) {
+                    self.navigateToOptionRank = true
+                } else {
+                    self.showSubscriptionSheet = true
+                }
+            } label: {
+                CompactSectorCard(
+                    sectorName: groupName, // 这里会去查 groupDisplayMap 显示 "期权预测"
+                    icon: getIcon(for: groupName),
+                    baseColor: .indigo, // 使用紫色/靛蓝色区分，或者用 .blue 保持一致
+                    isSpecial: false
+                )
+            }
         } else if let sector = sectors.first(where: { $0.name == groupName }) {
             Button {
                 handleSectorClick(sector)
@@ -434,7 +459,7 @@ struct IndicesContentView: View {
         case "Must": return "exclamationmark.shield.fill"
         case "Economics": return "chart.bar.xaxis"
         case "Economic_All": return "globe"
-        case "Short_Shift": return "chart.line.downtrend.xyaxis"
+        case "Short_W": return "chart.line.downtrend.xyaxis"
         case "Short": return "arrow.down.circle"
         case "PE_Deep": return "arrow.up.circle"
         case "OverSell_W": return "flame.fill"
@@ -445,6 +470,7 @@ struct IndicesContentView: View {
         case "Strategy34": return "4.circle"
         case "WeekLow": return "arrow.down.right.circle.fill"
         case "TenYearHigh": return "arrow.up.right.circle.fill"
+        case "OptionRank": return "chart.line.uptrend.xyaxis"
         default: return "chart.pie.fill"
         }
     }

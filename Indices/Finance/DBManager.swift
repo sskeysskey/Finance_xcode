@@ -5,7 +5,7 @@ class DatabaseManager {
     static let shared = DatabaseManager()
     
     // 服务器地址，请确保与 UpdateManager 中一致
-    private let serverBaseURL = "http://106.15.183.158:5001/api/Finance"
+    internal let serverBaseURL = "http://106.15.183.158:5001/api/Finance"
     
     private init() {}
     
@@ -262,7 +262,7 @@ class DatabaseManager {
             return nil
         }
     }
-    
+
     // 8. 获取期权历史价格数据 (Async) - 新增
     func fetchOptionsHistory(forSymbol symbol: String) async -> [OptionHistoryItem] {
         guard var components = URLComponents(string: "\(serverBaseURL)/query/options_price_history") else { return [] }

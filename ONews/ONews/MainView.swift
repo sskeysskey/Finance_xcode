@@ -3,6 +3,14 @@ import UserNotifications
 import Combine
 import UIKit
 
+extension Color {
+    // 稍微带一点灰度的背景，比纯白更护眼，能衬托出白色卡片
+    static let viewBackground = Color(UIColor.systemGroupedBackground)
+    
+    // 卡片背景：浅色模式纯白，深色模式深灰
+    static let cardBackground = Color(UIColor.secondarySystemGroupedBackground)
+}
+
 // 【新增】第 1 步：创建一个 AppDelegate 类
 // 这个类将负责处理所有 App 级别的一次性启动任务。
 class AppDelegate: NSObject, UIApplicationDelegate {
@@ -103,19 +111,6 @@ struct MainAppView: View {
         }
     }
 }
-
-
-// ==================== 共享颜色扩展 ====================
-extension Color {
-    // 稍微带一点灰度的背景，比纯白更护眼，能衬托出白色卡片
-    static let viewBackground = Color(UIColor.systemGroupedBackground)
-    
-    // 卡片背景：浅色模式纯白，深色模式深灰
-    static let cardBackground = Color(UIColor.secondarySystemGroupedBackground)
-}
-
-
-// ==================== 共享视图组件 ====================
 
 /// 公共：搜索输入视图（在导航栏下方显示）
 /// 已从各个视图文件中提取至此，以供全局复用。
@@ -754,13 +749,13 @@ struct Article: Identifiable, Codable, Hashable {
     let topic: String
     let article: String
     let images: [String]
-    let source_id: String? // 【新增】源ID字段
-
+    let source_id: String?
+    let url: String? // 【新增】原文链接字段
     var isRead: Bool = false
     var timestamp: String = ""
 
     enum CodingKeys: String, CodingKey {
-        case topic, article, images, source_id
+        case topic, article, images, source_id, url
     }
 
     func hash(into hasher: inout Hasher) {

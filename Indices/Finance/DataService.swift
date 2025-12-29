@@ -66,6 +66,19 @@ struct OptionItem: Identifiable, Hashable {
     let change: String     // 1-Day Chg
 }
 
+// 【新增】期权榜单单项模型
+struct OptionRankItem: Codable, Identifiable {
+    var id: String { symbol }
+    let symbol: String
+    let price: Double
+}
+
+// 【新增】期权榜单响应模型
+struct OptionRankResponse: Codable {
+    let rank_up: [OptionRankItem]
+    let rank_down: [OptionRankItem]
+}
+
 struct SearchStock: Identifiable, Codable, SearchDescribableItem {
     let id = UUID()
     let symbol: String
@@ -171,6 +184,9 @@ class DataService: ObservableObject {
 
     // 【修改 1：添加一个数组属性来存储顺序】
     @Published var orderedStrategyGroups: [String] = [] 
+
+    // 【新增】存储市值阀值，默认 500亿 (50B)
+    @Published var optionCapLimit: Double = 500_000_000_000
     
     // 【修改点】存储映射表
     @Published var strategyGroupNames: Set<String> = []
@@ -257,6 +273,30 @@ class DataService: ObservableObject {
     private var isInitialLoad: Bool {
         let localVersion = UserDefaults.standard.string(forKey: "FinanceAppLocalDataVersion")
         return localVersion == nil || localVersion == "0.0"
+    }
+
+    // 【新增】更新阀值的方法
+    func updateOptionCapLimit(_ limit: Double) {
+        DispatchQueue.main.async {
+            self.optionCapLimit = limit
+        }
+    }
+    
+    // 【新增】获取期权榜单数据 (Async)
+    // 返回元组: (上涨列表, 下跌列表)
+    func fetchOptionsRankData() async -> ([OptionRankItem], [OptionRankItem])? {
+        // 使用配置的阀值
+        let urlString = "\(DatabaseManager.shared.serverBaseURL)/query/options_rank?limit=\(String(format: "%.0f", optionCapLimit))"
+        guard let url = URL(string: urlString) else { return nil }
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let result = try JSONDecoder().decode(OptionRankResponse.self, from: data)
+            return (result.rank_up, result.rank_down)
+        } catch {
+            print("DataService: 获取期权榜单失败: \(error)")
+            return nil
+        }
     }
 
     // MARK: - 【修改点 5】新增：更新策略组配置的方法

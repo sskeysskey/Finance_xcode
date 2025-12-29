@@ -186,6 +186,9 @@ struct OptionsListView: View {
     @State private var navigateToDetail = false
     @State private var showSubscriptionSheet = false
     
+    // 【新增】控制跳转到榜单页面
+    @State private var navigateToRank = false
+    
     var sortedSymbols: [String] {
         let allSymbols = dataService.optionsData.keys
         let noCapSymbols = allSymbols.filter { symbol in
@@ -219,10 +222,54 @@ struct OptionsListView: View {
         }
         .navigationTitle("期权异动")
         .navigationBarTitleDisplayMode(.inline)
+        // 【新增】右上角按钮
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    if usageManager.canProceed(authManager: authManager, action: .openSpecialList) { // 复用 openSpecialList 权限或新增
+                        self.navigateToRank = true
+                    } else {
+                        self.showSubscriptionSheet = true
+                    }
+                }) {
+                    // 【修改点】设计漂亮的胶囊按钮
+                    HStack(spacing: 4) {
+                        // 加个小图标增加精致感
+                        Image(systemName: "chart.line.uptrend.xyaxis")
+                            .font(.system(size: 12, weight: .bold))
+                        
+                        Text("涨跌预测榜")
+                            .font(.system(size: 13, weight: .bold))
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 12)
+                    .foregroundColor(.white)
+                    .background(
+                        // 蓝紫色渐变，体现“预测/智能”的感觉
+                        LinearGradient(
+                            gradient: Gradient(colors: [Color.blue, Color.indigo]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .clipShape(Capsule()) // 胶囊圆角
+                    .shadow(color: Color.blue.opacity(0.3), radius: 4, x: 0, y: 2) // 柔和阴影
+                    .overlay(
+                        // 增加一道淡淡的高光描边，增加立体感
+                        Capsule()
+                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                    )
+                }
+            }
+        }
         .navigationDestination(isPresented: $navigateToDetail) {
             if let sym = selectedSymbol {
                 OptionsDetailView(symbol: sym)
             }
+        }
+        // 【新增】跳转目的地
+        .navigationDestination(isPresented: $navigateToRank) {
+            OptionsRankView()
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
     }
@@ -337,13 +384,13 @@ struct OptionsDetailView: View {
             // 数据列表
             dataListView
         }
-        .navigationTitle(symbol)
+        .navigationTitle(displayTitle) // 使用我们拼接好的字符串
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(UIColor.systemGroupedBackground))
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: { navigateToChart = true }) {
-                    Text("切换到股价模式")
+                    Text("切换股价模式")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 10)
@@ -367,6 +414,22 @@ struct OptionsDetailView: View {
                 }
             }
         }
+    }
+
+    // MARK: - 辅助逻辑
+    private var displayTitle: String {
+        // 1. 获取原始的 compare 字符串 (例如 "0.04%++")
+        if let compareStr = dataService.compareDataUppercased[symbol.uppercased()] {
+            // 2. 提取百分比部分
+            let pattern = "([+-]?\\d+(\\.\\d+)?%)"
+            if let range = compareStr.range(of: pattern, options: .regularExpression) {
+                let percentage = String(compareStr[range])
+                // 3. 返回拼接后的格式：NVDA (0.04%)
+                return "\(symbol) (\(percentage))"
+            }
+        }
+        // 如果找不到数据，则只显示 Symbol
+        return symbol
     }
     
     // 拆分出 Picker
@@ -419,6 +482,237 @@ struct OptionsDetailView: View {
                 proxy.scrollTo("TopAnchor", anchor: .top)
             }
         }
+    }
+}
+
+// MARK: - 【新增】期权榜单页面 (OptionsRankView)
+
+struct OptionsRankView: View {
+    @EnvironmentObject var dataService: DataService
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    
+    @State private var selectedTab = 0 // 0: 最可能涨, 1: 最可能跌
+    @State private var rankUp: [OptionRankItem] = []
+    @State private var rankDown: [OptionRankItem] = []
+    @State private var isLoading = true
+    
+    // 详情跳转
+    @State private var selectedSymbol: String?
+    @State private var navigateToDetail = false
+    @State private var showSubscriptionSheet = false
+    
+    var currentList: [OptionRankItem] {
+        selectedTab == 0 ? rankUp : rankDown
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // 1. 分段控制器
+            Picker("Filter", selection: $selectedTab) {
+                Text("最可能涨").tag(0)
+                Text("最可能跌").tag(1)
+            }
+            .pickerStyle(SegmentedPickerStyle())
+            .padding()
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            
+            // 2. 列表内容
+            if isLoading {
+                Spacer()
+                ProgressView("正在计算大数据榜单...")
+                Spacer()
+            } else if currentList.isEmpty {
+                Spacer()
+                VStack(spacing: 10) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.largeTitle)
+                        .foregroundColor(.gray)
+                    Text("暂无符合条件的数据")
+                        .foregroundColor(.secondary)
+                    Text("当前市值筛选阀值: \(formatMarketCap(dataService.optionCapLimit))")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                Spacer()
+            } else {
+                List {
+                    ForEach(currentList) { item in
+                        OptionRankRow(item: item, isUp: selectedTab == 0) {
+                            handleSelection(item.symbol)
+                        }
+                    }
+                }
+                .listStyle(InsetGroupedListStyle())
+            }
+        }
+        .navigationTitle("期权榜单")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(UIColor.systemGroupedBackground))
+        .task {
+            await loadData()
+        }
+        .navigationDestination(isPresented: $navigateToDetail) {
+            if let sym = selectedSymbol {
+                OptionsDetailView(symbol: sym)
+            }
+        }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+    }
+    
+    private func loadData() async {
+        isLoading = true
+        if let (up, down) = await dataService.fetchOptionsRankData() {
+            await MainActor.run {
+                self.rankUp = up
+                self.rankDown = down
+                self.isLoading = false
+            }
+        } else {
+            await MainActor.run { self.isLoading = false }
+        }
+    }
+    
+    private func handleSelection(_ symbol: String) {
+        if usageManager.canProceed(authManager: authManager, action: .viewOptionsDetail) {
+            self.selectedSymbol = symbol
+            self.navigateToDetail = true
+        } else {
+            self.showSubscriptionSheet = true
+        }
+    }
+    
+    private func formatMarketCap(_ cap: Double) -> String {
+        if cap >= 1_000_000_000 {
+            return String(format: "%.0fB", cap / 1_000_000_000)
+        } else {
+            return String(format: "%.0fM", cap / 1_000_000)
+        }
+    }
+}
+
+// 【新增】榜单行视图
+struct OptionRankRow: View {
+    let item: OptionRankItem
+    let isUp: Bool
+    let action: () -> Void
+    
+    @EnvironmentObject var dataService: DataService
+    // 【新增】用于存储倒数第二新的价格
+    @State private var secondLatestPrice: Double? = nil
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                // --- 第一行：Symbol/Name + 三个数值 ---
+                HStack(alignment: .firstTextBaseline) {
+                    // 左侧：代码和名字
+                    HStack(spacing: 6) {
+                        Text(item.symbol)
+                            .font(.system(size: 16, weight: .bold, design: .monospaced))
+                            .foregroundColor(.primary)
+                        
+                        let info = getInfo(for: item.symbol)
+                        if !info.name.isEmpty {
+                            Text(info.name)
+                                .font(.system(size: 14))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    
+                    Spacer() // 将数值推向最右侧
+                    
+                    // 右侧：数值对比组
+                    HStack(spacing: 10) {
+                        // 1. 最新 Price
+                        Text(String(format: "%.2f", item.price))
+                            .font(.system(size: 15, weight: .bold, design: .monospaced))
+                            .foregroundColor(isUp ? .red : .green)
+                        
+                        // 2. 【修改部分】Compare_All 百分比
+                        if let compareStr = dataService.compareDataUppercased[item.symbol.uppercased()] {
+                            let percentageText = extractPercentage(from: compareStr)
+                            let themeColor = getCompareColor(from: percentageText) // 获取动态颜色
+                            
+                            Text(percentageText)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(themeColor) // 文字颜色
+                                .padding(.horizontal, 4)
+                                .background(themeColor.opacity(0.1)) // 背景颜色（带透明度）
+                                .cornerRadius(4)
+                        }
+                        
+                        // 3. 倒数第二新 Price
+                        if let prevPrice = secondLatestPrice {
+                            Text(String(format: "%.2f", prevPrice))
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("--")
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundColor(.gray.opacity(0.3))
+                        }
+                    }
+                }
+                
+                // --- 第二行：全行展示 Tags ---
+                let info = getInfo(for: item.symbol)
+                if !info.tags.isEmpty {
+                    Text(info.tags.joined(separator: ", "))
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1) // 超出部分自动 ...
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+        .task {
+            // 【新增】进入视图时获取历史数据以提取倒数第二个值
+            await loadSecondLatestPrice()
+        }
+    }
+
+    // 【新增】颜色判断逻辑
+    private func getCompareColor(from text: String) -> Color {
+        // 检查是否包含负号
+        if text.contains("-") {
+            return .green
+        } 
+        // 默认或包含正号则为红色（符合“正为红色”的需求）
+        return .red
+    }
+    
+    private func loadSecondLatestPrice() async {
+        // 这里的 fetchOptionsHistory 返回的是按日期排序的数据
+        let history = await DatabaseManager.shared.fetchOptionsHistory(forSymbol: item.symbol)
+        // 假设返回的数据 [0] 是最新，[1] 是倒数第二新
+        if history.count >= 2 {
+            await MainActor.run {
+                self.secondLatestPrice = history[1].price
+            }
+        }
+    }
+
+    // 提取百分数：从 "0.04%++" 中提取 "0.04%"
+    private func extractPercentage(from text: String) -> String {
+        let pattern = "([+-]?\\d+(\\.\\d+)?%)"
+        if let range = text.range(of: pattern, options: .regularExpression) {
+            return String(text[range])
+        }
+        return text // 如果没匹配到则返回原样
+    }
+
+    private func getInfo(for symbol: String) -> (name: String, tags: [String]) {
+        let upperSymbol = symbol.uppercased()
+        if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == upperSymbol }) {
+            return (stock.name, stock.tag)
+        }
+        if let etf = dataService.descriptionData?.etfs.first(where: { $0.symbol.uppercased() == upperSymbol }) {
+            return (etf.name, etf.tag)
+        }
+        return ("", [])
     }
 }
 

@@ -14,6 +14,9 @@ struct VersionResponse: Codable {
     // 【新增】解析新字段
     let Eco_Data: String?
     let Intro_Symbol: String?
+
+    // 【新增】
+    let option_cap_limit: Double?
     
     let files: [FileInfo]
 }
@@ -119,6 +122,11 @@ class UpdateManager: ObservableObject {
             if let costs = serverVersionResponse.cost_config {
                 UsageManager.shared.updateCosts(costs)
                 print("UpdateManager: 已更新扣点规则: \(costs)")
+            }
+
+            // 【新增】更新期权市值阀值
+            if let capLimit = serverVersionResponse.option_cap_limit {
+                DataService.shared.updateOptionCapLimit(capLimit)
             }
             
             // 【新增 2】更新策略分组配置
