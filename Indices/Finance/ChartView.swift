@@ -174,6 +174,10 @@ struct ChartView: View {
     // 【新增】控制跳转到期权详情页
     @State private var navigateToOptionsDetail = false
 
+    // 【新增】控制跳转到比对和相似页面
+    @State private var navigateToCompare = false
+    @State private var navigateToSimilar = false
+
     // ⬇️⬇️⬇️ 【请补上这一行】 ⬇️⬇️⬇️
     @State private var showSubscriptionSheet = false 
     
@@ -426,6 +430,7 @@ struct ChartView: View {
             
             // Action Buttons
             HStack(spacing: 20) {
+                // 1. 简介 (通常不扣点，保留 NavigationLink)
                 NavigationLink(destination: {
                     if let descriptions = getDescriptions(for: symbol) {
                         // 【修改】: 删除了 isDarkMode: isDarkMode
@@ -438,12 +443,32 @@ struct ChartView: View {
                     Text("简介").font(.system(size: 22, weight: .medium)).foregroundColor(.blue)
                 }
                 
-                NavigationLink(destination: CompareView(initialSymbol: symbol)) {
-                    Text("比对").font(.system(size: 22, weight: .medium)).padding(.leading, 20).foregroundColor(.blue)
+                // 2. 比对 (改为 Button + 权限检查)
+                Button(action: {
+                    if usageManager.canProceed(authManager: authManager, action: .compare) {
+                        navigateToCompare = true
+                    } else {
+                        showSubscriptionSheet = true
+                    }
+                }) {
+                    Text("比对")
+                        .font(.system(size: 22, weight: .medium))
+                        .padding(.leading, 20)
+                        .foregroundColor(.blue)
                 }
                 
-                NavigationLink(destination: SimilarView(symbol: symbol)) {
-                    Text("相似").font(.system(size: 22, weight: .medium)).padding(.leading, 20).foregroundColor(.blue)
+                // 3. 相似 (改为 Button + 权限检查)
+                Button(action: {
+                    if usageManager.canProceed(authManager: authManager, action: .openList) {
+                        navigateToSimilar = true
+                    } else {
+                        showSubscriptionSheet = true
+                    }
+                }) {
+                    Text("相似")
+                        .font(.system(size: 22, weight: .medium))
+                        .padding(.leading, 20)
+                        .foregroundColor(.blue)
                 }
                 
                 // 【新增】期权按钮逻辑
@@ -499,6 +524,14 @@ struct ChartView: View {
         }
         .navigationDestination(isPresented: $showSearchView) {
             SearchView(isSearchActive: true, dataService: dataService)
+        }
+        // 【新增】比对页面跳转
+        .navigationDestination(isPresented: $navigateToCompare) {
+            CompareView(initialSymbol: symbol)
+        }
+        // 【新增】相似页面跳转
+        .navigationDestination(isPresented: $navigateToSimilar) {
+            SimilarView(symbol: symbol)
         }
         // 【新增】期权详情页跳转
         .navigationDestination(isPresented: $navigateToOptionsDetail) {

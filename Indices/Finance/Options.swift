@@ -226,7 +226,8 @@ struct OptionsListView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
-                    if usageManager.canProceed(authManager: authManager, action: .openSpecialList) { // 复用 openSpecialList 权限或新增
+                    // 这里原来是 .openSpecialList，改为 .viewOptionsRank
+                    if usageManager.canProceed(authManager: authManager, action: .viewOptionsRank) { 
                         self.navigateToRank = true
                     } else {
                         self.showSubscriptionSheet = true
@@ -289,6 +290,8 @@ struct OptionListRow: View {
     let symbol: String
     let action: () -> Void
     @EnvironmentObject var dataService: DataService
+    // --- 新增：用于存储最新价格的状态 ---
+    @State private var latestPrice: Double? = nil
     
     var body: some View {
         Button(action: action) {
@@ -299,7 +302,8 @@ struct OptionListRow: View {
                         Text(symbol)
                             .font(.headline)
                             .fontWeight(.bold)
-                            .foregroundColor(.primary)
+                            // --- 修改点：根据最新价格上色 ---
+                            .foregroundColor(priceColor)
                         
                         if !info.name.isEmpty {
                             Text(info.name)
@@ -325,6 +329,27 @@ struct OptionListRow: View {
             }
             .padding(.vertical, 4)
         }
+        // --- 新增：组件加载时请求历史数据获取最新价格 ---
+        .task {
+            await loadLatestPrice()
+        }
+    }
+
+    // --- 新增：计算属性确定颜色 ---
+    private var priceColor: Color {
+        guard let price = latestPrice else { return .primary } // 数据未加载时用默认色
+        return price >= 0 ? .red : .green // 正数为红，负数为绿
+    }
+    
+    // --- 新增：加载数据的逻辑 ---
+    private func loadLatestPrice() async {
+        let history = await DatabaseManager.shared.fetchOptionsHistory(forSymbol: symbol)
+        // 假设 history[0] 是最新一天的价格（根据 API 返回顺序确定）
+        if let latestItem = history.first {
+            await MainActor.run {
+                self.latestPrice = latestItem.price
+            }
+        }
     }
     
     private func getInfo(for symbol: String) -> (name: String, tags: [String]) {
@@ -344,11 +369,18 @@ struct OptionsDetailView: View {
     let symbol: String
     @EnvironmentObject var dataService: DataService
     
+    // --- 新增：注入权限和点数管理对象 ---
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    
     @State private var selectedTypeIndex = 0
     @State private var navigateToChart = false
     @State private var summaryCall: String = ""
     @State private var summaryPut: String = ""
     
+    // --- 新增：控制订阅页显示 ---
+    @State private var showSubscriptionSheet = false
+
     var filteredData: [OptionItem] {
         guard let items = dataService.optionsData[symbol] else { return [] }
         let filtered = items.filter { item in
@@ -365,7 +397,7 @@ struct OptionsDetailView: View {
             return abs(val1) > abs(val2)
         }
     }
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // 图表组件
@@ -389,7 +421,16 @@ struct OptionsDetailView: View {
         .background(Color(UIColor.systemGroupedBackground))
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: { navigateToChart = true }) {
+                // --- 修改点：在按钮点击时执行扣点检查 ---
+                Button(action: {
+                    if usageManager.canProceed(authManager: authManager, action: .viewChart) { 
+                        // 如果有足够点数（或已订阅），则允许跳转
+                        navigateToChart = true 
+                    } else {
+                        // 点数不足，弹出订阅/登录页
+                        showSubscriptionSheet = true
+                    }
+                }) {
                     Text("切换股价模式")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.white)
@@ -405,6 +446,8 @@ struct OptionsDetailView: View {
             let groupName = dataService.getCategory(for: symbol) ?? "US"
             ChartView(symbol: symbol, groupName: groupName)
         }
+        // --- 新增：挂载订阅页面 ---
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .task {
             // 获取汇总数据
             if let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol) {
