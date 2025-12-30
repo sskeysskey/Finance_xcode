@@ -544,6 +544,7 @@ struct OptionsRankView: View {
     @State private var selectedSymbol: String?
     @State private var navigateToDetail = false
     @State private var showSubscriptionSheet = false
+    @State private var navigateToChart = false // 控制直接跳转股价图
     
     var currentList: [OptionRankItem] {
         selectedTab == 0 ? rankUp : rankDown
@@ -582,7 +583,9 @@ struct OptionsRankView: View {
                 List {
                     ForEach(currentList) { item in
                         OptionRankRow(item: item, isUp: selectedTab == 0) {
-                            handleSelection(item.symbol)
+                            handleSelection(item.symbol) // 这是原有的短按
+                        } longPressAction: {
+                            handleLongPress(item.symbol) // 【新增】传入长按逻辑
                         }
                     }
                 }
@@ -598,6 +601,13 @@ struct OptionsRankView: View {
         .navigationDestination(isPresented: $navigateToDetail) {
             if let sym = selectedSymbol {
                 OptionsDetailView(symbol: sym)
+            }
+        }
+        .navigationDestination(isPresented: $navigateToChart) {
+            if let sym = selectedSymbol {
+                // 这里的 groupName 逻辑参考 OptionsDetailView 里的逻辑
+                let groupName = dataService.getCategory(for: sym) ?? "US"
+                ChartView(symbol: sym, groupName: groupName)
             }
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
@@ -632,6 +642,20 @@ struct OptionsRankView: View {
             return String(format: "%.0fM", cap / 1_000_000)
         }
     }
+
+    // 在 OptionsRankView 内部 handleSelection 下方添加：
+    private func handleLongPress(_ symbol: String) {
+        // 权限检查：跳转股价模式通常对应 .viewChart 行为
+        if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+            self.selectedSymbol = symbol
+            self.navigateToChart = true
+            // 触发一个轻微震动反馈
+            let impact = UIImpactFeedbackGenerator(style: .medium)
+            impact.impactOccurred()
+        } else {
+            self.showSubscriptionSheet = true
+        }
+    }
 }
 
 // 【新增】榜单行视图
@@ -639,91 +663,92 @@ struct OptionRankRow: View {
     let item: OptionRankItem
     let isUp: Bool
     let action: () -> Void
-    
+    let longPressAction: () -> Void // 接收长按逻辑
+
     @EnvironmentObject var dataService: DataService
     // 【新增】用于存储倒数第二新的价格
     @State private var secondLatestPrice: Double? = nil
 
     var body: some View {
-        Button(action: action) {
-            // 使用 VStack 将内容分为上下两行
-            VStack(alignment: .leading, spacing: 6) {
+        // 使用 VStack 包裹“数据行”和“Tags行”
+        VStack(alignment: .leading, spacing: 6) {
+            
+            // --- 第一行：Symbol, Name + 右侧三个数字 ---
+            // 确保这整个部分都在一个 HStack 里
+            HStack(alignment: .center) {
                 
-                // --- 第一行：Symbol, Name 和 三个数字 ---
-                HStack(alignment: .center) {
+                // 左侧容器：Symbol + Name
+                HStack(spacing: 6) {
+                    Text(item.symbol)
+                        .font(.system(size: 16, weight: .bold, design: .monospaced))
+                        .foregroundColor(.primary)
                     
-                    // 左侧容器：Symbol + Name
-                    HStack(spacing: 6) {
-                        Text(item.symbol)
-                            .font(.system(size: 16, weight: .bold, design: .monospaced))
-                            .foregroundColor(.primary)
-                            // Symbol 通常很短，不需要特殊处理
-                        
-                        let info = getInfo(for: item.symbol)
-                        if !info.name.isEmpty {
-                            Text(info.name)
-                                .font(.system(size: 14))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1) // 强制单行
-                                .truncationMode(.tail) // 空间不足时在末尾显示...
-                        }
+                    let info = getInfo(for: item.symbol)
+                    if !info.name.isEmpty {
+                        Text(info.name)
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
-                    // 关键点 1: 降低左侧容器的优先级
-                    .layoutPriority(0) 
-                    
-                    // 关键点 2: 这里的 Spacer 会自动收缩
-                    Spacer(minLength: 8) 
-                    
-                    // 右侧容器：三个核心数字
-                    HStack(spacing: 8) {
-                        // 1. 最新 Price
-                        Text(String(format: "%.1f", item.price))
-                            .font(.system(size: 15, weight: .bold, design: .monospaced))
-                            .foregroundColor(isUp ? .red : .green)
-                        
-                        // 2. Compare_All 百分比 (新增格式化逻辑)
-                        if let compareStr = dataService.compareDataUppercased[item.symbol.uppercased()] {
-                            // 提取并重新格式化为一位小数
-                            let rawPercentage = extractPercentage(from: compareStr)
-                            let formattedPercentage = formatToPrecision(rawPercentage, precision: 1)
-                            let themeColor = getCompareColor(from: rawPercentage)
-                            
-                            Text(formattedPercentage)
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundColor(themeColor) // 文字颜色
-                                .padding(.horizontal, 4)
-                                .background(themeColor.opacity(0.1)) // 背景颜色（带透明度）
-                                .cornerRadius(4)
-                        }
-                        
-                        // 3. 昨收/前值 (添加颜色判断逻辑)
-                        if let prevPrice = secondLatestPrice {
-                            Text(String(format: "%.1f", prevPrice))
-                                .font(.system(size: 13, design: .monospaced))
-                                .foregroundColor(prevPrice > 0 ? .red : (prevPrice < 0 ? .green : .secondary))
-                        } else {
-                            Text("--")
-                                .font(.system(size: 13, design: .monospaced))
-                                .foregroundColor(.gray.opacity(0.3))
-                        }
-                    }
-                    // 关键点 3: 强制右侧不换行并保持理想宽度
-                    .fixedSize(horizontal: true, vertical: false)
-                    // 关键点 4: 提高右侧容器的优先级，确保它先占满空间
-                    .layoutPriority(1) 
                 }
+                .layoutPriority(0) // 优先级低，允许被压缩
                 
-                // --- 第二行：全行展示 Tags ---
-                let info = getInfo(for: item.symbol)
-                if !info.tags.isEmpty {
-                    Text(info.tags.joined(separator: ", "))
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1) // 超出部分自动 ...
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 8) // 自动推开两侧
+                
+                // 右侧容器：三个核心数字（最新价、涨跌幅、昨收）
+                HStack(spacing: 8) {
+                    // 1. 最新 Price
+                    Text(String(format: "%.1f", item.price))
+                        .font(.system(size: 15, weight: .bold, design: .monospaced))
+                        .foregroundColor(isUp ? .red : .green)
+                    
+                    // 2. 涨跌百分比
+                    if let compareStr = dataService.compareDataUppercased[item.symbol.uppercased()] {
+                        let rawPercentage = extractPercentage(from: compareStr)
+                        let formattedPercentage = formatToPrecision(rawPercentage, precision: 1)
+                        let themeColor = getCompareColor(from: rawPercentage)
+                        
+                        Text(formattedPercentage)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(themeColor)
+                            .padding(.horizontal, 4)
+                            .background(themeColor.opacity(0.1))
+                            .cornerRadius(4)
+                    }
+                    
+                    // 3. 次新价格
+                    if let prevPrice = secondLatestPrice {
+                        Text(String(format: "%.1f", prevPrice))
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(prevPrice > 0 ? .red : (prevPrice < 0 ? .green : .secondary))
+                    } else {
+                        Text("--")
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(.gray.opacity(0.3))
+                    }
                 }
+                .fixedSize(horizontal: true, vertical: false) // 禁止换行
+                .layoutPriority(1) // 优先级高，确保先占满宽度
             }
-            .padding(.vertical, 8)
+            
+            // --- 第二行：Tags ---
+            let info = getInfo(for: item.symbol)
+            if !info.tags.isEmpty {
+                Text(info.tags.joined(separator: ", "))
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle()) // 关键：让整个 Cell 区域可点击
+        .onTapGesture {
+            action() // 点击执行：进入期权详情
+        }
+        .onLongPressGesture(minimumDuration: 0.5) {
+            longPressAction() // 长按执行：跳转股价模式
         }
         .task {
             // 【新增】进入视图时获取历史数据以提取倒数第二个值
@@ -780,7 +805,7 @@ struct OptionRankRow: View {
         }
         return text // 如果没匹配到则返回原样
     }
-
+    
     private func getInfo(for symbol: String) -> (name: String, tags: [String]) {
         let upperSymbol = symbol.uppercased()
         if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == upperSymbol }) {
