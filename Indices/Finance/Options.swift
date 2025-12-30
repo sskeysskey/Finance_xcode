@@ -668,17 +668,20 @@ struct OptionRankRow: View {
                     
                     // 右侧：数值对比组
                     HStack(spacing: 10) {
-                        // 1. 最新 Price
-                        Text(String(format: "%.2f", item.price))
+                        // 1. 最新 Price：将 %.2f 改为 %.1f
+                        Text(String(format: "%.1f", item.price))
                             .font(.system(size: 15, weight: .bold, design: .monospaced))
                             .foregroundColor(isUp ? .red : .green)
                         
-                        // 2. 【修改部分】Compare_All 百分比
+                        // 2. Compare_All 百分比 (新增格式化逻辑)
                         if let compareStr = dataService.compareDataUppercased[item.symbol.uppercased()] {
-                            let percentageText = extractPercentage(from: compareStr)
-                            let themeColor = getCompareColor(from: percentageText) // 获取动态颜色
+                            // 提取并重新格式化为一位小数
+                            let rawPercentage = extractPercentage(from: compareStr)
+                            let formattedPercentage = formatToPrecision(rawPercentage, precision: 1)
                             
-                            Text(percentageText)
+                            let themeColor = getCompareColor(from: rawPercentage)
+                            
+                            Text(formattedPercentage)
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundColor(themeColor) // 文字颜色
                                 .padding(.horizontal, 4)
@@ -686,9 +689,9 @@ struct OptionRankRow: View {
                                 .cornerRadius(4)
                         }
                         
-                        // 3. 倒数第二新 Price
+                        // 3. 倒数第二新 Price：将 %.2f 改为 %.1f
                         if let prevPrice = secondLatestPrice {
-                            Text(String(format: "%.2f", prevPrice))
+                            Text(String(format: "%.1f", prevPrice))
                                 .font(.system(size: 13, design: .monospaced))
                                 .foregroundColor(.secondary)
                         } else {
@@ -716,6 +719,20 @@ struct OptionRankRow: View {
             await loadSecondLatestPrice()
         }
     }
+    
+    // --- 新增或修改辅助函数 ---
+    
+    /// 将类似 "1.23%" 或 "1.23" 的字符串转换为指定精度的百分比格式
+    private func formatToPrecision(_ text: String, precision: Int) -> String {
+        // 去掉百分号以便转换
+        let cleanText = text.replacingOccurrences(of: "%", with: "")
+        if let value = Double(cleanText) {
+            // 使用 %.1f 格式化，并手动补回 %
+            return String(format: "%+.\(precision)f%%", value) 
+            // 注意：这里使用了 %+ 会自动带上正负号，如果你不需要正号，把 + 去掉即可
+        }
+        return text
+    }
 
     // 【新增】颜色判断逻辑
     private func getCompareColor(from text: String) -> Color {
@@ -728,12 +745,18 @@ struct OptionRankRow: View {
     }
     
     private func loadSecondLatestPrice() async {
-        // 这里的 fetchOptionsHistory 返回的是按日期排序的数据
+        // 现在 history[0] 是最新，history[1] 是次新
         let history = await DatabaseManager.shared.fetchOptionsHistory(forSymbol: item.symbol)
-        // 假设返回的数据 [0] 是最新，[1] 是倒数第二新
+        
         if history.count >= 2 {
             await MainActor.run {
+                // 因为后端改成了 DESC，所以索引 1 确确实实就是“次新”的价格
                 self.secondLatestPrice = history[1].price
+            }
+        } else {
+            // 如果只有一条数据，说明没有次新价格
+            await MainActor.run {
+                self.secondLatestPrice = nil
             }
         }
     }
