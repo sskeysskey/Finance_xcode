@@ -646,29 +646,37 @@ struct OptionRankRow: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 8) {
-                // --- 第一行：Symbol/Name + 三个数值 ---
-                HStack(alignment: .firstTextBaseline) {
-                    // 左侧：代码和名字
+            // 使用 VStack 将内容分为上下两行
+            VStack(alignment: .leading, spacing: 6) {
+                
+                // --- 第一行：Symbol, Name 和 三个数字 ---
+                HStack(alignment: .center) {
+                    
+                    // 左侧容器：Symbol + Name
                     HStack(spacing: 6) {
                         Text(item.symbol)
                             .font(.system(size: 16, weight: .bold, design: .monospaced))
                             .foregroundColor(.primary)
+                            // Symbol 通常很短，不需要特殊处理
                         
                         let info = getInfo(for: item.symbol)
                         if !info.name.isEmpty {
                             Text(info.name)
                                 .font(.system(size: 14))
                                 .foregroundColor(.secondary)
-                                .lineLimit(1)
+                                .lineLimit(1) // 强制单行
+                                .truncationMode(.tail) // 空间不足时在末尾显示...
                         }
                     }
+                    // 关键点 1: 降低左侧容器的优先级
+                    .layoutPriority(0) 
                     
-                    Spacer() // 将数值推向最右侧
+                    // 关键点 2: 这里的 Spacer 会自动收缩
+                    Spacer(minLength: 8) 
                     
-                    // 右侧：数值对比组
-                    HStack(spacing: 10) {
-                        // 1. 最新 Price：将 %.2f 改为 %.1f
+                    // 右侧容器：三个核心数字
+                    HStack(spacing: 8) {
+                        // 1. 最新 Price
                         Text(String(format: "%.1f", item.price))
                             .font(.system(size: 15, weight: .bold, design: .monospaced))
                             .foregroundColor(isUp ? .red : .green)
@@ -678,7 +686,6 @@ struct OptionRankRow: View {
                             // 提取并重新格式化为一位小数
                             let rawPercentage = extractPercentage(from: compareStr)
                             let formattedPercentage = formatToPrecision(rawPercentage, precision: 1)
-                            
                             let themeColor = getCompareColor(from: rawPercentage)
                             
                             Text(formattedPercentage)
@@ -689,17 +696,21 @@ struct OptionRankRow: View {
                                 .cornerRadius(4)
                         }
                         
-                        // 3. 倒数第二新 Price：将 %.2f 改为 %.1f
+                        // 3. 昨收/前值 (添加颜色判断逻辑)
                         if let prevPrice = secondLatestPrice {
                             Text(String(format: "%.1f", prevPrice))
                                 .font(.system(size: 13, design: .monospaced))
-                                .foregroundColor(.secondary)
+                                .foregroundColor(prevPrice > 0 ? .red : (prevPrice < 0 ? .green : .secondary))
                         } else {
                             Text("--")
                                 .font(.system(size: 13, design: .monospaced))
                                 .foregroundColor(.gray.opacity(0.3))
                         }
                     }
+                    // 关键点 3: 强制右侧不换行并保持理想宽度
+                    .fixedSize(horizontal: true, vertical: false)
+                    // 关键点 4: 提高右侧容器的优先级，确保它先占满空间
+                    .layoutPriority(1) 
                 }
                 
                 // --- 第二行：全行展示 Tags ---
