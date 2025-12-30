@@ -562,13 +562,17 @@ struct OptionsRankView: View {
             .background(Color(UIColor.secondarySystemGroupedBackground))
             
             // 2. 列表内容
-            if isLoading {
-                Spacer()
-                ProgressView("正在计算大数据榜单...")
-                Spacer()
-            } else if currentList.isEmpty {
-                Spacer()
+        ZStack { // 使用 ZStack 让加载菊花盖在列表上，而不是替换列表
+            if isLoading && rankUp.isEmpty {
+                VStack {
+                    Spacer()
+                    ProgressView("正在计算大数据榜单...")
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else if !isLoading && currentList.isEmpty {
                 VStack(spacing: 10) {
+                    Spacer()
                     Image(systemName: "doc.text.magnifyingglass")
                         .font(.largeTitle)
                         .foregroundColor(.gray)
@@ -580,6 +584,7 @@ struct OptionsRankView: View {
                 }
                 Spacer()
             } else {
+                // 只要有数据，List 就一直存在于这里，不会被销毁
                 List {
                     ForEach(currentList) { item in
                         OptionRankRow(item: item, isUp: selectedTab == 0) {
@@ -590,7 +595,9 @@ struct OptionsRankView: View {
                     }
                 }
                 .listStyle(InsetGroupedListStyle())
+                .id(selectedTab) 
             }
+        }
         }
         .navigationTitle("期权榜单")
         .navigationBarTitleDisplayMode(.inline)
@@ -614,17 +621,23 @@ struct OptionsRankView: View {
     }
     
     private func loadData() async {
-        isLoading = true
+        // 关键点：如果已经有数据了，就不要设置 isLoading = true
+        // 这样就不会触发 UI 的大切换，List 就不会被销毁
+        if rankUp.isEmpty && rankDown.isEmpty {
+            isLoading = true
+        }
+        
         if let (up, down) = await dataService.fetchOptionsRankData() {
             await MainActor.run {
                 self.rankUp = up
                 self.rankDown = down
-                self.isLoading = false
+                self.isLoading = false // 加载完成后关闭
             }
         } else {
             await MainActor.run { self.isLoading = false }
         }
     }
+
     
     private func handleSelection(_ symbol: String) {
         if usageManager.canProceed(authManager: authManager, action: .viewOptionsDetail) {
