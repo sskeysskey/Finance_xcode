@@ -81,18 +81,29 @@ struct OptionsHistoryChartView: View {
         .frame(height: 220)
         .padding(.horizontal)
     }
+
+    // 1. 定义一个用于显示的日期格式化器
+    private var chartDateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM/dd" // 显示为 12/26 格式
+        return formatter
+    }
     
     // 拆分出具体的 Chart 代码
     private var chartContent: some View {
-        Chart {
-            ForEach(filteredData) { item in
+        // 将 filteredData 按照日期升序排列，确保图表从左到右是时间顺序
+        let sortedData = filteredData.sorted { $0.date < $1.date }
+        
+        return Chart {
+            ForEach(sortedData) { item in
                 BarMark(
-                    x: .value("Date", item.date),
+                    // 【关键修改】X轴使用 String (分类)，消除周末空白
+                    x: .value("Date", chartDateFormatter.string(from: item.date)),
                     y: .value("Price", item.price)
                 )
-                // 【注意】移除了 .width 修饰符以解决 "has no member width" 报错。
-                // Charts 会自动根据数据密度调整柱子宽度。
                 .foregroundStyle(barGradient(for: item.price))
+                // 【优化】设置最大宽度，防止数据少时柱子太宽
+                .cornerRadius(4)
             }
             
             // 0轴基准线
@@ -100,21 +111,21 @@ struct OptionsHistoryChartView: View {
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [5]))
                 .foregroundStyle(.gray.opacity(0.5))
         }
-        .chartYAxis {
-            AxisMarks(position: .leading)
-        }
+        // 【关键修改】自定义 X 轴
         .chartXAxis {
-            AxisMarks(values: .automatic) { value in
-                AxisGridLine()
-                AxisTick()
-                if let date = value.as(Date.self) {
+            AxisMarks { value in
+                // 因为 X 轴变成了 String，这里直接获取 String
+                if let dateString = value.as(String.self) {
                     AxisValueLabel {
-                        Text(date, format: .dateTime.month().year(.twoDigits))
+                        Text(dateString)
                             .font(.caption2)
+                            .fixedSize() // 防止文字被压缩
                     }
                 }
             }
         }
+        // 【优化】如果数据很少，限制图表内容的宽度，不要撑满全屏（可选）
+        // .chartXScale(domain: .automatic(includesZero: false)) 
         .padding(.vertical, 16)
         .padding(.horizontal, 8)
     }
