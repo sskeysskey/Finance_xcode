@@ -18,6 +18,9 @@ class DatabaseManager {
     struct OptionsSummary: Codable {
         let call: String?
         let put: String?
+        // 【新增】匹配服务器返回的 Price 和 Change
+        let price: Double?
+        let change: Double?
     }
 
     struct MarketCapInfo: Codable {

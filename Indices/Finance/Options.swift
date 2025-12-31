@@ -472,30 +472,27 @@ struct OptionListRow: View {
         }
     }
     
-    // 【核心逻辑】加载数据并执行算法：最新 - 次新 + 最新
+    // 【核心修改】加载数据并执行算法
+    // 改为调用 fetchOptionsSummary，直接利用服务器返回的 change 字段
     private func loadPriceAndCalc() async {
-        // 如果已经有数据了，就不重复加载 (除非你想每次出现都刷新)
         if priceData != nil { return }
         
-        let history = await DatabaseManager.shared.fetchOptionsHistory(forSymbol: symbol)
+        // 调用新的接口获取数据 (Server 已更新 query_options_summary 返回 price 和 change)
+        guard let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol),
+              let latest = summary.price,
+              let change = summary.change else {
+            return
+        }
         
-        // 确保至少有两天数据才能计算 Diff 和 Prev
-        // history[0] 是最新 (DESC 排序), history[1] 是次新
-        if history.count >= 2 {
-            let latest = history[0].price
-            let prev = history[1].price
-            
-            // 算法：最新 - 次新 + 最新
-            let diff = latest - prev + latest
-            
-            await MainActor.run {
-                self.priceData = (latest, prev, diff)
-            }
-        } else if let first = history.first {
-            // 只有一天数据时的降级处理：Diff = Latest
-            await MainActor.run {
-                self.priceData = (first.price, 0.0, first.price)
-            }
+        // 【算法适配】
+        // 1. First Value (Diff) = Latest + Change
+        let diff = latest + change
+        
+        // 2. Fourth Value (Prev) = Latest - Change
+        let prev = latest - change
+        
+        await MainActor.run {
+            self.priceData = (latest, prev, diff)
         }
     }
     
