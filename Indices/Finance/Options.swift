@@ -266,6 +266,9 @@ struct OptionsListView: View {
     // 【新增】控制跳转到榜单页面
     @State private var navigateToRank = false
     
+    // 【新增 1】控制跳转到股价图的状态
+    @State private var navigateToChart = false
+    
     var sortedSymbols: [String] {
         let allSymbols = dataService.optionsData.keys
         let noCapSymbols = allSymbols.filter { symbol in
@@ -291,9 +294,16 @@ struct OptionsListView: View {
                     .foregroundColor(.secondary)
             } else {
                 ForEach(sortedSymbols, id: \.self) { symbol in
-                    OptionListRow(symbol: symbol) {
-                        handleSelection(symbol)
-                    }
+                    // 【修改 2】传入长按闭包
+                    OptionListRow(
+                        symbol: symbol, 
+                        action: {
+                            handleSelection(symbol)
+                        },
+                        longPressAction: {
+                            handleLongPress(symbol)
+                        }
+                    )
                 }
             }
         }
@@ -349,6 +359,14 @@ struct OptionsListView: View {
         .navigationDestination(isPresented: $navigateToRank) {
             OptionsRankView()
         }
+        // 【新增】跳转目的地
+        .navigationDestination(isPresented: $navigateToChart) {
+            if let sym = selectedSymbol {
+                // 这里的 groupName 逻辑
+                let groupName = dataService.getCategory(for: sym) ?? "US"
+                ChartView(symbol: sym, groupName: groupName)
+            }
+        }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
     }
     
@@ -360,12 +378,29 @@ struct OptionsListView: View {
             self.showSubscriptionSheet = true
         }
     }
+    
+    // 【修复点 1】补全 handleLongPress 函数
+    private func handleLongPress(_ symbol: String) {
+        // 权限检查：跳转股价模式通常对应 .viewChart 行为
+        if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+            self.selectedSymbol = symbol
+            self.navigateToChart = true
+            // 触发一个轻微震动反馈
+            let impact = UIImpactFeedbackGenerator(style: .medium)
+            impact.impactOccurred()
+        } else {
+            self.showSubscriptionSheet = true
+        }
+    }
 }
 
 // 拆分出的列表行视图
 struct OptionListRow: View {
     let symbol: String
     let action: () -> Void
+    // 【新增】接收长按事件
+    let longPressAction: () -> Void
+    
     @EnvironmentObject var dataService: DataService
     
     // 【修改】存储计算好的三个数值，而不是只存一个价格
@@ -373,62 +408,65 @@ struct OptionListRow: View {
     @State private var priceData: (latest: Double, prev: Double, diff: Double)? = nil
     
     var body: some View {
-        Button(action: action) {
-            // 使用 VStack 模仿 OptionRankRow 的布局结构
-            VStack(alignment: .leading, spacing: 6) {
-                
-                // 第一行：Symbol + Name ... Spacer ... 四联数字
-                HStack(alignment: .center) {
-                    // 左侧：Symbol + Name
-                    HStack(spacing: 6) {
-                        Text(symbol)
-                            .font(.headline)
-                            .fontWeight(.bold)
-                            .foregroundColor(.primary) // 恢复默认色，颜色由数字区域表达
-                        
-                        let info = getInfo(for: symbol)
-                        if !info.name.isEmpty {
-                            Text(info.name)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
-                    }
-                    .layoutPriority(0)
+        // 移除 Button，改用 VStack + 手势
+        VStack(alignment: .leading, spacing: 6) {
+            
+            // 第一行
+            HStack(alignment: .center) {
+                // 左侧 Symbol + Name
+                HStack(spacing: 6) {
+                    Text(symbol)
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
                     
-                    Spacer(minLength: 8)
-                    
-                    // 右侧：显示四联数字 (如果有数据)
-                    if let data = priceData {
-                        PriceQuadView(
-                            symbol: symbol,
-                            price: data.latest,
-                            prevPrice: data.prev,
-                            diff: data.diff
-                        )
-                        .layoutPriority(1)
-                    } else {
-                        // 加载占位符
-                        Text("--")
+                    let info = getInfo(for: symbol)
+                    if !info.name.isEmpty {
+                        Text(info.name)
+                            .font(.subheadline)
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
-                    
-                    // 【已删除】原有的 Image(systemName: "chevron.right") ... 代码块已移除
                 }
+                .layoutPriority(0)
                 
-                // 第二行：Tags (如果有)
-                let info = getInfo(for: symbol)
-                if !info.tags.isEmpty {
-                    Text(info.tags.joined(separator: ", "))
-                        .font(.caption)
+                Spacer(minLength: 8)
+                
+                // 右侧四联数字
+                if let data = priceData {
+                    PriceQuadView(
+                        symbol: symbol,
+                        price: data.latest,
+                        prevPrice: data.prev,
+                        diff: data.diff
+                    )
+                    .layoutPriority(1)
+                } else {
+                    Text("--")
                         .foregroundColor(.secondary)
-                        .lineLimit(1)
                 }
+                // (小箭头已移除)
             }
-            .padding(.vertical, 4)
+            
+            // 第二行 Tags
+            let info = getInfo(for: symbol)
+            if !info.tags.isEmpty {
+                Text(info.tags.joined(separator: ", "))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
         }
-        // 组件加载时请求历史数据并计算
+        .padding(.vertical, 4)
+        .contentShape(Rectangle()) // 确保点击空白处也能触发
+        // 【新增】添加手势
+        .onTapGesture {
+            action()
+        }
+        .onLongPressGesture(minimumDuration: 0.5) {
+            longPressAction()
+        }
         .task {
             await loadPriceAndCalc()
         }
@@ -489,7 +527,7 @@ struct OptionsDetailView: View {
     
     // --- 新增：控制订阅页显示 ---
     @State private var showSubscriptionSheet = false
-
+    
     var filteredData: [OptionItem] {
         guard let items = dataService.optionsData[symbol] else { return [] }
         let filtered = items.filter { item in
@@ -506,7 +544,7 @@ struct OptionsDetailView: View {
             return abs(val1) > abs(val2)
         }
     }
-
+    
     var body: some View {
         VStack(spacing: 0) {
             // 图表组件
@@ -764,8 +802,8 @@ struct OptionsRankView: View {
             return String(format: "%.0fM", cap / 1_000_000)
         }
     }
-
-    // 在 OptionsRankView 内部 handleSelection 下方添加：
+    
+    // 【修复点 2】删除了重复的 handleLongPress，只保留这一个
     private func handleLongPress(_ symbol: String) {
         // 权限检查：跳转股价模式通常对应 .viewChart 行为
         if usageManager.canProceed(authManager: authManager, action: .viewChart) {
