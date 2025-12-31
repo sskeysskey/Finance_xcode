@@ -513,7 +513,7 @@ struct OptionsDetailView: View {
     let symbol: String
     @EnvironmentObject var dataService: DataService
     
-    // --- 新增：注入权限和点数管理对象 ---
+    // --- 注入权限和点数管理对象 ---
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
     
@@ -522,7 +522,10 @@ struct OptionsDetailView: View {
     @State private var summaryCall: String = ""
     @State private var summaryPut: String = ""
     
-    // --- 新增：控制订阅页显示 ---
+    // 【新增】用于存储从数据库获取的涨跌额 change
+    @State private var dbChange: Double? = nil
+    
+    // --- 控制订阅页显示 ---
     @State private var showSubscriptionSheet = false
     
     var filteredData: [OptionItem] {
@@ -560,10 +563,27 @@ struct OptionsDetailView: View {
             // 数据列表
             dataListView
         }
-        .navigationTitle(displayTitle) // 使用我们拼接好的字符串
+        // 【修改 1】设置一个基础标题 (用于返回按钮的文字)
+        .navigationTitle(symbol)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(UIColor.systemGroupedBackground))
         .toolbar {
+            // 【修改 2】使用 principal 来自定义中间标题，支持颜色
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 4) {
+                    Text(symbol)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    
+                    // 如果获取到了 change 数据，显示带颜色的数值
+                    if let change = dbChange {
+                        Text(String(format: "(%+.2f)", change)) // 格式化为 (+1.50)
+                            .font(.headline)
+                            .foregroundColor(change >= 0 ? .red : .green) // 正红负绿
+                    }
+                }
+            }
+            
             ToolbarItem(placement: .navigationBarTrailing) {
                 // --- 修改点：在按钮点击时执行扣点检查 ---
                 Button(action: {
@@ -593,31 +613,24 @@ struct OptionsDetailView: View {
         // --- 新增：挂载订阅页面 ---
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .task {
-            // 获取汇总数据
+            // 【修改 3】获取数据并保存 change
             if let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol) {
                 await MainActor.run {
                     if let c = summary.call { self.summaryCall = c }
                     if let p = summary.put { self.summaryPut = p }
+                    
+                    // 赋值给状态变量
+                    if let chg = summary.change {
+                        self.dbChange = chg
+                    }
                 }
             }
         }
     }
-
+    
     // MARK: - 辅助逻辑
-    private var displayTitle: String {
-        // 1. 获取原始的 compare 字符串 (例如 "0.04%++")
-        if let compareStr = dataService.compareDataUppercased[symbol.uppercased()] {
-            // 2. 提取百分比部分
-            let pattern = "([+-]?\\d+(\\.\\d+)?%)"
-            if let range = compareStr.range(of: pattern, options: .regularExpression) {
-                let percentage = String(compareStr[range])
-                // 3. 返回拼接后的格式：NVDA (0.04%)
-                return "\(symbol) (\(percentage))"
-            }
-        }
-        // 如果找不到数据，则只显示 Symbol
-        return symbol
-    }
+    
+    // (displayTitle 属性已不再需要，可以删除)
     
     // 拆分出 Picker
     private var typePickerView: some View {
