@@ -2,6 +2,72 @@ import SwiftUI
 import Charts
 import Foundation
 
+// MARK: - 【新增】共享组件：价格四联显示 (差值 | 最新 | 涨跌幅 | 次新)
+struct PriceQuadView: View {
+    let symbol: String
+    let price: Double
+    let prevPrice: Double
+    let diff: Double
+    
+    @EnvironmentObject var dataService: DataService
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            // 1. 差值 (Diff)
+            Text(String(format: "%+.1f", diff))
+                .font(.system(size: 15, weight: .bold, design: .monospaced))
+                .foregroundColor(diff >= 0 ? .red : .green)
+            
+            // 2. 最新 Price
+            Text(String(format: "%.1f", price))
+                .font(.system(size: 14, weight: .regular, design: .monospaced))
+                .foregroundColor(.primary)
+            
+            // 3. 涨跌百分比
+            if let compareStr = dataService.compareDataUppercased[symbol.uppercased()] {
+                let rawPercentage = extractPercentage(from: compareStr)
+                let formattedPercentage = formatToPrecision(rawPercentage, precision: 1)
+                let themeColor = getCompareColor(from: rawPercentage)
+                
+                Text(formattedPercentage)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(themeColor)
+                    .padding(.horizontal, 4)
+                    .background(themeColor.opacity(0.1))
+                    .cornerRadius(4)
+            }
+            
+            // 4. 次新价格 (Prev)
+            Text(String(format: "%.1f", prevPrice))
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundColor(.secondary)
+        }
+        .fixedSize(horizontal: true, vertical: false) // 防止被压缩
+    }
+    
+    // 辅助函数 (直接复用之前的逻辑)
+    private func extractPercentage(from text: String) -> String {
+        let pattern = "([+-]?\\d+(\\.\\d+)?%)"
+        if let range = text.range(of: pattern, options: .regularExpression) {
+            return String(text[range])
+        }
+        return text
+    }
+    
+    private func formatToPrecision(_ text: String, precision: Int) -> String {
+        let cleanText = text.replacingOccurrences(of: "%", with: "")
+        if let value = Double(cleanText) {
+            return String(format: "%+.\(precision)f%%", value)
+        }
+        return text
+    }
+    
+    private func getCompareColor(from text: String) -> Color {
+        if text.contains("-") { return .green }
+        return .red
+    }
+}
+
 // MARK: - 【重构】期权价格历史图表组件
 struct OptionsHistoryChartView: View {
     let symbol: String
@@ -301,21 +367,26 @@ struct OptionListRow: View {
     let symbol: String
     let action: () -> Void
     @EnvironmentObject var dataService: DataService
-    // --- 新增：用于存储最新价格的状态 ---
-    @State private var latestPrice: Double? = nil
+    
+    // 【修改】存储计算好的三个数值，而不是只存一个价格
+    // Tuple: (Latest, Prev, Diff)
+    @State private var priceData: (latest: Double, prev: Double, diff: Double)? = nil
     
     var body: some View {
         Button(action: action) {
-            let info = getInfo(for: symbol)
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
+            // 使用 VStack 模仿 OptionRankRow 的布局结构
+            VStack(alignment: .leading, spacing: 6) {
+                
+                // 第一行：Symbol + Name ... Spacer ... 四联数字
+                HStack(alignment: .center) {
+                    // 左侧：Symbol + Name
+                    HStack(spacing: 6) {
                         Text(symbol)
                             .font(.headline)
                             .fontWeight(.bold)
-                            // --- 修改点：根据最新价格上色 ---
-                            .foregroundColor(priceColor)
+                            .foregroundColor(.primary) // 恢复默认色，颜色由数字区域表达
                         
+                        let info = getInfo(for: symbol)
                         if !info.name.isEmpty {
                             Text(info.name)
                                 .font(.subheadline)
@@ -324,41 +395,68 @@ struct OptionListRow: View {
                                 .truncationMode(.tail)
                         }
                     }
+                    .layoutPriority(0)
                     
-                    if !info.tags.isEmpty {
-                        Text(info.tags.joined(separator: ", "))
-                            .font(.caption)
+                    Spacer(minLength: 8)
+                    
+                    // 右侧：显示四联数字 (如果有数据)
+                    if let data = priceData {
+                        PriceQuadView(
+                            symbol: symbol,
+                            price: data.latest,
+                            prevPrice: data.prev,
+                            diff: data.diff
+                        )
+                        .layoutPriority(1)
+                    } else {
+                        // 加载占位符
+                        Text("--")
                             .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
                     }
+                    
+                    // 【已删除】原有的 Image(systemName: "chevron.right") ... 代码块已移除
                 }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.gray)
+                
+                // 第二行：Tags (如果有)
+                let info = getInfo(for: symbol)
+                if !info.tags.isEmpty {
+                    Text(info.tags.joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
             }
             .padding(.vertical, 4)
         }
-        // --- 新增：组件加载时请求历史数据获取最新价格 ---
+        // 组件加载时请求历史数据并计算
         .task {
-            await loadLatestPrice()
+            await loadPriceAndCalc()
         }
     }
-
-    // --- 新增：计算属性确定颜色 ---
-    private var priceColor: Color {
-        guard let price = latestPrice else { return .primary } // 数据未加载时用默认色
-        return price >= 0 ? .red : .green // 正数为红，负数为绿
-    }
     
-    // --- 新增：加载数据的逻辑 ---
-    private func loadLatestPrice() async {
+    // 【核心逻辑】加载数据并执行算法：最新 - 次新 + 最新
+    private func loadPriceAndCalc() async {
+        // 如果已经有数据了，就不重复加载 (除非你想每次出现都刷新)
+        if priceData != nil { return }
+        
         let history = await DatabaseManager.shared.fetchOptionsHistory(forSymbol: symbol)
-        // 假设 history[0] 是最新一天的价格（根据 API 返回顺序确定）
-        if let latestItem = history.first {
+        
+        // 确保至少有两天数据才能计算 Diff 和 Prev
+        // history[0] 是最新 (DESC 排序), history[1] 是次新
+        if history.count >= 2 {
+            let latest = history[0].price
+            let prev = history[1].price
+            
+            // 算法：最新 - 次新 + 最新
+            let diff = latest - prev + latest
+            
             await MainActor.run {
-                self.latestPrice = latestItem.price
+                self.priceData = (latest, prev, diff)
+            }
+        } else if let first = history.first {
+            // 只有一天数据时的降级处理：Diff = Latest
+            await MainActor.run {
+                self.priceData = (first.price, 0.0, first.price)
             }
         }
     }
@@ -715,47 +813,21 @@ struct OptionRankRow: View {
                             .truncationMode(.tail)
                     }
                 }
-                .layoutPriority(0) // 优先级低，允许被压缩
+                .layoutPriority(0)
                 
-                Spacer(minLength: 8) // 自动推开两侧
+                Spacer(minLength: 8)
                 
-                // 右侧容器：四个核心数字 (顺序：差值 | 最新 | 涨跌幅 | 次新)
-                HStack(spacing: 8) {
-                    
-                    // 1. 差值 (Diff) - 放在最前面
-                    Text(String(format: "%+.1f", item.diff)) // 带正负号
-                        .font(.system(size: 15, weight: .bold, design: .monospaced))
-                        .foregroundColor(item.diff >= 0 ? .red : .green)
-                    
-                    // 2. 最新 Price
-                    Text(String(format: "%.1f", item.price))
-                        .font(.system(size: 14, weight: .regular, design: .monospaced))
-                        .foregroundColor(.primary)
-                    
-                    // 3. 涨跌百分比 (CompareStr)
-                    if let compareStr = dataService.compareDataUppercased[item.symbol.uppercased()] {
-                        let rawPercentage = extractPercentage(from: compareStr)
-                        let formattedPercentage = formatToPrecision(rawPercentage, precision: 1)
-                        let themeColor = getCompareColor(from: rawPercentage)
-                        
-                        Text(formattedPercentage)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(themeColor)
-                            .padding(.horizontal, 4)
-                            .background(themeColor.opacity(0.1))
-                            .cornerRadius(4)
-                    }
-                    
-                    // 4. 次新价格 (Prev) - 放在最后
-                    Text(String(format: "%.1f", item.prevPrice))
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(.secondary) // 使用次要颜色区分
-                }
-                .fixedSize(horizontal: true, vertical: false)
+                // 【核心修改】直接调用共享组件
+                PriceQuadView(
+                    symbol: item.symbol,
+                    price: item.price,
+                    prevPrice: item.prevPrice,
+                    diff: item.diff
+                )
                 .layoutPriority(1)
             }
             
-            // --- 第二行：Tags ---
+            // 第二行 Tags
             let info = getInfo(for: item.symbol)
             if !info.tags.isEmpty {
                 Text(info.tags.joined(separator: ", "))
@@ -775,39 +847,7 @@ struct OptionRankRow: View {
         }
     }
     
-    // --- 新增或修改辅助函数 ---
-    
-    /// 将类似 "1.23%" 或 "1.23" 的字符串转换为指定精度的百分比格式
-    private func formatToPrecision(_ text: String, precision: Int) -> String {
-        // 去掉百分号以便转换
-        let cleanText = text.replacingOccurrences(of: "%", with: "")
-        if let value = Double(cleanText) {
-            // 使用 %.1f 格式化，并手动补回 %
-            return String(format: "%+.\(precision)f%%", value) 
-            // 注意：这里使用了 %+ 会自动带上正负号，如果你不需要正号，把 + 去掉即可
-        }
-        return text
-    }
-
-    // 【新增】颜色判断逻辑
-    private func getCompareColor(from text: String) -> Color {
-        // 检查是否包含负号
-        if text.contains("-") {
-            return .green
-        } 
-        // 默认或包含正号则为红色（符合“正为红色”的需求）
-        return .red
-    }
-
-    // 提取百分数：从 "0.04%++" 中提取 "0.04%"
-    private func extractPercentage(from text: String) -> String {
-        let pattern = "([+-]?\\d+(\\.\\d+)?%)"
-        if let range = text.range(of: pattern, options: .regularExpression) {
-            return String(text[range])
-        }
-        return text // 如果没匹配到则返回原样
-    }
-    
+    // ... getInfo 等辅助函数保持不变 (或者你也可以把 getInfo 提出来，但暂时放在这里没问题)
     private func getInfo(for symbol: String) -> (name: String, tags: [String]) {
         let upperSymbol = symbol.uppercased()
         if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == upperSymbol }) {
