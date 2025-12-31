@@ -687,18 +687,17 @@ struct OptionRankRow: View {
     let item: OptionRankItem
     let isUp: Bool
     let action: () -> Void
-    let longPressAction: () -> Void // 接收长按逻辑
-
+    let longPressAction: () -> Void 
     @EnvironmentObject var dataService: DataService
-    // 【新增】用于存储倒数第二新的价格
-    @State private var secondLatestPrice: Double? = nil
+
+    // 【移除】不再需要单独请求次新价格的状态
+    // @State private var secondLatestPrice: Double? = nil
 
     var body: some View {
         // 使用 VStack 包裹“数据行”和“Tags行”
         VStack(alignment: .leading, spacing: 6) {
             
-            // --- 第一行：Symbol, Name + 右侧三个数字 ---
-            // 确保这整个部分都在一个 HStack 里
+            // --- 第一行：Symbol, Name + 右侧四个数据 ---
             HStack(alignment: .center) {
                 
                 // 左侧容器：Symbol + Name
@@ -720,14 +719,20 @@ struct OptionRankRow: View {
                 
                 Spacer(minLength: 8) // 自动推开两侧
                 
-                // 右侧容器：三个核心数字（最新价、涨跌幅、昨收）
+                // 右侧容器：四个核心数字 (顺序：差值 | 最新 | 涨跌幅 | 次新)
                 HStack(spacing: 8) {
-                    // 1. 最新 Price
-                    Text(String(format: "%.1f", item.price))
-                        .font(.system(size: 15, weight: .bold, design: .monospaced))
-                        .foregroundColor(isUp ? .red : .green)
                     
-                    // 2. 涨跌百分比
+                    // 1. 差值 (Diff) - 放在最前面
+                    Text(String(format: "%+.1f", item.diff)) // 带正负号
+                        .font(.system(size: 15, weight: .bold, design: .monospaced))
+                        .foregroundColor(item.diff >= 0 ? .red : .green)
+                    
+                    // 2. 最新 Price
+                    Text(String(format: "%.1f", item.price))
+                        .font(.system(size: 14, weight: .regular, design: .monospaced))
+                        .foregroundColor(.primary)
+                    
+                    // 3. 涨跌百分比 (CompareStr)
                     if let compareStr = dataService.compareDataUppercased[item.symbol.uppercased()] {
                         let rawPercentage = extractPercentage(from: compareStr)
                         let formattedPercentage = formatToPrecision(rawPercentage, precision: 1)
@@ -741,19 +746,13 @@ struct OptionRankRow: View {
                             .cornerRadius(4)
                     }
                     
-                    // 3. 次新价格
-                    if let prevPrice = secondLatestPrice {
-                        Text(String(format: "%.1f", prevPrice))
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(prevPrice > 0 ? .red : (prevPrice < 0 ? .green : .secondary))
-                    } else {
-                        Text("--")
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(.gray.opacity(0.3))
-                    }
+                    // 4. 次新价格 (Prev) - 放在最后
+                    Text(String(format: "%.1f", item.prevPrice))
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(.secondary) // 使用次要颜色区分
                 }
-                .fixedSize(horizontal: true, vertical: false) // 禁止换行
-                .layoutPriority(1) // 优先级高，确保先占满宽度
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
             }
             
             // --- 第二行：Tags ---
@@ -773,10 +772,6 @@ struct OptionRankRow: View {
         }
         .onLongPressGesture(minimumDuration: 0.5) {
             longPressAction() // 长按执行：跳转股价模式
-        }
-        .task {
-            // 【新增】进入视图时获取历史数据以提取倒数第二个值
-            await loadSecondLatestPrice()
         }
     }
     
@@ -802,23 +797,6 @@ struct OptionRankRow: View {
         } 
         // 默认或包含正号则为红色（符合“正为红色”的需求）
         return .red
-    }
-    
-    private func loadSecondLatestPrice() async {
-        // 现在 history[0] 是最新，history[1] 是次新
-        let history = await DatabaseManager.shared.fetchOptionsHistory(forSymbol: item.symbol)
-        
-        if history.count >= 2 {
-            await MainActor.run {
-                // 因为后端改成了 DESC，所以索引 1 确确实实就是“次新”的价格
-                self.secondLatestPrice = history[1].price
-            }
-        } else {
-            // 如果只有一条数据，说明没有次新价格
-            await MainActor.run {
-                self.secondLatestPrice = nil
-            }
-        }
     }
 
     // 提取百分数：从 "0.04%++" 中提取 "0.04%"

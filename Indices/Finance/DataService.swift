@@ -70,7 +70,9 @@ struct OptionItem: Identifiable, Hashable {
 struct OptionRankItem: Codable, Identifiable {
     var id: String { symbol }
     let symbol: String
-    let price: Double
+    let price: Double      // 最新价格
+    let prevPrice: Double  // 次新价格 (新增)
+    let diff: Double       // 差值 (新增)
 }
 
 // 【新增】期权榜单响应模型
