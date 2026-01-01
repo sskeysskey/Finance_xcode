@@ -2,12 +2,12 @@ import SwiftUI
 import Charts
 import Foundation
 
-// MARK: - 【新增】共享组件：价格四联显示 (差值 | 最新 | 涨跌幅 | 次新)
-struct PriceQuadView: View {
+// MARK: - 【重构】共享组件：价格三联显示 (差值/最新 | 涨跌幅 | IV)
+// 原 PriceQuadView 改名为 PriceTriView 以体现变化，或者保持原名修改内部
+struct PriceTriView: View {
     let symbol: String
-    let price: Double
-    let prevPrice: Double
-    let diff: Double
+    let diff: Double      // 第一项：最新价+Change
+    let iv: String?       // 第三项：IV
     
     @EnvironmentObject var dataService: DataService
     
@@ -17,11 +17,6 @@ struct PriceQuadView: View {
             Text(String(format: "%+.1f", diff))
                 .font(.system(size: 15, weight: .bold, design: .monospaced))
                 .foregroundColor(diff >= 0 ? .red : .green)
-            
-            // 2. 最新 Price
-            Text(String(format: "%.1f", price))
-                .font(.system(size: 14, weight: .regular, design: .monospaced))
-                .foregroundColor(.primary)
             
             // 3. 涨跌百分比
             if let compareStr = dataService.compareDataUppercased[symbol.uppercased()] {
@@ -37,10 +32,16 @@ struct PriceQuadView: View {
                     .cornerRadius(4)
             }
             
-            // 4. 次新价格 (Prev)
-            Text(String(format: "%.1f", prevPrice))
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(.secondary)
+            // 3. IV (Implied Volatility) - 新增
+            if let ivText = iv {
+                Text(ivText)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(.secondary)
+            } else {
+                Text("--")
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(.secondary.opacity(0.5))
+            }
         }
         .fixedSize(horizontal: true, vertical: false) // 防止被压缩
     }
@@ -269,6 +270,13 @@ struct OptionsListView: View {
     // 【新增 1】控制跳转到股价图的状态
     @State private var navigateToChart = false
     
+    // 【新增 1】搜索相关的状态
+    @State private var showSearchBar = false      // 控制搜索框是否显示
+    @State private var searchText = ""            // 输入的内容
+    @State private var highlightedSymbol: String? // 当前高亮的 Symbol
+    // 【新增】焦点状态控制
+    @FocusState private var isSearchFieldFocused: Bool 
+    
     var sortedSymbols: [String] {
         let allSymbols = dataService.optionsData.keys
         let noCapSymbols = allSymbols.filter { symbol in
@@ -288,23 +296,64 @@ struct OptionsListView: View {
     }
     
     var body: some View {
-        List {
-            if sortedSymbols.isEmpty {
-                Text("暂无期权异动数据")
-                    .foregroundColor(.secondary)
-            } else {
-                ForEach(sortedSymbols, id: \.self) { symbol in
-                    // 【修改 2】传入长按闭包
-                    OptionListRow(
-                        symbol: symbol, 
-                        action: {
-                            handleSelection(symbol)
-                        },
-                        longPressAction: {
-                            handleLongPress(symbol)
+        // 【核心修改 1】使用 ScrollViewReader 包裹
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                
+                // 【新增 2】搜索栏区域 (当点击图标时显示)
+                if showSearchBar {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.gray)
+                        
+                        TextField("输入 Symbol 跳转 (如 AAPL)", text: $searchText)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .submitLabel(.search)
+                            // 【新增 1】绑定焦点状态
+                            .focused($isSearchFieldFocused) 
+                            // 【新增 2】当视图出现时，自动激活焦点
+                            .onAppear {
+                                isSearchFieldFocused = true
+                            }
+                            // 键盘点击“搜索/确认”时触发
+                            .onSubmit {
+                                performSearch(proxy: proxy)
+                            }
+                        
+                        Button("取消") {
+                            withAnimation {
+                                // 【优化】取消时先收起键盘
+                                isSearchFieldFocused = false 
+                                showSearchBar = false
+                                searchText = ""
+                                highlightedSymbol = nil // 取消高亮
+                            }
                         }
-                    )
+                    }
+                    .padding()
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
+                
+                List {
+                    if sortedSymbols.isEmpty {
+                        Text("暂无期权异动数据")
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(sortedSymbols, id: \.self) { symbol in
+                            OptionListRow(
+                                symbol: symbol,
+                                action: { handleSelection(symbol) },
+                                longPressAction: { handleLongPress(symbol) },
+                                // 【新增 3】传入高亮状态
+                                isHighlighted: symbol == highlightedSymbol
+                            )
+                            // 【关键】为每一行设置 id，以便 ScrollViewReader 能够找到它
+                            .id(symbol) 
+                        }
+                    }
+                }
+                .listStyle(PlainListStyle()) // 保持列表样式一致
             }
         }
         .navigationTitle("期权异动")
@@ -312,41 +361,56 @@ struct OptionsListView: View {
         // 【新增】右上角按钮
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: {
-                    // 这里原来是 .openSpecialList，改为 .viewOptionsRank
-                    if usageManager.canProceed(authManager: authManager, action: .viewOptionsRank) { 
-                        self.navigateToRank = true
-                    } else {
-                        self.showSubscriptionSheet = true
+                HStack(spacing: 12) { // 增加间距
+                    
+                    // 【新增 4】搜索按钮图标
+                    Button(action: {
+                        withAnimation {
+                            showSearchBar.toggle()
+                            // 如果打开搜索框，可以自动重置一下状态
+                            if !showSearchBar {
+                                highlightedSymbol = nil
+                            }
+                        }
+                    }) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.primary)
+                            .padding(8)
+                            .background(Color(UIColor.secondarySystemBackground))
+                            .clipShape(Circle())
                     }
-                }) {
-                    // 【修改点】设计漂亮的胶囊按钮
-                    HStack(spacing: 4) {
-                        // 加个小图标增加精致感
-                        Image(systemName: "chart.line.uptrend.xyaxis")
-                            .font(.system(size: 12, weight: .bold))
-                        
-                        Text("涨跌预测榜")
-                            .font(.system(size: 13, weight: .bold))
-                    }
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 12)
-                    .foregroundColor(.white)
-                    .background(
-                        // 蓝紫色渐变，体现“预测/智能”的感觉
-                        LinearGradient(
-                            gradient: Gradient(colors: [Color.blue, Color.indigo]),
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
+                    
+                    // 原有的 Rank 按钮
+                    Button(action: {
+                        if usageManager.canProceed(authManager: authManager, action: .viewOptionsRank) {
+                            self.navigateToRank = true
+                        } else {
+                            self.showSubscriptionSheet = true
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chart.line.uptrend.xyaxis")
+                                .font(.system(size: 12, weight: .bold))
+                            Text("涨跌预测榜")
+                                .font(.system(size: 13, weight: .bold))
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 12)
+                        .foregroundColor(.white)
+                        .background(
+                            LinearGradient(
+                                gradient: Gradient(colors: [Color.blue, Color.indigo]),
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
                         )
-                    )
-                    .clipShape(Capsule()) // 胶囊圆角
-                    .shadow(color: Color.blue.opacity(0.3), radius: 4, x: 0, y: 2) // 柔和阴影
-                    .overlay(
-                        // 增加一道淡淡的高光描边，增加立体感
-                        Capsule()
-                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                    )
+                        .clipShape(Capsule())
+                        .shadow(color: Color.blue.opacity(0.3), radius: 4, x: 0, y: 2)
+                        .overlay(
+                            Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1)
+                        )
+                    }
                 }
             }
         }
@@ -392,6 +456,37 @@ struct OptionsListView: View {
             self.showSubscriptionSheet = true
         }
     }
+
+    // 【新增 5】执行搜索与跳转逻辑
+    private func performSearch(proxy: ScrollViewProxy) {
+        let target = searchText.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        
+        guard !target.isEmpty else { return }
+        
+        // 在 sortedSymbols 中查找是否存在该 Symbol
+        // 为了体验更好，这里做了包含匹配，如果输入 "AAP"，能找到 "AAPL"
+        // 如果想严格匹配，就用 symbol == target
+        if let foundSymbol = sortedSymbols.first(where: { $0.contains(target) }) {
+            
+            // 1. 设置高亮
+            self.highlightedSymbol = foundSymbol
+            
+            // 2. 滚动跳转
+            withAnimation(.spring()) {
+                proxy.scrollTo(foundSymbol, anchor: .center) // anchor: .center 让它滚到屏幕中间
+            }
+            
+            // 可选：找到后收起键盘，但不收起搜索框，方便用户继续看
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            
+        } else {
+            // 可选：没找到给个震动反馈
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.error)
+            // 也可以把 highlightedSymbol 设为 nil
+            self.highlightedSymbol = nil
+        }
+    }
 }
 
 // 拆分出的列表行视图
@@ -401,11 +496,13 @@ struct OptionListRow: View {
     // 【新增】接收长按事件
     let longPressAction: () -> Void
     
+    // 【新增】是否高亮
+    var isHighlighted: Bool = false
+    
     @EnvironmentObject var dataService: DataService
     
-    // 【修改】存储计算好的三个数值，而不是只存一个价格
-    // Tuple: (Latest, Prev, Diff)
-    @State private var priceData: (latest: Double, prev: Double, diff: Double)? = nil
+    // 【修改】Tuple 结构变化：不需要 price 和 prev，只需要 diff 和 iv
+    @State private var displayData: (diff: Double, iv: String?)? = nil
     
     var body: some View {
         // 移除 Button，改用 VStack + 手势
@@ -415,10 +512,26 @@ struct OptionListRow: View {
             HStack(alignment: .center) {
                 // 左侧 Symbol + Name
                 HStack(spacing: 6) {
+                    
+                    // 【核心修改区域】只针对 Symbol 文字进行高亮
                     Text(symbol)
                         .font(.headline)
                         .fontWeight(.bold)
-                        .foregroundColor(.primary)
+                        // 1. 文字颜色：高亮时变白，普通时原色
+                        .foregroundColor(isHighlighted ? .white : .primary)
+                        // 2. 内边距：为了让背景色不贴着字，加一点点呼吸空间
+                        .padding(.horizontal, isHighlighted ? 6 : 0)
+                        .padding(.vertical, isHighlighted ? 2 : 0)
+                        // 3. 背景色：高亮时变蓝
+                        .background(
+                            isHighlighted 
+                            ? Color.blue 
+                            : Color.clear
+                        )
+                        // 4. 圆角：让高亮背景有个小圆角，更好看
+                        .cornerRadius(6)
+                        // 5. 动画：让颜色变化平滑过渡
+                        .animation(.easeInOut, value: isHighlighted)
                     
                     let info = getInfo(for: symbol)
                     if !info.name.isEmpty {
@@ -433,13 +546,12 @@ struct OptionListRow: View {
                 
                 Spacer(minLength: 8)
                 
-                // 右侧四联数字
-                if let data = priceData {
-                    PriceQuadView(
+                // 右侧三联数字
+                if let data = displayData {
+                    PriceTriView(
                         symbol: symbol,
-                        price: data.latest,
-                        prevPrice: data.prev,
-                        diff: data.diff
+                        diff: data.diff,
+                        iv: data.iv
                     )
                     .layoutPriority(1)
                 } else {
@@ -459,25 +571,20 @@ struct OptionListRow: View {
             }
         }
         .padding(.vertical, 4)
-        .contentShape(Rectangle()) // 确保点击空白处也能触发
-        // 【新增】添加手势
-        .onTapGesture {
-            action()
-        }
-        .onLongPressGesture(minimumDuration: 0.5) {
-            longPressAction()
-        }
-        .task {
-            await loadPriceAndCalc()
-        }
+        .contentShape(Rectangle())
+        .onTapGesture { action() }
+        .onLongPressGesture(minimumDuration: 0.5) { longPressAction() }
+        .task { await loadPriceAndCalc() }
+        // 这是一个小动画，让高亮出现时平滑一点
+        .animation(.easeInOut, value: isHighlighted)
     }
     
     // 【核心修改】加载数据并执行算法
     // 改为调用 fetchOptionsSummary，直接利用服务器返回的 change 字段
     private func loadPriceAndCalc() async {
-        if priceData != nil { return }
+        if displayData != nil { return }
         
-        // 调用新的接口获取数据 (Server 已更新 query_options_summary 返回 price 和 change)
+        // 调用包含 iv 的新接口
         guard let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol),
               let latest = summary.price,
               let change = summary.change else {
@@ -488,11 +595,11 @@ struct OptionListRow: View {
         // 1. First Value (Diff) = Latest + Change
         let diff = latest + change
         
-        // 2. Fourth Value (Prev) = Latest - Change
-        let prev = latest - change
+        // 3. Third Value (IV)
+        let iv = summary.iv
         
         await MainActor.run {
-            self.priceData = (latest, prev, diff)
+            self.displayData = (diff, iv)
         }
     }
     
@@ -836,9 +943,6 @@ struct OptionRankRow: View {
     let longPressAction: () -> Void 
     @EnvironmentObject var dataService: DataService
 
-    // 【移除】不再需要单独请求次新价格的状态
-    // @State private var secondLatestPrice: Double? = nil
-
     var body: some View {
         // 使用 VStack 包裹“数据行”和“Tags行”
         VStack(alignment: .leading, spacing: 6) {
@@ -865,12 +969,11 @@ struct OptionRankRow: View {
                 
                 Spacer(minLength: 8)
                 
-                // 【核心修改】直接调用共享组件
-                PriceQuadView(
+                // 【核心修改】使用新的三联组件
+                PriceTriView(
                     symbol: item.symbol,
-                    price: item.price,
-                    prevPrice: item.prevPrice,
-                    diff: item.diff
+                    diff: item.diff,
+                    iv: item.iv
                 )
                 .layoutPriority(1)
             }

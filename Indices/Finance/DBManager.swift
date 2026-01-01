@@ -21,6 +21,8 @@ class DatabaseManager {
         // 【新增】匹配服务器返回的 Price 和 Change
         let price: Double?
         let change: Double?
+        // 【新增】IV 字段
+        let iv: String?
     }
 
     struct MarketCapInfo: Codable {
