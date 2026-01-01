@@ -2,23 +2,34 @@ import SwiftUI
 import Charts
 import Foundation
 
-// MARK: - 【重构】共享组件：价格三联显示 (差值/最新 | 涨跌幅 | IV)
-// 原 PriceQuadView 改名为 PriceTriView 以体现变化，或者保持原名修改内部
+// MARK: - 【重构】共享组件：价格三联显示 (Latest IV | 涨跌幅 | Prev IV)
 struct PriceTriView: View {
     let symbol: String
-    let diff: Double      // 第一项：最新价+Change
-    let iv: String?       // 第三项：IV
+    
+    // 【修改】Value 1: 改为 String 类型 (传入 Latest IV)
+    let val1: String? 
+    // Value 2: 百分比 (自动计算)
+    // 【修改】Value 3: 改为 String 类型 (传入 Prev IV)
+    let val3: String? 
     
     @EnvironmentObject var dataService: DataService
     
     var body: some View {
         HStack(spacing: 8) {
-            // 1. 差值 (Diff)
-            Text(String(format: "%+.1f", diff))
-                .font(.system(size: 15, weight: .bold, design: .monospaced))
-                .foregroundColor(diff >= 0 ? .red : .green)
+            // 1. 第一项：Latest IV (替代原来的 Diff)
+            if let v1 = val1 {
+                Text(v1)
+                    .font(.system(size: 15, weight: .bold, design: .monospaced))
+                    // 【要求】保持正红负绿 (IV通常为正，所以这里实际上几乎总是红色)
+                    // 如果你想解析数值判断，可以用 Double(v1) >= 0
+                    .foregroundColor(.red) 
+            } else {
+                Text("--")
+                    .font(.system(size: 15, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
             
-            // 3. 涨跌百分比
+            // 2. 第二项：CompareStr (涨跌百分比) - 保持不变
             if let compareStr = dataService.compareDataUppercased[symbol.uppercased()] {
                 let rawPercentage = extractPercentage(from: compareStr)
                 let formattedPercentage = formatToPrecision(rawPercentage, precision: 1)
@@ -32,9 +43,9 @@ struct PriceTriView: View {
                     .cornerRadius(4)
             }
             
-            // 3. IV (Implied Volatility) - 新增
-            if let ivText = iv {
-                Text(ivText)
+            // 3. 第三项：Previous IV (替代原来的 Latest IV)
+            if let v3 = val3 {
+                Text(v3)
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundColor(.secondary)
             } else {
@@ -501,8 +512,8 @@ struct OptionListRow: View {
     
     @EnvironmentObject var dataService: DataService
     
-    // 【修改】Tuple 结构变化：不需要 price 和 prev，只需要 diff 和 iv
-    @State private var displayData: (diff: Double, iv: String?)? = nil
+    // 【修改】Tuple 结构变化：存储 (Latest IV, Prev IV)
+    @State private var displayData: (iv: String?, prevIv: String?)? = nil
     
     var body: some View {
         // 移除 Button，改用 VStack + 手势
@@ -546,12 +557,12 @@ struct OptionListRow: View {
                 
                 Spacer(minLength: 8)
                 
-                // 右侧三联数字
+                // 【核心修改】传入 IV 数据
                 if let data = displayData {
                     PriceTriView(
                         symbol: symbol,
-                        diff: data.diff,
-                        iv: data.iv
+                        val1: data.iv,      // Latest IV
+                        val3: data.prevIv   // Previous IV
                     )
                     .layoutPriority(1)
                 } else {
@@ -584,22 +595,17 @@ struct OptionListRow: View {
     private func loadPriceAndCalc() async {
         if displayData != nil { return }
         
-        // 调用包含 iv 的新接口
-        guard let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol),
-              let latest = summary.price,
-              let change = summary.change else {
+        // 调用新的 Summary 接口
+        guard let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol) else {
             return
         }
         
-        // 【算法适配】
-        // 1. First Value (Diff) = Latest + Change
-        let diff = latest + change
-        
-        // 3. Third Value (IV)
+        // 【修改】不再计算 Price+Change，而是直接取 IV
         let iv = summary.iv
+        let prevIv = summary.prev_iv
         
         await MainActor.run {
-            self.displayData = (diff, iv)
+            self.displayData = (iv, prevIv)
         }
     }
     
@@ -628,6 +634,9 @@ struct OptionsDetailView: View {
     @State private var navigateToChart = false
     @State private var summaryCall: String = ""
     @State private var summaryPut: String = ""
+
+    // 【修改】用于存储计算后的最新价格 (Price + Change)
+    @State private var displayPrice: Double? = nil 
     
     // 【新增】用于存储从数据库获取的涨跌额 change
     @State private var dbChange: Double? = nil
@@ -682,11 +691,18 @@ struct OptionsDetailView: View {
                         .font(.headline)
                         .foregroundColor(.primary)
                     
-                    // 如果获取到了 change 数据，显示带颜色的数值
-                    if let change = dbChange {
-                        Text(String(format: "(%+.2f)", change)) // 格式化为 (+1.50)
+                    // 【核心修改】显示 Price + Change
+                    if let priceVal = displayPrice {
+                        // 假设 change 我们需要重新获取或计算，
+                        // 但这里最简单的做法是：dbChange 存储的是 Change，
+                        // 我们需要在 task 里把 price 也存下来。
+                        
+                        // 逻辑：如果 Change > 0，显示红色，否则绿色
+                        // 这里使用 displayPrice 本身无法判断颜色，需要结合 dbChange
+                        Text(String(format: "(%.2f)", priceVal)) 
                             .font(.headline)
-                            .foregroundColor(change >= 0 ? .red : .green) // 正红负绿
+                             // 如果 dbChange (涨跌额) > 0 则红，否则绿
+                            .foregroundColor((dbChange ?? 0) >= 0 ? .red : .green) 
                     }
                 }
             }
@@ -720,7 +736,7 @@ struct OptionsDetailView: View {
         // --- 新增：挂载订阅页面 ---
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .task {
-            // 【修改 3】获取数据并保存 change
+            // 【修改 3】获取数据
             if let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol) {
                 await MainActor.run {
                     if let c = summary.call { self.summaryCall = c }
@@ -729,6 +745,11 @@ struct OptionsDetailView: View {
                     // 赋值给状态变量
                     if let chg = summary.change {
                         self.dbChange = chg
+                        
+                        // 【新增】计算 Price + Change
+                        if let price = summary.price {
+                            self.displayPrice = price + chg
+                        }
                     }
                 }
             }
@@ -969,11 +990,11 @@ struct OptionRankRow: View {
                 
                 Spacer(minLength: 8)
                 
-                // 【核心修改】使用新的三联组件
+                // 【核心修改】使用新的字段
                 PriceTriView(
                     symbol: item.symbol,
-                    diff: item.diff,
-                    iv: item.iv
+                    val1: item.iv,       // Latest IV
+                    val3: item.prev_iv   // Previous IV
                 )
                 .layoutPriority(1)
             }

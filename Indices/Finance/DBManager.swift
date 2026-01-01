@@ -23,6 +23,8 @@ class DatabaseManager {
         let change: Double?
         // 【新增】IV 字段
         let iv: String?
+        // 【新增】次新 IV
+        let prev_iv: String? 
     }
 
     struct MarketCapInfo: Codable {

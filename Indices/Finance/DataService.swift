@@ -70,10 +70,9 @@ struct OptionItem: Identifiable, Hashable {
 struct OptionRankItem: Codable, Identifiable {
     var id: String { symbol }
     let symbol: String
-    let price: Double      // 虽然后端传了，但前端可能不直接显示，保留作为参考
-    // let prevPrice: Double // 【移除】前端不再需要这个字段
-    let diff: Double       // Value 1
-    let iv: String?        // 【新增】Value 3
+    // 移除 price, diff，改为前后两个 IV
+    let iv: String?        // Value 1 (Latest)
+    let prev_iv: String?   // Value 3 (Previous)
 }
 
 // 【新增】期权榜单响应模型
