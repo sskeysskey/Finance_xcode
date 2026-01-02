@@ -25,6 +25,9 @@ class DatabaseManager {
         let iv: String?
         // 【新增】次新 IV
         let prev_iv: String? 
+        // 【本次新增】次新数据的 Price 和 Change
+        let prev_price: Double?
+        let prev_change: Double?
     }
 
     struct MarketCapInfo: Codable {

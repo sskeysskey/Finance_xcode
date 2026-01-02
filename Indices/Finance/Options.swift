@@ -622,6 +622,7 @@ struct OptionListRow: View {
 }
 
 // MARK: - 【重构】界面 B：期权详情表格
+
 struct OptionsDetailView: View {
     let symbol: String
     @EnvironmentObject var dataService: DataService
@@ -634,9 +635,11 @@ struct OptionsDetailView: View {
     @State private var navigateToChart = false
     @State private var summaryCall: String = ""
     @State private var summaryPut: String = ""
-
     // 【修改】用于存储计算后的最新价格 (Price + Change)
     @State private var displayPrice: Double? = nil 
+    
+    // 【新增】用于存储计算后的次新价格 (Prev Price + Prev Change)
+    @State private var displayPrevPrice: Double? = nil 
     
     // 【新增】用于存储从数据库获取的涨跌额 change
     @State private var dbChange: Double? = nil
@@ -687,22 +690,25 @@ struct OptionsDetailView: View {
             // 【修改 2】使用 principal 来自定义中间标题，支持颜色
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 4) {
+                    // Symbol 保持原样 (或者如果还是很挤，可以改为 .subheadline)
                     Text(symbol)
                         .font(.headline)
                         .foregroundColor(.primary)
                     
-                    // 【核心修改】显示 Price + Change
+                    // 1. 显示最新 Price + Change
                     if let priceVal = displayPrice {
-                        // 假设 change 我们需要重新获取或计算，
-                        // 但这里最简单的做法是：dbChange 存储的是 Change，
-                        // 我们需要在 task 里把 price 也存下来。
-                        
-                        // 逻辑：如果 Change > 0，显示红色，否则绿色
-                        // 这里使用 displayPrice 本身无法判断颜色，需要结合 dbChange
-                        Text(String(format: "(%.2f)", priceVal)) 
-                            .font(.headline)
-                             // 如果 dbChange (涨跌额) > 0 则红，否则绿
+                        // 【修改】移除括号，改用 smaller font (例如 size 14)
+                        Text(String(format: "%.2f", priceVal)) 
+                            .font(.system(size: 14, weight: .medium))
                             .foregroundColor((dbChange ?? 0) >= 0 ? .red : .green) 
+                    }
+                    
+                    // 2. 显示次新 Price + Change
+                    if let prevVal = displayPrevPrice {
+                        // 【修改】移除括号，改用 smaller font (例如 size 14)
+                        Text(String(format: "%.2f", prevVal))
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.gray) 
                     }
                 }
             }
@@ -718,7 +724,7 @@ struct OptionsDetailView: View {
                         showSubscriptionSheet = true
                     }
                 }) {
-                    Text("切换股价模式")
+                    Text("切股价")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 10)
@@ -742,7 +748,7 @@ struct OptionsDetailView: View {
                     if let c = summary.call { self.summaryCall = c }
                     if let p = summary.put { self.summaryPut = p }
                     
-                    // 赋值给状态变量
+                    // 1. 处理最新数据
                     if let chg = summary.change {
                         self.dbChange = chg
                         
@@ -750,6 +756,11 @@ struct OptionsDetailView: View {
                         if let price = summary.price {
                             self.displayPrice = price + chg
                         }
+                    }
+                    
+                    // 2. 【本次新增】处理次新数据
+                    if let prevPrice = summary.prev_price, let prevChg = summary.prev_change {
+                        self.displayPrevPrice = prevPrice + prevChg
                     }
                 }
             }
