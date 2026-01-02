@@ -3,6 +3,8 @@ import SwiftUI
 struct ArticleContainerView: View {
     let initialArticle: Article
     let navigationContext: NavigationContext
+    // 【新增】标记是否在页面出现时自动开始播放
+    let autoPlayOnAppear: Bool
 
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager
@@ -33,12 +35,13 @@ struct ArticleContainerView: View {
         case fromAllArticles
     }
 
-    init(article: Article, sourceName: String, context: NavigationContext, viewModel: NewsViewModel, resourceManager: ResourceManager) {
+    init(article: Article, sourceName: String, context: NavigationContext, viewModel: NewsViewModel, resourceManager: ResourceManager, autoPlayOnAppear: Bool = false) {
         self.initialArticle = article
         self.navigationContext = context
         self.viewModel = viewModel
         self.resourceManager = resourceManager
-        
+        self.autoPlayOnAppear = autoPlayOnAppear // 【新增】赋值
+
         self._currentArticle = State(initialValue: article)
         self._currentSourceName = State(initialValue: sourceName)
     }
@@ -136,6 +139,16 @@ struct ArticleContainerView: View {
                 }
             }
             audioPlayerManager.onPlaybackFinished = { }
+
+            // 【新增】处理进入页面后的自动播放逻辑
+            if autoPlayOnAppear {
+                // 稍微延迟一点，确保视图加载完成，且避免和系统的转场动画冲突
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    if !audioPlayerManager.isPlaybackActive {
+                        startPlayback()
+                    }
+                }
+            }
         }
         .onDisappear {
             guard !didCommitOnDisappear else { return }

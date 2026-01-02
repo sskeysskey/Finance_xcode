@@ -233,6 +233,9 @@ struct SourceListView: View {
     
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
+
+    // 【新增】用于控制跳转时是否自动播放的状态
+    @State private var shouldAutoPlayNextNav: Bool = false
     
     @State private var showAddSourceSheet = false
     // 【新增】控制登录弹窗的显示
@@ -388,9 +391,12 @@ struct SourceListView: View {
                     ArticleContainerView(
                         article: item.article,
                         sourceName: item.sourceName,
-                        context: .fromAllArticles, // 搜索结果的上下文视为 "All Articles"
+                        context: .fromAllArticles, // 搜索结果或All列表点击都视为 All 上下文
                         viewModel: viewModel,
-                        resourceManager: resourceManager
+                        resourceManager: resourceManager,
+                        
+                        // 👇👇👇 【核心修复】这里必须把状态传进去，否则默认为 false 👇👇👇
+                        autoPlayOnAppear: shouldAutoPlayNextNav
                     )
                 }
             }
@@ -641,14 +647,19 @@ struct SourceListView: View {
                                         .foregroundColor(.white.opacity(0.8))
                                 }
                                 Spacer()
-                                VStack(alignment: .trailing) {
+                                // 【修改】将 VStack 改为 HStack，并设置底部对齐
+                                HStack(alignment: .lastTextBaseline, spacing: 4) {
                                     Text("\(viewModel.totalUnreadCount)")
                                         .font(.system(size: 42, weight: .bold, design: .rounded))
                                         .foregroundColor(.white)
+                                    
                                     Text("未读")
                                         .font(.caption.bold())
                                         .foregroundColor(.white.opacity(0.8))
+                                        // 稍微调整一下位置，防止在大字体旁显得太靠下（可选）
+                                        .padding(.bottom, 4) 
                                 }
+
                             }
                             .padding(24)
                             .background(
@@ -656,9 +667,26 @@ struct SourceListView: View {
                             )
                             .cornerRadius(20)
                             .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
+                            // 【新增】在这里叠加播放按钮
+                            .overlay(alignment: .bottomTrailing) {
+                                Button(action: {
+                                    // 执行一键播放逻辑
+                                    Task { await handlePlayAll() }
+                                }) {
+                                    Image(systemName: "play.circle.fill")
+                                        .font(.system(size: 50)) // 大个按钮
+                                        .foregroundColor(.white)
+                                        .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 2)
+                                        .background(Circle().fill(Color.blue)) // 填充蓝色背景防止透视
+                                }
+                                .padding(.trailing, 20)
+                                .padding(.bottom, -25) // 让按钮悬挂在卡片边缘，增加立体感
+                            }
                         }
                         .padding(.horizontal, 16)
                         .buttonStyle(ScaleButtonStyle()) // 增加点击缩放效果
+                        // 为了给悬挂的播放按钮留出空间，增加一点间距
+                        Spacer().frame(height: 30)
                         
                         // 3. 分源列表
                         VStack(spacing: 1) {
@@ -718,9 +746,31 @@ struct SourceListView: View {
             }
         }
     }
-    
-    // 【新增】处理文章点击和图片下载的函数
-    private func handleArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool)) async {
+
+    // 【修改】处理点击“Play All”按钮的逻辑
+    private func handlePlayAll() async {
+        // 1. 获取所有排序后的文章列表
+        let allItems = viewModel.allArticlesSortedForDisplay
+        
+        // 2. 筛选出所有“未读”的文章
+        let unreadItems = allItems.filter { item in
+            !viewModel.isArticleEffectivelyRead(item.article)
+        }
+        
+        // 3. 优先取第一篇未读；如果全部已读，则兜底取整个列表的第一篇（最新的那篇）
+        guard let targetItem = unreadItems.first ?? allItems.first else {
+            return
+        }
+        
+        // 4. 构造数据结构
+        let itemToPlay = (article: targetItem.article, sourceName: targetItem.sourceName, isContentMatch: false)
+        
+        // 5. 调用复用的逻辑，并开启自动播放
+        await handleArticleTap(itemToPlay, autoPlay: true)
+    }
+
+    // 【修改】更新函数签名，增加 autoPlay 参数
+    private func handleArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool), autoPlay: Bool = false) async {
         let article = item.article
         let sourceName = item.sourceName
         
@@ -730,9 +780,17 @@ struct SourceListView: View {
             return
         }
         
+        // 准备导航
+        let prepareNavigation = {
+            await MainActor.run {
+                self.shouldAutoPlayNextNav = autoPlay // 【新增】设置自动播放状态
+                self.selectedArticleItem = (article, sourceName)
+                self.isNavigationActive = true
+            }
+        }
+
         guard !article.images.isEmpty else {
-            selectedArticleItem = (article, sourceName)
-            isNavigationActive = true
+            await prepareNavigation()
             return
         }
         
@@ -744,10 +802,7 @@ struct SourceListView: View {
         
         // 3. 如果图片已存在，直接导航
         if imagesAlreadyExist {
-            await MainActor.run {
-                selectedArticleItem = (article, sourceName)
-                isNavigationActive = true
-            }
+            await prepareNavigation()
             return
         }
         
@@ -773,9 +828,9 @@ struct SourceListView: View {
             // 5. 下载成功后，隐藏遮罩并执行导航
             await MainActor.run {
                 isDownloadingImages = false
-                selectedArticleItem = (article, sourceName)
-                isNavigationActive = true
             }
+            await prepareNavigation() // 下载成功后跳转
+            
         } catch {
             // 6. 下载失败，隐藏遮罩并显示错误提示
             await MainActor.run {

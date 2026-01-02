@@ -490,7 +490,8 @@ struct ArticleListView: View {
                         sourceName: sourceName,
                         context: .fromSource(sourceName),
                         viewModel: viewModel,
-                        resourceManager: resourceManager
+                        resourceManager: resourceManager,
+                        autoPlayOnAppear: false // 【修改】适配新参数
                     )
                 }
             }
@@ -840,7 +841,8 @@ struct AllArticlesListView: View {
                     sourceName: item.sourceName,
                     context: .fromAllArticles,
                     viewModel: viewModel,
-                    resourceManager: resourceManager
+                    resourceManager: resourceManager,
+                    autoPlayOnAppear: false // 【修改】适配新参数
                 )
             }
         }
