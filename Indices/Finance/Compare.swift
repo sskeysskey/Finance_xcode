@@ -415,10 +415,11 @@ struct NativeComparisonChartView: View {
         // 1. 数据归一化处理
         let normalizedData = normalizeData(data)
         
-        // 2. 计算整体时间范围，用于X轴格式化
+        // 2. 计算整体时间范围
+        // 【关键点 1】确保这里计算出的 minDate 和 maxDate 被用于下方的 chartXScale
         let (minDate, maxDate) = findDateRange(from: data)
         let timeSpan = maxDate.timeIntervalSince(minDate)
-
+        
         // 3. 构建图表
         Chart {
             // 遍历每个股票代码的数据
@@ -465,6 +466,10 @@ struct NativeComparisonChartView: View {
             }
         }
         // 4. 图表样式和坐标轴配置
+        
+        // 【关键修复 1】显式锁定 X 轴范围，防止手势触发自动缩放
+        .chartXScale(domain: minDate...maxDate)
+        
         .chartYScale(domain: 0...100) // Y轴固定在0-100范围
         .chartYAxis {
             // 隐藏Y轴标签，但保留网格线，实现与原版一致的效果
@@ -482,16 +487,28 @@ struct NativeComparisonChartView: View {
                 }
             }
         }
-        .chartLegend(position: .top, alignment: .leading) // 图例
-        .chartForegroundStyleScale(domain: data.keys.sorted(), range: colors) // 颜色映射
+        .chartLegend(position: .top, alignment: .leading)
+        .chartForegroundStyleScale(domain: data.keys.sorted(), range: colors)
         .chartOverlay { proxy in
-            // 添加手势识别区域，用于更新选择的日期
-            GeometryReader { _ in
+            // 添加手势识别区域
+            GeometryReader { geometry in // 这里改名为 geometry 方便调用 frame
                 Rectangle().fill(.clear).contentShape(Rectangle())
-                    .gesture(
+                    // 【关键修复 2】使用 highPriorityGesture 覆盖默认手势
+                    .highPriorityGesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { value in
-                                updateSelection(at: value.location, proxy: proxy)
+                                // 【关键修复 3】移植 b.swift 的坐标限制逻辑
+                                let xPos = value.location.x
+                                if let date: Date = proxy.value(atX: xPos) {
+                                    // 确保计算出的日期不超出实际数据范围，防止抖动
+                                    if date >= minDate && date <= maxDate {
+                                        selectedDate = date
+                                    } else if date < minDate {
+                                        selectedDate = minDate
+                                    } else {
+                                        selectedDate = maxDate
+                                    }
+                                }
                             }
                             .onEnded { _ in
                                 selectedDate = nil // 拖动结束时隐藏标记
@@ -527,14 +544,7 @@ struct NativeComparisonChartView: View {
         }
     }
     
-    /// 更新手势选择的位置
-    private func updateSelection(at location: CGPoint, proxy: ChartProxy) {
-        if let date: Date = proxy.value(atX: location.x) {
-            selectedDate = date
-        }
-    }
-    
-    /// 创建自定义的日期标记视图
+    /// 创建自定义的日期标记视图 (保留原样)
     @ViewBuilder
     private func dateMarkerView(for date: Date) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -565,15 +575,33 @@ struct NativeComparisonChartView: View {
     private func findDateRange(from data: [String: [DatabaseManager.PriceData]]) -> (Date, Date) {
         var minDate = Date.distantFuture
         var maxDate = Date.distantPast
+        var hasData = false
         
         for (_, priceData) in data {
-            if let firstDate = priceData.first?.date {
+            // 确保这组数据不为空
+            if let firstDate = priceData.first?.date, let lastDate = priceData.last?.date {
                 minDate = min(minDate, firstDate)
-            }
-            if let lastDate = priceData.last?.date {
                 maxDate = max(maxDate, lastDate)
+                hasData = true
             }
         }
+        
+        // 【崩溃修复核心】
+        // 如果没有找到有效数据，或者 minDate 依然大于 maxDate（初始状态），
+        // 则返回一个默认的安全范围（例如当前时间的前后24小时）。
+        // 这样可以保证 .chartXScale 永远接收合法的 range。
+        if !hasData || minDate > maxDate {
+            let now = Date()
+            return (now.addingTimeInterval(-86400), now)
+        }
+        
+        // 【优化】
+        // 如果只有一个数据点（min == max），Chart 也可能报错或显示异常。
+        // 这里手动撑开一点时间范围（例如前后半天）。
+        if minDate == maxDate {
+            return (minDate.addingTimeInterval(-43200), maxDate.addingTimeInterval(43200))
+        }
+        
         return (minDate, maxDate)
     }
 }
