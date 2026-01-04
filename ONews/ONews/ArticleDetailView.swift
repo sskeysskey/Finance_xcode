@@ -271,10 +271,12 @@ struct ArticleDetailView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $isSharePresented) {
-            let shareText = article.topic + "\n\n" + cachedParagraphs.joined(separator: "\n\n")
-            ActivityView(activityItems: [shareText])
-                .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+            // 直接调用函数获取文本，不再包含 if 逻辑代码
+            ActivityView(activityItems: [createShareText()])
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
+
         // 【新增】挂载推广弹窗
         .sheet(isPresented: $showNewsPromoSheet) {
             NewsPromoView(onOpenAction: {
@@ -287,6 +289,20 @@ struct ArticleDetailView: View {
             })
         }
     }
+
+    // 【新增】生成分享文本的辅助函数，避免在 ViewBuilder 中写复杂逻辑
+    private func createShareText() -> String {
+        let limit = 7
+        let textParts = cachedParagraphs.prefix(limit)
+        var bodyText = textParts.joined(separator: "\n\n")
+        
+        if cachedParagraphs.count > limit {
+            bodyText += "\n\n...\n\n阅读全文请前往App Store免费下载“国外的事“应用程序"
+        }
+        
+        return article.topic + "\n\n" + bodyText
+    }
+
     
     // 【优化】计算逻辑提取
     private func prepareContent() {
