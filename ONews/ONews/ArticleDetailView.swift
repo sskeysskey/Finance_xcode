@@ -83,7 +83,26 @@ struct ArticleDetailView: View {
     @State private var showSystemActivitySheet = false
     // 【新增】控制微信引导页
     @State private var showWeChatGuideSheet = false
-
+    
+    // 【新增 1】控制当前显示是否为英文模式
+    @State private var isEnglishMode = false
+    
+    // 【新增 2】判断是否存在有效的英文版本
+    private var hasEnglishVersion: Bool {
+        guard let tEng = article.topic_eng, !tEng.isEmpty,
+              let aEng = article.article_eng, !aEng.isEmpty else {
+            return false
+        }
+        return true
+    }
+    
+    // 【新增 3】获取当前应显示的标题
+    private var displayTopic: String {
+        if isEnglishMode, let tEng = article.topic_eng {
+            return tEng
+        }
+        return article.topic
+    }
     
     // 【优化】静态 Formatter
     private static let parsingFormatter: DateFormatter = {
@@ -128,17 +147,20 @@ struct ArticleDetailView: View {
                                 }
                             }
                         }
-                            
-                            Text(article.topic)
-                                .font(.system(.title, design: .serif)).fontWeight(.bold)
-                        }
-                        .padding(.horizontal, 20)
+                        
+                        // 【修改 1】这里使用动态的 displayTopic
+                        Text(displayTopic)
+                            .font(.system(.title, design: .serif)).fontWeight(.bold)
+                            // 英文标题通常不需要那么紧凑，可以微调，这里保持一致即可
+                            .animation(.none, value: isEnglishMode) 
+                    }
+                    .padding(.horizontal, 20)
                     
                     if let firstImage = article.images.first {
                         ArticleImageView(imageName: firstImage, timestamp: article.timestamp)
                     }
                     
-                    // 使用缓存的段落
+                    // 使用缓存的段落 (内容已在 prepareContent 中根据语言切换)
                     ForEach(cachedParagraphs.indices, id: \.self) { pIndex in
                         Text(cachedParagraphs[pIndex])
                             .font(.custom("NewYork-Regular", size: 21))
@@ -240,9 +262,17 @@ struct ArticleDetailView: View {
             }
         }
         .onAppear {
+            // 每次出现时，重置为中文模式（或者你可以根据需求保留状态）
+            // isEnglishMode = false 
             prepareContent()
         }
         .onChange(of: article) { _, _ in
+            // 切换文章时，重置回中文（可选）
+            isEnglishMode = false
+            prepareContent()
+        }
+        // 【新增 4】监听语言模式切换，重新计算段落布局
+        .onChange(of: isEnglishMode) { _, _ in
             prepareContent()
         }
         .toolbar {
@@ -264,8 +294,32 @@ struct ArticleDetailView: View {
                 }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
-                HStack {
-                    // 【修改】按钮的 action 现在调用 onAudioToggle 闭包
+                HStack(spacing: 12) { // 稍微增加间距
+                    // 【新增 5】中/英 切换按钮
+                    if hasEnglishVersion {
+                        Button(action: {
+                            withAnimation(.spring()) {
+                                isEnglishMode.toggle()
+                            }
+                        }) {
+                            ZStack {
+                                Circle()
+                                    .strokeBorder(Color.primary, lineWidth: 1.5)
+                                    // 逻辑：如果是英文模式，圆圈实心（高亮），否则空心
+                                    .background(isEnglishMode ? Color.primary : Color.clear)
+                                    .clipShape(Circle())
+                                    
+                                Text(isEnglishMode ? "中" : "En")
+                                    .font(.system(size: 10, weight: .bold)) // 字体小一点以适应圆圈
+                                    // 颜色适配：实心时文字反色，空心时文字主色
+                                    .foregroundColor(isEnglishMode ? Color.viewBackground : Color.primary)
+                            }
+                            .frame(width: 24, height: 24)
+                        }
+                        // 稍微给个过渡动画
+                        .transition(.scale.combined(with: .opacity))
+                    }
+
                     Button(action: onAudioToggle) {
                         Image(systemName: audioPlayerManager.isPlaybackActive ? "headphones.slash" : "headphones")
                     }
@@ -336,23 +390,34 @@ struct ArticleDetailView: View {
         var bodyText = textParts.joined(separator: "\n\n")
         
         if cachedParagraphs.count > limit {
-            bodyText += "\n\n...\n\n阅读全文请前往App Store免费下载“国外的事“应用程序"
+            bodyText += "\n\n...\n\n阅读全文请前往App Store免费下载“国外消息“应用程序"
         }
         
-        return article.topic + "\n\n" + bodyText
+        // 【修改 2】分享时也使用当前显示的语言标题
+        return displayTopic + "\n\n" + bodyText
     }
-
     
-    // 【优化】计算逻辑提取
+    // 【核心修改】prepareContent 逻辑升级
     private func prepareContent() {
-        let paras = article.article
+        // 1. 根据当前模式选择文本源
+        let contentToParse: String
+        if isEnglishMode, let contentEng = article.article_eng, !contentEng.isEmpty {
+            contentToParse = contentEng
+        } else {
+            contentToParse = article.article
+        }
+        
+        // 2. 解析段落
+        let paras = contentToParse
             .components(separatedBy: .newlines)
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         
+        // 3. 图片逻辑保持不变（图片通常是通用的）
         let imgs = Array(article.images.dropFirst())
         let distribute = !imgs.isEmpty && imgs.count < paras.count
         let interval = distribute ? paras.count / (imgs.count + 1) : 1
         
+        // 4. 更新状态
         self.cachedParagraphs = paras
         self.cachedRemainingImages = imgs
         self.cachedDistributeEvenly = distribute

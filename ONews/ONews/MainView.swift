@@ -748,14 +748,19 @@ struct Article: Identifiable, Codable, Hashable {
     var id = UUID()
     let topic: String
     let article: String
+    // --- 新增下面两个字段 ---
+    let topic_eng: String?   // 英文标题 (可选)
+    let article_eng: String? // 英文正文 (可选)
+    // ----------------------
     let images: [String]
     let source_id: String?
-    let url: String? // 【新增】原文链接字段
+    let url: String?
     var isRead: Bool = false
     var timestamp: String = ""
 
     enum CodingKeys: String, CodingKey {
-        case topic, article, images, source_id, url
+        // --- 记得在这里添加映射 ---
+        case topic, article, images, source_id, url, topic_eng, article_eng
     }
 
     func hash(into hasher: inout Hasher) {
