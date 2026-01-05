@@ -76,6 +76,14 @@ struct ArticleDetailView: View {
     @State private var cachedRemainingImages: [String] = []
     @State private var cachedInsertionInterval: Int = 1
     @State private var cachedDistributeEvenly: Bool = false
+
+    // 【修改】控制自定义分享菜单
+    @State private var showCustomShareSheet = false
+    // 【新增】控制系统分享（点击“更多”后显示）
+    @State private var showSystemActivitySheet = false
+    // 【新增】控制微信引导页
+    @State private var showWeChatGuideSheet = false
+
     
     // 【优化】静态 Formatter
     private static let parsingFormatter: DateFormatter = {
@@ -263,18 +271,49 @@ struct ArticleDetailView: View {
                     }
                     .disabled(audioPlayerManager.isSynthesizing)
                     
-                    Button { isSharePresented = true } label: { Image(systemName: "square.and.arrow.up") }
+                    // 原代码：Button { isSharePresented = true } ...
+                    // 修改后：
+                    Button { 
+                        showCustomShareSheet = true 
+                    } label: { 
+                        Image(systemName: "square.and.arrow.up") 
+                    }
+
                 }
                 // 【修改点1】这里添加 .primary 颜色，使图标变为黑白（跟随系统主题）
                 .foregroundColor(.primary)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $isSharePresented) {
-            // 直接调用函数获取文本，不再包含 if 逻辑代码
+                // 1. 自定义分享菜单
+        .sheet(isPresented: $showCustomShareSheet) {
+            CustomShareSheet(
+                onWeChatAction: {
+                    // --- 核心逻辑：复制文本并弹出引导 ---
+                    let text = createShareText()
+                    UIPasteboard.general.string = text
+                    
+                    // 延迟一点时间，让当前 sheet 收起动画完成后再弹出下一个
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        showWeChatGuideSheet = true
+                    }
+                },
+                onSystemShareAction: {
+                    // --- 核心逻辑：调用系统分享 ---
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        showSystemActivitySheet = true
+                    }
+                }
+            )
+        }
+        // 2. 微信引导页
+        .sheet(isPresented: $showWeChatGuideSheet) {
+            WeChatGuideView()
+        }
+        // 3. 原生系统分享（作为“更多”选项）
+        .sheet(isPresented: $showSystemActivitySheet) {
             ActivityView(activityItems: [createShareText()])
                 .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
         }
 
         // 【新增】挂载推广弹窗
