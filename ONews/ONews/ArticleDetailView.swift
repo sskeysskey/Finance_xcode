@@ -56,6 +56,8 @@ struct ArticleDetailView: View {
     let sourceName: String
     let unreadCountForGroup: Int
     let totalUnreadCount: Int
+    // 【修改】改为 Binding，接收父视图的状态
+    @Binding var isEnglishMode: Bool 
     @ObservedObject var viewModel: NewsViewModel
 
     // 【修改】保持对 manager 的观察以获取状态
@@ -83,9 +85,6 @@ struct ArticleDetailView: View {
     @State private var showSystemActivitySheet = false
     // 【新增】控制微信引导页
     @State private var showWeChatGuideSheet = false
-    
-    // 【新增 1】控制当前显示是否为英文模式
-    @State private var isEnglishMode = false
     
     // 【新增 2】判断是否存在有效的英文版本
     private var hasEnglishVersion: Bool {

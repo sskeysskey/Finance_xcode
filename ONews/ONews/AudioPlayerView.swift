@@ -218,7 +218,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     // MARK: - Public Control Methods
-    func startPlayback(text: String, title: String? = nil) {
+    func startPlayback(text: String, title: String? = nil, language: String = "zh-CN") {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             handleError("文本内容为空，无法播放。")
             return
@@ -235,7 +235,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         self.nowPlayingTitle = title?.isEmpty == false ? title! : "正在播放的文章"
         self.speechSynthesizer.delegate = self
 
-        let processedText = preprocessText(text)
+        // 【修改点】传入 language 参数给预处理函数
+        let processedText = preprocessText(text, language: language)
 
         isSynthesizing = true
         isPlaybackActive = true
@@ -251,7 +252,13 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         refreshNowPlayingInfo(playbackRate: 0.0)
 
         let utterance = AVSpeechUtterance(string: processedText)
-        utterance.voice = getBestVoice(for: text)
+        // 【修改点】使用传入的 language 来获取声音，不再完全依赖自动检测
+        // 如果是英文，直接指定英文声音；如果是中文，保持原有逻辑
+        if language.starts(with: "en") {
+            utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        } else {
+            utterance.voice = getBestVoice(for: text)
+        }
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.pitchMultiplier = 1.0
         utterance.postUtteranceDelay = 0.3
@@ -727,10 +734,15 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     // 调整调用顺序：先去逗号 -> 统一破折号 -> 英文/范围/单位处理 -> 年份逐字化 -> 中英间停顿
-    private func preprocessText(_ text: String) -> String {
-        // 【新增优化】在处理任何逻辑之前，先将 URL 替换为可读的文本“链接”
-        // 避免朗读冗长的 http 字符串
+    private func preprocessText(_ text: String, language: String) -> String {
+        // 移除 URL 是通用的
         let textWithoutURLs = text.replacingOccurrences(of: "https?://[^\\s]+", with: "链接", options: .regularExpression)
+        
+        // 【核心修改】如果是英文模式，直接返回处理过 URL 的文本
+        // 跳过所有针对中文的数字、年份、破折号处理，否则英文数字会被读乱
+        if language.starts(with: "en") {
+            return textWithoutURLs
+        }
         
         // 去掉数字中的逗号
         let textWithoutCommas = removeCommasFromNumbers(textWithoutURLs)

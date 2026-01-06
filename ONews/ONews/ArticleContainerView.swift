@@ -22,6 +22,9 @@ struct ArticleContainerView: View {
 
     @State private var didCommitOnDisappear = false
     
+    // 【新增】在父视图持有语言状态
+    @State private var isEnglishMode = false
+    
     // 【修改】更新图片下载状态变量以支持详细进度
     @State private var isDownloadingImages = false
     @State private var downloadProgress: Double = 0.0
@@ -40,8 +43,7 @@ struct ArticleContainerView: View {
         self.navigationContext = context
         self.viewModel = viewModel
         self.resourceManager = resourceManager
-        self.autoPlayOnAppear = autoPlayOnAppear // 【新增】赋值
-
+        self.autoPlayOnAppear = autoPlayOnAppear
         self._currentArticle = State(initialValue: article)
         self._currentSourceName = State(initialValue: sourceName)
     }
@@ -53,8 +55,8 @@ struct ArticleContainerView: View {
                 sourceName: currentSourceName,
                 unreadCountForGroup: unreadCountForGroup,
                 totalUnreadCount: totalUnreadCountForContext,
-                viewModel: viewModel,
-                audioPlayerManager: audioPlayerManager, // 保持传递以获取状态
+                isEnglishMode: $isEnglishMode, viewModel: viewModel,
+                audioPlayerManager: audioPlayerManager,
                 requestNextArticle: {
                     await self.switchToNextArticleAndStopAudio()
                 },
@@ -205,11 +207,30 @@ struct ArticleContainerView: View {
         // 开始播放时，确保完整播放器是展开状态
         isMiniPlayerCollapsed = false
         
-        let paragraphs = currentArticle.article
+        let rawText: String
+        let title: String
+        let language: String
+        
+        // 根据 isEnglishMode 决定播放内容
+        if isEnglishMode,
+           let engText = currentArticle.article_eng, !engText.isEmpty,
+           let engTitle = currentArticle.topic_eng {
+            rawText = engText
+            title = engTitle
+            language = "en-US"
+        } else {
+            rawText = currentArticle.article
+            title = currentArticle.topic
+            language = "zh-CN"
+        }
+        
+        let paragraphs = rawText
             .components(separatedBy: .newlines)
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let fullText = paragraphs.joined(separator: "\n\n")
-        audioPlayerManager.startPlayback(text: fullText, title: currentArticle.topic)
+        
+        // 传入 language 参数
+        audioPlayerManager.startPlayback(text: fullText, title: title, language: language)
     }
 
     private func updateUnreadCounts() {
@@ -220,7 +241,6 @@ struct ArticleContainerView: View {
         case .fromAllArticles:
             sourceNameToUse = nil
         }
-
         self.unreadCountForGroup = viewModel.getUnreadCountForDateGroup(
             timestamp: currentArticle.timestamp,
             inSource: sourceNameToUse
@@ -256,8 +276,10 @@ struct ArticleContainerView: View {
             return
         }
         
+        // ... (图片下载逻辑保持不变，为了节省篇幅这里省略，请保留原有的图片下载代码) ...
         if !next.article.images.isEmpty {
-            let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
+             // ... 图片下载代码 ...
+             let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
                 timestamp: next.article.timestamp,
                 imageNames: next.article.images
             )
@@ -298,11 +320,22 @@ struct ArticleContainerView: View {
             }
         }
         
-        // 切换文章的动画
+        // --- 【核心修改开始】 ---
+        
+        // 1. 预先判断下一篇是否有英文版
+        let nextHasEnglish = (next.article.topic_eng != nil && !next.article.topic_eng!.isEmpty) &&
+                             (next.article.article_eng != nil && !next.article.article_eng!.isEmpty)
+        
+        // 2. 决定是否保持英文模式
+        // 逻辑：如果当前已经是英文模式，且下一篇也有英文，则保持英文(true)；否则回退到中文(false)
+        let shouldKeepEnglish = self.isEnglishMode && nextHasEnglish
+        
         await MainActor.run {
             withAnimation(.easeInOut(duration: 0.4)) {
                 self.currentArticle = next.article
                 self.currentSourceName = next.sourceName
+                // 应用新的语言状态
+                self.isEnglishMode = shouldKeepEnglish
             }
         }
         
@@ -310,11 +343,33 @@ struct ArticleContainerView: View {
             await MainActor.run {
                 // 自动播放时，确保播放器是展开的
                 self.isMiniPlayerCollapsed = false
-                let paragraphs = next.article.article
+                
+                // 3. 根据刚才决定的语言状态，准备播放文本
+                let rawText: String
+                let title: String
+                let language: String
+                
+                if shouldKeepEnglish, 
+                   let engText = next.article.article_eng, 
+                   let engTitle = next.article.topic_eng {
+                    // 播放英文
+                    rawText = engText
+                    title = engTitle
+                    language = "en-US"
+                } else {
+                    // 播放中文
+                    rawText = next.article.article
+                    title = next.article.topic
+                    language = "zh-CN"
+                }
+                
+                let paragraphs = rawText
                     .components(separatedBy: .newlines)
                     .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 let fullText = paragraphs.joined(separator: "\n\n")
-                self.audioPlayerManager.startPlayback(text: fullText, title: next.article.topic)
+                
+                // 【修复】明确传入 "zh-CN"，确保逻辑一致
+                self.audioPlayerManager.startPlayback(text: fullText, title: title, language: language)
             }
         }
     }
@@ -359,7 +414,6 @@ struct ArticleContainerView: View {
 
     struct ToastView: View {
         let message: String
-        
         var body: some View {
             Text(message)
                 .font(.subheadline)
