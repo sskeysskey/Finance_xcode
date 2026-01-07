@@ -38,6 +38,8 @@ struct DownloadOverlay: View {
 struct UserProfileView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
+    // 【新增】为了让界面随语言刷新
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false 
     
     var body: some View {
         NavigationView {
@@ -50,7 +52,7 @@ struct UserProfileView: View {
                             .foregroundColor(.gray)
                         VStack(alignment: .leading, spacing: 4) {
                             if authManager.isSubscribed {
-                                Text("专业版会员")
+                                Text(Localized.premiumUser)
                                     .font(.subheadline)
                                     .foregroundColor(.yellow)
                                     .bold()
@@ -60,7 +62,7 @@ struct UserProfileView: View {
                                         .foregroundColor(.secondary)
                                 }
                             } else {
-                                Text("免费版用户")
+                                 Text(Localized.freeUser)
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
                             }
@@ -81,7 +83,7 @@ struct UserProfileView: View {
                 }
                 
                 // 2. 支持与反馈部分 (类似 Finance App)
-                Section(header: Text("支持与反馈")) {
+                Section(header: Text(Localized.feedback)) {
                     Button {
                         let email = "728308386@qq.com"
                         // 使用 mailto 协议唤起邮件客户端
@@ -95,7 +97,7 @@ struct UserProfileView: View {
                             Image(systemName: "envelope.fill")
                                 .foregroundColor(.blue)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("问题反馈")
+                                Text(Localized.feedback)
                                     .foregroundColor(.primary)
                                 Text("728308386@qq.com")
                                     .font(.caption)
@@ -127,13 +129,13 @@ struct UserProfileView: View {
                         } label: {
                             HStack {
                                 Image(systemName: "rectangle.portrait.and.arrow.right")
-                                Text("退出登录")
+                                Text(Localized.logout)
                             }
                         }
                     }
                 }
             }
-            .navigationTitle("账户")
+            .navigationTitle(Localized.profileTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -230,6 +232,8 @@ struct SourceListView: View {
     @EnvironmentObject var resourceManager: ResourceManager
     // 【新增】获取认证管理器
     @EnvironmentObject var authManager: AuthManager
+    // ... 确保有 @AppStorage ...
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false 
     
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
@@ -314,7 +318,7 @@ struct SourceListView: View {
                 if isSearching {
                     SearchBarInline(
                         text: $searchText,
-                        placeholder: "搜索标题或正文关键字", // 【修改】更新 placeholder
+                        placeholder: Localized.searchPlaceholder, // 【修改】
                         onCommit: {
                             isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         },
@@ -351,6 +355,25 @@ struct SourceListView: View {
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 16) {
+                        // ✅ 【新增】中英切换按钮 (放在最左边，作为第一个元素)
+                        Button(action: {
+                            withAnimation(.spring()) {
+                                isGlobalEnglishMode.toggle()
+                            }
+                        }) {
+                            ZStack {
+                                Circle()
+                                    .strokeBorder(Color.primary, lineWidth: 1.5)
+                                    .background(isGlobalEnglishMode ? Color.primary : Color.clear)
+                                    .clipShape(Circle())
+                                
+                                // 逻辑：英文模式显示"中"，中文模式显示"En"
+                                Text(isGlobalEnglishMode ? "中" : "En")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(isGlobalEnglishMode ? Color.viewBackground : Color.primary)
+                            }
+                            .frame(width: 24, height: 24)
+                        }
                         Button {
                             withAnimation {
                                 isSearching.toggle()
@@ -442,7 +465,7 @@ struct SourceListView: View {
                             Image(systemName: "person.crop.circle")
                                 .font(.title3)
                                 .frame(width: 30)
-                            Text("登录账户")
+                            Text(Localized.loginAccount)
                                 .font(.body)
                             Spacer()
                             Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
@@ -467,7 +490,7 @@ struct SourceListView: View {
                                 .font(.title3)
                                 .frame(width: 30)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("问题反馈")
+                                Text(Localized.feedback)
                                     .foregroundColor(.primary)
                                 Text("728308386@qq.com")
                                     .font(.caption)
@@ -550,7 +573,7 @@ struct SourceListView: View {
                 ForEach(timestamps, id: \.self) { timestamp in
                     Section(header:
                         HStack {
-                            Text("搜索结果")
+                            Text(Localized.searchResults)
                             Spacer()
                             Text(formatTimestamp(timestamp))
                                 .font(.caption.bold())
@@ -605,11 +628,11 @@ struct SourceListView: View {
                     Image(systemName: "newspaper")
                         .font(.system(size: 60))
                         .foregroundColor(.secondary.opacity(0.3))
-                    Text("您还没有订阅任何新闻源")
+                    Text(Localized.noSubscriptions) // 【修改】
                         .font(.headline)
                         .foregroundColor(.secondary)
                     Button(action: { showAddSourceSheet = true }) {
-                        Text("添加订阅")
+                        Text(Localized.addSubscriptionBtn)
                             .fontWeight(.semibold)
                             .padding(.horizontal, 30)
                             .padding(.vertical, 12)
@@ -624,7 +647,7 @@ struct SourceListView: View {
                     LazyVStack(spacing: 16) {
                         // 1. 顶部大标题
                         HStack {
-                            Text("我的订阅")
+                            Text(Localized.mySubscriptions) 
                                 .font(.system(size: 34, weight: .bold))
                                 .foregroundColor(.primary)
                             Spacer()
@@ -639,10 +662,10 @@ struct SourceListView: View {
                                     Image(systemName: "square.stack.3d.up.fill")
                                         .font(.title)
                                         .foregroundColor(.white)
-                                    Text("全部文章")
+                                    Text(Localized.allArticles) 
                                         .font(.title2.bold())
                                         .foregroundColor(.white)
-                                    Text("汇集所有订阅源")
+                                    Text(Localized.allArticlesDesc)
                                         .font(.caption)
                                         .foregroundColor(.white.opacity(0.8))
                                 }
@@ -653,7 +676,7 @@ struct SourceListView: View {
                                         .font(.system(size: 42, weight: .bold, design: .rounded))
                                         .foregroundColor(.white)
                                     
-                                    Text("未读")
+                                    Text(Localized.unread)
                                         .font(.caption.bold())
                                         .foregroundColor(.white.opacity(0.8))
                                         // 稍微调整一下位置，防止在大字体旁显得太靠下（可选）

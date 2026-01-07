@@ -204,7 +204,7 @@ struct ArticleDetailView: View {
                         }
                     }) {
                         HStack {
-                            Text("读取下一篇")
+                            Text(Localized.readNext)
                                 .fontWeight(.bold)
                             Image(systemName: "arrow.right.circle.fill")
                         }

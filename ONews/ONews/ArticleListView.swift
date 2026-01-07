@@ -234,22 +234,23 @@ struct ArticleContextMenu: View {
     var body: some View {
         if article.isRead {
             Button { viewModel.markAsUnread(articleID: article.id) }
-            label: { Label("标记为未读", systemImage: "circle") }
+            label: { Label(Localized.markAsUnread_text, systemImage: "circle") }
         } else {
+            // ✅ 修正：添加了 label: { ... }
             Button { viewModel.markAsRead(articleID: article.id) }
-            label: { Label("标记为已读", systemImage: "checkmark.circle") }
+            label: { Label(Localized.markAsRead_text, systemImage: "checkmark.circle") }
             
             if filterMode == .unread && !filteredArticles.isEmpty {
                 Divider()
                 Button {
                     viewModel.markAllAboveAsRead(articleID: article.id, inVisibleList: filteredArticles)
                 }
-                label: { Label("以上全部已读", systemImage: "arrow.up.to.line.compact") }
+                label: { Label(Localized.readAbove, systemImage: "arrow.up.to.line.compact") }
                 
                 Button {
                     viewModel.markAllBelowAsRead(articleID: article.id, inVisibleList: filteredArticles)
                 }
-                label: { Label("以下全部已读", systemImage: "arrow.down.to.line.compact") }
+                label: { Label(Localized.readBelow, systemImage: "arrow.down.to.line.compact") }
             }
         }
     }
@@ -386,6 +387,11 @@ struct ArticleListView: View {
         viewModel.sources.first(where: { $0.name == sourceName })
     }
     
+    // 1. 【新增】辅助函数：专门用于获取数量，减轻 View 的负担
+    private func getCount(for mode: ArticleFilterMode) -> Int {
+        return mode == .unread ? unreadCount : readCount
+    } // ✅ 修正：这里补上了丢失的大括号 "}"
+    
     private var baseFilteredArticles: [ArticleItem] {
         guard let source = source else { return [] }
         return source.articles
@@ -440,6 +446,7 @@ struct ArticleListView: View {
                     if isSearching {
                         SearchBarInline(
                             text: $searchText,
+                            placeholder: Localized.searchPlaceholder, // 【修改】
                             onCommit: {
                                 isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             },
@@ -489,10 +496,12 @@ struct ArticleListView: View {
                     }
                     
                     if !isSearchActive {
+                        // 2. 【修改】大幅简化 Picker 的写法，解决编译器超时和 scope 找不到的问题
                         Picker("Filter", selection: $filterMode) {
                             ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                                let count = (mode == .unread) ? unreadCount : readCount
-                                Text("\(mode.rawValue) (\(count))").tag(mode)
+                                // 这里直接调用辅助函数和 Localized
+                                Text("\(mode == .unread ? Localized.unread : Localized.read) (\(self.getCount(for: mode)))")
+                                    .tag(mode)
                             }
                         }
                         .pickerStyle(.segmented)
@@ -762,7 +771,7 @@ struct AllArticlesListView: View {
     // 【新增】获取认证管理器
     @EnvironmentObject var authManager: AuthManager
     
-    // ❌ 【遗漏了这行代码，请补上！】👇👇👇
+    // 1. 补上 AppStorage
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
     @State private var filterMode: ArticleFilterMode = .unread
@@ -786,6 +795,8 @@ struct AllArticlesListView: View {
     @State private var showProfileSheet = false
     
     @State private var hasPerformedAutoExpansion = false
+    
+    // MARK: - 辅助计算属性
     
     private var baseFilteredArticles: [ArticleItem] {
         viewModel.allArticlesSortedForDisplay
@@ -817,12 +828,27 @@ struct AllArticlesListView: View {
         }
     }
     
+    // MARK: - 核心修复：添加辅助函数
+    
+    // 修复 1：定义获取数量的函数（使用 totalUnreadCount）
+    private func getCount(for mode: ArticleFilterMode) -> Int {
+        return mode == .unread ? totalUnreadCount : totalReadCount
+    }
+    
+    // 修复 2：定义获取标题文字的函数（解决编译器超时问题）
+    private func getFilterTitle(for mode: ArticleFilterMode) -> String {
+        let name = (mode == .unread) ? Localized.unread : Localized.read
+        let count = getCount(for: mode)
+        return "\(name) (\(count))"
+    }
+    
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
                 if isSearching {
                     SearchBarInline(
                         text: $searchText,
+                        placeholder: Localized.searchPlaceholder, // 【修改】
                         onCommit: {
                             isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         },
@@ -872,10 +898,10 @@ struct AllArticlesListView: View {
                 }
                 
                 if !isSearchActive {
+                    // 修复 3：使用 getFilterTitle 简化视图逻辑
                     Picker("Filter", selection: $filterMode) {
                         ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                            let count = (mode == .unread) ? totalUnreadCount : totalReadCount
-                            Text("\(mode.rawValue) (\(count))").tag(mode)
+                            Text(getFilterTitle(for: mode)).tag(mode)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -937,10 +963,10 @@ struct AllArticlesListView: View {
                     Task { await syncResources(isManual: true) }
                 } label: {
                     Image(systemName: "arrow.clockwise")
-                        .foregroundColor(.primary) 
+                        .foregroundColor(.primary)
                 }
                 .disabled(resourceManager.isSyncing)
-                .accessibilityLabel("刷新")
+                .accessibilityLabel(Localized.refresh)
             }
             
             ToolbarItem(placement: .topBarTrailing) {
@@ -954,9 +980,9 @@ struct AllArticlesListView: View {
                     }
                 } label: {
                     Image(systemName: "magnifyingglass")
-                        .foregroundColor(.primary) 
+                        .foregroundColor(.primary)
                 }
-                .accessibilityLabel("搜索")
+                .accessibilityLabel(Localized.search)
             }
         }
         .overlay(
@@ -966,7 +992,7 @@ struct AllArticlesListView: View {
                 progressText: downloadProgressText
             )
         )
-        .alert("", isPresented: $showErrorAlert, actions: { Button("好的", role: .cancel) { } }, message: { Text(errorMessage) })
+        .alert("", isPresented: $showErrorAlert, actions: { Button(Localized.confirm, role: .cancel) { } }, message: { Text(errorMessage) })
         .sheet(isPresented: $showLoginSheet) { LoginView() }
         // 【新增】
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
@@ -975,7 +1001,7 @@ struct AllArticlesListView: View {
         .sheet(isPresented: $showGuestMenu) {
             VStack(spacing: 20) {
                 Capsule().fill(Color.secondary.opacity(0.3)).frame(width: 40, height: 5).padding(.top, 10)
-                Text("欢迎使用 ONews").font(.headline)
+                Text(Localized.loginWelcome).font(.headline)
                 VStack(spacing: 0) {
                     Button {
                         showGuestMenu = false
@@ -983,7 +1009,7 @@ struct AllArticlesListView: View {
                     } label: {
                         HStack {
                             Image(systemName: "person.crop.circle").font(.title3).frame(width: 30)
-                            Text("登录账户").font(.body)
+                            Text(Localized.loginAccount).font(.body)
                             Spacer()
                             Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
                         }
@@ -999,7 +1025,7 @@ struct AllArticlesListView: View {
                         HStack {
                             Image(systemName: "envelope").font(.title3).frame(width: 30)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("问题反馈").foregroundColor(.primary)
+                                Text(Localized.feedback).foregroundColor(.primary)
                                 Text("728308386@qq.com").font(.caption).foregroundColor(.secondary)
                             }
                             Spacer()
@@ -1060,7 +1086,7 @@ struct AllArticlesListView: View {
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
-            downloadProgressText = "准备中..."
+            downloadProgressText = Localized.imagePrepare
         }
         
         do {
@@ -1069,7 +1095,7 @@ struct AllArticlesListView: View {
                 imageNames: article.images,
                 progressHandler: { current, total in
                     self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
-                    self.downloadProgressText = "已下载 \(current) / \(total)"
+                    self.downloadProgressText = "\(Localized.imageDownloaded) \(current) / \(total)"
                 }
             )
             
@@ -1116,7 +1142,7 @@ struct AllArticlesListView: View {
                     urlError.code == .cannotConnectToHost ||
                     urlError.code == .timedOut ||
                     urlError.code == .notConnectedToInternet:
-                    self.errorMessage = "网络连接失败，请检查网络设置或稍后重试。"
+                    self.errorMessage = Localized.networkError
                     self.showErrorAlert = true
                 default:
                     self.errorMessage = "发生未知错误，请稍后重试。"

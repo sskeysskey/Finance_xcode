@@ -4,6 +4,8 @@ struct SubscriptionView: View {
 
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
+    // 【新增】
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false 
     
     @State private var isPurchasing = false
     @State private var showError = false
@@ -30,7 +32,7 @@ struct SubscriptionView: View {
             VStack(spacing: 25) {
                 // 标题
                 VStack(spacing: 10) {
-                    Text("最近三天的新闻需付费观看🥲")
+                    Text(Localized.subTitle) // "最近三天..."
                         .font(.largeTitle.bold())
                         .foregroundColor(.primary)
                         // 连续点击5次触发
@@ -38,7 +40,7 @@ struct SubscriptionView: View {
                             showRedeemAlert = true
                         }
                     
-                    Text("推荐选择“专业版”套餐\n订阅成功后的一个月内畅享所有日期资讯\n如果实在不想付费😓\n三天前资讯也可永久免费享用")
+                    Text(Localized.subDesc)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -51,7 +53,7 @@ struct SubscriptionView: View {
                 }) {
                     HStack {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("【当前】免费版")
+                            Text(Localized.planFree)
                                 // .font(.title2.bold())
                                 .foregroundColor(.primary)
                             Text("可免费浏览 \(authManager.isSubscribed ? "全部" : "三天前") 的所有文章")
@@ -83,10 +85,10 @@ struct SubscriptionView: View {
                 }) {
                     HStack {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("专业版套餐")
+                            Text(Localized.planPro)
                                 .font(.title2.bold())
                                 .foregroundColor(.primary)
-                            Text("解锁最新日期资讯，与世界同频")
+                            Text(Localized.planProDesc)
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
@@ -118,7 +120,7 @@ struct SubscriptionView: View {
                     Button(action: {
                         performRestore()
                     }) {
-                        Text("恢复购买")
+                        Text(Localized.restorePurchase)
                             .font(.footnote)
                             .foregroundColor(.blue)
                             .underline()
@@ -127,12 +129,12 @@ struct SubscriptionView: View {
                     
                     Text("|").foregroundColor(.secondary)
                     
-                    Link("隐私政策", destination: URL(string: "https://sskeysskey.github.io/website/privacy.html")!)
+                    Link(Localized.privacy, destination: URL(string: "https://sskeysskey.github.io/website/privacy.html")!)
                         .font(.footnote)
                         .foregroundColor(.secondary)
 
                     Text("|").foregroundColor(.secondary)
-                    Link("使用条款 (EULA)", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
+                    Link(Localized.terms, destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }
@@ -152,7 +154,7 @@ struct SubscriptionView: View {
                         .padding(.horizontal)
                 }
                 
-                Button("关闭") {
+                Button(Localized.close) {
                     dismiss()
                 }
                 .foregroundColor(.secondary)
@@ -178,7 +180,7 @@ struct SubscriptionView: View {
                             .foregroundColor(.white)
                             .padding(.top)
                     } else {
-                        Text("正在处理支付...")
+                        Text(Localized.processingPayment)
                             .foregroundColor(.white)
                             .padding(.top)
                     }
