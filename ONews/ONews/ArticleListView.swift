@@ -33,6 +33,8 @@ struct ArticleListContent: View {
     let viewModel: NewsViewModel
     // 【新增】传入 AuthManager 以判断登录状态
     let authManager: AuthManager
+    // 【新增】
+    let showEnglish: Bool 
     let onToggleTimestamp: (String) -> Void
     let onArticleTap: (ArticleItem) async -> Void
     
@@ -63,7 +65,9 @@ struct ArticleListContent: View {
                             viewModel: viewModel,
                             authManager: authManager,
                             filteredArticles: items,
-                            onTap: { await onArticleTap(item) }
+                            onTap: { await onArticleTap(item) },
+                            // 【新增】传递参数
+                            showEnglish: showEnglish 
                         )
                     }
                 }
@@ -87,6 +91,8 @@ struct SearchResultsList: View {
     let viewModel: NewsViewModel
     // 【新增】传入 AuthManager
     let authManager: AuthManager
+    // 【新增】
+    let showEnglish: Bool
     let onArticleTap: (ArticleItem) async -> Void
     
     // 【优化】静态 formatter
@@ -155,7 +161,9 @@ struct SearchResultsList: View {
                             viewModel: viewModel,
                             authManager: authManager,
                             filteredArticles: [],
-                            onTap: { await onArticleTap(item) }
+                            onTap: { await onArticleTap(item) },
+                            // 【新增】传递参数
+                            showEnglish: showEnglish
                         )
                     }
                 }
@@ -177,19 +185,27 @@ struct ArticleRowButton: View {
     let filteredArticles: [ArticleItem]
     let onTap: () async -> Void
     
+    // 1. 【新增】接收外部传入的状态
+    let showEnglish: Bool
+    
+    // 2. ❌ 【删除】原来的 @AppStorage
+    // @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+
     var body: some View {
         Button(action: {
             Task { await onTap() }
         }) {
             let isLocked = !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: item.article.timestamp)
             
-            // 这里调用新的卡片视图
+            // 【修改】传入 showEnglish 参数
             ArticleRowCardView(
                 article: item.article,
                 sourceName: item.sourceName,
                 isReadEffective: viewModel.isArticleEffectivelyRead(item.article),
                 isContentMatch: item.isContentMatch,
-                isLocked: isLocked
+                isLocked: isLocked,
+                // 3. 【修改】使用传入的参数
+                showEnglish: showEnglish 
             )
         }
         .buttonStyle(PlainButtonStyle()) // 取消按钮默认点击高亮效果，改用缩放动画（可选）
@@ -341,6 +357,8 @@ struct ArticleListView: View {
     @ObservedObject var resourceManager: ResourceManager
     // 【新增】获取认证管理器
     @EnvironmentObject var authManager: AuthManager
+    // 【新增】引入全局语言状态
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
     @State private var filterMode: ArticleFilterMode = .unread
     @State private var isSearching: Bool = false
@@ -441,6 +459,8 @@ struct ArticleListView: View {
                                 results: searchResults,
                                 viewModel: viewModel,
                                 authManager: authManager, // 传递
+                                // 【新增】传递状态
+                        showEnglish: isGlobalEnglishMode, 
                                 onArticleTap: handleArticleTap
                             )
                         } else {
@@ -450,6 +470,8 @@ struct ArticleListView: View {
                                 expandedTimestamps: viewModel.expandedTimestampsBySource[sourceName, default: Set<String>()],
                                 viewModel: viewModel,
                                 authManager: authManager, // 传递
+                                // 【新增】传递状态
+                        showEnglish: isGlobalEnglishMode, 
                                 onToggleTimestamp: { timestamp in
                                     viewModel.toggleTimestampExpansion(for: sourceName, timestamp: timestamp)
                                 },
@@ -505,7 +527,32 @@ struct ArticleListView: View {
                         showProfileSheet: $showProfileSheet
                     )
                 }
-                
+
+                // 【新增】中英切换按钮 (放在刷新按钮之前或之后)
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: {
+                        withAnimation(.spring()) {
+                            isGlobalEnglishMode.toggle()
+                        }
+                    }) {
+                        ZStack {
+                            Circle()
+                                .strokeBorder(Color.primary, lineWidth: 1.5)
+                                // 如果是英文模式(true)，背景实心，代表状态激活
+                                .background(isGlobalEnglishMode ? Color.primary : Color.clear)
+                                .clipShape(Circle())
+                            
+                            // 【修正文字逻辑】
+                            // isGlobalEnglishMode 为 true (英文状态) -> 显示 "中" (提示点击切回中文)
+                            // isGlobalEnglishMode 为 false (中文状态) -> 显示 "En" (提示点击切成英文)
+                            Text(isGlobalEnglishMode ? "中" : "En") 
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(isGlobalEnglishMode ? Color.viewBackground : Color.primary)
+                        }
+                        .frame(width: 24, height: 24)
+                    }
+                }
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Task { await syncResources(isManual: true) }
@@ -715,6 +762,9 @@ struct AllArticlesListView: View {
     // 【新增】获取认证管理器
     @EnvironmentObject var authManager: AuthManager
     
+    // ❌ 【遗漏了这行代码，请补上！】👇👇👇
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    
     @State private var filterMode: ArticleFilterMode = .unread
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
@@ -792,6 +842,8 @@ struct AllArticlesListView: View {
                             results: searchResults,
                             viewModel: viewModel,
                             authManager: authManager, // 传递
+                            // 【新增】传递状态
+                            showEnglish: isGlobalEnglishMode,
                             onArticleTap: handleArticleTap
                         )
                     } else {
@@ -801,6 +853,8 @@ struct AllArticlesListView: View {
                             expandedTimestamps: viewModel.expandedTimestampsBySource[viewModel.allArticlesKey, default: Set<String>()],
                             viewModel: viewModel,
                             authManager: authManager, // 传递
+                            // 【新增】传递状态
+                            showEnglish: isGlobalEnglishMode,
                             onToggleTimestamp: { timestamp in
                                 viewModel.toggleTimestampExpansion(for: viewModel.allArticlesKey, timestamp: timestamp)
                             },
@@ -854,6 +908,28 @@ struct AllArticlesListView: View {
                     showGuestMenu: $showGuestMenu,
                     showProfileSheet: $showProfileSheet
                 )
+            }
+
+            // 【新增】中英切换按钮 (放在刷新按钮之前或之后)
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: {
+                    withAnimation(.spring()) {
+                        isGlobalEnglishMode.toggle()
+                    }
+                }) {
+                    ZStack {
+                        Circle()
+                            .strokeBorder(Color.primary, lineWidth: 1.5)
+                            .background(isGlobalEnglishMode ? Color.primary : Color.clear)
+                            .clipShape(Circle())
+                        
+                        // 修正：英文状态显示“中”，中文状态显示“En”
+                        Text(isGlobalEnglishMode ? "中" : "En")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(isGlobalEnglishMode ? Color.viewBackground : Color.primary)
+                    }
+                    .frame(width: 24, height: 24)
+                }
             }
             
             ToolbarItem(placement: .topBarTrailing) {

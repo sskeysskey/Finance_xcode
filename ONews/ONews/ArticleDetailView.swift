@@ -266,8 +266,6 @@ struct ArticleDetailView: View {
             prepareContent()
         }
         .onChange(of: article) { _, _ in
-            // 切换文章时，重置回中文（可选）
-            isEnglishMode = false
             prepareContent()
         }
         // 【新增 4】监听语言模式切换，重新计算段落布局

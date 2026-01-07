@@ -170,17 +170,32 @@ struct ArticleRowCardView: View {
     let isReadEffective: Bool
     let isContentMatch: Bool
     let isLocked: Bool
+    
+    // 【新增 1】接收外部传入的语言状态
+    let showEnglish: Bool
 
-    init(article: Article, sourceName: String?, isReadEffective: Bool, isContentMatch: Bool = false, isLocked: Bool = false) {
+    // 【修改 2】初始化增加 showEnglish，默认值为 false
+    init(article: Article, sourceName: String?, isReadEffective: Bool, isContentMatch: Bool = false, isLocked: Bool = false, showEnglish: Bool = false) {
         self.article = article
         self.sourceName = sourceName
         self.isReadEffective = isReadEffective
         self.isContentMatch = isContentMatch
         self.isLocked = isLocked
+        self.showEnglish = showEnglish
+    }
+    
+    // 【新增 3】核心逻辑：决定显示哪个标题
+    var displayTopic: String {
+        // 如果开启英文模式，且英文标题存在且不为空，则显示英文
+        if showEnglish, let engTitle = article.topic_eng, !engTitle.isEmpty {
+            return engTitle
+        }
+        // 否则（关闭模式 或 没有英文标题），显示中文
+        return article.topic
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) { // 间距稍微加大到 14
+        VStack(alignment: .leading, spacing: 14) { 
             // 1. 顶部元数据行：来源名称 + 锁定状态
             HStack {
                 if let name = sourceName {
@@ -209,14 +224,16 @@ struct ArticleRowCardView: View {
             
             // 2. 标题区域：使用衬线字体
             HStack(alignment: .top) {
-                Text(article.topic)
-                    // 【修改】核心改动：19 -> 22，字重保持，这样标题更醒目
+                // 【修改 4】这里必须使用计算出来的 displayTopic，而不是固定的 article.topic
+                Text(displayTopic)
                     .font(.system(size: 19, weight: isReadEffective ? .regular : .bold, design: .serif))
                     .foregroundColor(isReadEffective ? .secondary : .primary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true) // 防止截断
                     .multilineTextAlignment(.leading)
                     .opacity(isReadEffective ? 0.8 : 1.0)
+                    // 【可选】添加动画，让文字切换更平滑
+                    .animation(.none, value: showEnglish)
                 
                 Spacer(minLength: 0)
             }

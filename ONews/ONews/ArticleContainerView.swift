@@ -6,6 +6,10 @@ struct ArticleContainerView: View {
     // 【新增】标记是否在页面出现时自动开始播放
     let autoPlayOnAppear: Bool
 
+    // 【修改】将 @State 替换为 @AppStorage，使用固定的 Key "isGlobalEnglishMode"
+    // 这样列表页和详情页共享同一个持久化状态
+    @AppStorage("isGlobalEnglishMode") private var isEnglishMode = false
+
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager
 
@@ -21,9 +25,6 @@ struct ArticleContainerView: View {
     @State private var isMiniPlayerCollapsed = false
 
     @State private var didCommitOnDisappear = false
-    
-    // 【新增】在父视图持有语言状态
-    @State private var isEnglishMode = false
     
     // 【修改】更新图片下载状态变量以支持详细进度
     @State private var isDownloadingImages = false
@@ -322,20 +323,15 @@ struct ArticleContainerView: View {
         
         // --- 【核心修改开始】 ---
         
-        // 1. 预先判断下一篇是否有英文版
-        let nextHasEnglish = (next.article.topic_eng != nil && !next.article.topic_eng!.isEmpty) &&
-                             (next.article.article_eng != nil && !next.article.article_eng!.isEmpty)
-        
-        // 2. 决定是否保持英文模式
-        // 逻辑：如果当前已经是英文模式，且下一篇也有英文，则保持英文(true)；否则回退到中文(false)
-        let shouldKeepEnglish = self.isEnglishMode && nextHasEnglish
+        // 移除原有的 "shouldKeepEnglish" 强制切换逻辑
+        // 我们希望保留用户的“偏好设置”，即使当前文章没有英文，开关依然是开着的(只是显示中文)
+        // 这样下一篇如果有英文，依然会自动显示英文。
         
         await MainActor.run {
             withAnimation(.easeInOut(duration: 0.4)) {
                 self.currentArticle = next.article
                 self.currentSourceName = next.sourceName
-                // 应用新的语言状态
-                self.isEnglishMode = shouldKeepEnglish
+                // 【删除】self.isEnglishMode = shouldKeepEnglish
             }
         }
         
@@ -344,12 +340,16 @@ struct ArticleContainerView: View {
                 // 自动播放时，确保播放器是展开的
                 self.isMiniPlayerCollapsed = false
                 
-                // 3. 根据刚才决定的语言状态，准备播放文本
+                // 3. 根据全局 isEnglishMode 和当前文章是否有英文，决定播放语言
                 let rawText: String
                 let title: String
                 let language: String
                 
-                if shouldKeepEnglish, 
+                // 动态判断当前这篇新文章能不能播英文
+                let canPlayEnglish = self.isEnglishMode && 
+                                     (next.article.article_eng != nil && !next.article.article_eng!.isEmpty)
+                
+                if canPlayEnglish,
                    let engText = next.article.article_eng, 
                    let engTitle = next.article.topic_eng {
                     // 播放英文
