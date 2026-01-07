@@ -29,8 +29,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         
         print("AppDelegate: didFinishLaunchingWithOptions - App 启动完成，开始进行一次性设置。")
         
-        // 1. 在这里进行“接线”操作，不会再有编译错误。
-        // 因为此时 AppDelegate 实例已经完全创建好了。
+        // --- 🌍 【新增】国际化智能初始化逻辑 ---
+        initializeLanguagePreference()
+        // ------------------------------------
+
+        // ... (原有的接线操作)
         newsViewModel.badgeUpdater = { [weak self] count in
             self?.badgeManager.updateBadge(count: count)
         }
@@ -53,6 +56,53 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         tv.separatorStyle = .none
         
         return true
+    }
+    
+    // 【新增】辅助方法：只在首次安装时，根据系统语言自动设置默认模式
+    private func initializeLanguagePreference() {
+        let defaults = UserDefaults.standard
+        let initKey = "hasInitializedLanguage"
+        
+        // 1. 检查是否已经初始化过
+        // 如果已经初始化过，说明用户可能已经手动改过设置，或者已经沿用了上次的自动设置，直接跳过，尊重用户选择。
+        if defaults.bool(forKey: initKey) {
+            return
+        }
+        
+        // 2. 获取当前系统语言或区域 (兼容 iOS 16 新旧 API)
+        let languageCode: String?
+        let regionCode: String?
+        
+        if #available(iOS 16, *) {
+            languageCode = Locale.current.language.languageCode?.identifier
+            regionCode = Locale.current.region?.identifier
+        } else {
+            languageCode = Locale.current.languageCode
+            regionCode = Locale.current.regionCode
+        }
+        
+        print("检测到系统语言: \(languageCode ?? "nil"), 地区: \(regionCode ?? "nil")")
+        
+        var shouldBeEnglish = false
+        
+        // 3. 判断逻辑
+        // 策略 A：如果语言代码是 'en' (英语)，直接默认开启
+        if let lang = languageCode, lang.contains("en") {
+            shouldBeEnglish = true
+        }
+        // 策略 B：或者如果地区是美国 (US)、英国 (GB)、加拿大 (CA)、澳大利亚 (AU) 等
+        else if let region = regionCode, ["US", "GB", "CA", "AU", "NZ", "IE"].contains(region) {
+            shouldBeEnglish = true
+        }
+        
+        // 4. 写入设置
+        // 这里直接修改 "isGlobalEnglishMode"，视图里的 @AppStorage 会自动读取这个值
+        defaults.set(shouldBeEnglish, forKey: "isGlobalEnglishMode")
+        
+        // 5. 标记已初始化，以后不再自动覆盖
+        defaults.set(true, forKey: initKey)
+        
+        print("【国际化】首次启动初始化完成。默认英文模式: \(shouldBeEnglish)")
     }
 }
 
