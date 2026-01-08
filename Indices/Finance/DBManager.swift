@@ -23,6 +23,9 @@ class DatabaseManager {
         let change: Double?
         // 【新增】IV 字段
         let iv: String?
+        // 【本次新增】日期字段，用于前端校验
+        let date: String?
+        
         // 【新增】次新 IV
         let prev_iv: String? 
         // 【本次新增】次新数据的 Price 和 Change

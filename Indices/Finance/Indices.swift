@@ -956,6 +956,16 @@ struct SymbolItemView: View {
     @State private var isNavigationActive = false
     @State private var showSubscriptionSheet = false
     
+    // 【新增】用于存储异步获取的期权指标
+    @State private var optionsMetrics: (iv: String, sum: String)? = nil
+    @State private var showOptionsMetrics = false
+    
+    // 【定义】不需要改变显示逻辑的“经济数据”板块列表
+    private let economySectors: Set<String> = [
+        "ETFs", "Bonds", "Crypto", "Indices", "Currencies",
+        "Economics", "Economic_All", "Commodities"
+    ]
+    
     private var earningTrend: EarningTrend {
         dataService.earningTrends[symbol.symbol.uppercased()] ?? .insufficientData
     }
@@ -971,6 +981,7 @@ struct SymbolItemView: View {
         dataService.getCategory(for: symbol.symbol) ?? fallbackGroupName
     }
     
+    // 用于原逻辑的解析结构
     private struct ParsedValue {
         let prefix: String?
         let percentage: String?
@@ -990,9 +1001,13 @@ struct SymbolItemView: View {
                     Text(symbol.symbol)
                         .font(.headline)
                         .foregroundColor(colorForEarningTrend(earningTrend))
+                    
                     Spacer()
-                    compareValueView
+                    
+                    // 【核心修改】根据板块名称决定显示哪种视图
+                    rightSideInfoView
                 }
+                
                 if let tags = symbol.tags, !tags.isEmpty {
                     Text(tags.joined(separator: ", "))
                         .font(.footnote)
@@ -1019,11 +1034,30 @@ struct SymbolItemView: View {
                 dataService.fetchEarningTrends(for: [symbol.symbol])
             }
         }
+        // 【优化】只有非经济板块才加载期权数据
+        .task {
+            if !economySectors.contains(sectorName) {
+                await loadOptionsMetrics()
+            }
+        }
     }
     
+    // MARK: - 视图选择器
     @ViewBuilder
-    private var compareValueView: some View {
-        let parsed = parseCompareValue(symbol.value)
+    private var rightSideInfoView: some View {
+        if economySectors.contains(sectorName) {
+            // 1. 经济数据：保持原样 (Prefix + Percentage + Suffix)
+            originalCompareView
+        } else {
+            // 2. 股票/策略：新样式 (Prefix Only + Option Data)
+            stockOptionStyleView
+        }
+    }
+    
+    // MARK: - 样式 1: 原有的显示逻辑 (用于经济数据)
+    @ViewBuilder
+    private var originalCompareView: some View {
+        let parsed = parseOriginalValue(symbol.value)
         if parsed.prefix == nil && parsed.percentage == "N/A" && parsed.suffix == nil {
             Text("N/A")
                 .foregroundColor(.gray)
@@ -1040,30 +1074,139 @@ struct SymbolItemView: View {
                     Text(suffix).foregroundColor(.gray)
                 }
             }
+            .font(.system(size: 16)) // 保持原有大小
             .fontWeight(.semibold)
         }
     }
     
-    private func parseCompareValue(_ value: String) -> ParsedValue {
+    // MARK: - 样式 2: 新的显示逻辑 (用于股票)
+    @ViewBuilder
+    private var stockOptionStyleView: some View {
+        HStack(spacing: 8) { // 数值间稍微隔开
+            
+            // 1. 只提取前缀 (03后, 02前, 未)
+            // 无论有没有期权数据，只要有前缀就显示
+            if let prefix = extractPrefixOnly(from: symbol.value) {
+                Text(prefix)
+                    .foregroundColor(.orange)
+                    .fontWeight(.semibold)
+            }
+            
+            // 2. 显示期权数据 (IV 和 Sum)
+            // 只有当 showOptionsMetrics 为 true (意味着日期校验通过) 时才显示
+            if showOptionsMetrics, let metrics = optionsMetrics {
+                // IV
+                Text(metrics.iv)
+                    .foregroundColor(colorForValueString(metrics.iv))
+                    .fontWeight(.semibold)
+                
+                // Sum (Price + Change)
+                Text(metrics.sum)
+                    .foregroundColor(colorForValueString(metrics.sum))
+                    .fontWeight(.semibold)
+            }
+        }
+        .font(.system(size: 14)) // 字体稍小一点以适应更多数据
+    }
+    
+    // MARK: - 逻辑处理方法
+    
+    // 加载并校验期权数据 (与 AppServer 和 DBManager 配合)
+    private func loadOptionsMetrics() async {
+        // 避免重复加载
+        if optionsMetrics != nil { return }
+        
+        // 调用 DBManager 获取数据
+        guard let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol.symbol) else {
+            return
+        }
+        
+        // 校验日期：必须是系统日期的前一天 (Yesterday)
+        guard let dateStr = summary.date else { return }
+        
+        // 获取昨天的日期字符串
+        // 注意：这里简单使用 Calendar 计算。
+        // 如果你的服务器返回的是 UTC 时间，而客户端是北京时间，可能需要注意时区。
+        // 这里假设 AppServer 返回的 date 是 "YYYY-MM-DD" 格式的日期字符串，不带时分秒。
+        let calendar = Calendar.current
+        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: Date()) else { return }
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let yesterdayStr = formatter.string(from: yesterday)
+        
+        // 【核心判断】日期必须匹配
+        if dateStr == yesterdayStr {
+            guard let iv = summary.iv, let price = summary.price, let change = summary.change else { return }
+            
+            let sum = price + change
+            // 格式化 Sum，保留两位小数
+            let sumStr = String(format: "%.2f", sum)
+            
+            await MainActor.run {
+                self.optionsMetrics = (iv, sumStr)
+                self.showOptionsMetrics = true
+            }
+        } else {
+            // 日期不匹配，不显示数据
+        }
+    }
+    
+    // 解析原有的格式 (Prefix + Percentage + Suffix)
+    private func parseOriginalValue(_ value: String) -> ParsedValue {
         if value == "N/A" {
             return ParsedValue(prefix: nil, percentage: "N/A", suffix: nil)
         }
+        // 正则：(前缀)?(百分比)(后缀)?
         let pattern = #"^(\d+[前后未])?(-?\d+\.?\d*%)(\S*)?$"#
         if let regex = try? NSRegularExpression(pattern: pattern) {
             let range = NSRange(value.startIndex..<value.endIndex, in: value)
             if let match = regex.firstMatch(in: value, options: [], range: range) {
+                
+                var prefix: String? = nil
+                var percentage: String? = nil
+                var suffix: String? = nil
+                
                 let prefixRange = match.range(at: 1)
-                let prefix = prefixRange.location != NSNotFound ? (value as NSString).substring(with: prefixRange) : nil
+                if prefixRange.location != NSNotFound {
+                    prefix = (value as NSString).substring(with: prefixRange)
+                }
+                
                 let percentageRange = match.range(at: 2)
-                let percentage = percentageRange.location != NSNotFound ? (value as NSString).substring(with: percentageRange) : nil
+                if percentageRange.location != NSNotFound {
+                    percentage = (value as NSString).substring(with: percentageRange)
+                }
+                
                 let suffixRange = match.range(at: 3)
-                let suffix = suffixRange.location != NSNotFound ? (value as NSString).substring(with: suffixRange) : nil
+                if suffixRange.location != NSNotFound {
+                    suffix = (value as NSString).substring(with: suffixRange)
+                }
+                
                 return ParsedValue(prefix: prefix, percentage: percentage, suffix: suffix)
             }
         }
+        // 如果匹配失败，直接把整个 value 当作 percentage 显示（容错）
         return ParsedValue(prefix: nil, percentage: value, suffix: nil)
     }
     
+    // 【新逻辑】只提取前缀
+    private func extractPrefixOnly(from value: String) -> String? {
+        if value == "N/A" { return nil }
+        // 只要匹配开头是 "数字+前后未" 即可
+        let pattern = #"^(\d+[前后未])"#
+        
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            let range = NSRange(value.startIndex..<value.endIndex, in: value)
+            if let match = regex.firstMatch(in: value, options: [], range: range) {
+                if let r = Range(match.range(at: 1), in: value) {
+                    return String(value[r])
+                }
+            }
+        }
+        return nil
+    }
+    
+    // 颜色判断辅助
     private func colorForPercentage(_ percentageString: String?) -> Color {
         guard let percentageString = percentageString else { return .white }
         let numericString = percentageString.replacingOccurrences(of: "%", with: "")
@@ -1072,6 +1215,18 @@ struct SymbolItemView: View {
         else if number < 0 { return .green }
         else { return .gray }
     }
+    
+    private func colorForValueString(_ valueStr: String) -> Color {
+        // 去除 %, 空格 等非数字字符进行判断
+        let cleanStr = valueStr.replacingOccurrences(of: "%", with: "").trimmingCharacters(in: .whitespaces)
+        if let val = Double(cleanStr) {
+            if val > 0 { return .red }
+            if val < 0 { return .green }
+        }
+        return .gray
+    }
+    
+    // ... (保留 colorForEarningTrend 等其他辅助函数)
     
     private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
         switch trend {
