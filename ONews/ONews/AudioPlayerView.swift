@@ -303,34 +303,44 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     private func getBestVoice(for text: String) -> AVSpeechSynthesisVoice? {
-        // 【修复步骤1】为了检测语言，先创建一个不包含 URL 的临时字符串。
-        // URL 包含大量英文字符，会严重干扰 NLLanguageRecognizer，导致短中文文章被误判为英文。
+        // 1. 移除 URL 避免干扰（保持原逻辑）
         let textForDetection = text.replacingOccurrences(of: "https?://[^\\s]+", with: "", options: .regularExpression)
-
-        let recognizer = NLLanguageRecognizer()
-        recognizer.processString(textForDetection)
         
-        var languageCode = recognizer.dominantLanguage?.rawValue
+        // 2. 【核心修复】最高优先级：检测是否包含汉字
+        // 不需要管 NLLanguageRecognizer 认为它是什么语言。
+        // 只要含有汉字（\p{Han}），为了保证可读性，必须用中文引擎。
+        // (除非你明确知道这是日文，但根据你的业务场景看起来是中文为主)
+        let hasChineseChar = textForDetection.range(of: "\\p{Han}", options: .regularExpression) != nil
         
-        // 【修复步骤2】强制纠错逻辑
-        // 如果检测结果是英文（或者没检测出来），但文本中明显包含中文字符（Unicode Script Han），
-        // 则强制将语言代码指定为中文 (zh-CN)。这对于中文新闻 App 至关重要。
-        if languageCode == nil || languageCode?.hasPrefix("en") == true {
-            if textForDetection.range(of: "\\p{Han}", options: .regularExpression) != nil {
-                languageCode = "zh-CN"
+        var finalLanguageCode = "zh-CN"
+        
+        if hasChineseChar {
+            // 如果有汉字，强制锁定中文
+            finalLanguageCode = "zh-CN"
+        } else {
+            // 只有在【完全没有汉字】的情况下，才依赖自动检测
+            // 这适用于纯英文、纯法文等场景
+            let recognizer = NLLanguageRecognizer()
+            recognizer.processString(textForDetection)
+            
+            if let detected = recognizer.dominantLanguage?.rawValue {
+                finalLanguageCode = detected
+            } else {
+                // 检测失败，兜底
+                finalLanguageCode = Locale.current.language.languageCode?.identifier ?? "zh-CN"
             }
         }
 
-        // 兜底：如果还是空的，使用当前系统语言，或者默认 zh-CN
-        let finalLanguageCode = languageCode ?? Locale.current.language.languageCode?.identifier ?? "zh-CN"
-
+        // 3. 获取对应语言的最佳语音包
         let voices = AVSpeechSynthesisVoice.speechVoices()
         let matches = voices.filter { $0.language.starts(with: finalLanguageCode) }
         
+        // 优先选择高质量语音
         if let v = matches.first(where: { $0.quality == .premium }) { return v }
         if let v = matches.first(where: { $0.quality == .enhanced }) { return v }
         if let v = matches.first { return v }
         
+        // 最后的兜底
         return AVSpeechSynthesisVoice(language: finalLanguageCode)
     }
 
@@ -1114,6 +1124,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             "HTML": "H.T.M.L",
             "CSS": "C.S.S",
             "JS": "J.S",
+            "xAI": "X.A.I",
             "AI": "A.I",
             "OpenAI": "Open.A.I",
             "openAI": "open.A.I",
