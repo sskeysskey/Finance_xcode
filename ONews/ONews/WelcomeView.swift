@@ -1,5 +1,6 @@
 import SwiftUI
 
+// FloatingWord 结构体保持不变
 struct FloatingWord: Identifiable {
     let id = UUID()
     let text: String
@@ -178,19 +179,19 @@ struct WelcomeView: View {
                 // 文字层
                 VStack(spacing: 0) {
                     Spacer().frame(height: 100)
-                    Text("ONews")
+                    Text(Localized.appName) // 使用字典
                         .font(.system(size: 60, weight: .black, design: .rounded))
                         .foregroundColor(.blue)
                         .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
                     
-                    Text("可以听的海外资讯")
+                    Text(Localized.appSlogan) // 使用字典
                         .font(.title2.bold())
                         .foregroundColor(.primary.opacity(0.8))
                         .padding(.top, 10)
                     
                     Spacer()
                     
-                    Text("点击右下角按钮\n定制您的专属新闻源")
+                    Text(Localized.welcomeInstruction) // 使用字典
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -255,7 +256,7 @@ struct WelcomeView: View {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                 .scaleEffect(1.5)
-                            Text(resourceManager.syncMessage)
+                            Text(resourceManager.syncMessage) // 这里假设 syncMessage 已经在 ResourceManager 内部处理了国际化
                                 .font(.headline)
                                 .foregroundColor(.white)
                         }
@@ -268,8 +269,17 @@ struct WelcomeView: View {
             }
         }
         .tint(.blue)
-        .alert("获取失败", isPresented: $showErrorAlert, actions: { Button("好的", role: .cancel) { } }, message: { Text(errorMessage) })
-        .alert("", isPresented: $showAlreadyUpToDateAlert) { Button("好的", role: .cancel) {} } message: { Text("网络连接正常，请点击右下角“+”按钮来选择你喜欢的新闻源。") }
+        // 使用字典替换 Alert 文本
+        .alert(Localized.fetchFailed, isPresented: $showErrorAlert, actions: { 
+            Button(Localized.ok, role: .cancel) { } 
+        }, message: { 
+            Text(errorMessage) 
+        })
+        .alert("", isPresented: $showAlreadyUpToDateAlert) { 
+            Button(Localized.ok, role: .cancel) {} 
+        } message: { 
+            Text(Localized.upToDateMessage) 
+        }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .active && !hasAttemptedInitialSync {
                 hasAttemptedInitialSync = true
@@ -283,7 +293,11 @@ struct WelcomeView: View {
 
     // 【修改】: 增加 isManual 参数以区分调用来源
     private func syncInitialResources(isManual: Bool = false) async {
-        do { try await resourceManager.checkAndDownloadAllNewsManifests(isManual: isManual) }
-        catch { self.errorMessage = "同步失败，请重试。"; self.showErrorAlert = true }
+        do { 
+            try await resourceManager.checkAndDownloadAllNewsManifests(isManual: isManual) 
+        } catch { 
+            self.errorMessage = Localized.syncFailed // 使用字典
+            self.showErrorAlert = true 
+        }
     }
 }

@@ -19,7 +19,8 @@ struct ServerVersion: Codable {
 class ResourceManager: ObservableObject {
     
     @Published var isSyncing = false
-    @Published var syncMessage = "启动中..."
+    // 【修改】初始值使用双语
+    @Published var syncMessage = Localized.syncStarting 
     @Published var isDownloading = false
     @Published var downloadProgress: Double = 0.0
     @Published var progressText = ""
@@ -46,7 +47,7 @@ class ResourceManager: ObservableObject {
         return URLSession(configuration: configuration)
     }()
 
-    // 【新增】专门用于欢迎页特效：只获取 source_mappings 的值
+    // 【修改】特效数据获取失败时的默认词汇
     func fetchSourceNames() async -> [String] {
         do {
             // 复用已有的 getServerVersion 方法
@@ -54,14 +55,20 @@ class ResourceManager: ObservableObject {
             // 提取 source_mappings 的所有 value（即中文名称）
             if let mappings = version.source_mappings {
                 let names = Array(mappings.values)
-                print("特效数据获取成功: \(names)")
                 return names
             }
         } catch {
             print("特效数据获取失败: \(error)")
         }
-        // 如果失败或为空，返回默认列表以防特效空白
-        return ["流行的西方期刊", "指尖的外媒报纸", "最酷最敢说", "欧美媒体", "一手新闻源", "可以听的海外新闻"]
+        // 使用双语字典中的默认词汇
+        return [
+            Localized.fallbackSource1,
+            Localized.fallbackSource2,
+            Localized.fallbackSource3,
+            Localized.fallbackSource4,
+            Localized.fallbackSource5,
+            Localized.fallbackSource6
+        ]
     }
     
     // MARK: - 检查图片是否存在而不下载
@@ -234,7 +241,7 @@ class ResourceManager: ObservableObject {
     func checkAndDownloadAllNewsManifests(isManual: Bool = false) async throws {
         self.isSyncing = true
         self.isDownloading = false
-        self.syncMessage = "正在获取新闻列表..."
+        self.syncMessage = Localized.fetchingManifest // 【修改】
         self.progressText = ""
         self.downloadProgress = 0.0
         
@@ -243,14 +250,12 @@ class ResourceManager: ObservableObject {
             
             // 【新增】获取到配置后，立即更新
             self.serverLockedDays = serverVersion.locked_days ?? 0
-            print("ResourceManager: 从服务器获取到 locked_days = \(self.serverLockedDays)")
             
             let allJsonInfos = serverVersion.files
                 .filter { $0.type == "json" && $0.name.starts(with: "onews_") }
                 .sorted { $0.name < $1.name }
             
             if allJsonInfos.isEmpty {
-                print("服务器上未找到任何 'onews_*.json' 文件。")
                 self.isSyncing = false
                 return
             }
@@ -297,7 +302,7 @@ class ResourceManager: ObservableObject {
             for (index, info) in tasksToDownload.enumerated() {
                 self.progressText = "\(index + 1)/\(total)"
                 self.downloadProgress = Double(index + 1) / Double(total)
-                self.syncMessage = "正在加载数据..."
+                self.syncMessage = Localized.downloadingData // 【修改】
                 try await downloadSingleFile(named: info.name)
             }
             
@@ -316,7 +321,7 @@ class ResourceManager: ObservableObject {
     func checkAndDownloadUpdates(isManual: Bool = false) async throws {
         self.isSyncing = true
         self.isDownloading = false
-        self.syncMessage = "正在检查更新..."
+        self.syncMessage = Localized.checkingUpdates // 【修改】
         self.progressText = ""
         self.downloadProgress = 0.0
         
@@ -328,7 +333,7 @@ class ResourceManager: ObservableObject {
             self.serverLockedDays = serverVersion.locked_days ?? 0
             print("ResourceManager: 从服务器获取到 locked_days = \(self.serverLockedDays)")
             
-            self.syncMessage = "正在清理旧资源..."
+            self.syncMessage = Localized.cleaningOldResources // 【修改】
             let validServerFiles = Set(serverVersion.files.map { $0.name })
             let filesToDelete = localFiles.subtracting(validServerFiles)
             let oldNewsItemsToDelete = filesToDelete.filter {
@@ -385,7 +390,7 @@ class ResourceManager: ObservableObject {
             
             if downloadTasks.isEmpty {
                 if isManual {
-                    self.syncMessage = "当前已是最新"
+                    self.syncMessage = Localized.upToDate // 【修改】
                     resetStateAfterDelay()
                 } else {
                     self.isSyncing = false
@@ -403,14 +408,13 @@ class ResourceManager: ObservableObject {
                 self.downloadProgress = Double(index + 1) / Double(totalTasks)
                 
                 if task.fileInfo.type == "json" {
-                    // self.syncMessage = "正在下载文件: \(task.fileInfo.name)..."
-                    self.syncMessage = "正在下载文件..."
+                    self.syncMessage = Localized.downloadingFiles // 【修改】
                     try await downloadSingleFile(named: task.fileInfo.name)
                 }
             }
             
             self.isDownloading = false
-            self.syncMessage = "更新完成！"
+            self.syncMessage = Localized.updateComplete // 【修改】
             self.progressText = ""
             resetStateAfterDelay()
             

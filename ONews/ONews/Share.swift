@@ -5,10 +5,14 @@ struct CustomShareSheet: View {
     var onWeChatAction: () -> Void
     var onSystemShareAction: () -> Void
     @Environment(\.dismiss) var dismiss
+    
+    // 监听语言变化以实时刷新 UI
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     var body: some View {
         VStack(spacing: 20) {
-            Text("分享至")
+            // 使用修正后的 Localized 属性
+            Text(Localized.shareTo)
                 .font(.headline)
                 .padding(.top, 20)
             
@@ -17,7 +21,7 @@ struct CustomShareSheet: View {
                 ShareIconBtn(
                     icon: "message.fill", // 这里用SF Symbol代替，实际可用微信图标资源
                     color: Color.green,
-                    title: "微信"
+                    title: Localized.weChat
                 ) {
                     dismiss()
                     onWeChatAction()
@@ -27,7 +31,7 @@ struct CustomShareSheet: View {
                 ShareIconBtn(
                     icon: "ellipsis.circle.fill",
                     color: Color.gray,
-                    title: "更多"
+                    title: Localized.more
                 ) {
                     dismiss()
                     onSystemShareAction()
@@ -37,7 +41,7 @@ struct CustomShareSheet: View {
             
             Spacer()
         }
-        .presentationDetents([.height(200)]) // iOS 16+ 支持，控制弹窗高度
+        .presentationDetents([.height(220)]) 
         .presentationDragIndicator(.visible)
     }
 }
@@ -62,7 +66,10 @@ struct ShareIconBtn: View {
                 }
                 Text(title)
                     .font(.caption)
+                    .fontWeight(.medium)
                     .foregroundColor(.primary)
+                    .frame(width: 80) 
+                    .multilineTextAlignment(.center)
             }
         }
     }
@@ -71,6 +78,7 @@ struct ShareIconBtn: View {
 // 2. 微信手动粘贴引导页
 struct WeChatGuideView: View {
     @Environment(\.dismiss) var dismiss
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
     var body: some View {
         VStack(spacing: 25) {
@@ -79,13 +87,14 @@ struct WeChatGuideView: View {
                 .foregroundColor(.green)
                 .padding(.top, 40)
             
-            Text("文章内容已复制")
+            Text(Localized.contentCopied)
                 .font(.title2)
                 .fontWeight(.bold)
             
-            Text("由于微信限制请手动去微信粘贴文章内容")
+            Text(Localized.weChatLimitHint)
+                .font(.body)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal)
+                .padding(.horizontal, 30)
                 .foregroundColor(.secondary)
         }
         .presentationDetents([.medium])
@@ -97,8 +106,8 @@ struct WeChatGuideView: View {
             if UIApplication.shared.canOpenURL(url) {
                 UIApplication.shared.open(url)
             } else {
-                // 如果没装微信的备选逻辑，这里简单打印
-                print("未安装微信")
+                // 这里可以加一个提示，或者打印
+                print(Localized.weChatNotInstalled)
             }
         }
     }

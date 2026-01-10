@@ -43,6 +43,7 @@ struct SubscriptionView: View {
                     Text(Localized.subDesc)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
                 }
                 .padding(.top, 40)
                 
@@ -56,7 +57,9 @@ struct SubscriptionView: View {
                             Text(Localized.planFree)
                                 // .font(.title2.bold())
                                 .foregroundColor(.primary)
-                            Text("可免费浏览 \(authManager.isSubscribed ? "全部" : "三天前") 的所有文章")
+                                .font(.headline)
+                            // 【修改】使用双语变量
+                            Text(authManager.isSubscribed ? Localized.planFreeDetailSubbed : Localized.planFreeDetail)
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
@@ -94,7 +97,8 @@ struct SubscriptionView: View {
                         }
                         Spacer()
                         VStack(alignment: .trailing) {
-                            Text("¥12/月")
+                            // 【修改】价格双语化
+                            Text(Localized.pricePerMonth)
                                 .font(.title2.bold())
                                 .foregroundColor(.orange)
                         }
@@ -143,11 +147,13 @@ struct SubscriptionView: View {
                 
                 // 底部说明
                 if authManager.isSubscribed {
-                    Text("您当前是尊贵的专业版用户")
+                    // 【修改】双语化
+                    Text(Localized.currentProUser)
                         .foregroundColor(.orange)
                         .padding()
                 } else {
-                    Text("如果不选择付费，您将继续使用免费版，仍可以浏览三天前的文章。")
+                    // 【修改】双语化
+                    Text(Localized.freePlanFootnote)
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -170,13 +176,13 @@ struct SubscriptionView: View {
                         .scaleEffect(1.5)
                         .tint(.white)
                     
-                    // 根据状态显示不同文案
+                    // 【修改】文案双语化
                     if isRestoring {
-                        Text("正在恢复购买...")
+                        Text(Localized.restoring)
                             .foregroundColor(.white)
                             .padding(.top)
                     } else if isRedeeming {
-                        Text("正在验证...")
+                        Text(Localized.verifying)
                             .foregroundColor(.white)
                             .padding(.top)
                     } else {
@@ -187,26 +193,26 @@ struct SubscriptionView: View {
                 }
             }
         }
-        .alert("支付失败", isPresented: $showError) {
-            Button("确定", role: .cancel) { }
+        // 【修改】Alert 标题双语化
+        .alert(Localized.paymentFailed, isPresented: $showError) {
+            Button(Localized.confirm, role: .cancel) { }
         } message: {
             Text(errorMessage)
         }
-        // 【新增】兑换码输入弹窗
-        .alert("内部测试/亲友通道", isPresented: $showRedeemAlert) {
-            TextField("请输入邀请码", text: $inviteCode)
-                .textInputAutocapitalization(.characters) // 自动大写
-            Button("取消", role: .cancel) { }
-            Button("兑换") {
+        // 【修改】兑换码 Alert 双语化
+        .alert(Localized.internalTestTitle, isPresented: $showRedeemAlert) {
+            TextField(Localized.enterInviteCode, text: $inviteCode)
+                .textInputAutocapitalization(.characters)
+            Button(Localized.cancel, role: .cancel) { }
+            Button(Localized.redeem) {
                 handleRedeem()
             }
         } message: {
-            Text("请输入管理员提供的专用代码以解锁全部功能。")
+            Text(Localized.inviteCodeInstruction)
         }
-        // 【新增】恢复结果弹窗
-        .alert("恢复结果", isPresented: $showRestoreAlert) {
-            Button("确定", role: .cancel) {
-                // 如果恢复成功，用户点击确定后可以自动关闭页面
+        // 【修改】恢复结果 Alert 双语化
+        .alert(Localized.restoreResult, isPresented: $showRestoreAlert) {
+            Button(Localized.confirm, role: .cancel) {
                 if authManager.isSubscribed {
                     dismiss()
                 }
@@ -283,17 +289,19 @@ struct SubscriptionView: View {
                 try await authManager.restorePurchases()
                 await MainActor.run {
                     isRestoring = false
+                    // 【修改】恢复结果文案双语化
                     if authManager.isSubscribed {
-                        restoreMessage = "成功恢复订阅！您现在可以无限制访问数据。"
+                        restoreMessage = Localized.restoreSuccess
                     } else {
-                        restoreMessage = "未发现有效的订阅记录。"
+                        restoreMessage = Localized.restoreNotFound
                     }
                     showRestoreAlert = true
                 }
             } catch {
                 await MainActor.run {
                     isRestoring = false
-                    restoreMessage = "恢复失败: \(error.localizedDescription)"
+                    // 使用专门的“恢复失败”词条
+                    restoreMessage = "\(Localized.restoreFailed): \(error.localizedDescription)"
                     showRestoreAlert = true
                 }
             }
@@ -324,7 +332,7 @@ struct SubscriptionView: View {
                 await MainActor.run {
                     isRedeeming = false
                     inviteCode = ""
-                    errorMessage = "兑换失败: \(error.localizedDescription)"
+                    errorMessage = error.localizedDescription
                     showError = true
                 }
             }

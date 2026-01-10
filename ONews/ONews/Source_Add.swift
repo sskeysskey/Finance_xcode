@@ -2,7 +2,7 @@ import SwiftUI
 import Foundation
 
 // 文件名: Source_Add.swift
-// 职责: 提供一个列表，让用户能够添加或移除新闻源订阅（已取消搜索功能）。
+// 职责: 提供一个列表，让用户能够添加或移除新闻源订阅。
 // 职责: 集中管理用户的新闻源订阅列表，使用 UserDefaults 进行持久化存储。
 
 class SubscriptionManager: ObservableObject {
@@ -48,7 +48,7 @@ class SubscriptionManager: ObservableObject {
         subscribedSourceIDs.formUnion(sourceIds)
     }
     
-    /// 【新增】供外部调用的迁移方法：将旧的名称订阅转换为 ID 订阅
+    /// 供外部调用的迁移方法：将旧的名称订阅转换为 ID 订阅
     func migrateOldSubscription(name: String, id: String) {
         // 读取旧的名称列表
         let oldNames = UserDefaults.standard.stringArray(forKey: oldSubscribedSourcesKey) ?? []
@@ -68,8 +68,9 @@ struct AddSourceView: View {
     // 订阅管理器
     @ObservedObject private var subscriptionManager = SubscriptionManager.shared
 
-    // 【新增】接收 ResourceManager 以获取 mappings
+    // 获取资源管理器和语言设置
     @EnvironmentObject var resourceManager: ResourceManager 
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false 
     
     // 用于判断显示逻辑（首次设置 vs. 后续添加）
     let isFirstTimeSetup: Bool
@@ -92,7 +93,7 @@ struct AddSourceView: View {
                 VStack(spacing: 16) {
                     ProgressView()
                         .scaleEffect(1.2)
-                    Text("正在获取最新源...")
+                    Text(Localized.fetchingSources) // 【双语化】
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -107,6 +108,12 @@ struct AddSourceView: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                         .foregroundColor(.secondary)
+                    
+                    // 增加一个刷新按钮，方便出错后重试
+                    Button(Localized.refresh) { // 【双语化】
+                        loadAvailableSources()
+                    }
+                    .buttonStyle(.bordered)
                 }
                 .frame(maxHeight: .infinity)
                 .background(Color.viewBackground)
@@ -144,7 +151,7 @@ struct AddSourceView: View {
                             .padding(.vertical, 6)
                         }
                     } header: {
-                        Text("可用新闻源")
+                        Text(Localized.availableSources) // 【双语化】
                     }
                     // 【关键点】这里不需要 footer spacer 了，因为 safeAreaInset 会自动处理
                 }
@@ -169,7 +176,8 @@ struct AddSourceView: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: "checkmark.rectangle.stack.fill")
                                             .font(.system(size: 18))
-                                        Text("一键添加所有 (\(allAvailableSources.count))")
+                                        // 【双语化】一键添加所有 (n)
+                                        Text("\(Localized.addAll) (\(allAvailableSources.count))")
                                             .fontWeight(.bold)
                                     }
                                     .font(.headline)
@@ -191,7 +199,8 @@ struct AddSourceView: View {
                             
                             // 完成设置按钮
                             Button(action: handleConfirm) {
-                                Text(subscriptionManager.subscribedSourceIDs.isEmpty ? "请至少选择一个" : "完成设置")
+                                // 【双语化】请至少选择一个 / 完成设置
+                                Text(subscriptionManager.subscribedSourceIDs.isEmpty ? Localized.selectAtLeastOne : Localized.finishSetup)
                                     .font(.headline)
                                     .foregroundColor(subscriptionManager.subscribedSourceIDs.isEmpty ? .secondary : .white)
                                     .frame(maxWidth: .infinity)
@@ -215,7 +224,7 @@ struct AddSourceView: View {
                 }
             }
         }
-        .navigationTitle("添加内容")
+        .navigationTitle(Localized.addSourceTitle) // 【双语化】
         .navigationBarTitleDisplayMode(.inline)
         // 移除右上角“完成”按钮，保留默认返回按钮
         .onAppear(perform: loadAvailableSources)
@@ -241,6 +250,7 @@ struct AddSourceView: View {
         // 【修复】在进入后台线程前，先从 ResourceManager 获取映射表
         // 这样 mappings 变量就在闭包的作用域内了
         let mappings = resourceManager.sourceMappings
+        let currentLangIsEnglish = self.isGlobalEnglishMode // 捕获当前语言状态用于闭包
         
         DispatchQueue.global(qos: .userInitiated).async {
             do {
@@ -252,7 +262,11 @@ struct AddSourceView: View {
                     .filter { $0.lastPathComponent.starts(with: "onews_") && $0.pathExtension == "json" }
                 
                 guard !newsJSONURLs.isEmpty else {
-                    throw NSError(domain: "AppError", code: 1, userInfo: [NSLocalizedDescriptionKey: "在 Documents 目录中没有找到任何 'onews_*.json' 文件。\n请先返回主页同步资源。"])
+                    // 【双语化错误提示】
+                    let errorMsg = currentLangIsEnglish 
+                        ? "No news data found in local storage.\nPlease go back and sync resources first."
+                        : "本地未发现新闻数据。\n请先返回主页同步资源。"
+                    throw NSError(domain: "AppError", code: 1, userInfo: [NSLocalizedDescriptionKey: errorMsg])
                 }
 
                 // 使用字典去重：Key 是 ID，Value 是 Name

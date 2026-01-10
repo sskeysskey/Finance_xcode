@@ -29,7 +29,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         
         print("AppDelegate: didFinishLaunchingWithOptions - App 启动完成，开始进行一次性设置。")
         
-        // --- 🌍 【新增】国际化智能初始化逻辑 ---
+        // --- 🌍 国际化智能初始化逻辑 ---
         initializeLanguagePreference()
         // ------------------------------------
 
@@ -166,7 +166,8 @@ struct MainAppView: View {
 /// 已从各个视图文件中提取至此，以供全局复用。
 struct SearchBarInline: View {
     @Binding var text: String
-    var placeholder: String = "搜索标题或正文关键字" // 【修改】更新 placeholder 文本
+    // 【修改】默认使用 Localized 里的占位符
+    var placeholder: String = Localized.searchPlaceholder 
     var onCommit: () -> Void
     var onCancel: () -> Void
 
@@ -189,11 +190,13 @@ struct SearchBarInline: View {
             .cornerRadius(10)
 
             if !text.isEmpty {
-                Button("搜索") { onCommit() }
+                // 【修改】使用 Localized.search
+                Button(Localized.search) { onCommit() }
                     .buttonStyle(.bordered)
             }
 
-            Button("取消") {
+            // 【修改】使用 Localized.cancel
+            Button(Localized.cancel) {
                 onCancel()
                 // 取消时顺便收起键盘
                 isFocused = false
@@ -236,7 +239,7 @@ struct ArticleRowCardView: View {
     
     // 【新增 3】核心逻辑：决定显示哪个标题
     var displayTopic: String {
-        // 如果开启英文模式，且英文标题存在且不为空，则显示英文
+        // 如果开启英文模式且有英文标题，则显示英文
         if showEnglish, let engTitle = article.topic_eng, !engTitle.isEmpty {
             return engTitle
         }
@@ -260,9 +263,10 @@ struct ArticleRowCardView: View {
                 if isLocked {
                     HStack(spacing: 4) {
                         Image(systemName: "lock.fill")
-                            .font(.system(size: 14)) // 【修改】10 -> 12
-                        Text("需订阅")
-                            .font(.system(size: 14, weight: .medium)) // 【修改】10 -> 12
+                            .font(.system(size: 14))
+                        // 【修改】使用 Localized.needSubscription
+                        Text(Localized.needSubscription)
+                            .font(.system(size: 14, weight: .medium))
                     }
                     .foregroundColor(.orange.opacity(0.9))
                     .padding(.horizontal, 8)
@@ -291,8 +295,9 @@ struct ArticleRowCardView: View {
             // 3. 底部标签栏：正文匹配标记等
             if isContentMatch {
                 HStack {
-                    Label("正文匹配", systemImage: "text.magnifyingglass")
-                        .font(.system(size: 12, weight: .medium)) // 【修改】10 -> 12
+                    // 【修改】使用 Localized.contentMatch
+                    Label(Localized.contentMatch, systemImage: "text.magnifyingglass")
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.secondary)
                     Spacer()
                 }

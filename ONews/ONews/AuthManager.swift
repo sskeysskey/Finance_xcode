@@ -188,7 +188,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         // 2. 获取商品信息
         let products = try await Product.products(for: [subscriptionProductID])
         guard let product = products.first else {
-            throw NSError(domain: "StoreError", code: 404, userInfo: [NSLocalizedDescriptionKey: "未找到商品信息"])
+            throw NSError(domain: "StoreError", code: 404, userInfo: [NSLocalizedDescriptionKey: Localized.errProductNotFound]) // 使用双语
         }
         
         // 3. 发起购买
@@ -216,7 +216,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             return true // ✅ 返回成功
             
         case .userCancelled:
-            print("用户取消支付")
+            print(Localized.errUserCancelled) // 使用双语
             return false // ❌ 返回失败（取消）
             
         case .pending:
@@ -252,7 +252,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         if let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential {
             guard let identityTokenData = appleIDCredential.identityToken,
                   let identityToken = String(data: identityTokenData, encoding: .utf8) else {
-                handleSignInError("无法获取 Identity Token。")
+                handleSignInError(Localized.errNoIdentityToken) // 使用双语
                 return
             }
             
@@ -278,11 +278,11 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                         print("AuthManager: 登录成功。订阅状态: \(self.isSubscribed)")
                     }
                 } catch {
-                    handleSignInError("服务器验证失败: \(error.localizedDescription)")
+                    handleSignInError("\(Localized.errServerVerifyFailed): \(error.localizedDescription)") // 使用双语
                 }
             }
         } else {
-            handleSignInError("获取 Apple ID 凭证失败。")
+            handleSignInError(Localized.errAppleIDCredentialFailed) // 使用双语
         }
     }
 
@@ -294,7 +294,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             handleSignInError(nil) // nil 表示是用户主动取消，不显示错误信息
         } else {
             print("AuthManager: Apple 登录授权失败: \(error.localizedDescription)")
-            handleSignInError("登录失败，请稍后重试。")
+            handleSignInError(Localized.errLoginFailedRetry) // 使用双语
         }
     }
     
@@ -392,7 +392,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     func checkVerified<T>(_ result: VerificationResult<T>) throws -> T {
         switch result {
         case .unverified:
-            throw NSError(domain: "StoreError", code: 401, userInfo: [NSLocalizedDescriptionKey: "Transaction unverified"])
+            throw NSError(domain: "StoreError", code: 401, userInfo: [NSLocalizedDescriptionKey: Localized.errTransactionUnverified]) // 使用双语
         case .verified(let safe):
             return safe
         }
@@ -535,11 +535,11 @@ struct LoginView: View {
                         // 【修改】颜色自适应
                         .foregroundColor(.primary)
                     
-                    Text("登录【环球要闻】")
+                    Text(Localized.loginWelcome) // 替换
                         .font(.largeTitle.bold())
                         .foregroundColor(.primary)
                     
-                    Text("成功登录后\n即使更换设备\n也可以同步您的订阅状态")
+                    Text(Localized.loginDesc) // 替换
                         .font(.headline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -588,7 +588,7 @@ struct LoginView: View {
                 Spacer()
                 
                 // 关闭按钮
-                Button("稍后再说") {
+                Button(Localized.later) { // 替换
                     dismiss()
                 }
                 .font(.subheadline)

@@ -41,13 +41,13 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     private var speechSynthesizer = AVSpeechSynthesizer()
     private var audioPlayer: AVAudioPlayer?
     private var displayLink: CADisplayLink?
-
     private var temporaryAudioFileURL: URL?
     private var audioFile: AVAudioFile?
     private let autoPlayEnabledKey = "audio.autoPlayEnabled"
-
     private var remoteCommandsRegistered = false
-    private var nowPlayingTitle: String = "正在播放的文章"
+    
+    // 使用词典中的默认标题
+    private var nowPlayingTitle: String = Localized.playingArticle
 
     private var synthesisWatchdogTimer: Timer?
     private var synthesisLastWriteAt: Date?
@@ -152,17 +152,19 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             info[MPMediaItemPropertyPlaybackDuration] = player.duration
             info[MPNowPlayingInfoPropertyPlaybackRate] = player.isPlaying ? Double(playbackRate) : 0.0
         }
-        info[MPMediaItemPropertyArtist] = isAutoPlayEnabled ? "自动连播" : "单次播放"
+        // 使用双语词条
+        info[MPMediaItemPropertyArtist] = isAutoPlayEnabled ? Localized.autoPlay : Localized.singlePlay
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
     private func refreshNowPlayingInfo(playbackRate explicitRate: Double? = nil) {
         var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-
         info[MPMediaItemPropertyTitle] = nowPlayingTitle
 
         let speedText = String(format: "%.2fx", playbackRate).replacingOccurrences(of: ".00", with: "x")
-        info[MPMediaItemPropertyArtist] = isAutoPlayEnabled ? "自动连播 • \(speedText)" : "单次播放 • \(speedText)"
+        // 使用双语词条
+        let modeText = isAutoPlayEnabled ? Localized.autoPlay : Localized.singlePlay
+        info[MPMediaItemPropertyArtist] = "\(modeText) • \(speedText)"
         info[MPMediaItemPropertyAlbumTitle] = "Speed \(speedText)"
 
         if let player = audioPlayer {
@@ -220,7 +222,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     // MARK: - Public Control Methods
     func startPlayback(text: String, title: String? = nil, language: String = "zh-CN") {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            handleError("文本内容为空，无法播放。")
+            handleError(Localized.errEmptyText) // 双语错误
             return
         }
 
@@ -232,12 +234,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         cleanupTemporaryFile()
         invalidateSynthesisWatchdog()
 
-        self.nowPlayingTitle = title?.isEmpty == false ? title! : "正在播放的文章"
+        self.nowPlayingTitle = title?.isEmpty == false ? title! : Localized.playingArticle
         self.speechSynthesizer.delegate = self
 
         // 【修改点】传入 language 参数给预处理函数
         let processedText = preprocessText(text, language: language)
-
         isSynthesizing = true
         isPlaybackActive = true
 
@@ -246,7 +247,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             try session.setCategory(.playback, mode: .spokenAudio)
             try session.setActive(true, options: [])
         } catch {
-            print("激活音频会话警告: \(error.localizedDescription)")
+            print("\(Localized.errSessionFailed): \(error.localizedDescription)")
         }
 
         refreshNowPlayingInfo(playbackRate: 0.0)
@@ -275,7 +276,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
-                    self.handleError("无法获取 PCM 缓冲。")
+                    self.handleError(Localized.errPCMBuffer)
                     return
                 }
 
@@ -287,12 +288,12 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                     if self.audioFile == nil {
                         do {
                             guard let url = self.temporaryAudioFileURL else {
-                                self.handleError("无法创建音频文件：临时 URL 缺失。")
+                                self.handleError(Localized.errTempURL)
                                 return
                             }
                             self.audioFile = try AVAudioFile(forWriting: url, settings: pcmBuffer.format.settings)
                         } catch {
-                            self.handleError("根据音频数据格式创建文件失败: \(error)")
+                            self.handleError("\(Localized.errPlayerFailed): \(error)")
                             return
                         }
                     }
@@ -362,7 +363,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 enableRemoteCommandsForActivePlayback()
                 refreshNowPlayingInfo(playbackRate: 1.0)
             } catch {
-                handleError("恢复播放时，重新激活音频会话失败: \(error)")
+                handleError("\(Localized.errPlayerFailed): \(error)")
             }
         }
     }
@@ -429,14 +430,14 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         do {
             try self.audioFile?.write(from: buffer)
         } catch {
-            handleError("写入音频文件失败: \(error)")
+            handleError("\(Localized.unknownError): \(error)") // 或者在 Localized 增加 errWriteFailed
         }
     }
 
     private func synthesisToFileCompleted() {
         self.audioFile = nil
         guard let url = self.temporaryAudioFileURL else {
-            handleError("合成结束，但找不到临时文件URL。")
+            handleError(Localized.errTempURL)
             return
         }
         invalidateSynthesisWatchdog()
@@ -462,7 +463,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 guard let last = self.synthesisLastWriteAt else { return }
                 let elapsed = Date().timeIntervalSince(last)
                 if elapsed > timeout {
-                    self.handleError("语音合成阶段长时间无响应（可能在后台被系统限制）。已中止此次合成。")
+                    // 【修正点】使用双语词条
+                    self.handleError(Localized.errSynthesisTimeout)
                 }
             }
         }
@@ -492,7 +494,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             enableRemoteCommandsForActivePlayback()
             refreshNowPlayingInfo(playbackRate: 1.0)
         } catch {
-            handleError("创建或播放 AVAudioPlayer 失败: \(error)")
+            handleError("\(Localized.errPlayerFailed): \(error)")
         }
     }
 
@@ -745,8 +747,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
     // 调整调用顺序：先去逗号 -> 统一破折号 -> 英文/范围/单位处理 -> 年份逐字化 -> 中英间停顿
     private func preprocessText(_ text: String, language: String) -> String {
-        // 移除 URL 是通用的
-        let textWithoutURLs = text.replacingOccurrences(of: "https?://[^\\s]+", with: "链接", options: .regularExpression)
+        // 【修正点】使用词典中的“链接”占位符
+        let textWithoutURLs = text.replacingOccurrences(of: "https?://[^\\s]+", with: Localized.linkPlaceholder, options: .regularExpression)
         
         // 【核心修改】如果是英文模式，直接返回处理过 URL 的文本
         // 跳过所有针对中文的数字、年份、破折号处理，否则英文数字会被读乱
@@ -1178,6 +1180,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 }
 
+// MARK: - AudioPlayerView (UI 双语化)
 struct AudioPlayerView: View {
     @ObservedObject var playerManager: AudioPlayerManager
     @State private var sliderValue: Double = 0.0
@@ -1224,7 +1227,7 @@ struct AudioPlayerView: View {
             if playerManager.isSynthesizing {
                 HStack(spacing: 10) {
                     ProgressView()
-                    Text("正在合成语音，请稍候...")
+                    Text(Localized.synthesizing) // 双语
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -1249,7 +1252,7 @@ struct AudioPlayerView: View {
                                 .symbolRenderingMode(.hierarchical)
                                 .foregroundColor(playerManager.isAutoPlayEnabled ? .white : .white.opacity(0.45))
                         }
-                        .accessibilityLabel(playerManager.isAutoPlayEnabled ? "自动连播" : "单次播放")
+                        .accessibilityLabel(playerManager.isAutoPlayEnabled ? Localized.autoPlay : Localized.singlePlay)
                         Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity)
@@ -1268,7 +1271,7 @@ struct AudioPlayerView: View {
                                 .background(Color.white.opacity(0.18))
                                 .clipShape(Capsule())
                         }
-                        .accessibilityLabel("播放速度 \(rateLabel)")
+                        .accessibilityLabel("\(Localized.playbackSpeed) \(rateLabel)")
                         Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity)
@@ -1300,7 +1303,7 @@ struct AudioPlayerView: View {
                     .foregroundColor(.white)
                     .padding(6)
                     .clipShape(Circle())
-                    .accessibilityLabel("最小化播放器")
+                    .accessibilityLabel(Localized.minimizePlayer)
             }
             .padding(6),
             alignment: .topLeading
@@ -1314,7 +1317,8 @@ struct AudioPlayerView: View {
                     .background(Color.white.opacity(0.8))
                     .clipShape(Circle())
             }
-            .padding(6),
+            .padding(6)
+            .accessibilityLabel(Localized.close), // 【修正点】增加无障碍支持
             alignment: .topTrailing
         )
         .offset(y: -18)

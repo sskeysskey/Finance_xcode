@@ -56,7 +56,8 @@ struct ArticleContainerView: View {
                 sourceName: currentSourceName,
                 unreadCountForGroup: unreadCountForGroup,
                 totalUnreadCount: totalUnreadCountForContext,
-                isEnglishMode: $isEnglishMode, viewModel: viewModel,
+                isEnglishMode: $isEnglishMode, 
+                viewModel: viewModel,
                 audioPlayerManager: audioPlayerManager,
                 requestNextArticle: {
                     await self.switchToNextArticleAndStopAudio()
@@ -73,7 +74,8 @@ struct ArticleContainerView: View {
             )
             
             if showNoNextToast {
-                ToastView(message: "该分组内已无更多文章")
+                // 【修改】使用词典：无更多文章
+                ToastView(message: Localized.noMore) 
             }
             
             // 常驻的悬浮按钮
@@ -110,7 +112,7 @@ struct ArticleContainerView: View {
             // 更新图片下载遮罩层UI以显示详细进度
             if isDownloadingImages {
                 VStack(spacing: 12) {
-                    Text("正在加载图片...")
+                    Text(Localized.imageLoading) // 使用词典：正在加载图片
                         .font(.headline)
                         .foregroundColor(.white)
                     
@@ -169,7 +171,7 @@ struct ArticleContainerView: View {
         }
         .background(Color.viewBackground.ignoresSafeArea())
         .alert("", isPresented: $showErrorAlert, actions: {
-            Button("好的", role: .cancel) { }
+            Button(Localized.ok, role: .cancel) { } // 使用词典：好的
         }, message: {
             Text(errorMessage)
         })
@@ -290,7 +292,7 @@ struct ArticleContainerView: View {
                 await MainActor.run {
                     isDownloadingImages = true
                     downloadProgress = 0.0
-                    downloadProgressText = "准备中..."
+                    downloadProgressText = Localized.imagePrepare // 使用词典：准备中
                 }
                 
                 do {
@@ -301,13 +303,14 @@ struct ArticleContainerView: View {
                         progressHandler: { current, total in
                             // 这个闭包会在 MainActor 上被调用，可以直接更新UI状态
                             self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
-                            self.downloadProgressText = "已下载 \(current) / \(total)"
+                            // 【修改】使用词典拼接：已下载 X / Y
+                            self.downloadProgressText = "\(Localized.imageDownloaded) \(current) / \(total)"
                         }
                     )
                 } catch {
                     await MainActor.run {
                         isDownloadingImages = false
-                        errorMessage = "图片下载失败: \(error.localizedDescription)"
+                        errorMessage = "\(Localized.imageLoadFailed): \(error.localizedDescription)"
                         showErrorAlert = true
                         audioPlayerManager.stop()
                     }

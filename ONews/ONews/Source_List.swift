@@ -15,7 +15,7 @@ struct DownloadOverlay: View {
     var body: some View {
         if isDownloading {
             VStack(spacing: 12) {
-                Text("正在加载图片...")
+                Text(Localized.imageLoading) // 【双语化】
                     .font(.headline)
                     .foregroundColor(.white)
                 
@@ -52,17 +52,18 @@ struct UserProfileView: View {
                             .foregroundColor(.gray)
                         VStack(alignment: .leading, spacing: 4) {
                             if authManager.isSubscribed {
-                                Text(Localized.premiumUser)
+                                Text(Localized.premiumUser) // 【双语化】
                                     .font(.subheadline)
                                     .foregroundColor(.yellow)
                                     .bold()
                                 if let dateStr = authManager.subscriptionExpiryDate {
-                                    Text("有效期至: \(formatDateLocal(dateStr))")
+                                    // 【双语化】有效期至
+                                    Text("\(Localized.validUntil): \(formatDateLocal(dateStr, isEnglish: isGlobalEnglishMode))")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
                             } else {
-                                 Text(Localized.freeUser)
+                                 Text(Localized.freeUser) // 【双语化】
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
                             }
@@ -72,7 +73,7 @@ struct UserProfileView: View {
                                     .font(.caption2)
                                     .foregroundColor(.gray)
                             } else {
-                                Text("未登录")
+                                Text(Localized.notLoggedIn) // 【双语化】
                                     .font(.caption2)
                                     .foregroundColor(.gray)
                             }
@@ -115,7 +116,8 @@ struct UserProfileView: View {
                         Button {
                             UIPasteboard.general.string = "728308386@qq.com"
                         } label: {
-                            Label("复制邮箱地址", systemImage: "doc.on.doc")
+                            // 【双语化建议】可以在 Localized 增加 copyEmail 词条，此处先硬编码演示
+                            Label(isGlobalEnglishMode ? "Copy Email" : "复制邮箱地址", systemImage: "doc.on.doc")
                         }
                     }
                 }
@@ -129,35 +131,35 @@ struct UserProfileView: View {
                         } label: {
                             HStack {
                                 Image(systemName: "rectangle.portrait.and.arrow.right")
-                                Text(Localized.logout)
+                                Text(Localized.logout) // 【双语化】
                             }
                         }
                     }
                 }
             }
-            .navigationTitle(Localized.profileTitle)
+            .navigationTitle(Localized.profileTitle) // 【双语化】
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("关闭") { dismiss() }
+                    Button(Localized.close) { dismiss() } // 【双语化】
                 }
             }
         }
     }
 }
 
-// 辅助函数：放在 View 结构体外面或内部
-func formatDateLocal(_ isoString: String) -> String {
-    // 1. 创建解析器 (用于读取服务器返回的 ISO8601 字符串)
+// MARK: - Helper Functions
+func formatDateLocal(_ isoString: String, isEnglish: Bool) -> String {
     let isoFormatter = ISO8601DateFormatter()
     // 增加对毫秒和各种网络时间格式的支持
     isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds, .withTimeZone]
     
     // 2. 创建显示格式化器 (用于输出给用户看)
     let displayFormatter = DateFormatter()
-    displayFormatter.locale = Locale(identifier: "zh_CN") // ⚡️ 核心：强制指定为中文区域
-    displayFormatter.dateStyle = .medium  // 显示如：2026年1月20日
-    displayFormatter.timeStyle = .short   // 显示如：11:02 (如果不需要时间，可以改为 .none)
+    // 【双语化修复】根据当前模式选择区域
+    displayFormatter.locale = Locale(identifier: isEnglish ? "en_US" : "zh_CN")
+    displayFormatter.dateStyle = .medium
+    displayFormatter.timeStyle = .short
     
     // 尝试解析标准 ISO 格式 (带 Z 或偏移量)
     if let date = isoFormatter.date(from: isoString) {
@@ -174,6 +176,7 @@ func formatDateLocal(_ isoString: String) -> String {
     // 兜底方案 B：如果解析彻底失败，直接处理字符串 (处理 2026-01-20 这种格式)
     if isoString.contains("-") && isoString.count >= 10 {
         let datePart = String(isoString.prefix(10))
+        if isEnglish { return datePart }
         return datePart.replacingOccurrences(of: "-", with: "年", range: datePart.range(of: "-"))
                        .replacingOccurrences(of: "-", with: "月") + "日"
     }
@@ -185,6 +188,7 @@ func formatDateLocal(_ isoString: String) -> String {
 // 修改逻辑：不再直接传入 showLoginSheet，而是传入两个 Sheet 的控制状态
 struct UserStatusToolbarItem: View {
     @EnvironmentObject var authManager: AuthManager
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false 
     
     // 接收两个绑定的状态
     @Binding var showGuestMenu: Bool
@@ -214,7 +218,7 @@ struct UserStatusToolbarItem: View {
             } else {
                 HStack(spacing: 6) {
                     Image(systemName: "person.circle")
-                    Text("登录")
+                    Text(Localized.loginAccount) // 【双语化】
                         .font(.caption.bold())
                 }
                 .padding(.horizontal, 10)
@@ -223,10 +227,11 @@ struct UserStatusToolbarItem: View {
                 .foregroundColor(.primary)
             }
         }
-        .accessibilityLabel(authManager.isLoggedIn ? "个人中心" : "登录或反馈")
+        .accessibilityLabel(authManager.isLoggedIn ? Localized.profileTitle : Localized.loginAccount)
     }
 }
 
+// MARK: - Main Source List View
 struct SourceListView: View {
     @EnvironmentObject var viewModel: NewsViewModel
     @EnvironmentObject var resourceManager: ResourceManager
@@ -262,20 +267,6 @@ struct SourceListView: View {
     @State private var downloadProgressText = ""
     @State private var selectedArticleItem: (article: Article, sourceName: String)?
     @State private var isNavigationActive = false
-    
-    // 静态 formatter
-    private static let parsingFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyMMdd"
-        return f
-    }()
-    
-    private static let displayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy年M月d日, EEEE"
-        f.locale = Locale(identifier: "zh_CN")
-        return f
-    }()
     
     private var searchResults: [(article: Article, sourceName: String, isContentMatch: Bool)] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -374,6 +365,7 @@ struct SourceListView: View {
                             }
                             .frame(width: 24, height: 24)
                         }
+                        
                         Button {
                             withAnimation {
                                 isSearching.toggle()
@@ -442,6 +434,7 @@ struct SourceListView: View {
         .sheet(isPresented: $showProfileSheet) { UserProfileView() }
         // 【新增】未登录底部菜单 Sheet (仿 Finance)
         .sheet(isPresented: $showGuestMenu) {
+            // MARK: - Guest Menu (Bottom Sheet)
             VStack(spacing: 20) {
                 // 顶部小横条
                 Capsule()
@@ -449,7 +442,7 @@ struct SourceListView: View {
                     .frame(width: 40, height: 5)
                     .padding(.top, 10)
                 
-                Text("欢迎使用 ONews")
+                Text(Localized.loginWelcome) // 【双语化】
                     .font(.headline)
                 
                 VStack(spacing: 0) {
@@ -465,7 +458,7 @@ struct SourceListView: View {
                             Image(systemName: "person.crop.circle")
                                 .font(.title3)
                                 .frame(width: 30)
-                            Text(Localized.loginAccount)
+                            Text(Localized.loginAccount) // 【双语化】
                                 .font(.body)
                             Spacer()
                             Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
@@ -490,7 +483,7 @@ struct SourceListView: View {
                                 .font(.title3)
                                 .frame(width: 30)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(Localized.feedback)
+                                Text(Localized.feedback) // 【双语化】
                                     .foregroundColor(.primary)
                                 Text("728308386@qq.com")
                                     .font(.caption)
@@ -530,7 +523,7 @@ struct SourceListView: View {
                 if resourceManager.isSyncing {
                     // 简单的同步 HUD
                     VStack(spacing: 15) {
-                        if resourceManager.syncMessage.contains("最新") {
+                        if resourceManager.syncMessage.contains("最新") || resourceManager.syncMessage.contains("date") {
                             Image(systemName: "checkmark.circle.fill").font(.largeTitle).foregroundColor(.white)
                             Text(resourceManager.syncMessage).font(.headline).foregroundColor(.white)
                         } else if resourceManager.isDownloading {
@@ -540,7 +533,7 @@ struct SourceListView: View {
                                 .padding(.horizontal, 50)
                         } else {
                             ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white)).scaleEffect(1.2)
-                            Text("正在同步...").foregroundColor(.white.opacity(0.9))
+                            Text(Localized.loading).foregroundColor(.white.opacity(0.9)) // 【双语化】
                         }
                     }
                     .frame(width: 200, height: 160) // 小巧的 HUD 尺寸
@@ -552,7 +545,7 @@ struct SourceListView: View {
                 DownloadOverlay(isDownloading: isDownloadingImages, progress: downloadProgress, progressText: downloadProgressText)
             }
         )
-        .alert("", isPresented: $showErrorAlert, actions: { Button("好的", role: .cancel) { } }, message: { Text(errorMessage) })
+        .alert(Localized.ok, isPresented: $showErrorAlert, actions: { Button(Localized.ok, role: .cancel) { } }, message: { Text(errorMessage) })
     }
     
     // MARK: - 搜索结果视图 (使用新的卡片)
@@ -563,7 +556,7 @@ struct SourceListView: View {
             
             if searchResults.isEmpty {
                 Section {
-                    Text("未找到匹配的文章")
+                    Text(Localized.noMatch) // 【双语化】
                         .foregroundColor(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 30)
@@ -573,7 +566,7 @@ struct SourceListView: View {
                 ForEach(timestamps, id: \.self) { timestamp in
                     Section(header:
                         HStack {
-                            Text(Localized.searchResults)
+                            Text(Localized.searchResults) // 【双语化】
                             Spacer()
                             Text(formatTimestamp(timestamp))
                                 .font(.caption.bold())
@@ -604,9 +597,9 @@ struct SourceListView: View {
                             .contextMenu {
                                 // 保持原有菜单逻辑
                                 if item.article.isRead {
-                                    Button { viewModel.markAsUnread(articleID: item.article.id) } label: { Label("标为未读", systemImage: "circle") }
+                                    Button { viewModel.markAsUnread(articleID: item.article.id) } label: { Label(Localized.markAsUnread_text, systemImage: "circle") }
                                 } else {
-                                    Button { viewModel.markAsRead(articleID: item.article.id) } label: { Label("标为已读", systemImage: "checkmark.circle") }
+                                    Button { viewModel.markAsRead(articleID: item.article.id) } label: { Label(Localized.markAsRead_text, systemImage: "checkmark.circle") }
                                 }
                             }
                         }
@@ -833,7 +826,7 @@ struct SourceListView: View {
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
-            downloadProgressText = "准备中..."
+            downloadProgressText = Localized.imagePrepare // 【双语化】
         }
         
         do {
@@ -844,7 +837,8 @@ struct SourceListView: View {
                 progressHandler: { current, total in
                     // 这个闭包会在主线程上被调用，可以直接更新UI状态
                     self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
-                    self.downloadProgressText = "已下载 \(current) / \(total)"
+                    // 【双语化】已下载 x / y
+                    self.downloadProgressText = "\(Localized.imageDownloaded) \(current) / \(total)"
                 }
             )
             
@@ -858,7 +852,7 @@ struct SourceListView: View {
             // 6. 下载失败，隐藏遮罩并显示错误提示
             await MainActor.run {
                 isDownloadingImages = false
-                errorMessage = "图片下载失败: \(error.localizedDescription)"
+                errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)" // 【双语化】
                 showErrorAlert = true
             }
         }
@@ -873,16 +867,16 @@ struct SourceListView: View {
             if isManual {
                 switch error {
                 case is DecodingError:
-                    self.errorMessage = "数据解析失败，请稍后重试。"
+                    self.errorMessage = isGlobalEnglishMode ? "Data parsing failed, please try again later." : "数据解析失败，请稍后重试。"
                     self.showErrorAlert = true
                 case let urlError as URLError where
                     urlError.code == .cannotConnectToHost ||
                     urlError.code == .timedOut ||
                     urlError.code == .notConnectedToInternet:
-                    self.errorMessage = "网络连接失败，请检查网络设置或稍后重试。"
+                    self.errorMessage = Localized.networkError
                     self.showErrorAlert = true
                 default:
-                    self.errorMessage = "发生未知错误，请稍后重试。"
+                    self.errorMessage = isGlobalEnglishMode ? "Something unknown happened, plz try again later." : "发生未知错误，请稍后重试。"
                     self.showErrorAlert = true
                 }
                 print("手动同步失败: \(error)")
@@ -893,8 +887,17 @@ struct SourceListView: View {
     }
     
     private func formatTimestamp(_ timestamp: String) -> String {
-        guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp }
-        return Self.displayFormatter.string(from: date)
+        let parsingFormatter = DateFormatter()
+        parsingFormatter.dateFormat = "yyMMdd"
+        
+        guard let date = parsingFormatter.date(from: timestamp) else { return timestamp }
+        
+        let displayFormatter = DateFormatter()
+        // 【双语化修复】根据当前模式选择区域
+        displayFormatter.locale = Locale(identifier: isGlobalEnglishMode ? "en_US" : "zh_CN")
+        displayFormatter.dateFormat = isGlobalEnglishMode ? "MMM d, yyyy, EEEE" : "yyyy年M月d日, EEEE"
+        
+        return displayFormatter.string(from: date)
     }
 }
 

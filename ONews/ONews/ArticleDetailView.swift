@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import Photos
 
+// MARK: - ActivityView (保持不变)
 struct ActivityView: UIViewControllerRepresentable {
     let activityItems: [Any]
     let applicationActivities: [UIActivity]? = nil
@@ -15,6 +16,7 @@ struct ActivityView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
+// MARK: - ImageLoader (保持不变)
 @MainActor
 final class ImageLoader: ObservableObject {
     @Published var image: UIImage?
@@ -51,6 +53,7 @@ final class ImageLoader: ObservableObject {
     }
 }
 
+// MARK: - ArticleDetailView
 struct ArticleDetailView: View {
     let article: Article
     let sourceName: String
@@ -97,30 +100,27 @@ struct ArticleDetailView: View {
     
     // 【新增 3】获取当前应显示的标题
     private var displayTopic: String {
-        if isEnglishMode, let tEng = article.topic_eng {
-            return tEng
-        }
-        return article.topic
+        (isEnglishMode && hasEnglishVersion) ? (article.topic_eng ?? article.topic) : article.topic
     }
     
-    // 【优化】静态 Formatter
+    // 【优化】动态 Formatter 适配语言
+    private var monthDayFormatter: DateFormatter {
+        let f = DateFormatter()
+        f.dateFormat = Localized.dateFormatShort
+        f.locale = Localized.currentLocale
+        return f
+    }
+    
+    private var longDateFormatter: DateFormatter {
+        let f = DateFormatter()
+        f.dateFormat = Localized.dateFormatFull
+        f.locale = Localized.currentLocale
+        return f
+    }
+    
     private static let parsingFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyMMdd"
-        return f
-    }()
-    
-    private static let monthDayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "M月d日"
-        f.locale = Locale(identifier: "zh_CN")
-        return f
-    }()
-    
-    private static let longDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "EEEE, MMMM d, yyyy"
-        f.locale = Locale(identifier: "en_US_POSIX")
         return f
     }()
     
@@ -138,8 +138,8 @@ struct ArticleDetailView: View {
                             if let urlString = article.url, let url = URL(string: urlString) {
                                 Link(destination: url) {
                                     HStack(spacing: 2) {
-                                        Text("原文链接")
-                                        Image(systemName: "arrow.up.right") // 加一个小图标增加辨识度
+                                        Text(Localized.originalLink)
+                                        Image(systemName: "arrow.up.right")
                                     }
                                     .font(.caption)
                                     .foregroundColor(.blue) // 经典的链接蓝色
@@ -169,10 +169,8 @@ struct ArticleDetailView: View {
                                 LongPressGesture()
                                     .onEnded { _ in
                                         UIPasteboard.general.string = cachedParagraphs[pIndex]
-                                        self.toastMessage = "选中段落已复制"
-                                        withAnimation(.spring()) {
-                                            self.showCopyToast = true
-                                        }
+                                        self.toastMessage = Localized.paragraphCopied
+                                        withAnimation(.spring()) { self.showCopyToast = true }
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                                             withAnimation(.spring()) {
                                                 self.showCopyToast = false
@@ -222,9 +220,8 @@ struct ArticleDetailView: View {
                         showNewsPromoSheet = true
                     }) {
                         HStack(spacing: 4) {
-                            Image(systemName: "star.fill") // 可选：加个小星星图标
-                                .font(.caption)
-                            Text("毛遂自荐：博主另一款精品应用\n炒美股必备伴侣——“美股精灵”")
+                            Image(systemName: "star.fill").font(.caption)
+                            Text(Localized.promoLinkText)
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                                 .underline() // 下划线增加链接感
@@ -279,9 +276,9 @@ struct ArticleDetailView: View {
                         .font(.headline)
                     HStack(spacing: 8) {
                         if unreadCountForGroup == totalUnreadCount {
-                            Text("\(totalUnreadCount) 未读")
+                            Text("\(totalUnreadCount) \(Localized.unread)")
                         } else {
-                            Text("\(unreadCountForGroup) | \(totalUnreadCount) 未读")
+                            Text("\(unreadCountForGroup) | \(totalUnreadCount) \(Localized.unread)")
                         }
                         // 这里调用的是 formatMonthDay，下面已经修改了该函数的实现
                         Text(formatMonthDay(from: article.timestamp))
@@ -316,7 +313,6 @@ struct ArticleDetailView: View {
                         // 稍微给个过渡动画
                         .transition(.scale.combined(with: .opacity))
                     }
-
                     Button(action: onAudioToggle) {
                         Image(systemName: audioPlayerManager.isPlaybackActive ? "headphones.slash" : "headphones")
                     }
@@ -387,7 +383,7 @@ struct ArticleDetailView: View {
         var bodyText = textParts.joined(separator: "\n\n")
         
         if cachedParagraphs.count > limit {
-            bodyText += "\n\n...\n\n阅读全文请前往App Store免费下载“国外消息“应用程序"
+            bodyText += Localized.shareFooter
         }
         
         // 【修改 2】分享时也使用当前显示的语言标题
@@ -446,18 +442,18 @@ struct ArticleDetailView: View {
         guard let date = Self.parsingFormatter.date(from: timestamp) else {
             return timestamp
         }
-        return Self.monthDayFormatter.string(from: date)
+        return monthDayFormatter.string(from: date) // 去掉了 Self.
     }
     
     private func formatDate(from timestamp: String) -> String {
         guard let date = Self.parsingFormatter.date(from: timestamp) else {
             return timestamp.uppercased()
         }
-        return Self.longDateFormatter.string(from: date).uppercased()
+        return longDateFormatter.string(from: date).uppercased() // 去掉了 Self.
     }
 }
 
-// ===== 优化后的 ArticleImageView =====
+// MARK: - ArticleImageView
 struct ArticleImageView: View {
     let imageName: String
     let timestamp: String
@@ -492,12 +488,8 @@ struct ArticleImageView: View {
                         .padding(.horizontal, horizontalPadding)
                 } else {
                     VStack(spacing: 8) {
-                        Image(systemName: "photo.fill")
-                            .font(.largeTitle)
-                            .foregroundColor(.gray)
-                        Text("图片加载失败")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        Image(systemName: "photo.fill").font(.largeTitle).foregroundColor(.gray)
+                        Text(Localized.imageLoadFailed).font(.caption).foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, minHeight: 150)
                     .background(Color(UIColor.secondarySystemBackground))
@@ -525,11 +517,11 @@ struct ArticleImageView: View {
     }
 }
 
+// MARK: - ZoomableImageView
 struct ZoomableImageView: View {
     let imageName: String
     let timestamp: String
     @Binding var isPresented: Bool
-
     @State private var showSaveAlert = false
     @State private var saveAlertMessage = ""
 
@@ -574,10 +566,8 @@ struct ZoomableImageView: View {
     }
 
     private func saveImageToPhotoLibrary() {
-        guard let uiImage = loadImage() else {
-            saveAlertMessage = "图片加载失败，无法保存"
-            showSaveAlert = true
-            return
+        guard let uiImage = UIImage(contentsOfFile: imagePath) else {
+            saveAlertMessage = Localized.imageLoadError; showSaveAlert = true; return
         }
         
         guard let imageData = uiImage.jpegData(compressionQuality: 1.0) else {
@@ -597,22 +587,22 @@ struct ZoomableImageView: View {
                         req.addResource(with: .photo, data: imageData, options: nil)
                     } completionHandler: { success, error in
                         DispatchQueue.main.async {
-                            saveAlertMessage = success ? "已保存到相册" : "保存失败：\(error?.localizedDescription ?? "未知错误")"
+                            saveAlertMessage = success ? Localized.saveToAlbum : "\(Localized.saveFailed): \(error?.localizedDescription ?? "")"
                             showSaveAlert = true
                         }
                     }
                 default:
-                    saveAlertMessage = "没有相册权限，保存失败"; showSaveAlert = true
+                    saveAlertMessage = Localized.noPhotoPermission; showSaveAlert = true
                 }
             }
         }
     }
 }
 
+// MARK: - ZoomableScrollView (保持不变)
 struct ZoomableScrollView: UIViewRepresentable {
     let imageName: String
     let timestamp: String
-
     func makeUIView(context: Context) -> UIScrollView {
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let imagePath = documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
@@ -713,7 +703,7 @@ struct NewsPromoView: View {
                                 )
                                 .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
 
-                            Text("每日AI大模型算法荐股\n全球财经数据一站搞定")
+                            Text(Localized.promoTitle)
                                 .font(.system(size: 28, weight: .heavy))
                                 .foregroundColor(.primary)
                                 .multilineTextAlignment(.center)
@@ -722,13 +712,11 @@ struct NewsPromoView: View {
 
                         // 3. 媒体品牌墙
                         VStack(spacing: 10) {
-                            Text("「美股精灵」 特色介绍：")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .textCase(.uppercase)
-
-                            let brands = ["美股财报", "美国经济数据", "期权分析", "ETF榜单", "大宗商品", "货币汇率",
-                                          "全球交易所", "各国债券", "..."]
+                            Text(Localized.promoFeature).font(.subheadline).foregroundColor(.secondary).textCase(.uppercase)
+                            // 在 NewsPromoView 的 body 内部
+                            let brands = Localized.isEnglish ? 
+                                ["Earnings", "Economy", "Options", "ETF", "Commodity", "FX", "Exchanges", "Bonds", "..."] :
+                                ["美股财报", "美国经济数据", "期权分析", "ETF榜单", "大宗商品", "货币汇率", "全球交易所", "各国债券", "..."]
                             FlowLayoutView(items: brands)
                         }
                         .padding(.vertical, 20)
@@ -736,12 +724,9 @@ struct NewsPromoView: View {
                         // 4. 核心介绍文案
                         VStack(alignment: .leading, spacing: 15) {
                             HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "sparkles")
-                                    .foregroundColor(.orange)
-                                Text("业界首创财报和价格线完美结合。无论你是擅长抄底还是做空抑或追高，总有一种荐股分类适合你。通过期权数据对AI算法结果做二次验证，确保成功率...")
-                            }
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                                Image(systemName: "sparkles").foregroundColor(.orange)
+                                Text(Localized.promoDesc)
+                            }.font(.subheadline).foregroundColor(.secondary)
                         }
                         .padding(20)
                         .background(
@@ -763,8 +748,7 @@ struct NewsPromoView: View {
                 }) {
                     HStack {
                         Image(systemName: "app.badge.fill")
-                        Text("跳转到商店页面下载")
-                            .fontWeight(.bold)
+                        Text(Localized.downloadInStore).fontWeight(.bold)
                     }
                     .font(.title3)
                     .foregroundColor(.white)

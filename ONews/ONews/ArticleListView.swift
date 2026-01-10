@@ -1,8 +1,16 @@
 import SwiftUI
 
 enum ArticleFilterMode: String, CaseIterable {
-    case unread = "未读"
-    case read = "已读"
+    case unread
+    case read
+    
+    // 获取对应的本地化文本
+    var localizedName: String {
+        switch self {
+        case .unread: return Localized.unread
+        case .read: return Localized.read
+        }
+    }
 }
 
 // ==================== 公共协议和扩展 ====================
@@ -102,12 +110,13 @@ struct SearchResultsList: View {
         return f
     }()
     
-    private static let displayFormatter: DateFormatter = {
+    // 【修改】动态获取 Formatter，适配语言切换
+    private var displayFormatter: DateFormatter {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "yyyy年M月d日, EEEE"
+        f.locale = Localized.currentLocale
+        f.dateFormat = Localized.dateFormatFull
         return f
-    }()
+    }
     
     var groupedResults: [String: [ArticleItem]] {
         var initial = Dictionary(grouping: results, by: { $0.article.timestamp })
@@ -122,12 +131,12 @@ struct SearchResultsList: View {
     var body: some View {
         if results.isEmpty {
             Section {
-                Text("未找到匹配的文章")
+                Text(Localized.noMatch)
                     .foregroundColor(.secondary)
                     .padding(.vertical, 12)
                     .listRowBackground(Color.clear)
             } header: {
-                Text("搜索结果")
+                Text(Localized.searchResults)
                     .font(.headline)
                     .foregroundColor(.blue.opacity(0.7))
                     .padding(.vertical, 4)
@@ -136,7 +145,7 @@ struct SearchResultsList: View {
             ForEach(sortedTimestamps, id: \.self) { timestamp in
                 Section(header:
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("搜索结果")
+                        Text(Localized.searchResults)
                             .font(.subheadline)
                             .foregroundColor(.blue.opacity(0.7))
                         HStack {
@@ -173,7 +182,7 @@ struct SearchResultsList: View {
     
     private func formatTimestamp(_ timestamp: String) -> String {
         guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp }
-        return Self.displayFormatter.string(from: date)
+        return displayFormatter.string(from: date)
     }
 }
 
@@ -188,9 +197,6 @@ struct ArticleRowButton: View {
     // 1. 【新增】接收外部传入的状态
     let showEnglish: Bool
     
-    // 2. ❌ 【删除】原来的 @AppStorage
-    // @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-
     var body: some View {
         Button(action: {
             Task { await onTap() }
@@ -277,12 +283,13 @@ struct TimestampHeader: View {
         return f
     }()
     
-    private static let displayFormatter: DateFormatter = {
+    // 【修改】动态获取 Formatter
+    private var displayFormatter: DateFormatter {
         let f = DateFormatter()
-        f.dateFormat = "M月d日 EEEE"
-        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = Localized.dateFormatShort
+        f.locale = Localized.currentLocale
         return f
-    }()
+    }
     
     var body: some View {
         Button(action: {
@@ -346,7 +353,7 @@ struct TimestampHeader: View {
     
     private func formatTimestamp(_ timestamp: String) -> String {
         guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp }
-        return Self.displayFormatter.string(from: date)
+        return displayFormatter.string(from: date)
     }
 }
 
@@ -434,7 +441,7 @@ struct ArticleListView: View {
     var body: some View {
         if source == nil {
             VStack {
-                Text("新闻源不再可用")
+                Text(Localized.sourceUnavailable)
                     .foregroundColor(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -476,9 +483,8 @@ struct ArticleListView: View {
                                 filterMode: filterMode,
                                 expandedTimestamps: viewModel.expandedTimestampsBySource[sourceName, default: Set<String>()],
                                 viewModel: viewModel,
-                                authManager: authManager, // 传递
-                                // 【新增】传递状态
-                        showEnglish: isGlobalEnglishMode, 
+                                authManager: authManager,
+                                showEnglish: isGlobalEnglishMode, 
                                 onToggleTimestamp: { timestamp in
                                     viewModel.toggleTimestampExpansion(for: sourceName, timestamp: timestamp)
                                 },
@@ -499,8 +505,7 @@ struct ArticleListView: View {
                         // 2. 【修改】大幅简化 Picker 的写法，解决编译器超时和 scope 找不到的问题
                         Picker("Filter", selection: $filterMode) {
                             ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                                // 这里直接调用辅助函数和 Localized
-                                Text("\(mode == .unread ? Localized.unread : Localized.read) (\(self.getCount(for: mode)))")
+                                Text("\(mode.localizedName) (\(self.getCount(for: mode)))")
                                     .tag(mode)
                             }
                         }
@@ -570,7 +575,7 @@ struct ArticleListView: View {
                             .foregroundColor(.primary) // 【添加这行】强制使用黑白色系
                     }
                     .disabled(resourceManager.isSyncing)
-                    .accessibilityLabel("刷新")
+                    .accessibilityLabel(Localized.refresh)
                 }
                 
                 ToolbarItem(placement: .topBarTrailing) {
@@ -586,7 +591,7 @@ struct ArticleListView: View {
                         Image(systemName: "magnifyingglass")
                             .foregroundColor(.primary) // 【添加这行】强制使用黑白色系
                     }
-                    .accessibilityLabel("搜索")
+                    .accessibilityLabel(Localized.search)
                 }
             }
             .overlay(
@@ -596,7 +601,7 @@ struct ArticleListView: View {
                     progressText: downloadProgressText
                 )
             )
-            .alert("", isPresented: $showErrorAlert, actions: { Button("好的", role: .cancel) { } }, message: { Text(errorMessage) })
+            .alert("", isPresented: $showErrorAlert, actions: { Button(Localized.confirm, role: .cancel) { } }, message: { Text(errorMessage) })
             .sheet(isPresented: $showLoginSheet) { LoginView() }
             // 【新增】订阅弹窗
             .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
@@ -606,7 +611,7 @@ struct ArticleListView: View {
             .sheet(isPresented: $showGuestMenu) {
                 VStack(spacing: 20) {
                     Capsule().fill(Color.secondary.opacity(0.3)).frame(width: 40, height: 5).padding(.top, 10)
-                    Text("欢迎使用 ONews").font(.headline)
+                    Text(Localized.loginWelcome).font(.headline)
                     VStack(spacing: 0) {
                         Button {
                             showGuestMenu = false
@@ -614,7 +619,7 @@ struct ArticleListView: View {
                         } label: {
                             HStack {
                                 Image(systemName: "person.crop.circle").font(.title3).frame(width: 30)
-                                Text("登录账户").font(.body)
+                                Text(Localized.loginAccount).font(.body)
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
                             }
@@ -630,7 +635,7 @@ struct ArticleListView: View {
                             HStack {
                                 Image(systemName: "envelope").font(.title3).frame(width: 30)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("问题反馈").foregroundColor(.primary)
+                                    Text(Localized.feedback).foregroundColor(.primary)
                                     Text("728308386@qq.com").font(.caption).foregroundColor(.secondary)
                                 }
                                 Spacer()
@@ -693,7 +698,7 @@ struct ArticleListView: View {
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
-            downloadProgressText = "准备中..."
+            downloadProgressText = Localized.imagePrepare
         }
         
         do {
@@ -702,7 +707,7 @@ struct ArticleListView: View {
                 imageNames: article.images,
                 progressHandler: { current, total in
                     self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
-                    self.downloadProgressText = "已下载 \(current) / \(total)"
+                    self.downloadProgressText = "\(Localized.imageDownloaded) \(current) / \(total)"
                 }
             )
             
@@ -714,7 +719,7 @@ struct ArticleListView: View {
         } catch {
             await MainActor.run {
                 isDownloadingImages = false
-                errorMessage = "图片下载失败: \(error.localizedDescription)"
+                errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)"
                 showErrorAlert = true
             }
         }
@@ -743,18 +748,16 @@ struct ArticleListView: View {
             if isManual {
                 switch error {
                 case is DecodingError:
-                    self.errorMessage = "数据解析失败,请稍后重试。"
-                    self.showErrorAlert = true
+                    self.errorMessage = Localized.parseError
                 case let urlError as URLError where
                     urlError.code == .cannotConnectToHost ||
                     urlError.code == .timedOut ||
                     urlError.code == .notConnectedToInternet:
-                    self.errorMessage = "网络连接失败，请检查网络设置或稍后重试。"
-                    self.showErrorAlert = true
+                    self.errorMessage = Localized.networkError
                 default:
-                    self.errorMessage = "发生未知错误，请稍后重试。"
-                    self.showErrorAlert = true
+                    self.errorMessage = Localized.unknownErrorMsg
                 }
+                self.showErrorAlert = true
                 print("手动同步失败: \(error)")
             } else {
                 print("自动同步静默失败: \(error)")
@@ -837,7 +840,7 @@ struct AllArticlesListView: View {
     
     // 修复 2：定义获取标题文字的函数（解决编译器超时问题）
     private func getFilterTitle(for mode: ArticleFilterMode) -> String {
-        let name = (mode == .unread) ? Localized.unread : Localized.read
+        let name = mode.localizedName
         let count = getCount(for: mode)
         return "\(name) (\(count))"
     }
@@ -848,7 +851,7 @@ struct AllArticlesListView: View {
                 if isSearching {
                     SearchBarInline(
                         text: $searchText,
-                        placeholder: Localized.searchPlaceholder, // 【修改】
+                        placeholder: Localized.searchPlaceholder,
                         onCommit: {
                             isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         },
@@ -1107,7 +1110,7 @@ struct AllArticlesListView: View {
         } catch {
             await MainActor.run {
                 isDownloadingImages = false
-                errorMessage = "图片下载失败: \(error.localizedDescription)"
+                errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)"
                 showErrorAlert = true
             }
         }
@@ -1134,23 +1137,21 @@ struct AllArticlesListView: View {
             viewModel.loadNews()
         } catch {
             if isManual {
-                switch error {
-                case is DecodingError:
-                    self.errorMessage = "数据解析失败，请稍后重试。"
-                    self.showErrorAlert = true
-                case let urlError as URLError where
-                    urlError.code == .cannotConnectToHost ||
-                    urlError.code == .timedOut ||
-                    urlError.code == .notConnectedToInternet:
-                    self.errorMessage = Localized.networkError
-                    self.showErrorAlert = true
-                default:
-                    self.errorMessage = "发生未知错误，请稍后重试。"
-                    self.showErrorAlert = true
+                await MainActor.run { // 建议在主线程更新 UI 状态
+                    switch error {
+                    case is DecodingError:
+                        self.errorMessage = Localized.parseError
+                    case let urlError as URLError where
+                        urlError.code == .cannotConnectToHost ||
+                        urlError.code == .timedOut ||
+                        urlError.code == .notConnectedToInternet:
+                        self.errorMessage = Localized.networkError
+                    default:
+                        self.errorMessage = Localized.unknownErrorMsg
+                    }
+                    self.showErrorAlert = true // 移出 switch，确保所有错误都弹窗
                 }
                 print("手动同步失败: \(error)")
-            } else {
-                print("自动同步静默失败: \(error)")
             }
         }
     }
