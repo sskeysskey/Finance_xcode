@@ -713,9 +713,12 @@ struct SourceListView: View {
                                         // 使用新的智能图标组件
                                         SourceIconView(sourceName: source.name)
                                         
-                                        Text(source.name)
+                                        // 【修改这里】
+                                        Text(isGlobalEnglishMode ? source.name_en : source.name)
                                             .font(.body.weight(.medium))
                                             .foregroundColor(.primary)
+                                            // 添加动画让切换顺滑
+                                            .animation(.none, value: isGlobalEnglishMode)
                                         
                                         Spacer()
                                         

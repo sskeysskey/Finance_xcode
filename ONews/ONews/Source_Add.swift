@@ -251,6 +251,7 @@ struct AddSourceView: View {
         // 这样 mappings 变量就在闭包的作用域内了
         let mappings = resourceManager.sourceMappings
         let currentLangIsEnglish = self.isGlobalEnglishMode // 捕获当前语言状态用于闭包
+        let useEnglish = self.isGlobalEnglishMode // 捕获主线程状态
         
         DispatchQueue.global(qos: .userInitiated).async {
             do {
@@ -284,8 +285,20 @@ struct AddSourceView: View {
                         if let firstArticle = articles.first, let sourceId = firstArticle.source_id, !sourceId.isEmpty {
                             // 【核心修改】如果有映射，使用映射名；否则使用文件里的 Key
                             // 现在 mappings 变量已经存在了，不会报错
-                            let displayName = mappings[sourceId] ?? fileKeyName
-                            sourceMap[sourceId] = displayName
+                            let rawDisplayName = mappings[sourceId] ?? fileKeyName
+                            // 根据当前语言模式，直接决定显示哪一段
+                            // 注意：loadAvailableSources 闭包里用到了 self.isGlobalEnglishMode
+                            // 建议在闭包外捕获一下: let useEnglish = self.isGlobalEnglishMode
+
+                            let parts = rawDisplayName.components(separatedBy: "|")
+                            let finalName: String
+                            if useEnglish {
+                                finalName = parts.count > 1 ? parts[1] : (parts.first ?? rawDisplayName)
+                            } else {
+                                finalName = parts.first ?? rawDisplayName
+                            }
+
+                            sourceMap[sourceId] = finalName
                         }
                     }
                 }

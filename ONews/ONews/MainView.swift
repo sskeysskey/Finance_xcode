@@ -437,14 +437,12 @@ class NewsViewModel: ObservableObject {
     func loadNews() {
         self.lockedDays = resourceManager?.serverLockedDays ?? 0
         
-        // 获取当前的映射关系 (从 version.json 下载下来的)
-        // 注意：如果 resourceManager 为空，则默认为空字典
+        // 获取当前的映射关系 (从 version.json 下载下来的 "wsj": "环球资讯|Global Info")
         let currentMappings = resourceManager?.sourceMappings ?? [:]
         
         let subscribedIDs = SubscriptionManager.shared.subscribedSourceIDs
         
-        // 【迁移逻辑】如果 ID 订阅为空，但存在旧的名称订阅，我们可能需要迁移
-        // 这里我们不直接 return，而是允许继续加载，以便在遍历文件时进行迁移匹配
+        // 【迁移逻辑】兼容旧版本
         let hasLegacySubscriptions = UserDefaults.standard.object(forKey: SubscriptionManager.shared.oldSubscribedSourcesKey) != nil
         
         if subscribedIDs.isEmpty && !hasLegacySubscriptions {
@@ -468,7 +466,8 @@ class NewsViewModel: ObservableObject {
             
             guard !newsJSONURLs.isEmpty else { return }
             
-            var allArticlesBySource = [String: [Article]]()
+            // 【修改点1】Key改为 String (source_id)，不再是中文名
+            var allArticlesBySourceID = [String: [Article]]()
             let decoder = JSONDecoder()
             
             for url in newsJSONURLs {
@@ -478,24 +477,19 @@ class NewsViewModel: ObservableObject {
                     continue
                 }
                 
-                for (fileKeyName, articles) in decoded {
+                for (_, articles) in decoded {
+                    // 必须有 source_id
                     guard let firstArticle = articles.first,
                           let sourceId = firstArticle.source_id else {
                         continue
                     }
                     
-                    // 简单的线程安全订阅检查（注意：SubscriptionManager.shared 是类，但在读操作上通常没问题，或者可以将其数据拷贝传入）
-                    // 既然 SubscriptionManager 是单例，且我们这里只是读取，风险较低。
-                    // 严格来说应该在 MainActor 获取 copy，但这里暂时直接访问
-                    if !SubscriptionManager.shared.subscribedSourceIDs.contains(sourceId) {
-                         // 在后台无法执行 State 变更的迁移逻辑，这里简化处理：只显示已订阅的
-                         // 如果需要迁移，应在主线程预先处理
-                        if !SubscriptionManager.shared.isSubscribed(sourceId: sourceId) {
-                            continue
-                        }
+                    // 【修改】直接使用函数开头捕获的 subscribedIDs 副本
+                    // 这样就避免了在后台线程访问 SubscriptionManager 单例，确保线程安全
+                    if !subscribedIDs.contains(sourceId) {
+                        continue
                     }
                     
-                    let finalDisplayName = currentMappings[sourceId] ?? fileKeyName
                     let timestamp = url.lastPathComponent
                         .replacingOccurrences(of: "onews_", with: "")
                         .replacingOccurrences(of: ".json", with: "")
@@ -506,23 +500,41 @@ class NewsViewModel: ObservableObject {
                         return mutableArticle
                     }
                     
-                    allArticlesBySource[finalDisplayName, default: []].append(contentsOf: articlesWithTimestamp)
+                    // 【修改点2】直接用 sourceId 作为归类的 Key
+                    allArticlesBySourceID[sourceId, default: []].append(contentsOf: articlesWithTimestamp)
                 }
             }
             
-            // 排序和已读状态应用
-            var tempSources = allArticlesBySource.map { sourceName, articles -> NewsSource in
+            // 【修改点3】在这里统一处理 "中文|英文" 的分割逻辑
+            var tempSources = allArticlesBySourceID.map { sourceId, articles -> NewsSource in
+                
+                // 1. 获取映射字符串 (例如: "环球资讯|Global Info")
+                // 如果没有映射，就暂时用 sourceId
+                let rawMappingName = currentMappings[sourceId] ?? sourceId
+                
+                // 2. 切分字符串
+                let nameParts = rawMappingName.components(separatedBy: "|")
+                let cnName = nameParts.first ?? rawMappingName
+                // 如果有竖线后的部分就用，没有则回退到中文名
+                let enName = nameParts.count > 1 ? nameParts[1] : cnName
+                
                 let sortedArticles = articles.sorted {
                     if $0.timestamp != $1.timestamp {
                         return $0.timestamp > $1.timestamp
                     }
                     return $0.topic < $1.topic
                 }
-                return NewsSource(name: sourceName, articles: sortedArticles)
+                
+                return NewsSource(
+                    sourceId: sourceId,
+                    name: cnName,      // 存中文
+                    name_en: enName,   // 存英文
+                    articles: sortedArticles
+                )
             }
-            .sorted { $0.name < $1.name }
+            .sorted { $0.name < $1.name } // 默认按中文名排序
             
-            // 应用已读状态 (在后台线程修改 tempSources)
+            // 应用已读状态
             for i in tempSources.indices {
                 for j in tempSources[i].articles.indices {
                     let topic = tempSources[i].articles[j].topic
@@ -807,10 +819,12 @@ class NewsViewModel: ObservableObject {
 
 struct NewsSource: Identifiable {
     let id = UUID()
-    let name: String
+    let sourceId: String // 【新增】保存原始ID (如 "wsj")
+    let name: String     // 存中文名 (作为默认/逻辑主键)
+    let name_en: String  // 【新增】存英文名
+    
     var articles: [Article]
-
-
+    
     var unreadCount: Int {
         articles.filter { !$0.isRead }.count
     }

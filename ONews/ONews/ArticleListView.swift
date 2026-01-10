@@ -360,7 +360,7 @@ struct TimestampHeader: View {
 // ==================== 单一来源列表 ====================
 
 struct ArticleListView: View {
-    let sourceName: String
+    let sourceName: String // 这是中文名，用于数据库查找
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager
     // 【新增】获取认证管理器
@@ -389,6 +389,13 @@ struct ArticleListView: View {
     @State private var showProfileSheet = false
     
     @State private var hasPerformedAutoExpansion = false
+    
+    // 【新增】获取当前应显示的标题
+    private var displayTitle: String {
+        guard let source = source else { return sourceName }
+        // 如果是英文模式，返回 source.name_en，否则返回 source.name
+        return isGlobalEnglishMode ? source.name_en : source.name
+    }
     
     private var source: NewsSource? {
         viewModel.sources.first(where: { $0.name == sourceName })
@@ -531,7 +538,9 @@ struct ArticleListView: View {
                     )
                 }
             }
-            .navigationTitle(sourceName.replacingOccurrences(of: "_", with: " "))
+            // 【修改点】原代码是 sourceName.replacingOccurrences...
+            // 改为使用 displayTitle 属性
+            .navigationTitle(displayTitle.replacingOccurrences(of: "_", with: " "))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // 【修改】调用更新后的 UserStatusToolbarItem
