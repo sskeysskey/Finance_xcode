@@ -268,36 +268,34 @@ struct SourceListView: View {
     @State private var selectedArticleItem: (article: Article, sourceName: String)?
     @State private var isNavigationActive = false
     
-    private var searchResults: [(article: Article, sourceName: String, isContentMatch: Bool)] {
+    private var searchResults: [(article: Article, sourceName: String, sourceNameEN: String, isContentMatch: Bool)] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return []
         }
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         
-        // 使用 compactMap 来处理更复杂的匹配逻辑
-        return viewModel.allArticlesSortedForDisplay.compactMap { item -> (Article, String, Bool)? in
-            // 优先匹配标题
+        // 这里的 compactMap 签名也对应更新
+        return viewModel.allArticlesSortedForDisplay.compactMap { item -> (Article, String, String, Bool)? in
             if item.article.topic.lowercased().contains(keyword) {
-                return (item.article, item.sourceName, false) // false 表示不是内容匹配
+                // item 现在包含 (article, sourceName, sourceNameEN)
+                return (item.article, item.sourceName, item.sourceNameEN, false)
             }
-            // 如果标题不匹配，再匹配正文
             if item.article.article.lowercased().contains(keyword) {
-                return (item.article, item.sourceName, true) // true 表示是内容匹配
+                return (item.article, item.sourceName, item.sourceNameEN, true)
             }
-            // 都没有匹配，则返回 nil
             return nil
         }
     }
 
     // 【修改】更新分组逻辑以适应新的元组结构
-    private func groupedSearchByTimestamp() -> [String: [(article: Article, sourceName: String, isContentMatch: Bool)]] {
+    private func groupedSearchByTimestamp() -> [String: [(article: Article, sourceName: String, sourceNameEN: String, isContentMatch: Bool)]] {
         var initial = Dictionary(grouping: searchResults, by: { $0.article.timestamp })
         initial = initial.mapValues { Array($0.reversed()) }
         return initial
     }
 
-    // 【修改】更新排序逻辑以适应新的元组结构
-    private func sortedSearchTimestamps(for groups: [String: [(article: Article, sourceName: String, isContentMatch: Bool)]]) -> [String] {
+    // 【修改】类型增加 sourceNameEN
+    private func sortedSearchTimestamps(for groups: [String: [(article: Article, sourceName: String, sourceNameEN: String, isContentMatch: Bool)]]) -> [String] {
         return groups.keys.sorted(by: >)
     }
     
@@ -577,17 +575,21 @@ struct SourceListView: View {
                         // 【核心修改】将 NavigationLink 替换为 Button，并调用 handleArticleTap
                         ForEach(grouped[timestamp] ?? [], id: \.article.id) { item in
                             Button(action: {
-                                Task { await handleArticleTap(item) }
+                                // 注意：handleArticleTap 的参数是一个 3 元素的元组，这里 item 是 4 元素
+                                // 我们需要重新构建一下参数传给它
+                                let tapItem = (article: item.article, sourceName: item.sourceName, isContentMatch: item.isContentMatch)
+                                Task { await handleArticleTap(tapItem) }
                             }) {
-                                // 【修改】传递锁定状态
-                                // 应该判断是否订阅 (!isSubscribed)
                                 let isLocked = !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: item.article.timestamp)
+                                
                                 ArticleRowCardView(
                                     article: item.article,
                                     sourceName: item.sourceName,
+                                    sourceNameEN: item.sourceNameEN, // 【核心修改】传入 item.sourceNameEN
                                     isReadEffective: viewModel.isArticleEffectivelyRead(item.article),
                                     isContentMatch: item.isContentMatch,
-                                    isLocked: isLocked
+                                    isLocked: isLocked,
+                                    showEnglish: isGlobalEnglishMode // 【核心修改】传入当前的语言开关
                                 )
                             }
                             .buttonStyle(PlainButtonStyle())

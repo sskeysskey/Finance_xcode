@@ -23,13 +23,15 @@ struct ArticleItem: Identifiable {
     let id: UUID
     let article: Article
     let sourceName: String?
-    var isContentMatch: Bool = false // 【新增】增加内容匹配标志，并提供默认值
-     
-    // 【修改】更新初始化方法以支持 isContentMatch
-    init(article: Article, sourceName: String? = nil, isContentMatch: Bool = false) {
+    let sourceNameEN: String? // 【新增】
+    var isContentMatch: Bool = false
+
+    // 【修改】初始化方法
+    init(article: Article, sourceName: String? = nil, sourceNameEN: String? = nil, isContentMatch: Bool = false) {
         self.id = article.id
         self.article = article
         self.sourceName = sourceName
+        self.sourceNameEN = sourceNameEN // 【新增】
         self.isContentMatch = isContentMatch
     }
 }
@@ -207,6 +209,7 @@ struct ArticleRowButton: View {
             ArticleRowCardView(
                 article: item.article,
                 sourceName: item.sourceName,
+                sourceNameEN: item.sourceNameEN, // 【新增】传递英文名
                 isReadEffective: viewModel.isArticleEffectivelyRead(item.article),
                 isContentMatch: item.isContentMatch,
                 isLocked: isLocked,
@@ -816,7 +819,8 @@ struct AllArticlesListView: View {
                 let isReadEff = viewModel.isArticleEffectivelyRead(item.article)
                 return (filterMode == .unread) ? !isReadEff : isReadEff
             }
-            .map { ArticleItem(article: $0.article, sourceName: $0.sourceName) }
+            // 【核心修改】这里传入 sourceNameEN
+            .map { ArticleItem(article: $0.article, sourceName: $0.sourceName, sourceNameEN: $0.sourceNameEN) }
     }
     
     private var totalUnreadCount: Int { viewModel.totalUnreadCount }
@@ -829,12 +833,15 @@ struct AllArticlesListView: View {
         }
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         
+        // 【核心修改】allArticlesSortedForDisplay 现在返回 3 个元素的元组
         return viewModel.allArticlesSortedForDisplay.compactMap { item -> ArticleItem? in
             if item.article.topic.lowercased().contains(keyword) {
-                return ArticleItem(article: item.article, sourceName: item.sourceName, isContentMatch: false)
+                // 传入 sourceNameEN
+                return ArticleItem(article: item.article, sourceName: item.sourceName, sourceNameEN: item.sourceNameEN, isContentMatch: false)
             }
             if item.article.article.lowercased().contains(keyword) {
-                return ArticleItem(article: item.article, sourceName: item.sourceName, isContentMatch: true)
+                // 传入 sourceNameEN
+                return ArticleItem(article: item.article, sourceName: item.sourceName, sourceNameEN: item.sourceNameEN, isContentMatch: true)
             }
             return nil
         }

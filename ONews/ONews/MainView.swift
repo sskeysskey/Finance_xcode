@@ -220,6 +220,7 @@ struct SearchBarInline: View {
 struct ArticleRowCardView: View {
     let article: Article
     let sourceName: String?
+    let sourceNameEN: String? // 【新增】接收英文名称
     let isReadEffective: Bool
     let isContentMatch: Bool
     let isLocked: Bool
@@ -227,10 +228,11 @@ struct ArticleRowCardView: View {
     // 【新增 1】接收外部传入的语言状态
     let showEnglish: Bool
 
-    // 【修改 2】初始化增加 showEnglish，默认值为 false
-    init(article: Article, sourceName: String?, isReadEffective: Bool, isContentMatch: Bool = false, isLocked: Bool = false, showEnglish: Bool = false) {
+    // 【修改】初始化方法，增加 sourceNameEN，默认值为 nil
+    init(article: Article, sourceName: String?, sourceNameEN: String? = nil, isReadEffective: Bool, isContentMatch: Bool = false, isLocked: Bool = false, showEnglish: Bool = false) {
         self.article = article
         self.sourceName = sourceName
+        self.sourceNameEN = sourceNameEN // 【新增】
         self.isReadEffective = isReadEffective
         self.isContentMatch = isContentMatch
         self.isLocked = isLocked
@@ -252,10 +254,15 @@ struct ArticleRowCardView: View {
             // 1. 顶部元数据行：来源名称 + 锁定状态
             HStack {
                 if let name = sourceName {
-                    Text(name.replacingOccurrences(of: "_", with: " ").uppercased())
-                        .font(.system(size: 11, weight: .bold, design: .default)) // 【修改】11 -> 13
+                    // 【核心修改】这里增加判断：如果是英文模式且有英文名，显示英文名；否则显示中文名
+                    let finalName = (showEnglish && sourceNameEN != nil && !sourceNameEN!.isEmpty) ? sourceNameEN! : name
+                    
+                    Text(finalName.replacingOccurrences(of: "_", with: " ").uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .default))
                         .tracking(0.5)
                         .foregroundColor(isReadEffective ? .secondary.opacity(0.7) : .blue.opacity(0.8))
+                        // 添加动画
+                        .animation(.none, value: showEnglish)
                 }
                 
                 Spacer()
@@ -354,23 +361,20 @@ class NewsViewModel: ObservableObject {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    var allArticlesSortedForDisplay: [(article: Article, sourceName: String)] {
+    var allArticlesSortedForDisplay: [(article: Article, sourceName: String, sourceNameEN: String)] {
         let flatList = self.sources.flatMap { source in
-            source.articles.map { (article: $0, sourceName: source.name) }
+            // 这里返回的是 3 个元素，现在类型签名匹配了
+            source.articles.map { (article: $0, sourceName: source.name, sourceNameEN: source.name_en) }
         }
         
-        // 【重要修改】这里的排序逻辑现在仅作为后备或内部使用。
-        // 主要的“下一篇”逻辑将依赖于UI传递的列表。
-        // 为了保持一致性，我们将其改为与UI相同的降序排序。
         return flatList.sorted { item1, item2 in
             if item1.article.timestamp != item2.article.timestamp {
-                // 改为降序（新 -> 旧）
                 return item1.article.timestamp > item2.article.timestamp
             }
-            // 日期相同时，按标题字母序
             return item1.article.topic < item2.article.topic
         }
     }
+
 
     init() {
         loadReadRecords()
@@ -747,26 +751,31 @@ class NewsViewModel: ObservableObject {
 
     /// 按显示顺序寻找下一篇未读：跳过已读和“已暂存为已读”的文章
     func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
-        let baseList: [(article: Article, sourceName: String)]
+        // 1. 统一数据源类型
+        let candidates: [(article: Article, sourceName: String)]
+        
         if let name = sourceName, let source = self.sources.first(where: { $0.name == name }) {
-            baseList = source.articles.map { (article: $0, sourceName: name) }
+            candidates = source.articles.map { (article: $0, sourceName: name) }
         } else {
-            baseList = self.allArticlesSortedForDisplay
+            // allArticlesSortedForDisplay 现在包含 3 个元素，我们只取前两个用于查找逻辑
+            candidates = self.allArticlesSortedForDisplay.map { ($0.article, $0.sourceName) }
         }
-
-        guard let currentIndex = baseList.firstIndex(where: { $0.article.id == id }) else {
+        
+        // 2. 查找当前文章索引
+        guard let currentIndex = candidates.firstIndex(where: { $0.article.id == id }) else {
             return nil
         }
-
-        let subsequentItems = baseList.suffix(from: currentIndex + 1)
-
+        
+        // 3. 【修复点】这里必须使用 candidates，而不是旧的 baseList
+        let subsequentItems = candidates.suffix(from: currentIndex + 1)
+        
         let nextUnreadItem = subsequentItems.first { item in
             let isPending = isArticlePendingRead(articleID: item.article.id)
             // 【修改】寻找下一篇时，也要跳过锁定的文章
             let isLocked = !isLoggedInNow() && isTimestampLocked(timestamp: item.article.timestamp)
             return !item.article.isRead && !isPending && !isLocked
         }
-
+        
         return nextUnreadItem
     }
     
