@@ -29,6 +29,92 @@ struct IndicesSector: Identifiable, Codable {
     }
 }
 
+// MARK: - Helper: 交易日计算工具
+struct TradingDateHelper {
+    // 美股休市日列表 (2025-2026)
+    // 格式: yyyy-MM-dd
+    static let holidays: Set<String> = [
+        // 2026
+        "2026-01-01", // New Year's Day
+        "2026-01-19", // Martin Luther King, Jr. Day
+        "2026-02-16", // Washington's Birthday
+        "2026-04-03", // Good Friday
+        "2026-05-25", // Memorial Day
+        "2026-06-19", // Juneteenth National Independence Day
+        "2026-07-03", // Independence Day (Observed)
+        "2026-09-07", // Labor Day
+        "2026-11-26", // Thanksgiving Day
+        "2026-12-25", // Christmas Day
+
+        // --- 2027 ---
+        "2027-01-01", // New Year's Day
+        "2027-01-18", // Martin Luther King, Jr. Day
+        "2027-02-15", // Washington's Birthday
+        "2027-03-26", // Good Friday
+        "2027-05-31", // Memorial Day
+        "2027-06-18", // Juneteenth (Observed, June 19 is Sat)
+        "2027-07-05", // Independence Day (Observed, July 4 is Sun)
+        "2027-09-06", // Labor Day
+        "2027-11-25", // Thanksgiving Day
+        "2027-12-24", // Christmas Day (Observed, Dec 25 is Sat)
+
+        // --- 2028 ---
+        // 注意：2028年元旦是周六，根据NYSE规则，前一年(2027)12月31日不补休，照常开市。
+        "2028-01-17", // Martin Luther King, Jr. Day
+        "2028-02-21", // Washington's Birthday
+        "2028-04-14", // Good Friday
+        "2028-05-29", // Memorial Day
+        "2028-06-19", // Juneteenth
+        "2028-07-04", // Independence Day
+        "2028-09-04", // Labor Day
+        "2028-11-23", // Thanksgiving Day
+        "2028-12-25", // Christmas Day
+
+        // --- 2029 ---
+        "2029-01-01", // New Year's Day
+        "2029-01-15", // Martin Luther King, Jr. Day
+        "2029-02-19", // Washington's Birthday
+        "2029-03-30", // Good Friday
+        "2029-05-28", // Memorial Day
+        "2029-06-19", // Juneteenth
+        "2029-07-04", // Independence Day
+        "2029-09-03", // Labor Day
+        "2029-11-22", // Thanksgiving Day
+        "2029-12-25"  // Christmas Day
+    ]
+    
+    /// 获取相对于当前时间(或指定时间)的"最近一个有效交易日"的日期字符串
+    static func getLastExpectedTradingDateString(from date: Date = Date()) -> String {
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        
+        // 1. 从"昨天"开始找
+        // 为什么从昨天开始？因为如果是"今天"，盘中可能还没收盘数据，通常我们显示的是上一个收盘日的数据。
+        var targetDate = calendar.date(byAdding: .day, value: -1, to: date)!
+        
+        // 2. 循环回推，直到找到一个既不是周末也不是节假日的日子
+        while true {
+            let dateStr = formatter.string(from: targetDate)
+            
+            // 检查周末 (1=Sunday, 7=Saturday)
+            let weekday = calendar.component(.weekday, from: targetDate)
+            let isWeekend = (weekday == 1 || weekday == 7)
+            
+            // 检查节假日
+            let isHoliday = holidays.contains(dateStr)
+            
+            if !isWeekend && !isHoliday {
+                return dateStr
+            }
+            
+            // 如果是周末或节假日，继续往前推一天
+            targetDate = calendar.date(byAdding: .day, value: -1, to: targetDate)!
+        }
+    }
+}
+
+
 struct IndicesSymbol: Identifiable, Codable {
     var id: String { symbol }  // 使用symbol作为唯一标识符
     let symbol: String
@@ -1121,22 +1207,19 @@ struct SymbolItemView: View {
             return
         }
         
-        // 校验日期：必须是系统日期的前一天 (Yesterday)
-        guard let dateStr = summary.date else { return }
+        // 校验日期：必须是"最近的一个有效交易日"
+        guard let serverDateStr = summary.date else { return }
         
-        // 获取昨天的日期字符串
-        // 注意：这里简单使用 Calendar 计算。
-        // 如果你的服务器返回的是 UTC 时间，而客户端是北京时间，可能需要注意时区。
-        // 这里假设 AppServer 返回的 date 是 "YYYY-MM-DD" 格式的日期字符串，不带时分秒。
-        let calendar = Calendar.current
-        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: Date()) else { return }
+        // 【核心修改】使用 Helper 计算理论上的最近交易日
+        // 逻辑：如果是周日(今天)，Helper会算出周五。如果Server也是周五，匹配成功 -> 显示。
+        //      如果是周日(今天)，但Server只有周四(周五数据缺失)，匹配失败 -> 不显示。
+        let expectedDateStr = TradingDateHelper.getLastExpectedTradingDateString()
         
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        let yesterdayStr = formatter.string(from: yesterday)
+        // 打印调试日志（可选，调试完可删除）
+        // print("Symbol: \(symbol.symbol), Server: \(serverDateStr), Expected: \(expectedDateStr)")
         
-        // 【核心判断】日期必须匹配
-        if dateStr == yesterdayStr {
+        // 【核心判断】日期必须严格匹配
+        if serverDateStr == expectedDateStr {
             guard let iv = summary.iv, let price = summary.price, let change = summary.change else { return }
             
             let sum = price + change
@@ -1148,7 +1231,8 @@ struct SymbolItemView: View {
                 self.showOptionsMetrics = true
             }
         } else {
-            // 日期不匹配，不显示数据
+            // 日期不匹配（数据过期或缺失），不显示数据
+            // 保持 showOptionsMetrics = false
         }
     }
     
