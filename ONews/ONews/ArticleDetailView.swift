@@ -6,13 +6,11 @@ import Photos
 struct ActivityView: UIViewControllerRepresentable {
     let activityItems: [Any]
     let applicationActivities: [UIActivity]? = nil
-
     func makeUIViewController(context: Context) -> UIActivityViewController {
         let vc = UIActivityViewController(activityItems: activityItems, applicationActivities: applicationActivities)
         vc.modalPresentationStyle = .automatic
         return vc
     }
-
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
@@ -37,7 +35,6 @@ final class ImageLoader: ObservableObject {
         isLoading = true
         Task.detached(priority: .userInitiated) {
             let loadedImage = UIImage(contentsOfFile: path)
-            
             await MainActor.run {
                 self.isLoading = false
                 if let img = loadedImage {
@@ -98,12 +95,24 @@ struct ArticleDetailView: View {
         return true
     }
     
-    // 【新增 3】获取当前应显示的标题
+    // 获取当前应显示的标题
     private var displayTopic: String {
         (isEnglishMode && hasEnglishVersion) ? (article.topic_eng ?? article.topic) : article.topic
     }
     
-    // 【优化】动态 Formatter 适配语言
+    // 【新增】获取当前应显示的来源名称 (Banner 标题)
+    private var displaySourceName: String {
+        // 如果是英文模式，尝试在 viewModel 的 sources 列表中查找对应的英文名
+        if isEnglishMode {
+            // 注意：这里的 sourceName 通常是中文名（作为ID使用），我们用它来查找 Source 对象
+            if let source = viewModel.sources.first(where: { $0.name == sourceName }) {
+                return source.name_en
+            }
+        }
+        // 默认为传入的 sourceName (中文)
+        return sourceName
+    }
+    
     private var monthDayFormatter: DateFormatter {
         let f = DateFormatter()
         f.dateFormat = Localized.dateFormatShort
@@ -269,11 +278,16 @@ struct ArticleDetailView: View {
         .onChange(of: isEnglishMode) { _, _ in
             prepareContent()
         }
+        // --- 核心修改区域：Toolbar ---
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 2) {
-                    Text(sourceName.replacingOccurrences(of: "_", with: " "))
+                    // 【修改】使用 displaySourceName 替代 sourceName
+                    Text(displaySourceName.replacingOccurrences(of: "_", with: " "))
                         .font(.headline)
+                        // 添加动画，防止文字切换时生硬跳变
+                        .animation(.none, value: isEnglishMode)
+                    
                     HStack(spacing: 8) {
                         if unreadCountForGroup == totalUnreadCount {
                             Text("\(totalUnreadCount) \(Localized.unread)")

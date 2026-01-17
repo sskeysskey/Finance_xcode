@@ -2,32 +2,38 @@ import SwiftUI
 import Charts
 import Foundation
 
-// MARK: - 【重构】共享组件：价格三联显示 (Latest IV | 涨跌幅 | Prev IV)
-struct PriceTriView: View {
+// MARK: - 【新增】5列数据显示组件 (Latest IV | Prev IV | Compare | Prev Price | Latest Price)
+struct PriceFiveColumnView: View {
     let symbol: String
     
-    // 【修改】Value 1: 改为 String 类型 (传入 Latest IV)
-    let val1: String? 
-    // Value 2: 百分比 (自动计算)
-    // 【修改】Value 3: 改为 String 类型 (传入 Prev IV)
-    let val3: String? 
+    // 1. Latest IV (大)
+    let latestIv: String?
+    // 2. Prev IV (小)
+    let prevIv: String?
+    
+    // 4. Prev Price (小)
+    let prevPrice: Double?
+    // 5. Latest Price (大)
+    let latestPrice: Double?
+    let latestChange: Double? // 用于判断颜色
     
     @EnvironmentObject var dataService: DataService
-    
+
     var body: some View {
-        HStack(spacing: 8) {
-            // 1. 第一项：Latest IV (替代原来的 Diff)
-            if let v1 = val1 {
-                Text(v1)
-                    .font(.system(size: 15, weight: .bold, design: .monospaced))
-                    // 【要求】保持正红负绿 (IV通常为正，所以这里实际上几乎总是红色)
-                    // 如果你想解析数值判断，可以用 Double(v1) >= 0
-                    .foregroundColor(.red) 
-            } else {
-                Text("--")
-                    .font(.system(size: 15, design: .monospaced))
-                    .foregroundColor(.secondary)
-            }
+        HStack(spacing: 6) { // 稍微紧凑一点的间距
+            
+            // 1. Latest IV (大字体)
+            Text(latestIv ?? "--")
+                .font(.system(size: 16, weight: .bold, design: .monospaced))
+                // 【修改点】调用辅助函数判断颜色
+                .foregroundColor(getIvColor(latestIv)) 
+                .fixedSize()
+            
+            // 2. Previous IV (小字体)
+            Text(prevIv ?? "--")
+                .font(.system(size: 12, design: .monospaced)) // 正常/偏小
+                .foregroundColor(.secondary)
+                .fixedSize()
             
             // 2. 第二项：CompareStr (涨跌百分比) - 保持不变
             if let compareStr = dataService.compareDataUppercased[symbol.uppercased()] {
@@ -38,32 +44,59 @@ struct PriceTriView: View {
                 Text(formattedPercentage)
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundColor(themeColor)
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 2)
                     .background(themeColor.opacity(0.1))
                     .cornerRadius(4)
+                    .fixedSize()
             }
             
-            // 3. 第三项：Previous IV (替代原来的 Latest IV)
-            if let v3 = val3 {
-                Text(v3)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(.secondary)
+            // 4. Previous Price (小字体)
+            if let pPrice = prevPrice {
+                Text(String(format: "%.2f", pPrice))
+                    .font(.system(size: 12, design: .monospaced)) // 正常/偏小
+                    .foregroundColor(.gray)
+                    .fixedSize()
             } else {
                 Text("--")
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(.secondary.opacity(0.5))
+                    .font(.system(size: 12))
+                    .foregroundColor(.gray)
+            }
+            
+            // 5. Latest Price (大字体)
+            if let lPrice = latestPrice {
+                Text(String(format: "%.2f", lPrice))
+                    .font(.system(size: 16, weight: .bold, design: .monospaced)) // 放大
+                    // 根据涨跌额判断颜色 (大于等于0红，小于0绿)
+                    .foregroundColor((latestChange ?? 0) >= 0 ? .red : .green)
+                    .fixedSize()
+            } else {
+                Text("--")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.secondary)
             }
         }
-        .fixedSize(horizontal: true, vertical: false) // 防止被压缩
     }
     
-    // 辅助函数 (直接复用之前的逻辑)
+    // 复用之前的辅助函数
     private func extractPercentage(from text: String) -> String {
         let pattern = "([+-]?\\d+(\\.\\d+)?%)"
         if let range = text.range(of: pattern, options: .regularExpression) {
             return String(text[range])
         }
         return text
+    }
+
+    // 【新增辅助函数】解析 IV 字符串并返回颜色
+    private func getIvColor(_ text: String?) -> Color {
+        guard let text = text else { return .secondary }
+        // 去除可能存在的百分号或其他符号
+        let cleanText = text.replacingOccurrences(of: "%", with: "")
+        // 转为 Double 判断
+        if let value = Double(cleanText) {
+            return value >= 0 ? .red : .green
+        }
+        // 解析失败默认红色 (因为 IV 通常是正数)
+        return .red
     }
     
     private func formatToPrecision(_ text: String, precision: Int) -> String {
@@ -512,8 +545,14 @@ struct OptionListRow: View {
     
     @EnvironmentObject var dataService: DataService
     
-    // 【修改】Tuple 结构变化：存储 (Latest IV, Prev IV)
-    @State private var displayData: (iv: String?, prevIv: String?)? = nil
+    // 【修改点 1】Tuple 结构扩展：存储 IV 和 价格信息
+    @State private var displayData: (
+        iv: String?, 
+        prevIv: String?, 
+        latestPrice: Double?, 
+        prevPrice: Double?, 
+        change: Double?
+    )? = nil
     
     var body: some View {
         // 移除 Button，改用 VStack + 手势
@@ -521,55 +560,38 @@ struct OptionListRow: View {
             
             // 第一行
             HStack(alignment: .center) {
-                // 左侧 Symbol + Name
-                HStack(spacing: 6) {
-                    
-                    // 【核心修改区域】只针对 Symbol 文字进行高亮
-                    Text(symbol)
-                        .font(.headline)
-                        .fontWeight(.bold)
-                        // 1. 文字颜色：高亮时变白，普通时原色
-                        .foregroundColor(isHighlighted ? .white : .primary)
-                        // 2. 内边距：为了让背景色不贴着字，加一点点呼吸空间
-                        .padding(.horizontal, isHighlighted ? 6 : 0)
-                        .padding(.vertical, isHighlighted ? 2 : 0)
-                        // 3. 背景色：高亮时变蓝
-                        .background(
-                            isHighlighted 
-                            ? Color.blue 
-                            : Color.clear
-                        )
-                        // 4. 圆角：让高亮背景有个小圆角，更好看
-                        .cornerRadius(6)
-                        // 5. 动画：让颜色变化平滑过渡
-                        .animation(.easeInOut, value: isHighlighted)
-                    
-                    let info = getInfo(for: symbol)
-                    if !info.name.isEmpty {
-                        Text(info.name)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-                .layoutPriority(0)
+                // 左侧 Symbol (移除 Name)
+                Text(symbol)
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundColor(isHighlighted ? .white : .primary)
+                    .padding(.horizontal, isHighlighted ? 6 : 0)
+                    .padding(.vertical, isHighlighted ? 2 : 0)
+                    .background(isHighlighted ? Color.blue : Color.clear)
+                    .cornerRadius(6)
+                    .animation(.easeInOut, value: isHighlighted)
+                    .layoutPriority(0)
+                
+                // 【修改点 2】移除 Name 的显示代码
+                // 原来的 if !info.name.isEmpty { ... } 代码块删除
                 
                 Spacer(minLength: 8)
                 
-                // 【核心修改】传入 IV 数据
+                // 【修改点 3】使用新的 5列组件
                 if let data = displayData {
-                    PriceTriView(
+                    PriceFiveColumnView(
                         symbol: symbol,
-                        val1: data.iv,      // Latest IV
-                        val3: data.prevIv   // Previous IV
+                        latestIv: data.iv,
+                        prevIv: data.prevIv,
+                        prevPrice: data.prevPrice,
+                        latestPrice: data.latestPrice,
+                        latestChange: data.change
                     )
                     .layoutPriority(1)
                 } else {
                     Text("--")
                         .foregroundColor(.secondary)
                 }
-                // (小箭头已移除)
             }
             
             // 第二行 Tags
@@ -590,8 +612,7 @@ struct OptionListRow: View {
         .animation(.easeInOut, value: isHighlighted)
     }
     
-    // 【核心修改】加载数据并执行算法
-    // 改为调用 fetchOptionsSummary，直接利用服务器返回的 change 字段
+    // 【修改点 4】计算价格数据
     private func loadPriceAndCalc() async {
         if displayData != nil { return }
         
@@ -600,12 +621,27 @@ struct OptionListRow: View {
             return
         }
         
-        // 【修改】不再计算 Price+Change，而是直接取 IV
+        // 提取 IV
         let iv = summary.iv
         let prevIv = summary.prev_iv
         
+        // 计算最新价格
+        var latestPrice: Double? = nil
+        if let p = summary.price, let c = summary.change {
+            latestPrice = p + c
+        }
+        
+        // 计算次新价格
+        var prevPrice: Double? = nil
+        if let pp = summary.prev_price, let pc = summary.prev_change {
+            prevPrice = pp + pc
+        }
+        
+        // 保存 change 用于判断颜色
+        let change = summary.change
+        
         await MainActor.run {
-            self.displayData = (iv, prevIv)
+            self.displayData = (iv, prevIv, latestPrice, prevPrice, change)
         }
     }
     
@@ -687,30 +723,12 @@ struct OptionsDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(UIColor.systemGroupedBackground))
         .toolbar {
-            // 【修改 2】使用 principal 来自定义中间标题，支持颜色
+            // 【修改点】ToolbarItem (principal) 只需要显示 Symbol
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 4) {
-                    // Symbol 保持原样 (或者如果还是很挤，可以改为 .subheadline)
-                    Text(symbol)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    
-                    // 1. 显示最新 Price + Change
-                    if let priceVal = displayPrice {
-                        // 【修改】移除括号，改用 smaller font (例如 size 14)
-                        Text(String(format: "%.2f", priceVal)) 
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor((dbChange ?? 0) >= 0 ? .red : .green) 
-                    }
-                    
-                    // 2. 显示次新 Price + Change
-                    if let prevVal = displayPrevPrice {
-                        // 【修改】移除括号，改用 smaller font (例如 size 14)
-                        Text(String(format: "%.2f", prevVal))
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.gray) 
-                    }
-                }
+                // 移除原来的 HStack 和 Price 显示逻辑
+                Text(symbol)
+                    .font(.headline)
+                    .foregroundColor(.primary)
             }
             
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -1001,11 +1019,15 @@ struct OptionRankRow: View {
                 
                 Spacer(minLength: 8)
                 
-                // 【核心修改】使用新的字段
-                PriceTriView(
+                // 【修复错误】：将 PriceTriView 替换为 PriceFiveColumnView
+                // 注意：RankItem 目前可能没有 Price 数据，所以 Price 部分传 nil
+                PriceFiveColumnView(
                     symbol: item.symbol,
-                    val1: item.iv,       // Latest IV
-                    val3: item.prev_iv   // Previous IV
+                    latestIv: item.iv,        // Latest IV
+                    prevIv: item.prev_iv,     // Previous IV
+                    prevPrice: nil,           // 榜单数据暂时没有 Price，传 nil
+                    latestPrice: nil,         // 榜单数据暂时没有 Price，传 nil
+                    latestChange: nil         // 传 nil
                 )
                 .layoutPriority(1)
             }
