@@ -113,9 +113,16 @@ struct ArticleDetailView: View {
         return sourceName
     }
     
+    // 【修改】去掉星期几，只保留日期
     private var monthDayFormatter: DateFormatter {
         let f = DateFormatter()
-        f.dateFormat = Localized.dateFormatShort
+        // 原代码：f.dateFormat = Localized.dateFormatShort
+        
+        // 修改为：使用模板指定只显示 月(M) 和 日(d)
+        // 这样系统会自动根据 Locale 去掉星期几。
+        // 中文环境下显示 "1月17日"，英文环境下显示 "Jan 17"
+        f.setLocalizedDateFormatFromTemplate("MMMd")
+        
         f.locale = Localized.currentLocale
         return f
     }

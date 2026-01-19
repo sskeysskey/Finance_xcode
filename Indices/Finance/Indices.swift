@@ -924,12 +924,21 @@ struct SectorDetailView: View {
             )
         }
         .onAppear {
+            // 原有的财报趋势加载
             if let subSectors = sector.subSectors, !subSectors.isEmpty {
                 let allSymbols = subSectors.flatMap { $0.symbols.map { $0.symbol } }
                 dataService.fetchEarningTrends(for: allSymbols)
+                
+                // 【新增】批量加载期权数据
+                Task { await dataService.fetchOptionsMetrics(for: allSymbols) }
+                
             } else {
                 loadSymbols()
-                dataService.fetchEarningTrends(for: symbols.map { $0.symbol })
+                let symbolList = symbols.map { $0.symbol }
+                dataService.fetchEarningTrends(for: symbolList)
+                
+                // 【新增】批量加载期权数据
+                Task { await dataService.fetchOptionsMetrics(for: symbolList) }
             }
             if sector.name == "ETFs" {
                 let extraSymbols = dataService.etfTopGainers.map { $0.symbol } + dataService.etfTopLosers.map { $0.symbol }
@@ -1042,9 +1051,17 @@ struct SymbolItemView: View {
     @State private var isNavigationActive = false
     @State private var showSubscriptionSheet = false
     
-    // 【新增】用于存储异步获取的期权指标
-    @State private var optionsMetrics: (iv: String, sum: String)? = nil
-    @State private var showOptionsMetrics = false
+    // 【修改】直接计算属性，不再需要 @State
+    private var optionsMetrics: (iv: String, sum: String)? {
+        dataService.optionsMetricsCache[symbol.symbol] // Key 可能是 uppercased 还是原样？
+        // 建议统一一下，假设 Server 返回的和 symbol.symbol 一致。
+        // 如果不一致，试一下 dataService.optionsMetricsCache[symbol.symbol.uppercased()]
+    }
+    
+    // 【修改】判断是否显示
+    private var showOptionsMetrics: Bool {
+        return optionsMetrics != nil
+    }
     
     // 【定义】不需要改变显示逻辑的“经济数据”板块列表
     private let economySectors: Set<String> = [
@@ -1120,12 +1137,6 @@ struct SymbolItemView: View {
                 dataService.fetchEarningTrends(for: [symbol.symbol])
             }
         }
-        // 【优化】只有非经济板块才加载期权数据
-        .task {
-            if !economySectors.contains(sectorName) {
-                await loadOptionsMetrics()
-            }
-        }
     }
     
     // MARK: - 视图选择器
@@ -1196,45 +1207,6 @@ struct SymbolItemView: View {
     }
     
     // MARK: - 逻辑处理方法
-    
-    // 加载并校验期权数据 (与 AppServer 和 DBManager 配合)
-    private func loadOptionsMetrics() async {
-        // 避免重复加载
-        if optionsMetrics != nil { return }
-        
-        // 调用 DBManager 获取数据
-        guard let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol.symbol) else {
-            return
-        }
-        
-        // 校验日期：必须是"最近的一个有效交易日"
-        guard let serverDateStr = summary.date else { return }
-        
-        // 【核心修改】使用 Helper 计算理论上的最近交易日
-        // 逻辑：如果是周日(今天)，Helper会算出周五。如果Server也是周五，匹配成功 -> 显示。
-        //      如果是周日(今天)，但Server只有周四(周五数据缺失)，匹配失败 -> 不显示。
-        let expectedDateStr = TradingDateHelper.getLastExpectedTradingDateString()
-        
-        // 打印调试日志（可选，调试完可删除）
-        // print("Symbol: \(symbol.symbol), Server: \(serverDateStr), Expected: \(expectedDateStr)")
-        
-        // 【核心判断】日期必须严格匹配
-        if serverDateStr == expectedDateStr {
-            guard let iv = summary.iv, let price = summary.price, let change = summary.change else { return }
-            
-            let sum = price + change
-            // 格式化 Sum，保留两位小数
-            let sumStr = String(format: "%.2f", sum)
-            
-            await MainActor.run {
-                self.optionsMetrics = (iv, sumStr)
-                self.showOptionsMetrics = true
-            }
-        } else {
-            // 日期不匹配（数据过期或缺失），不显示数据
-            // 保持 showOptionsMetrics = false
-        }
-    }
     
     // 解析原有的格式 (Prefix + Percentage + Suffix)
     private func parseOriginalValue(_ value: String) -> ParsedValue {

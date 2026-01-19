@@ -134,6 +134,29 @@ class DatabaseManager {
     }
     
     // MARK: - API Requests
+
+    // 7.5. 批量获取期权汇总数据 (Async) - 【新增】
+    func fetchOptionsSummaries(forSymbols symbols: [String]) async -> [String: OptionsSummary] {
+        guard !symbols.isEmpty else { return [:] }
+        
+        guard var components = URLComponents(string: "\(serverBaseURL)/query/options_summary") else { return [:] }
+        
+        // 将数组拼接成 comma-separated string
+        let symbolsStr = symbols.joined(separator: ",")
+        components.queryItems = [URLQueryItem(name: "symbols", value: symbolsStr)]
+        
+        guard let url = components.url else { return [:] }
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            // 解码为 字典 [String: OptionsSummary]
+            let results = try JSONDecoder().decode([String: OptionsSummary].self, from: data)
+            return results
+        } catch {
+            print("Network error fetching batch options: \(error)")
+            return [:]
+        }
+    }
     
     // 1. 获取所有市值数据 (Async)
     func fetchAllMarketCapData(from tableName: String) async -> [MarketCapInfo] {

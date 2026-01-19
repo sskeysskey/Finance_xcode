@@ -70,9 +70,15 @@ struct OptionItem: Identifiable, Hashable {
 struct OptionRankItem: Codable, Identifiable {
     var id: String { symbol }
     let symbol: String
-    // 移除 price, diff，改为前后两个 IV
+    
     let iv: String?        // Value 1 (Latest)
-    let prev_iv: String?   // Value 3 (Previous)
+    let prev_iv: String?   // Value 2 (Previous)
+    
+    // 【修改点】新增价格相关字段
+    let price: Double?       // Latest Price (Server: price_latest)
+    let change: Double?      // Latest Change (Server: change_latest)
+    let prev_price: Double?  // Prev Price (Server: price_prev)
+    let prev_change: Double? // Prev Change (Server: change_prev)
 }
 
 // 【新增】期权榜单响应模型
@@ -202,6 +208,9 @@ class DataService: ObservableObject {
     private let ecoDataKey = "FinanceAppEcoDataTime"
     private let introSymbolKey = "FinanceAppIntroSymbolTime"
 
+    // 【新增】缓存期权指标数据：Key=Symbol, Value=(IV, SumPrice)
+    @Published var optionsMetricsCache: [String: (iv: String, sum: String)] = [:]
+
     private init() {
         // 【修改点 3】初始化时从 UserDefaults 读取配置，同时读取到 orderedStrategyGroups】
         if let savedGroups = UserDefaults.standard.array(forKey: strategyGroupsKey) as? [String] {
@@ -298,6 +307,55 @@ class DataService: ObservableObject {
         } catch {
             print("DataService: 获取期权榜单失败: \(error)")
             return nil
+        }
+    }
+
+    // 【新增】批量加载期权指标
+    func fetchOptionsMetrics(for symbols: [String]) async {
+        // 1. 过滤掉已经缓存过的，避免重复请求
+        // 注意：在后台线程读取 MainActor 属性需要 await，或者我们简单点每次都请求也行，
+        // 为了性能，建议简单过滤一下：
+        let needFetch = await MainActor.run {
+            symbols.filter { self.optionsMetricsCache[$0] == nil }
+        }
+        
+        if needFetch.isEmpty { return }
+        
+        // 分批处理：一次最多查 50 个，防止 URL 过长
+        let chunkedSymbols = needFetch.chunked(into: 50) 
+        
+        // 计算预期的交易日 (只需要计算一次)
+        let expectedDateStr = TradingDateHelper.getLastExpectedTradingDateString()
+        
+        for chunk in chunkedSymbols {
+            // 网络请求
+            let results = await DatabaseManager.shared.fetchOptionsSummaries(forSymbols: chunk)
+            
+            // 处理数据
+            // 1. 这里依然用 var，因为我们需要在下面的循环里修改它
+            var tempCache: [String: (iv: String, sum: String)] = [:]
+            
+            for (symbol, summary) in results {
+                // 校验日期
+                if let serverDateStr = summary.date, serverDateStr == expectedDateStr,
+                   let iv = summary.iv, let price = summary.price, let change = summary.change {
+                    
+                    let sum = price + change
+                    let sumStr = String(format: "%.2f", sum)
+                    tempCache[symbol] = (iv, sumStr)
+                }
+            }
+            
+            // 【关键修改】
+            // 在进入 MainActor 之前，创建一个不可变的副本 (let)
+            // 这样编译器就知道这个数据在传递过程中不会被修改了
+            let finalCache = tempCache
+            
+            // 回到主线程更新 UI
+            await MainActor.run {
+                // 这里使用 finalCache 而不是 tempCache
+                self.optionsMetricsCache.merge(finalCache) { (_, new) in new }
+            }
         }
     }
 
@@ -1104,5 +1162,13 @@ class DataService: ObservableObject {
         let descriptions = String(rest[descRange])
         
         return ETF(groupName: "ETFs", rawSymbol: rawSymbol, symbol: cleanedSymbol, value: value, descriptions: descriptions)
+    }
+}
+
+extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0 ..< Swift.min($0 + size, count)])
+        }
     }
 }

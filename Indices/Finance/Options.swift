@@ -992,58 +992,56 @@ struct OptionRankRow: View {
     let action: () -> Void
     let longPressAction: () -> Void 
     @EnvironmentObject var dataService: DataService
-
+    
     var body: some View {
-        // 使用 VStack 包裹“数据行”和“Tags行”
-        VStack(alignment: .leading, spacing: 6) {
+        // 使用 VStack 垂直排列三行内容
+        VStack(alignment: .leading, spacing: 8) {
             
-            // --- 第一行：Symbol, Name + 右侧四个数据 ---
-            HStack(alignment: .center) {
+            // --- 第一行：Symbol + Name ---
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(item.symbol)
+                    .font(.system(size: 18, weight: .bold, design: .monospaced)) // 稍微加大字号突出显示
+                    .foregroundColor(.primary)
                 
-                // 左侧容器：Symbol + Name
-                HStack(spacing: 6) {
-                    Text(item.symbol)
-                        .font(.system(size: 16, weight: .bold, design: .monospaced))
-                        .foregroundColor(.primary)
-                    
-                    let info = getInfo(for: item.symbol)
-                    if !info.name.isEmpty {
-                        Text(info.name)
-                            .font(.system(size: 14))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
+                let info = getInfo(for: item.symbol)
+                if !info.name.isEmpty {
+                    Text(info.name)
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
-                .layoutPriority(0)
                 
-                Spacer(minLength: 8)
-                
-                // 【修复错误】：将 PriceTriView 替换为 PriceFiveColumnView
-                // 注意：RankItem 目前可能没有 Price 数据，所以 Price 部分传 nil
-                PriceFiveColumnView(
-                    symbol: item.symbol,
-                    latestIv: item.iv,        // Latest IV
-                    prevIv: item.prev_iv,     // Previous IV
-                    prevPrice: nil,           // 榜单数据暂时没有 Price，传 nil
-                    latestPrice: nil,         // 榜单数据暂时没有 Price，传 nil
-                    latestChange: nil         // 传 nil
-                )
-                .layoutPriority(1)
+                Spacer()
             }
             
-            // 第二行 Tags
+            // --- 第二行：五个数字 (PriceFiveColumnView) ---
+            // 依然需要先计算价格
+            let latestPriceVal = (item.price != nil && item.change != nil) ? (item.price! + item.change!) : nil
+            let prevPriceVal = (item.prev_price != nil && item.prev_change != nil) ? (item.prev_price! + item.prev_change!) : nil
+            
+            PriceFiveColumnView(
+                symbol: item.symbol,
+                latestIv: item.iv,        // Latest IV
+                prevIv: item.prev_iv,     // Previous IV
+                prevPrice: prevPriceVal,  // Prev Price
+                latestPrice: latestPriceVal, // Latest Price
+                latestChange: item.change
+            )
+            // 因为 VStack 是 leading 对齐，这里不需要 Spacer，它会自动靠左显示
+            
+            // --- 第三行：Tags ---
             let info = getInfo(for: item.symbol)
             if !info.tags.isEmpty {
                 Text(info.tags.joined(separator: ", "))
                     .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.gray) // 使用稍微淡一点的颜色
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.vertical, 8)
-        .contentShape(Rectangle()) // 关键：让整个 Cell 区域可点击
+        .contentShape(Rectangle()) // 保证点击区域覆盖整个块
         .onTapGesture {
             action() // 点击执行：进入期权详情
         }
