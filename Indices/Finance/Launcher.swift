@@ -787,7 +787,7 @@ struct NewsPromoView: View {
                                 )
                                 .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
 
-                            Text("全球财经要闻 · 一手掌握\n支持语音播放")
+                            Text("全球财经要闻·中英双语\n支持语音播放")
                                 .font(.system(size: 28, weight: .heavy))
                                 .foregroundColor(.primary)
                                 .multilineTextAlignment(.center) // ✅ 加这一行
@@ -802,7 +802,7 @@ struct NewsPromoView: View {
                                 .textCase(.uppercase)
                             
                             // 使用流式布局或简单的多行排列
-                            let brands = ["纽约时报", "伦敦金融时报", "华尔街日报", "Bloomberg布隆伯格", "经济学人", "路透社", "日经新闻", "华盛顿邮报", "..."]
+                            let brands = ["纽约时报", "伦敦金融时报", "华尔街日报", "Bloomberg彭博社", "法广头条", "经济学人", "路透社", "日经新闻", "华盛顿邮报", "..."]
                             
                             FlowLayoutView(items: brands)
                         }
@@ -813,7 +813,7 @@ struct NewsPromoView: View {
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: "sparkles")
                                     .foregroundColor(.orange)
-                                Text("原版内容，AI总结翻译，配原版图片，支持语音播放。欢迎尝试...")
+                                Text("原版内容，中英双语，AI总结翻译，原版配图，语音播放....欢迎尝试")
                             }
                             .font(.subheadline)
                             .foregroundColor(.secondary)

@@ -324,6 +324,22 @@ struct ArticleRowCardView: View {
 // 【主要修改】将 NewsViewModel 标记为 @MainActor，以确保其所有操作都在主线程上执行。
 @MainActor
 class NewsViewModel: ObservableObject {
+    // 定义一个公共的静态常量
+    nonisolated static let preferredSourceOrder: [String] = [
+        "ft",        // 金融时报
+        "wsjcn",     // 华尔街日报中文
+        "nytimes",   // 纽约时报
+        "bloomberg", // 彭博社
+        "rfi",       // 法广
+        "nikkei",    // 日经亚洲
+        "dw",         // 德声
+        "wsj",       // 华尔街日报
+        "economist", // 经济学人
+        "reuters",   // 路透社
+        "washpost",  // 华盛顿邮报
+        "mittr",     // 麻省理工
+    ]
+
     @Published var sources: [NewsSource] = []
 
     // MARK: - UI状态管理
@@ -453,6 +469,8 @@ class NewsViewModel: ObservableObject {
             self.sources = []
             return
         }
+
+        let preferredOrder = Self.preferredSourceOrder
         
         // 捕获需要的数据，传入后台 Task
         let docDir = self.documentsDirectory
@@ -536,7 +554,22 @@ class NewsViewModel: ObservableObject {
                     articles: sortedArticles
                 )
             }
-            .sorted { $0.name < $1.name } // 默认按中文名排序
+            // 【步骤 2：修改排序逻辑】
+            // 原代码: .sorted { $0.name < $1.name }
+            // 修改为:
+            .sorted { source1, source2 in
+                // 获取两个源在自定义列表中的索引 (如果没有找到，返回 Int.max，即排到最后)
+                let index1 = preferredOrder.firstIndex(of: source1.sourceId) ?? Int.max
+                let index2 = preferredOrder.firstIndex(of: source2.sourceId) ?? Int.max
+                
+                // 如果两个都在列表中（或者有一个在列表中），按列表索引排序（小的在前）
+                if index1 != index2 {
+                    return index1 < index2
+                }
+                
+                // 如果两个都不在列表中（index 都是 Int.max），则回退到按中文名称排序
+                return source1.name < source2.name
+            }
             
             // 应用已读状态
             for i in tempSources.indices {

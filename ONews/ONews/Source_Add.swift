@@ -250,7 +250,6 @@ struct AddSourceView: View {
         // 【修复】在进入后台线程前，先从 ResourceManager 获取映射表
         // 这样 mappings 变量就在闭包的作用域内了
         let mappings = resourceManager.sourceMappings
-        let currentLangIsEnglish = self.isGlobalEnglishMode // 捕获当前语言状态用于闭包
         let useEnglish = self.isGlobalEnglishMode // 捕获主线程状态
         
         DispatchQueue.global(qos: .userInitiated).async {
@@ -264,7 +263,7 @@ struct AddSourceView: View {
                 
                 guard !newsJSONURLs.isEmpty else {
                     // 【双语化错误提示】
-                    let errorMsg = currentLangIsEnglish 
+                    let errorMsg = useEnglish 
                         ? "No news data found in local storage.\nPlease go back and sync resources first."
                         : "本地未发现新闻数据。\n请先返回主页同步资源。"
                     throw NSError(domain: "AppError", code: 1, userInfo: [NSLocalizedDescriptionKey: errorMsg])
@@ -302,10 +301,24 @@ struct AddSourceView: View {
                         }
                     }
                 }
-
-                // 转换为数组并按名称排序
+                
+                // 2. 数据读取完毕后，再进行排序
+                let preferredOrder = NewsViewModel.preferredSourceOrder
+                
                 let sortedSources = sourceMap.map { (id: $0.key, name: $0.value) }
-                    .sorted { $0.name < $1.name }
+                    .sorted { source1, source2 in
+                        // 获取两个源在自定义列表中的索引
+                        let index1 = preferredOrder.firstIndex(of: source1.id) ?? Int.max
+                        let index2 = preferredOrder.firstIndex(of: source2.id) ?? Int.max
+                        
+                        // 优先按列表顺序排
+                        if index1 != index2 {
+                            return index1 < index2
+                        }
+                        
+                        // 列表里没有的，或者都在列表里的，按名称排
+                        return source1.name < source2.name
+                    }
 
                 DispatchQueue.main.async {
                     self.allAvailableSources = sortedSources

@@ -641,14 +641,14 @@ struct SourceListView: View {
                 ScrollView {
                     LazyVStack(spacing: 16) {
                         // 1. 顶部大标题
-                        HStack {
-                            Text(Localized.mySubscriptions) 
-                                .font(.system(size: 34, weight: .bold))
-                                .foregroundColor(.primary)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 10)
+//                        HStack {
+//                            Text(Localized.mySubscriptions) 
+//                                .font(.system(size: 34, weight: .bold))
+//                                .foregroundColor(.primary)
+//                            Spacer()
+//                        }
+//                        .padding(.horizontal, 20)
+//                        .padding(.top, 10)
                         
                         // 2. "ALL" 聚合大卡片
                         NavigationLink(value: NavigationTarget.allArticles) {
