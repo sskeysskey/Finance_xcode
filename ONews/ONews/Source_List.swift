@@ -34,6 +34,56 @@ struct DownloadOverlay: View {
     }
 }
 
+// 【新增】通用的通知条组件
+struct NotificationBannerView: View {
+    let message: String
+    let onClose: () -> Void
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            // 图标
+            Image(systemName: "bell.badge.fill")
+                .foregroundColor(.orange)
+                .font(.system(size: 16))
+                .padding(.top, 3) // 微调对齐
+            
+            // 文字
+            Text(message)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.primary)
+                .fixedSize(horizontal: false, vertical: true) // 允许换行
+                .lineLimit(3) // 最多显示3行，防止太长
+            
+            Spacer()
+            
+            // 关闭按钮
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .padding(6)
+                    .background(Color.secondary.opacity(0.15))
+                    .clipShape(Circle())
+            }
+        }
+        .padding(12)
+        // 背景样式：自适应浅色/深色模式
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
+                .shadow(color: Color.black.opacity(0.06), radius: 3, x: 0, y: 2)
+        )
+        // 边框（可选，增加一点精致感）
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.1), lineWidth: 0.5)
+        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .transition(.move(edge: .top).combined(with: .opacity)) // 出现/消失动画
+    }
+}
+
 // MARK: - 【新增】个人中心视图 (User Profile)
 struct UserProfileView: View {
     @EnvironmentObject var authManager: AuthManager
@@ -303,7 +353,7 @@ struct SourceListView: View {
         // 【修改】将 NavigationView 升级为 NavigationStack
         NavigationStack {
             VStack(spacing: 0) {
-                // 搜索栏
+                // 1. 搜索栏
                 if isSearching {
                     SearchBarInline(
                         text: $searchText,
@@ -324,6 +374,15 @@ struct SourceListView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 
+                // 【新增】2. 通知条 (插入在这里)
+                // 只有当有内容时才显示
+                if let message = resourceManager.activeNotification {
+                    NotificationBannerView(message: message) {
+                        resourceManager.dismissNotification()
+                    }
+                }
+                
+                // 3. 主内容区
                 if isSearchActive {
                     searchResultsView
                 } else {
@@ -545,7 +604,18 @@ struct SourceListView: View {
         )
         .alert(Localized.ok, isPresented: $showErrorAlert, actions: { Button(Localized.ok, role: .cancel) { } }, message: { Text(errorMessage) })
     }
-    
+
+    // 【新增】辅助函数：格式化显示时间文案
+    private func formatUpdateTime(_ rawTime: String) -> String {
+        // 如果是英文模式
+        if isGlobalEnglishMode {
+            return "Updated: \(rawTime)"
+        } else {
+            // 中文模式
+            return "更新时间: \(rawTime)"
+        }
+    }
+
     // MARK: - 搜索结果视图 (使用新的卡片)
     private var searchResultsView: some View {
         List {
@@ -650,61 +720,77 @@ struct SourceListView: View {
 //                        .padding(.horizontal, 20)
 //                        .padding(.top, 10)
                         
-                        // 2. "ALL" 聚合大卡片
-                        NavigationLink(value: NavigationTarget.allArticles) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Image(systemName: "square.stack.3d.up.fill")
-                                        .font(.title)
-                                        .foregroundColor(.white)
-                                    Text(Localized.allArticles) 
-                                        .font(.title2.bold())
-                                        .foregroundColor(.white)
-                                    Text(Localized.allArticlesDesc)
-                                        .font(.caption)
-                                        .foregroundColor(.white.opacity(0.8))
+                        // 使用 VStack 将卡片和下方的时间条组合在一起，作为一个整体单元
+                        VStack(alignment: .leading, spacing: 6) {
+                            NavigationLink(value: NavigationTarget.allArticles) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Image(systemName: "square.stack.3d.up.fill")
+                                            .font(.title)
+                                            .foregroundColor(.white)
+                                        Text(Localized.allArticles)
+                                            .font(.title2.bold())
+                                            .foregroundColor(.white)
+                                        Text(Localized.allArticlesDesc)
+                                            .font(.caption)
+                                            .foregroundColor(.white.opacity(0.8))
+                                    }
+                                    Spacer()
+                                    // 右侧数字
+                                    HStack(alignment: .lastTextBaseline, spacing: 4) {
+                                        Text("\(viewModel.totalUnreadCount)")
+                                            .font(.system(size: 42, weight: .bold, design: .rounded))
+                                            .foregroundColor(.white)
+                                        
+                                        Text(Localized.unread)
+                                            .font(.caption.bold())
+                                            .foregroundColor(.white.opacity(0.8))
+                                            .padding(.bottom, 4)
+                                    }
                                 }
-                                Spacer()
-                                // 【修改】将 VStack 改为 HStack，并设置底部对齐
-                                HStack(alignment: .lastTextBaseline, spacing: 4) {
-                                    Text("\(viewModel.totalUnreadCount)")
-                                        .font(.system(size: 42, weight: .bold, design: .rounded))
-                                        .foregroundColor(.white)
-                                    
-                                    Text(Localized.unread)
-                                        .font(.caption.bold())
-                                        .foregroundColor(.white.opacity(0.8))
-                                        // 稍微调整一下位置，防止在大字体旁显得太靠下（可选）
-                                        .padding(.bottom, 4) 
+                                .padding(24)
+                                .background(
+                                    LinearGradient(gradient: Gradient(colors: [Color.blue, Color.purple]), startPoint: .topLeading, endPoint: .bottomTrailing)
+                                )
+                                .cornerRadius(20)
+                                .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
+                                .overlay(alignment: .bottomTrailing) {
+                                    Button(action: {
+                                        Task { await handlePlayAll() }
+                                    }) {
+                                        Image(systemName: "play.circle.fill")
+                                            .font(.system(size: 50))
+                                            .foregroundColor(.white)
+                                            .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 2)
+                                            .background(Circle().fill(Color.blue))
+                                    }
+                                    .padding(.trailing, 20)
+                                    .padding(.bottom, -25)
                                 }
-
+                                }
+                                .buttonStyle(ScaleButtonStyle())
+                                
+                                // 2. 卡片外部左下方的更新时间条
+                                if !resourceManager.serverUpdateTime.isEmpty {
+                                    HStack(spacing: 4) {
+                                        // 图标
+                                        // Image(systemName: "arrow.triangle.2.circlepath") // 循环更新图标
+                                        //     .font(.caption2)
+                                        //     .foregroundColor(.secondary)
+                                        
+                                        // 时间文字
+                                        Text(formatUpdateTime(resourceManager.serverUpdateTime))
+                                            .font(.system(size: 11, weight: .medium, design: .monospaced)) // 等宽字体显专业
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.leading, 8) // 让它比卡片边缘稍微缩进一点点，视觉上更协调
+                                    .transition(.opacity) // 出现时的淡入动画
+                                }
                             }
-                            .padding(24)
-                            .background(
-                                LinearGradient(gradient: Gradient(colors: [Color.blue, Color.purple]), startPoint: .topLeading, endPoint: .bottomTrailing)
-                            )
-                            .cornerRadius(20)
-                            .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
-                            // 【新增】在这里叠加播放按钮
-                            .overlay(alignment: .bottomTrailing) {
-                                Button(action: {
-                                    // 执行一键播放逻辑
-                                    Task { await handlePlayAll() }
-                                }) {
-                                    Image(systemName: "play.circle.fill")
-                                        .font(.system(size: 50)) // 大个按钮
-                                        .foregroundColor(.white)
-                                        .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 2)
-                                        .background(Circle().fill(Color.blue)) // 填充蓝色背景防止透视
-                                }
-                                .padding(.trailing, 20)
-                                .padding(.bottom, -25) // 让按钮悬挂在卡片边缘，增加立体感
-                            }
-                        }
                         .padding(.horizontal, 16)
                         .buttonStyle(ScaleButtonStyle()) // 增加点击缩放效果
                         // 为了给悬挂的播放按钮留出空间，增加一点间距
-                        Spacer().frame(height: 30)
+                        Spacer().frame(height: 10)
                         
                         // 3. 分源列表
                         VStack(spacing: 1) {

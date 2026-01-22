@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import SwiftUI
 
 struct FileInfo: Codable {
     let name: String
@@ -10,8 +11,10 @@ struct FileInfo: Codable {
 // 【修改】为 ServerVersion 添加 locked_days 字段
 struct ServerVersion: Codable {
     let version: String
-    let locked_days: Int? // 使用可选类型以兼容旧版 version.json
-    let source_mappings: [String: String]? // source_id -> Display Name
+    let locked_days: Int?
+    let notification: String? // 【新增】通知内容
+    let update_time: String? // 【新增】服务器返回的更新时间
+    let source_mappings: [String: String]?
     let files: [FileInfo]
 }
 
@@ -24,16 +27,21 @@ class ResourceManager: ObservableObject {
     @Published var isDownloading = false
     @Published var downloadProgress: Double = 0.0
     @Published var progressText = ""
-    
     @Published var showAlreadyUpToDateAlert = false
+
+    // 【新增】存储最后更新时间，默认为空
+    @Published var serverUpdateTime: String = "" 
     
     // 【新增】存储从服务器获取的配置
     @Published var serverLockedDays: Int = 0
+    @Published var sourceMappings: [String: String] = [:]
     
-    // 【新增】存储映射关系，虽然主要逻辑依赖本地文件扫描，但这可用于全局查找
-    @Published var sourceMappings: [String: String] = [:] 
+    // 【新增】当前需要显示的通知（如果为 nil 则不显示）
+    @Published var activeNotification: String? = nil
     
     private let serverBaseURL = "http://106.15.183.158:5001/api/ONews"
+    // 【新增】UserDefaults Key
+    private let dismissedNotificationKey = "dismissedNotificationContent"
     
     private let fileManager = FileManager.default
     private var documentsDirectory: URL {
@@ -94,6 +102,40 @@ class ResourceManager: ObservableObject {
         
         print("检查发现所有图片均已本地存在。")
         return true
+    }
+
+    // 【新增】处理通知的逻辑
+    // 当从服务器获取到新版本信息时调用此方法
+    private func updateNotificationStatus(serverMessage: String?) {
+        // 1. 如果服务器没有通知，直接清空
+        guard let message = serverMessage, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            self.activeNotification = nil
+            return
+        }
+        
+        // 2. 获取本地已关闭过的通知内容
+        let dismissedMessage = UserDefaults.standard.string(forKey: dismissedNotificationKey)
+        
+        // 3. 只有当服务器通知内容 不等于 本地已关闭的内容时，才显示
+        // 这样一旦内容变更（不相等），就会再次弹出
+        if message != dismissedMessage {
+            self.activeNotification = message
+        } else {
+            self.activeNotification = nil
+        }
+    }
+    
+    // 【新增】用户点击关闭按钮时调用
+    func dismissNotification() {
+        guard let message = activeNotification else { return }
+        
+        // 1. 保存当前内容到本地，标记为“已读/已关闭”
+        UserDefaults.standard.set(message, forKey: dismissedNotificationKey)
+        
+        // 2. 隐藏 UI
+        withAnimation {
+            self.activeNotification = nil
+        }
     }
 
     // MARK: - 按需下载单篇文章的图片 (面向UI)
@@ -461,10 +503,21 @@ class ResourceManager: ObservableObject {
         let (data, _) = try await urlSession.data(from: url)
         let version = try JSONDecoder().decode(ServerVersion.self, from: data)
         
-        // 【新增】保存映射关系
+        // 保存映射关系
         if let mappings = version.source_mappings {
             await MainActor.run {
                 self.sourceMappings = mappings
+            }
+        }
+        
+        // 【修改】更新通知状态 AND 更新时间
+        await MainActor.run {
+            self.serverLockedDays = version.locked_days ?? 0
+            self.updateNotificationStatus(serverMessage: version.notification)
+            
+            // 【新增】保存更新时间
+            if let time = version.update_time {
+                self.serverUpdateTime = time
             }
         }
         

@@ -477,6 +477,17 @@ struct ArticleListView: View {
                         )
                     }
                     
+                    // 【新增】通知条插入位置
+                    // 注意：由于我们在 Source_List.swift 定义了 NotificationBannerView，
+                    // 只要它们在同一个 Target 下，这里可以直接使用。
+                    if let message = resourceManager.activeNotification {
+                        NotificationBannerView(message: message) {
+                            resourceManager.dismissNotification()
+                        }
+                        // 稍微给下面一点间距，或者让Banner自带padding
+                        .background(Color.viewBackground) // 确保背景色一致
+                    }
+
                     List {
                         if isSearchActive {
                             SearchResultsList(
@@ -881,6 +892,14 @@ struct AllArticlesListView: View {
                     )
                 }
                 
+                // 【新增】通知条插入位置
+                if let message = resourceManager.activeNotification {
+                    NotificationBannerView(message: message) {
+                        resourceManager.dismissNotification()
+                    }
+                    .background(Color.viewBackground)
+                }
+
                 List {
                     if isSearchActive {
                         SearchResultsList(
