@@ -575,6 +575,13 @@ struct MainContentView: View {
                 UpdateOverlayView(updateManager: updateManager)
                 Spacer()
             }
+            
+            // 【新增】强制更新拦截层 (放在最下面，即最顶层)
+            if updateManager.showForceUpdate {
+                ForceUpdateView(storeURL: updateManager.appStoreURL)
+                    .transition(.opacity)
+                    .zIndex(999) // 确保盖住所有内容
+            }
         }
         // 【新增】全局弹窗处理
         .sheet(isPresented: $showLoginSheet) { LoginView() }
@@ -899,5 +906,55 @@ struct BrandTag: View {
             .background(Color.blue.opacity(0.1))
             .foregroundColor(.blue)
             .cornerRadius(8)
+    }
+}
+
+struct ForceUpdateView: View {
+    // 接收从服务器传来的 URL
+    let storeURL: String
+    
+    // 【修改】Finance 项目的真实 ID 作为默认备份
+    private let fallbackURL = "https://apps.apple.com/cn/app/id6754904170"
+    
+    var body: some View {
+        ZStack {
+            // 背景不能点击，防止用户绕过
+            Color.black.ignoresSafeArea()
+            
+            VStack(spacing: 30) {
+                Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                    .font(.system(size: 80))
+                    .foregroundColor(.blue)
+                
+                Text("需要更新")
+                    .font(.largeTitle.bold())
+                    .foregroundColor(.white)
+                
+                Text("我们发布了一个重要的版本升级。\n当前版本已停止服务，请更新后继续使用。")
+                    .font(.body)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.gray)
+                    .padding(.horizontal)
+                
+                Button(action: {
+                    // 优先使用服务器配置，没有则使用默认备份
+                    let urlStr = storeURL.isEmpty ? fallbackURL : storeURL
+                    
+                    if let url = URL(string: urlStr) {
+                        UIApplication.shared.open(url)
+                    }
+                }) {
+                    Text("前往 App Store 更新")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.blue)
+                        .cornerRadius(12)
+                }
+                .padding(.horizontal, 40)
+            }
+            .padding()
+        }
     }
 }

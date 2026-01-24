@@ -154,11 +154,22 @@ struct MainAppView: View {
     @EnvironmentObject var authManager: AuthManager
     
     var body: some View {
-        if hasCompletedInitialSetup {
-            SourceListView()
-        } else {
-            WelcomeView(hasCompletedInitialSetup: $hasCompletedInitialSetup)
+        ZStack { // 【修改】使用 ZStack 包裹，以便放置强制更新层
+            if hasCompletedInitialSetup {
+                SourceListView()
+            } else {
+                WelcomeView(hasCompletedInitialSetup: $hasCompletedInitialSetup)
+            }
+            
+            // 【新增】强制更新拦截层
+            // 只要 showForceUpdate 为 true，这个视图就会盖住底下所有内容
+            if resourceManager.showForceUpdate {
+                ForceUpdateView(storeURL: resourceManager.appStoreURL)
+                    .transition(.opacity)
+                    .zIndex(999) // 确保在最上层
+            }
         }
+        .animation(.easeInOut, value: resourceManager.showForceUpdate)
     }
 }
 

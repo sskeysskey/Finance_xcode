@@ -8,9 +8,65 @@ struct FileInfo: Codable {
     let md5: String?
 }
 
+struct ForceUpdateView: View {
+    // 接收从服务器传来的 URL
+    let storeURL: String
+    
+    // 【新增】把你代码里的真实 ID 作为默认备份
+    // 如果服务器传空字符串，就用这个
+    private let fallbackURL = "https://apps.apple.com/cn/app/id6754591885"
+    
+    var body: some View {
+        ZStack {
+            // 背景不能点击，防止用户绕过
+            Color.black.ignoresSafeArea()
+            
+            VStack(spacing: 30) {
+                Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                    .font(.system(size: 80))
+                    .foregroundColor(.blue)
+                
+                Text("需要更新")
+                    .font(.largeTitle.bold())
+                    .foregroundColor(.white)
+                
+                Text("我们发布了一个重要的版本升级。\n当前版本已停止服务，请更新后继续使用。")
+                    .font(.body)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.gray)
+                    .padding(.horizontal)
+                
+                Button(action: {
+                    // 【逻辑优化】
+                    // 1. 优先使用服务器配置的 URL (storeURL)
+                    // 2. 如果服务器没配，使用本地写死的 fallbackURL
+                    let urlStr = storeURL.isEmpty ? fallbackURL : storeURL
+                    
+                    if let url = URL(string: urlStr) {
+                        UIApplication.shared.open(url)
+                    }
+                }) {
+                    Text("前往 App Store 更新")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        // 使用主色调
+                        .background(Color.blue)
+                        .cornerRadius(12)
+                }
+                .padding(.horizontal, 40)
+            }
+            .padding()
+        }
+    }
+}
+
 // 【修改】为 ServerVersion 添加 locked_days 字段
 struct ServerVersion: Codable {
     let version: String
+    let min_app_version: String?
+    let store_url: String?
     let locked_days: Int?
     let notification: String? // 【新增】通知内容
     let update_time: String? // 【新增】服务器返回的更新时间
@@ -28,6 +84,10 @@ class ResourceManager: ObservableObject {
     @Published var downloadProgress: Double = 0.0
     @Published var progressText = ""
     @Published var showAlreadyUpToDateAlert = false
+
+    // 【新增】强制更新控制开关
+    @Published var showForceUpdate: Bool = false
+    @Published var appStoreURL: String = ""
 
     // 【新增】存储最后更新时间，默认为空
     @Published var serverUpdateTime: String = "" 
@@ -496,6 +556,24 @@ class ResourceManager: ObservableObject {
         }
     }
 
+    // 【新增】版本号比对逻辑
+    // 返回 true 表示 currentVersion < minVersion (需要强制更新)
+    private func isVersion(_ current: String, lessThan min: String) -> Bool {
+        let currentParts = current.split(separator: ".").compactMap { Int($0) }
+        let minParts = min.split(separator: ".").compactMap { Int($0) }
+        
+        let count = max(currentParts.count, minParts.count)
+        
+        for i in 0..<count {
+            let v1 = i < currentParts.count ? currentParts[i] : 0
+            let v2 = i < minParts.count ? minParts[i] : 0
+            
+            if v1 < v2 { return true }
+            if v1 > v2 { return false }
+        }
+        return false // 版本相同
+    }
+
     private func getServerVersion() async throws -> ServerVersion {
         guard let url = URL(string: "\(serverBaseURL)/check_version") else { 
             throw URLError(.badURL) 
@@ -503,21 +581,26 @@ class ResourceManager: ObservableObject {
         let (data, _) = try await urlSession.data(from: url)
         let version = try JSONDecoder().decode(ServerVersion.self, from: data)
         
-        // 保存映射关系
-        if let mappings = version.source_mappings {
-            await MainActor.run {
-                self.sourceMappings = mappings
-            }
-        }
-        
-        // 【修改】更新通知状态 AND 更新时间
         await MainActor.run {
+            self.sourceMappings = version.source_mappings ?? [:]
             self.serverLockedDays = version.locked_days ?? 0
             self.updateNotificationStatus(serverMessage: version.notification)
+            if let time = version.update_time { self.serverUpdateTime = time }
             
-            // 【新增】保存更新时间
-            if let time = version.update_time {
-                self.serverUpdateTime = time
+            // 【新增】强制更新检查核心逻辑
+            if let minVersion = version.min_app_version,
+               let storeUrl = version.store_url {
+                
+                // 获取当前 App 版本号 (Info.plist)
+                let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+                
+                if isVersion(currentVersion, lessThan: minVersion) {
+                    print("当前版本 \(currentVersion) 低于最低要求 \(minVersion)，触发强制更新。")
+                    self.showForceUpdate = true
+                    self.appStoreURL = storeUrl
+                } else {
+                    self.showForceUpdate = false
+                }
             }
         }
         

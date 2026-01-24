@@ -4,6 +4,9 @@ import SwiftUI
 // MARK: - 数据模型 (无修改)
 struct VersionResponse: Codable {
     let version: String
+    let min_app_version: String? // 【新增】
+    let store_url: String?       // 【新增】
+    
     let daily_free_limit: Int?
     // 【新增】扣点配置字典
     let cost_config: [String: Int]?
@@ -91,11 +94,30 @@ class UpdateManager: ObservableObject {
     
     @Published var updateState: UpdateState = .idle
     
+    // 【新增】强制更新状态控制
+    @Published var showForceUpdate: Bool = false
+    @Published var appStoreURL: String = ""
+    
     // 请确保此 IP 与 AppServer 运行的 IP 一致
     private let serverBaseURL = "http://106.15.183.158:5001/api/Finance"
     private let localVersionKey = "FinanceAppLocalDataVersion"
     
     private init() {}
+    
+    // 【新增】版本号比对辅助方法
+    private func isVersion(_ current: String, lessThan min: String) -> Bool {
+        let currentParts = current.split(separator: ".").compactMap { Int($0) }
+        let minParts = min.split(separator: ".").compactMap { Int($0) }
+        let count = max(currentParts.count, minParts.count)
+        
+        for i in 0..<count {
+            let v1 = i < currentParts.count ? currentParts[i] : 0
+            let v2 = i < minParts.count ? minParts[i] : 0
+            if v1 < v2 { return true }
+            if v1 > v2 { return false }
+        }
+        return false
+    }
     
     func checkForUpdates(isManual: Bool = false) async -> Bool {
         if case .checking = updateState, !isManual { return false }
@@ -238,6 +260,25 @@ class UpdateManager: ObservableObject {
             
             // 只有在状态码是 200 的情况下，才尝试解码
             let decodedResponse = try JSONDecoder().decode(VersionResponse.self, from: data)
+            
+            // 【新增】在这里插入强制更新检查逻辑
+            await MainActor.run {
+                if let minVersion = decodedResponse.min_app_version,
+                   let storeUrl = decodedResponse.store_url {
+                    
+                    // 获取当前 App 版本 (Info.plist)
+                    let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+                    
+                    if self.isVersion(currentVersion, lessThan: minVersion) {
+                        print("检测到强制更新: 当前 \(currentVersion) < 最低 \(minVersion)")
+                        self.showForceUpdate = true
+                        self.appStoreURL = storeUrl
+                    } else {
+                        self.showForceUpdate = false
+                    }
+                }
+            }
+            
             return .success(decodedResponse)
             
         } catch {
