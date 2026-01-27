@@ -511,6 +511,10 @@ struct SearchView: View {
             return
         }
         
+        // 【新增】在这里也可以记一次数
+        // 这代表用户通过搜索找到了想要的东西，并准备跳转去看了
+        ReviewManager.shared.recordInteraction()
+        
         // 2. 正常逻辑
         if let groupName = viewModel.dataService.getCategory(for: result.symbol) {
             // 【修改点】：使用 Task 替代 DispatchQueue.global().async

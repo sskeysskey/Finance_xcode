@@ -259,6 +259,11 @@ struct ArticleContainerView: View {
     }
 
     private func switchToNextArticle(shouldAutoplayNext: Bool) async {
+        
+        // 【新增】在这里调用 ReviewManager
+        // 逻辑：用户决定看下一篇，说明刚刚这就这篇看完了/听完了，记录一次有效交互
+        ReviewManager.shared.recordInteraction()
+
         if shouldAutoplayNext {
             audioPlayerManager.prepareForNextTransition()
         }

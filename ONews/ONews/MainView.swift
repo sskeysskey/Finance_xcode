@@ -63,37 +63,30 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         let defaults = UserDefaults.standard
         let initKey = "hasInitializedLanguage"
         
+        // ⚠️ 调试专用：强制删除旧的初始化标记，确保每次运行都能测试逻辑。
+        // 测试通过后，请删除或注释掉下面这行代码！
+        // defaults.removeObject(forKey: initKey)
+        
         // 1. 检查是否已经初始化过
         // 如果已经初始化过，说明用户可能已经手动改过设置，或者已经沿用了上次的自动设置，直接跳过，尊重用户选择。
         if defaults.bool(forKey: initKey) {
             return
         }
         
-        // 2. 获取当前系统语言或区域 (兼容 iOS 16 新旧 API)
-        let languageCode: String?
-        let regionCode: String?
+        // 2. 使用 Locale.preferredLanguages 获取用户系统首选语言列表
+        // 这是判断用户意图最准确的方法，比 Locale.current 更可靠
+        let preferredLang = Locale.preferredLanguages.first ?? "en"
         
-        if #available(iOS 16, *) {
-            languageCode = Locale.current.language.languageCode?.identifier
-            regionCode = Locale.current.region?.identifier
-        } else {
-            languageCode = Locale.current.languageCode
-            regionCode = Locale.current.regionCode
-        }
-        
-        print("检测到系统语言: \(languageCode ?? "nil"), 地区: \(regionCode ?? "nil")")
-        
-        var shouldBeEnglish = false
+        print("【国际化】检测到系统首选语言: \(preferredLang)")
         
         // 3. 判断逻辑
-        // 策略 A：如果语言代码是 'en' (英语)，直接默认开启
-        if let lang = languageCode, lang.contains("en") {
-            shouldBeEnglish = true
-        }
-        // 策略 B：或者如果地区是美国 (US)、英国 (GB)、加拿大 (CA)、澳大利亚 (AU) 等
-        else if let region = regionCode, ["US", "GB", "CA", "AU", "NZ", "IE"].contains(region) {
-            shouldBeEnglish = true
-        }
+        // 策略：只有当用户的首选语言明确是“中文”时，才关闭英文模式。
+        // 其他所有语言（英文、日文、法文等）都默认开启英文模式（作为通用语）。
+        
+        let isChinese = preferredLang.hasPrefix("zh") // 涵盖 zh-Hans, zh-Hant, zh-CN, zh-HK 等
+        
+        // 如果是中文，shouldBeEnglish = false；否则 = true
+        let shouldBeEnglish = !isChinese
         
         // 4. 写入设置
         // 这里直接修改 "isGlobalEnglishMode"，视图里的 @AppStorage 会自动读取这个值
@@ -102,7 +95,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // 5. 标记已初始化，以后不再自动覆盖
         defaults.set(true, forKey: initKey)
         
-        print("【国际化】首次启动初始化完成。默认英文模式: \(shouldBeEnglish)")
+        print("【国际化】首次启动初始化完成。设置英文模式: \(shouldBeEnglish)")
     }
 }
 

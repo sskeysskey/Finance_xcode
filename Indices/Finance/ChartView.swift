@@ -521,6 +521,10 @@ struct ChartView: View {
         .onAppear {
             loadChartData()
             dataService.fetchEarningTrends(for: [symbol])
+            
+            // 【新增】记录一次交互
+            // 用户成功进入图表页，说明并没有被 UsageManager 拦截，是高质量的交互
+            ReviewManager.shared.recordInteraction()
         }
         .navigationDestination(isPresented: $showSearchView) {
             SearchView(isSearchActive: true, dataService: dataService)
