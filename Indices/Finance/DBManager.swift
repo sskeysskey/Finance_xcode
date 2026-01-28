@@ -80,14 +80,26 @@ class DatabaseManager {
         let id = UUID() //以此符合 Identifiable
         let date: Date
         let price: Double
+        // 【新增】存储处理后的 IV 数值
+        let iv: Double 
         
         enum CodingKeys: String, CodingKey {
-            case date, price
+            case date, price, iv
         }
         
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             price = try container.decode(Double.self, forKey: .price)
+            
+            // 【新增】解析 IV 字符串并进行数学转换
+            // 逻辑：Server 返回 "50.2%", 去掉 "%" -> 50.2, * 100 -> 5020.0
+            if let ivString = try? container.decode(String.self, forKey: .iv) {
+                let cleanIv = ivString.replacingOccurrences(of: "%", with: "")
+                let val = Double(cleanIv) ?? 0.0
+                self.iv = val * 100 
+            } else {
+                self.iv = 0.0
+            }
             
             let dateString = try container.decode(String.self, forKey: .date)
             let formatter = DateFormatter()
@@ -109,6 +121,7 @@ class DatabaseManager {
             case date, price
         }
         
+        // 【修正】这里不需要 iv 参数，因为 EarningData 只有 date 和 price
         init(date: Date, price: Double) {
             self.date = date
             self.price = price

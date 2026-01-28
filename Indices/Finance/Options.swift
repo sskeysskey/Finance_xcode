@@ -65,9 +65,12 @@ struct PriceFiveColumnView: View {
             // 5. Latest Price (大字体)
             if let lPrice = latestPrice {
                 Text(String(format: "%.2f", lPrice))
-                    .font(.system(size: 16, weight: .bold, design: .monospaced)) // 放大
-                    // 根据涨跌额判断颜色 (大于等于0红，小于0绿)
-                    .foregroundColor((latestChange ?? 0) >= 0 ? .red : .green)
+                    .font(.system(size: 16, weight: .bold, design: .monospaced))
+                    
+                    // 【修改了这里】：直接根据 lPrice 的值判断颜色
+                    // 正数(>=0)变红，负数(<0)变绿
+                    .foregroundColor(lPrice >= 0 ? .red : .green)
+                    
                     .fixedSize()
             } else {
                 Text("--")
@@ -114,32 +117,35 @@ struct PriceFiveColumnView: View {
 }
 
 // MARK: - 【重构】期权价格历史图表组件
+// 包含 TabView 容器和时间选择器逻辑
 struct OptionsHistoryChartView: View {
     let symbol: String
     
     // 状态管理
     @State private var historyData: [DatabaseManager.OptionHistoryItem] = []
-    @State private var selectedTimeRange: TimeRangeOption = .threeMonths
+    // 默认值设为 .threeMonths (或者你想改成 .oneMonth 也可以)
+    @State private var selectedTimeRange: TimeRangeOption = .oneMonth
     @State private var isLoading = false
+    
+    // 控制当前显示的页面索引 (0: IV, 1: Price)
+    @State private var currentPage = 0
     
     // 定义时间范围枚举
     enum TimeRangeOption: String, CaseIterable, Identifiable {
+        // 【修改点 1】修改 Case 定义：增加 1M，保留 3M/1Y/10Y，删除 6M/2Y/5Y
+        case oneMonth = "1M"
         case threeMonths = "3M"
-        case sixMonths = "6M"
         case oneYear = "1Y"
-        case twoYears = "2Y"
-        case fiveYears = "5Y"
         case tenYears = "10Y"
         
         var id: String { self.rawValue }
         
         var monthsBack: Int {
             switch self {
+            // 【修改点 2】更新对应的月份数值
+            case .oneMonth: return 1
             case .threeMonths: return 3
-            case .sixMonths: return 6
             case .oneYear: return 12
-            case .twoYears: return 24
-            case .fiveYears: return 60
             case .tenYears: return 120
             }
         }
@@ -155,11 +161,64 @@ struct OptionsHistoryChartView: View {
     }
     
     var body: some View {
-        VStack(spacing: 12) {
-            // 1. 图表主体区域
-            mainChartArea
+        VStack(spacing: 8) {
             
-            // 2. 时间切换条
+            // 1. 【新增】顶部指示点 (Page Indicator)
+            // 只有当有数据时才显示指示器
+            if !historyData.isEmpty {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(currentPage == 0 ? Color.primary : Color.secondary.opacity(0.3))
+                        .frame(width: 6, height: 6)
+                    Circle()
+                        .fill(currentPage == 1 ? Color.primary : Color.secondary.opacity(0.3))
+                        .frame(width: 6, height: 6)
+                }
+                .padding(.top, 4)
+                .animation(.easeInOut, value: currentPage)
+            }
+            
+            // 2. 图表主体区域 (包含 Loading 和 TabView)
+            ZStack {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(UIColor.secondarySystemGroupedBackground))
+                    .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                
+                if isLoading {
+                    ProgressView()
+                } else if historyData.isEmpty {
+                    Text("暂无历史数据")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else if filteredData.isEmpty {
+                    Text("该时间段内无数据")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    // 【核心修改】使用 TabView 实现左右滑动
+                    TabView(selection: $currentPage) {
+                        
+                        // 页面 0: IV 图表 (默认)
+                        SingleChartContent(
+                            data: filteredData,
+                            dataType: .iv
+                        )
+                        .tag(0)
+                        
+                        // 页面 1: Price 图表
+                        SingleChartContent(
+                            data: filteredData,
+                            dataType: .price
+                        )
+                        .tag(1)
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .never)) // 隐藏系统自带的底部指示器
+                }
+            }
+            .frame(height: 240) // 稍微增加高度以容纳 TabView
+            .padding(.horizontal)
+            
+            // 3. 时间切换条 (公用)
             timeRangeSelector
         }
         .task {
@@ -167,95 +226,8 @@ struct OptionsHistoryChartView: View {
         }
     }
     
-    // 拆分出图表主体
-    @ViewBuilder
-    private var mainChartArea: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(UIColor.secondarySystemGroupedBackground))
-                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-            
-            if isLoading {
-                ProgressView()
-            } else if historyData.isEmpty {
-                Text("暂无历史价格数据")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } else if filteredData.isEmpty {
-                Text("该时间段内无数据")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } else {
-                chartContent
-            }
-        }
-        .frame(height: 220)
-        .padding(.horizontal)
-    }
-
-    // 1. 定义一个用于显示的日期格式化器
-    private var chartDateFormatter: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MM/dd" // 显示为 12/26 格式
-        return formatter
-    }
+    // 【关键修复】这里把 timeRangeSelector 和 loadData 放回了 struct 内部
     
-    // 拆分出具体的 Chart 代码
-    private var chartContent: some View {
-        // 将 filteredData 按照日期升序排列，确保图表从左到右是时间顺序
-        let sortedData = filteredData.sorted { $0.date < $1.date }
-        
-        return Chart {
-            ForEach(sortedData) { item in
-                BarMark(
-                    // 【关键修改】X轴使用 String (分类)，消除周末空白
-                    x: .value("Date", chartDateFormatter.string(from: item.date)),
-                    y: .value("Price", item.price)
-                )
-                .foregroundStyle(barGradient(for: item.price))
-                // 【优化】设置最大宽度，防止数据少时柱子太宽
-                .cornerRadius(4)
-            }
-            
-            // 0轴基准线
-            RuleMark(y: .value("Zero", 0))
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [5]))
-                .foregroundStyle(.gray.opacity(0.5))
-        }
-        // 【关键修改】自定义 X 轴
-        .chartXAxis {
-            AxisMarks { value in
-                // 因为 X 轴变成了 String，这里直接获取 String
-                if let dateString = value.as(String.self) {
-                    AxisValueLabel {
-                        Text(dateString)
-                            .font(.caption2)
-                            .fixedSize() // 防止文字被压缩
-                    }
-                }
-            }
-        }
-        // 【优化】如果数据很少，限制图表内容的宽度，不要撑满全屏（可选）
-        // .chartXScale(domain: .automatic(includesZero: false)) 
-        .padding(.vertical, 16)
-        .padding(.horizontal, 8)
-    }
-    
-    // 辅助函数：生成渐变色
-    private func barGradient(for price: Double) -> LinearGradient {
-        let isPositive = price >= 0
-        let colors: [Color] = isPositive
-            ? [.red.opacity(0.8), .red.opacity(0.4)]
-            : [.green.opacity(0.8), .green.opacity(0.4)]
-        
-        return LinearGradient(
-            colors: colors,
-            startPoint: isPositive ? .bottom : .top,
-            endPoint: isPositive ? .top : .bottom
-        )
-    }
-    
-    // 拆分出时间选择器
     private var timeRangeSelector: some View {
         HStack(spacing: 0) {
             ForEach(TimeRangeOption.allCases) { option in
@@ -295,6 +267,149 @@ struct OptionsHistoryChartView: View {
             self.historyData = rawData
             self.isLoading = false
         }
+    }
+}
+
+// MARK: - 【新增】单一图表绘制组件
+// 负责具体的 Chart 绘制逻辑
+struct SingleChartContent: View {
+    let data: [DatabaseManager.OptionHistoryItem]
+    let dataType: ChartDataType
+    
+    enum ChartDataType {
+        case price
+        case iv
+        
+        var title: String {
+            switch self {
+            case .price: return "Calls+Puts" // 【修改点 1】标题改为 Calls+Puts
+            case .iv: return "IV Trend"
+            }
+        }
+        
+        // baseColor 属性实际上在下面 barGradient 里被覆盖了，这里保留或删除都可以，不影响
+        var baseColor: Color {
+            switch self {
+            case .price: return .red
+            case .iv: return .red // 让 IV 基础色也变为红色
+            }
+        }
+    }
+    
+    // 1. 日期格式化 (显示用)
+    private var dayFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd"
+        return formatter
+    }
+    
+    // 2. 唯一ID格式化 (X轴唯一性)
+    private var uniqueIDFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            // 小标题，提示当前是什么图
+            Text(dataType.title)
+                .font(.caption2)
+                .fontWeight(.bold)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 8)
+                .padding(.top, 8)
+            
+            chartBody
+        }
+    }
+    
+    private var chartBody: some View {
+        // 1. 数据排序
+        let sortedData = data.sorted { $0.date < $1.date }
+        
+        // 2. 准备 X 轴的唯一 ID
+        let allDateIDs = sortedData.map { uniqueIDFormatter.string(from: $0.date) }
+        
+        // 3. 计算步长
+        let stride = getAxisStride(count: sortedData.count)
+        
+        // 4. 计算 Tick Values
+        let totalCount = allDateIDs.count
+        let tickValues = allDateIDs.enumerated().compactMap { index, idValue in
+            let distanceFromEnd = totalCount - 1 - index
+            if distanceFromEnd % stride == 0 {
+                return idValue
+            }
+            return nil
+        }
+        
+        return Chart {
+            ForEach(sortedData) { item in
+                // 根据类型获取数值
+                let value = (dataType == .price) ? item.price : item.iv
+                
+                BarMark(
+                    x: .value("Date", uniqueIDFormatter.string(from: item.date)),
+                    y: .value("Value", value)
+                )
+                // 【修改点 2】颜色逻辑现在统一了，正数自动变红
+                .foregroundStyle(barGradient(for: value))
+                .cornerRadius(4)
+            }
+            
+            // 0 线
+            RuleMark(y: .value("Zero", 0))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [5]))
+                .foregroundStyle(.gray.opacity(0.5))
+        }
+        .chartXAxis {
+            AxisMarks(values: tickValues) { value in
+                if let fullDateString = value.as(String.self),
+                   let dateObject = uniqueIDFormatter.date(from: fullDateString) {
+                    
+                    AxisValueLabel(centered: true) {
+                        let dayString = dayFormatter.string(from: dateObject)
+                        Text(dayString)
+                            .font(.system(size: 10, design: .monospaced))
+                            .multilineTextAlignment(.center)
+                            .lineSpacing(0)
+                            .fixedSize()
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+    }
+    
+    // 辅助：获取步长
+    private func getAxisStride(count: Int) -> Int {
+        switch count {
+        case 0...10: return 1
+        case 11...30: return 3
+        case 31...70: return 5
+        case 71...150: return 10
+        default: return 20
+        }
+    }
+    
+    // 辅助：渐变色
+    // 【修改点 2 核心】：移除了 if dataType == .iv 的判断
+    // 现在无论什么图表，只要数值是正数(>=0)就是红色渐变，负数是绿色渐变
+    private func barGradient(for value: Double) -> LinearGradient {
+        
+        let isPositive = value >= 0
+        let colors: [Color] = isPositive
+            ? [.red.opacity(0.8), .red.opacity(0.4)]   // 正数 = 红色
+            : [.green.opacity(0.8), .green.opacity(0.4)] // 负数 = 绿色
+        
+        return LinearGradient(
+            colors: colors,
+            startPoint: isPositive ? .bottom : .top,
+            endPoint: isPositive ? .top : .bottom
+        )
     }
 }
 
@@ -942,14 +1057,44 @@ struct OptionsRankView: View {
         }
         
         if let (up, down) = await dataService.fetchOptionsRankData() {
+            
+            // 【新增步骤 1】过滤 "最可能涨" 列表
+            // 逻辑：只要 (IV > 0) 或 (Price > 0) 即可保留。
+            // 如果 (IV < 0 且 Price < 0)，则剔除。
+            let filteredUp = up.filter { item in
+                let ivVal = parseIvValue(item.iv)
+                let priceVal = (item.price ?? 0) + (item.change ?? 0)
+                
+                // 保留条件：IV 是正数 OR 价格是正数
+                return ivVal > 0 || priceVal > 0
+            }
+            
+            // 【新增步骤 2】过滤 "最可能跌" 列表
+            // 逻辑：只要 (IV < 0) 或 (Price < 0) 即可保留。
+            // 如果 (IV > 0 且 Price > 0)，则剔除。
+            let filteredDown = down.filter { item in
+                let ivVal = parseIvValue(item.iv)
+                let priceVal = (item.price ?? 0) + (item.change ?? 0)
+                
+                // 保留条件：IV 是负数 OR 价格是负数
+                return ivVal < 0 || priceVal < 0
+            }
+
             await MainActor.run {
-                self.rankUp = up
-                self.rankDown = down
-                self.isLoading = false // 加载完成后关闭
+                self.rankUp = filteredUp
+                self.rankDown = filteredDown
+                self.isLoading = false
             }
         } else {
             await MainActor.run { self.isLoading = false }
         }
+    }
+
+    // 【新增辅助函数】解析 IV 字符串为 Double (去掉百分号)
+    private func parseIvValue(_ text: String?) -> Double {
+        guard let t = text else { return 0.0 }
+        let clean = t.replacingOccurrences(of: "%", with: "")
+        return Double(clean) ?? 0.0
     }
 
     
