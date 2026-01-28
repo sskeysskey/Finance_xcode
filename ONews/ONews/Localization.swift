@@ -143,7 +143,7 @@ struct Localized {
     static var freeUser: String { tr("免费版用户", "Free User") }
     static var validUntil: String { tr("有效期至", "Valid until") }
     static var notLoggedIn: String { tr("未登录", "Not Logged In") }
-    static var loginWelcome: String { tr("登录【环球要闻】", "Login to ONews") }
+    static var loginWelcome: String { tr("登录【国外消息】", "Login to ONews") }
     static var loginDesc: String { tr("成功登录后\n即使更换设备\n也可以同步您的订阅状态", "Sync your subscriptions\nacross devices\nafter logging in") }
     static var later: String { tr("稍后再说", "Not Now") }
     

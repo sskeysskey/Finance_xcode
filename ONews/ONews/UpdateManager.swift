@@ -68,6 +68,7 @@ struct ServerVersion: Codable {
     let min_app_version: String?
     let store_url: String?
     let locked_days: Int?
+    let server_date: String? // 【新增】服务器返回的基准日期
     let notification: String? // 【新增】通知内容
     let update_time: String? // 【新增】服务器返回的更新时间
     let source_mappings: [String: String]?
@@ -98,6 +99,8 @@ class ResourceManager: ObservableObject {
     
     // 【新增】当前需要显示的通知（如果为 nil 则不显示）
     @Published var activeNotification: String? = nil
+
+    @Published var serverDate: String = "" // 【新增】存储服务器日期
     
     private let serverBaseURL = "http://106.15.183.158:5001/api/ONews"
     // 【新增】UserDefaults Key
@@ -582,9 +585,16 @@ class ResourceManager: ObservableObject {
         let version = try JSONDecoder().decode(ServerVersion.self, from: data)
         
         await MainActor.run {
+            self.serverDate = version.server_date ?? ""
             self.sourceMappings = version.source_mappings ?? [:]
             self.serverLockedDays = version.locked_days ?? 0
             self.updateNotificationStatus(serverMessage: version.notification)
+            
+            // 持久化存储，防止离线时丢失基准
+            if let sDate = version.server_date {
+                UserDefaults.standard.set(sDate, forKey: "LastKnownServerDate")
+            }
+            
             if let time = version.update_time { self.serverUpdateTime = time }
             
             // 【新增】强制更新检查核心逻辑

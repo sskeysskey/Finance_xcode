@@ -91,6 +91,9 @@ struct UserProfileView: View {
     // 【新增】为了让界面随语言刷新
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false 
     
+    // 【新增】控制退出登录确认框的状态
+    @State private var showLogoutConfirmation = false
+    
     var body: some View {
         NavigationView {
             List {
@@ -176,8 +179,8 @@ struct UserProfileView: View {
                 Section {
                     if authManager.isLoggedIn {
                         Button(role: .destructive) {
-                            authManager.signOut()
-                            dismiss()
+                            // 不再直接退出，而是弹出确认框
+                            showLogoutConfirmation = true
                         } label: {
                             HStack {
                                 Image(systemName: "rectangle.portrait.and.arrow.right")
@@ -193,6 +196,18 @@ struct UserProfileView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(Localized.close) { dismiss() } // 【双语化】
                 }
+            }
+            // 【新增】退出登录的二次确认弹窗
+            .alert(isGlobalEnglishMode ? "Sign Out" : "确认退出登录", isPresented: $showLogoutConfirmation) {
+                Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
+                Button(isGlobalEnglishMode ? "Sign Out" : "退出登录", role: .destructive) {
+                    authManager.signOut()
+                    dismiss()
+                }
+            } message: {
+                Text(isGlobalEnglishMode ? 
+                     "After signing out, you will no longer be able to access premium content. You can restore access by signing back in with the same Apple ID." : 
+                     "退出登录后，您将无法查看受限内容。重新登录同一 Apple 账号即可恢复权限。")
             }
         }
     }
@@ -439,7 +454,13 @@ struct SourceListView: View {
                         }
                         
                         Button {
-                            Task { await syncResources(isManual: true) }
+                            // 【核心修改】点击刷新时，同时同步资源和用户状态
+                            Task { 
+                                // 1. 同步新闻内容
+                                await syncResources(isManual: true) 
+                                // 2. 同步用户订阅状态 (手动重试机制)
+                                await authManager.checkServerSubscriptionStatus()
+                            }
                         } label: {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 16, weight: .medium))

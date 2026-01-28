@@ -592,7 +592,11 @@ struct ArticleListView: View {
 
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        Task { await syncResources(isManual: true) }
+                        // 【核心修改】点击刷新时，同时同步资源和用户状态
+                        Task { 
+                            await syncResources(isManual: true) 
+                            await authManager.checkServerSubscriptionStatus()
+                        }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .foregroundColor(.primary) // 【添加这行】强制使用黑白色系
@@ -998,7 +1002,11 @@ struct AllArticlesListView: View {
             
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task { await syncResources(isManual: true) }
+                    // 【核心修改】点击刷新时，同时同步资源和用户状态
+                    Task { 
+                        await syncResources(isManual: true) 
+                        await authManager.checkServerSubscriptionStatus()
+                    }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .foregroundColor(.primary)

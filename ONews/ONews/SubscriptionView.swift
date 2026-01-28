@@ -229,8 +229,20 @@ struct SubscriptionView: View {
         .onChange(of: authManager.isLoggedIn) { _, newValue in
             if newValue == true && showLoginSheet {
                 showLoginSheet = false
-                // 可选：如果需要在登录后自动继续购买流程，可以在这里再次调用 handlePurchase()
-                // handlePurchase() 
+                // 登录成功后，给系统一点时间去同步服务器状态和 Apple 凭证
+                Task {
+                    // 延迟 1.5 秒，给用户一个“正在同步状态”的视觉缓冲，也确保网络请求完成
+                    try? await Task.sleep(nanoseconds: 1_500_000_000) 
+                    
+                    if authManager.isSubscribed {
+                        // 如果识别到已经是订阅用户，直接关闭订阅窗口
+                        print("登录成功且识别到订阅，自动关闭订阅页面。")
+                        dismiss()
+                    } else {
+                        // 如果登录了但还没订阅，可以保持在当前页面，让用户继续选购
+                        print("登录成功但未发现有效订阅。")
+                    }
+                }
             }
         }
     }

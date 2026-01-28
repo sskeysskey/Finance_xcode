@@ -34,6 +34,10 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     // 服务器地址
     private let serverBaseURL = "http://106.15.183.158:5001/api/ONews"
     
+    // 【新增】缓存 Key
+    private let cacheIsSubscribedKey = "AuthCache_IsSubscribed"
+    private let cacheExpiryDateKey = "AuthCache_ExpiryDate"
+    
     // 【新增】用于监听交易更新的任务
     private var updateListenerTask: Task<Void, Error>?
 
@@ -58,18 +62,23 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                 self.isLoggedIn = true
                 print("AuthManager: 本地已登录，User ID: \(userId)")
                 
-                // 【核心修复】
+                // 【核心修复 1】启动时，先加载本地缓存的订阅状态
+                // 这样即使网络请求失败，用户也能看到之前的订阅状态
+                loadSubscriptionCache()
+                
+                // 【核心修复 2】
                 // 启动时，不仅要检查服务器，更要直接检查 Apple 本地的 Entitlements (权限)。
                 Task {
                     // 1. 优先检查 Apple 本地凭证 (这是最快且最准确的源头)
                     await updateSubscriptionStatus()
                     
-                    // 2. 同时/随后检查服务器状态
+                    // 2. 同时/随后检查服务器状态 (用于同步安卓/跨平台状态或特殊后门)
                     await checkServerSubscriptionStatus()
                 }
             } else {
                 self.isLoggedIn = false
                 self.isSubscribed = false
+                clearSubscriptionCache() // 未登录时清理缓存
             }
         } catch {
             self.isLoggedIn = false
@@ -101,12 +110,14 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             self.isLoggedIn = false
             self.isSubscribed = false // 登出后取消订阅状态
             self.subscriptionExpiryDate = nil
+            clearSubscriptionCache() // 清理缓存
             print("AuthManager: 用户已成功登出。")
         } catch {
             // 即使删除失败，也在 UI 上表现为登出
             self.userIdentifier = nil
             self.isLoggedIn = false
             self.isSubscribed = false
+            clearSubscriptionCache()
             print("AuthManager: 登出错误: \(error.localizedDescription)")
         }
     }
@@ -149,6 +160,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         await MainActor.run {
             self.isSubscribed = redeemResponse.is_subscribed
             self.subscriptionExpiryDate = redeemResponse.subscription_expires_at
+            // 兑换成功也更新缓存
+            self.saveSubscriptionCache(isSubscribed: redeemResponse.is_subscribed, expiryDate: redeemResponse.subscription_expires_at)
             print("AuthManager: 邀请码兑换成功，VIP 状态已激活。")
         }
     }
@@ -229,7 +242,14 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
 
-    
+    func handleAppDidBecomeActive() {
+        Task {
+            // 每次回到前台都刷一下，确保续订后第一时间同步给服务器
+            await updateSubscriptionStatus()
+            await checkServerSubscriptionStatus()
+        }
+    }
+
     // 【新增】恢复购买功能 (从 Finance 移植)
     func restorePurchases() async throws {
         // 1. 强制同步 App Store 交易信息 (StoreKit 2)
@@ -345,6 +365,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         await MainActor.run {
             self.isSubscribed = authResponse.is_subscribed
             self.subscriptionExpiryDate = authResponse.subscription_expires_at
+            // 登录成功，保存缓存
+            self.saveSubscriptionCache(isSubscribed: authResponse.is_subscribed, expiryDate: authResponse.subscription_expires_at)
         }
     }
     
@@ -380,8 +402,11 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         
         await MainActor.run {
             if finalStatus {
+                // 如果 Apple 说有效，直接覆盖所有状态，这是最高优先级
                 self.isSubscribed = true
                 self.subscriptionExpiryDate = finalDateStr
+                // 本地 StoreKit 检查最权威，更新缓存
+                self.saveSubscriptionCache(isSubscribed: true, expiryDate: finalDateStr)
             }
             print("AuthManager: 本地 StoreKit 检查完成。结果: \(self.isSubscribed)")
         }
@@ -445,16 +470,129 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             let status = try JSONDecoder().decode(StatusResponse.self, from: data)
             
             await MainActor.run {
+                // 1. 如果服务器说 "是 VIP"
                 if status.is_subscribed {
                     self.isSubscribed = true
                     self.subscriptionExpiryDate = status.subscription_expires_at
+                    // 服务器校验成功，更新缓存
+                    self.saveSubscriptionCache(isSubscribed: true, expiryDate: status.subscription_expires_at)
+                    print("AuthManager: 服务器确认 VIP 身份。")
+                } 
+                // 2. 如果服务器说 "不是 VIP"
+                else {
+                    // 【核心修复】
+                    // 只有在 "本地 Apple 凭证也过期" 的情况下，才听服务器的。
+                    // 如果我们刚刚通过 StoreKit 确认了本地权限有效，就忽略服务器的 "false"。
+                    if self.isSubscribedViaAppleLocal() {
+                        print("AuthManager: 服务器返回未订阅，但本地 Apple 凭证有效。忽略服务器结果，保持 VIP。")
+                        // 可选：这里可以触发一次静默的同步，告诉服务器更新状态
+                        Task { try? await self.syncPurchaseToServer(userId: userId) }
+                    } else {
+                        // 确实没订阅，也没本地凭证，那才是真的没订阅
+                        self.isSubscribed = false
+                        self.subscriptionExpiryDate = nil
+                        self.clearSubscriptionCache()
+                        print("AuthManager: 服务器确认未订阅，且无本地凭证。")
+                    }
                 }
-                print("AuthManager: 服务器状态同步完成，订阅状态: \(status.is_subscribed)")
             }
         } catch {
-            print("AuthManager: 检查状态失败: \(error)")
+            print("AuthManager: 检查服务器状态失败: \(error)")
+            // 网络失败时不操作，保持现有状态（依赖缓存或本地凭证）
         }
     }
+    
+    // 【新增】辅助函数：判断当前是否是基于 Apple 本地凭证的订阅
+    // 我们需要一个简单的判断：如果当前 isSubscribed 为 true，且 expiryDate 是将来，
+    // 我们就假设它是有效的（因为 updateSubscriptionStatus 会定期运行保证它准确）
+    private func isSubscribedViaAppleLocal() -> Bool {
+        guard self.isSubscribed else { return false }
+        guard let dateStr = self.subscriptionExpiryDate else { return false } // 永久会员可能没日期，视情况而定
+        
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
+        // 尝试解析
+        if let date = formatter.date(from: dateStr) {
+            return date > Date()
+        }
+        
+        // 兼容简单格式
+        let simpleFormatter = ISO8601DateFormatter()
+        simpleFormatter.formatOptions = [.withFullDate, .withDashSeparatorInDate]
+        if let date = simpleFormatter.date(from: dateStr) {
+             // 简单日期通常指当天的 00:00，为了保险起见，如果是今天或未来，都算有效
+             return date >= Calendar.current.startOfDay(for: Date())
+        }
+        
+        // 如果是 "2099" 这种永久标记，也算有效
+        if dateStr.starts(with: "2099") { return true }
+        
+        return false
+    }
+    
+    // MARK: - 缓存逻辑 (解决网络启动慢/失败的问题)
+    
+    private func saveSubscriptionCache(isSubscribed: Bool, expiryDate: String?) {
+        UserDefaults.standard.set(isSubscribed, forKey: cacheIsSubscribedKey)
+        if let date = expiryDate {
+            UserDefaults.standard.set(date, forKey: cacheExpiryDateKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: cacheExpiryDateKey)
+        }
+    }
+    
+    private func loadSubscriptionCache() {
+        let cachedStatus = UserDefaults.standard.bool(forKey: cacheIsSubscribedKey)
+        let cachedExpiry = UserDefaults.standard.string(forKey: cacheExpiryDateKey)
+        
+        if cachedStatus {
+            // 只有当缓存是 true 时，我们才需要验证日期
+            // 如果缓存里有日期，检查是否已过期
+            if let dateStr = cachedExpiry {
+                // 简单解析 ISO8601
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                
+                // 尝试解析，如果解析失败尝试简单格式
+                var date = formatter.date(from: dateStr)
+                if date == nil {
+                    let simpleFormatter = ISO8601DateFormatter()
+                    simpleFormatter.formatOptions = [.withFullDate, .withDashSeparatorInDate]
+                    date = simpleFormatter.date(from: dateStr)
+                }
+                
+                if let validDate = date {
+                    if validDate > Date() {
+                        // 缓存有效且未过期
+                        self.isSubscribed = true
+                        self.subscriptionExpiryDate = dateStr
+                        print("AuthManager: 已加载本地缓存，暂时赋予 VIP 权限。")
+                        return
+                    } else {
+                        print("AuthManager: 本地缓存已过期。")
+                    }
+                } else {
+                    // 如果是永久 VIP (2099年) 或者日期解析不了但状态是 true，也暂时信任
+                    // 假设 2099 这种简单字符串
+                    if dateStr.starts(with: "2099") {
+                        self.isSubscribed = true
+                        self.subscriptionExpiryDate = dateStr
+                        return
+                    }
+                }
+            }
+        }
+        
+        // 如果缓存无效或未订阅
+        // self.isSubscribed = false // 默认就是 false，不用重复赋值
+    }
+    
+    private func clearSubscriptionCache() {
+        UserDefaults.standard.removeObject(forKey: cacheIsSubscribedKey)
+        UserDefaults.standard.removeObject(forKey: cacheExpiryDateKey)
+    }
+
     
     // ... (Keychain Helpers 保持不变) ...
     private func saveUserIdentifierToKeychain(_ identifier: String) throws {

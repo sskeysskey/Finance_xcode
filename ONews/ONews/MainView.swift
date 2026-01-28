@@ -118,12 +118,20 @@ struct NewsReaderAppApp: App {
                 .environmentObject(appDelegate.authManager)
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
-            // 【修改】从 appDelegate 获取 newsViewModel 来调用方法
+            // 获取 ViewModel 和 AuthManager 的引用
             let newsViewModel = appDelegate.newsViewModel
+            let authManager = appDelegate.authManager
             
             if newPhase == .active {
-                print("App is active. Syncing read status.")
+                print("App is active. Syncing status...")
+                
+                // 1. 原有的阅读记录同步
                 newsViewModel.syncReadStatusFromPersistence()
+                
+                // 【核心新增】调用 AuthManager 处理订阅状态同步
+                // 这会触发本地 StoreKit 检查并同步给 Python 服务器
+                authManager.handleAppDidBecomeActive()
+                
             } else if newPhase == .background {
                 print("App entered background. Committing pending reads silently.")
                 newsViewModel.commitPendingReadsSilently()
@@ -417,22 +425,28 @@ class NewsViewModel: ObservableObject {
         // 如果 lockedDays 为 0 或负数，则不锁定任何内容
         guard lockedDays > 0 else { return false }
         
-        // 【优化】使用静态 formatter
-        guard let dateOfTimestamp = Self.lockCheckFormatter.date(from: timestamp) else {
-            return false
+        // 1. 获取基准日期：优先使用本次运行获取的 serverDate，如果没有则取上次缓存的
+        let referenceDateStr = resourceManager?.serverDate ?? UserDefaults.standard.string(forKey: "LastKnownServerDate")
+        
+        // 2. 如果完全拿不到服务器日期（比如从未联网），为了安全，默认锁定最近的文章
+        // 或者你可以选择信任本地时间作为最后兜底，但这里我们解析服务器日期
+        guard let refDateStr = referenceDateStr,
+              let refDate = Self.lockCheckFormatter.date(from: refDateStr),
+              let articleDate = Self.lockCheckFormatter.date(from: timestamp) else {
+            // 如果拿不到基准，保守起见：如果文章日期非常新（比如就是今天），则锁定
+            return true 
         }
         
         let calendar = Calendar.current
-        let today = Date()
+        // 注意：这里不再使用 Date()，而是使用 refDate (服务器时间)
+        let startOfRefDay = calendar.startOfDay(for: refDate)
         
-        // 获取今天的起始时间
-        let startOfToday = calendar.startOfDay(for: today)
-        
-        // 计算日期差异
-        let components = calendar.dateComponents([.day], from: dateOfTimestamp, to: startOfToday)
+        let components = calendar.dateComponents([.day], from: articleDate, to: startOfRefDay)
         
         if let dayDifference = components.day {
-            // 如果日期差异小于 lockedDays (例如，昨天是1，前天是2)，则认为是锁定的
+            // 文章日期与服务器日期对比
+            // 如果 dayDifference < 0，说明用户把本地时间往后调了（调到未来），依然锁定
+            // 如果 dayDifference < lockedDays，说明是最近几天的，锁定
             return dayDifference < lockedDays
         }
         
