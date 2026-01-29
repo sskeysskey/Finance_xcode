@@ -160,6 +160,9 @@ struct ChartView: View {
     @State private var showOrangeMarkers: Bool = true
     @State private var showGreenMarkers: Bool = true
     
+    // 【新增】成交量显示控制
+    @State private var showVolume: Bool = false
+    
     @State private var bubbleMarkers: [BubbleMarker] = []
     @State private var shouldUpdateBubbles: Bool = true
     @State private var showBubbles: Bool = false
@@ -219,6 +222,12 @@ struct ChartView: View {
     private var minPrice: Double { sampledChartData.map { $0.price }.min() ?? 0 }
     private var maxPrice: Double { sampledChartData.map { $0.price }.max() ?? 0 }
     private var priceRange: Double { max(maxPrice - minPrice, 0.01) }
+    
+    // 【新增】成交量最大值计算
+    private var maxVolume: Double {
+        let maxVol = sampledChartData.compactMap { $0.volume }.max() ?? 0
+        return Double(maxVol)
+    }
     
     private var priceDifferencePercentage: Double? {
         guard let first = firstTouchPoint?.price,
@@ -290,7 +299,14 @@ struct ChartView: View {
                                             .font(.system(size: 14, weight: .medium))
                                             .foregroundColor(.green)
                                     }
+                                    // 【新增】显示成交量信息
+                                    if let vol = point.volume, vol > 0 {
+                                        Text("\(formatVolume(vol))")
+                                            .font(.system(size: 14, weight: .regular))
+                                            .foregroundColor(.purple)
+                                    }
                                 }
+                                
                                 if let orangeText = markerInfo.orange {
                                     Text(orangeText.replacingOccurrences(of: "\n", with: " "))
                                         .font(.system(size: 14, weight: .medium))
@@ -424,8 +440,10 @@ struct ChartView: View {
                 Toggle(isOn: $showBubbles) {}.toggleStyle(SwitchToggleStyle(tint: .purple))
                 Toggle(isOn: $showRedMarkers) {}.toggleStyle(SwitchToggleStyle(tint: .red))
                 Toggle(isOn: $showOrangeMarkers) {}.toggleStyle(SwitchToggleStyle(tint: .orange))
-                .padding(.horizontal)
+                // 【新增】成交量开关
+                Toggle(isOn: $showVolume) {}.toggleStyle(SwitchToggleStyle(tint: .purple))
             }
+            .padding(.horizontal)
             .padding(.vertical, 30)
             
             // Action Buttons
@@ -555,20 +573,23 @@ struct ChartView: View {
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() } 
     }
     
-    // MARK: - 绘图逻辑 (抽取出来减少Body长度)
+    // MARK: - 绘图逻辑 (修复版：统一坐标系)
     private func drawChart(context: GraphicsContext, size: CGSize) {
         let effectiveHeight = size.height - (verticalPadding * 2)
+        
+        // 1. 定义统一的 Y 轴映射闭包
         let priceToY: (Double) -> CGFloat = { price in
             let normalizedY = CGFloat((price - minPrice) / priceRange)
             return size.height - verticalPadding - (normalizedY * effectiveHeight)
         }
 
         let width = size.width
+        // 2. 统一使用画布宽度计算水平步长
         let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
         let halfStep = horizontalStep / 2
 
         guard let displayStart = sampledChartData.first?.date,
-              let displayEnd = sampledChartData.last?.date else { return }
+            let displayEnd = sampledChartData.last?.date else { return }
 
         // 内部函数：计算遮罩范围
         func xBounds(from rawStart: Date, to rawEnd: Date) -> (CGFloat, CGFloat)? {
@@ -576,8 +597,8 @@ struct ChartView: View {
             let end = min(rawEnd, displayEnd)
             guard start <= end else { return nil }
             guard let startIndex = sampledChartData.firstIndex(where: { $0.date >= start }),
-                  let endIndex = sampledChartData.lastIndex(where: { $0.date <= end }),
-                  startIndex <= endIndex else { return nil }
+                let endIndex = sampledChartData.lastIndex(where: { $0.date <= end }),
+                startIndex <= endIndex else { return nil }
 
             var x1 = CGFloat(startIndex) * horizontalStep - halfStep
             var x2 = CGFloat(endIndex) * horizontalStep + halfStep
@@ -599,18 +620,51 @@ struct ChartView: View {
         if let fifthWeek = fifthWeekRange { drawRange(fifthWeek, tint: .blue) }
         if let thirdWeek = thirdWeekRange { drawRange(thirdWeek, tint: .purple) }
         
-        // 绘制价格线
-        if !renderedPoints.isEmpty {
-            var pricePath = Path()
-            pricePath.move(to: CGPoint(x: renderedPoints[0].x, y: renderedPoints[0].y))
-            for i in 1..<renderedPoints.count {
-                pricePath.addLine(to: CGPoint(x: renderedPoints[i].x, y: renderedPoints[i].y))
+        // 绘制成交量 (Volume)
+        if showVolume {
+            let maxVol = maxVolume
+            if maxVol > 0 {
+                let volumeAreaHeight = size.height * 0.20
+                let volumeBottomY = size.height - verticalPadding
+                
+                for (index, point) in sampledChartData.enumerated() {
+                    if let vol = point.volume, vol > 0 {
+                        let x = CGFloat(index) * horizontalStep
+                        let barHeight = CGFloat(Double(vol) / maxVol) * volumeAreaHeight
+                        let y = volumeBottomY - barHeight
+                        let barWidth = max(1, horizontalStep * 0.6)
+                        let barRect = CGRect(x: x - barWidth/2, y: y, width: barWidth, height: barHeight)
+                        context.fill(Path(barRect), with: .color(Color.purple.opacity(0.5)))
+                    }
+                }
             }
+        }
+        
+        // 3. 【核心修复】直接基于 sampledChartData 和当前 size 绘制价格线
+        // 不再使用 renderedPoints，确保线和点使用相同的计算逻辑
+        if !sampledChartData.isEmpty {
+            var pricePath = Path()
+            
+            // 移动到第一个点
+            let startX = 0.0
+            let startY = priceToY(sampledChartData[0].price)
+            pricePath.move(to: CGPoint(x: startX, y: startY))
+            
+            // 连接后续点
+            for index in 1..<sampledChartData.count {
+                let x = CGFloat(index) * horizontalStep
+                let y = priceToY(sampledChartData[index].price)
+                pricePath.addLine(to: CGPoint(x: x, y: y))
+            }
+            
             context.stroke(pricePath, with: .color(chartColor), lineWidth: 2)
             
+            // 绘制线上的小黑点 (1M/3M/6M 模式)
             if [.oneMonth, .threeMonths, .sixMonths].contains(selectedTimeRange) {
-                for pt in renderedPoints {
-                    let dotRect = CGRect(x: pt.x - 2, y: pt.y - 2, width: 3, height: 3)
+                for (index, point) in sampledChartData.enumerated() {
+                    let x = CGFloat(index) * horizontalStep
+                    let y = priceToY(point.price)
+                    let dotRect = CGRect(x: x - 2, y: y - 2, width: 3, height: 3)
                     context.fill(Path(ellipseIn: dotRect), with: .color(.black))
                 }
             }
@@ -627,12 +681,12 @@ struct ChartView: View {
             context.stroke(zeroPath, with: .color(Color.gray.opacity(0.5)), style: StrokeStyle(lineWidth: 1, dash: [4]))
         }
         
-        // 绘制标记点
+        // 绘制标记点 (逻辑不变，现在与线完全对齐)
         for marker in getTimeMarkers() {
             if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, marker.date) }) {
                 let shouldShow = (marker.type == .global && showRedMarkers) ||
-                               (marker.type == .symbol && showOrangeMarkers) ||
-                               (marker.type == .earning && showGreenMarkers)
+                            (marker.type == .symbol && showOrangeMarkers) ||
+                            (marker.type == .earning && showGreenMarkers)
                 if shouldShow {
                     let x = CGFloat(index) * horizontalStep
                     let y = priceToY(sampledChartData[index].price)
@@ -642,7 +696,7 @@ struct ChartView: View {
             }
         }
         
-        // 绘制触摸指示器
+        // 绘制触摸指示器 (同样使用实时计算的坐标)
         if isMultiTouch {
             // 双指逻辑
             if let firstIndex = firstTouchPointIndex, let firstPoint = firstTouchPoint {
@@ -669,7 +723,7 @@ struct ChartView: View {
                 context.stroke(circlePath, with: .color(chartColor), lineWidth: 2)
             }
             if let firstIndex = firstTouchPointIndex, let secondIndex = secondTouchPointIndex,
-               let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
+            let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
                 let x1 = CGFloat(firstIndex) * horizontalStep
                 let y1 = priceToY(firstPoint.price)
                 let x2 = CGFloat(secondIndex) * horizontalStep
@@ -802,6 +856,20 @@ struct ChartView: View {
     private func calculatePriceChangePercentage(from point: DatabaseManager.PriceData) -> Double? {
         guard let latestPrice = sampledChartData.last?.price else { return nil }
         return ((latestPrice - point.price) / point.price) * 100.0
+    }
+    
+    // 【新增】格式化成交量
+    private func formatVolume(_ volume: Int64) -> String {
+        let doubleVol = Double(volume)
+        if doubleVol >= 1_000_000_000 {
+            return String(format: "%.2fB", doubleVol / 1_000_000_000)
+        } else if doubleVol >= 1_000_000 {
+            return String(format: "%.2fM", doubleVol / 1_000_000)
+        } else if doubleVol >= 1_000 {
+            return String(format: "%.0fK", doubleVol / 1_000)
+        } else {
+            return "\(volume)"
+        }
     }
     
     private func getDescriptions(for symbol: String) -> (String, String)? {
