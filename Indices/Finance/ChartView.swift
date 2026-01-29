@@ -161,7 +161,7 @@ struct ChartView: View {
     @State private var showGreenMarkers: Bool = true
     
     // 【新增】成交量显示控制
-    @State private var showVolume: Bool = false
+    @State private var showVolume: Bool = true
     
     @State private var bubbleMarkers: [BubbleMarker] = []
     @State private var shouldUpdateBubbles: Bool = true
@@ -615,10 +615,10 @@ struct ChartView: View {
         }
 
         // 绘制遮罩
-        if let threeWeeks = threeWeeksBeforeRange { drawRange(threeWeeks, tint: .purple) }
+        if let threeWeeks = threeWeeksBeforeRange { drawRange(threeWeeks, tint: .green) }
         if let oneWeek = oneWeekBeforeRange { drawRange(oneWeek, tint: .blue) }
         if let fifthWeek = fifthWeekRange { drawRange(fifthWeek, tint: .blue) }
-        if let thirdWeek = thirdWeekRange { drawRange(thirdWeek, tint: .purple) }
+        if let thirdWeek = thirdWeekRange { drawRange(thirdWeek, tint: .green) }
         
         // 绘制成交量 (Volume)
         if showVolume {
