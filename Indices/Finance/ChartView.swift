@@ -412,32 +412,36 @@ struct ChartView: View {
             }
             
             // Time Range Buttons
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 7) {
-                    ForEach([TimeRange.oneMonth, .threeMonths, .sixMonths, .oneYear, .all, .twoYears, .fiveYears, .tenYears], id: \.title) { range in
-                        Button(action: {
-                            selectedTimeRange = range
-                            loadChartData()
-                        }) {
-                            Text(range.title)
-                                .font(.system(size: 14, weight: selectedTimeRange == range ? .bold : .regular))
-                                .padding(.vertical, 6)
-                                .padding(.horizontal, 12)
-                                .background(selectedTimeRange == range ? Color.blue.opacity(0.2) : Color.clear)
-                                .foregroundColor(selectedTimeRange == range ? .blue : .primary)
-                                .cornerRadius(8)
+            GeometryReader { geo in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 7) {
+                        ForEach([TimeRange.oneMonth, .threeMonths, .sixMonths, .oneYear, .all, .twoYears, .fiveYears, .tenYears], id: \.title) { range in
+                            Button(action: {
+                                selectedTimeRange = range
+                                loadChartData()
+                            }) {
+                                Text(range.title)
+                                    .font(.system(size: 14, weight: selectedTimeRange == range ? .bold : .regular))
+                                    .padding(.vertical, 6)
+                                    .padding(.horizontal, 12)
+                                    .background(selectedTimeRange == range ? Color.blue.opacity(0.2) : Color.clear)
+                                    .foregroundColor(selectedTimeRange == range ? .blue : .primary)
+                                    .cornerRadius(8)
+                            }
                         }
                     }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .frame(minWidth: geo.size.width) // 居中关键点
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
             }
+            .frame(height: 50)
             .padding(.vertical, 10)
             
             // Toggles
             HStack(spacing: 10) {
                 Toggle(isOn: $showGreenMarkers) {}.toggleStyle(SwitchToggleStyle(tint: .green))
-                Toggle(isOn: $showBubbles) {}.toggleStyle(SwitchToggleStyle(tint: .purple))
+                Toggle(isOn: $showBubbles) {}.toggleStyle(SwitchToggleStyle(tint: .blue))
                 Toggle(isOn: $showRedMarkers) {}.toggleStyle(SwitchToggleStyle(tint: .red))
                 Toggle(isOn: $showOrangeMarkers) {}.toggleStyle(SwitchToggleStyle(tint: .orange))
                 // 【新增】成交量开关

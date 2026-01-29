@@ -199,6 +199,9 @@ class DataService: ObservableObject {
     // 【修改点】存储映射表
     @Published var strategyGroupNames: Set<String> = []
     @Published var groupDisplayMap: [String: String] = [:] // 新增：Key 为英文，Value 为中文
+    
+    // 【新增】存储符合条件的最新财报数值：Key=Symbol, Value=Price
+    @Published var recentEarningPrices: [String: Double] = [:]
 
     // 【新增】存储更新时间文案
     @Published var ecoDataTimestamp: String? = nil
@@ -307,6 +310,37 @@ class DataService: ObservableObject {
         } catch {
             print("DataService: 获取期权榜单失败: \(error)")
             return nil
+        }
+    }
+    
+    // 【新增】在不修改服务器的情况下，客户端自行处理逻辑
+    func fetchRecentEarningPriceIfNeeded(for symbol: String) {
+        let upperSymbol = symbol.uppercased()
+        
+        // 性能优化：如果已经加载过，就不再重复请求
+        if recentEarningPrices[upperSymbol] != nil { return }
+        
+        Task {
+            // 1. 调用现有接口获取所有财报数据
+            let earnings = await DatabaseManager.shared.fetchEarningData(forSymbol: symbol)
+            
+            // 2. 客户端排序：按日期从新到旧排序
+            let sortedEarnings = earnings.sorted { $0.date > $1.date }
+            
+            // 3. 取出最新的一条
+            guard let latest = sortedEarnings.first else { return }
+            
+            // 4. 判断日期是否在两个月内
+            let calendar = Calendar.current
+            let now = Date()
+            if let twoMonthsAgo = calendar.date(byAdding: .month, value: -2, to: now) {
+                // 如果最新财报日期 >= 两个月前的日期
+                if latest.date >= twoMonthsAgo {
+                    await MainActor.run {
+                        self.recentEarningPrices[upperSymbol] = latest.price
+                    }
+                }
+            }
         }
     }
 

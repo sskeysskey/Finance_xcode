@@ -38,23 +38,32 @@ class UsageManager: ObservableObject {
     private let dateKey = "FinanceLastUsageDate"
     // 【新增】持久化存储配置的 Key
     private let costConfigKey = "FinanceCostConfig"
-    
+    private let lastServerDateKey = "LastServerDate" // 存储服务器日期的 Key
+
     private init() {
-        checkReset()
-        loadLocalCosts() // 初始化时加载本地缓存的配置
+        // 1. 初始化时只加载本地存储的数值，不进行重置判断
+        self.dailyCount = UserDefaults.standard.integer(forKey: countKey)
+        loadLocalCosts()
     }
-    
-    // 检查是否需要重置计数（新的一天）
+
+    // 2. 废弃原来的 checkReset() 方法，或者将其改为“防回退”检查
     private func checkReset() {
-        let lastDate = UserDefaults.standard.object(forKey: dateKey) as? Date ?? Date.distantPast
-        if !Calendar.current.isDateInToday(lastDate) {
-            // 是新的一天，重置
+        // 这个方法现在可以删掉，或者留着空实现以防报错
+    }
+
+    // 3. 这是唯一的重置入口
+    func checkResetWithServerDate(_ serverDate: String) {
+        let lastServerDate = UserDefaults.standard.string(forKey: lastServerDateKey) ?? ""
+        
+        if lastServerDate != serverDate {
+            // 只有当服务器返回的日期字符串（如 "260129"）变了，才清零
             dailyCount = 0
             UserDefaults.standard.set(0, forKey: countKey)
-            UserDefaults.standard.set(Date(), forKey: dateKey)
+            UserDefaults.standard.set(serverDate, forKey: lastServerDateKey)
+            UserDefaults.standard.set(Date(), forKey: dateKey) // 记录最后操作时间
+            print("UsageManager: 依据服务器日期 [\(serverDate)] 重置计数")
         } else {
-            // 是今天，加载计数
-            dailyCount = UserDefaults.standard.integer(forKey: countKey)
+            print("UsageManager: 服务器日期未变，维持当前计数: \(dailyCount)")
         }
     }
     

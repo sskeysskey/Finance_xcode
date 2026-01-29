@@ -172,7 +172,7 @@ struct EarningReleaseView: View {
     private func timingGroupHeader(for group: TimingGroup) -> some View {
         HStack {
             // 1. 字体加粗，增加视觉重量
-            Text("\(group.displayName)  \(group.items.count)")
+            Text("\(group.displayName)  \(group.items.count) 个")
                 .font(.subheadline.weight(.semibold)) // 使用 .semibold 加粗
                 .foregroundColor(.secondary)
             
@@ -213,8 +213,18 @@ struct EarningReleaseView: View {
             }
         }) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.symbol)
-                    .font(.system(.body, design: .monospaced))
+                // --- 修改点：使用 HStack 包裹 Symbol 和 Price ---
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(item.symbol)
+                        .font(.system(.body, design: .monospaced))
+                    
+                    // 如果 DataService 缓存中有这个 Symbol 的近两个月价格，则显示
+                    if let price = dataService.recentEarningPrices[item.symbol.uppercased()] {
+                        Text(String(format: "%@%.2f", price >= 0 ? "+" : "", price))
+                            .font(.system(.subheadline, design: .monospaced).bold())
+                            .foregroundColor(price >= 0 ? .red : .green)
+                    }
+                }
                 if let tags = getTags(for: item.symbol), !tags.isEmpty {
                     Text(tags.joined(separator: ", "))
                         .font(.footnote)
@@ -227,6 +237,10 @@ struct EarningReleaseView: View {
             .padding(.vertical, 2)
             // 保持 Symbol 行的缩进
             .padding(.leading)
+        }
+        .onAppear {
+            // --- 修改点：行出现时触发数据检查 ---
+            dataService.fetchRecentEarningPriceIfNeeded(for: item.symbol)
         }
     }
 

@@ -4,8 +4,9 @@ import SwiftUI
 // MARK: - 数据模型 (无修改)
 struct VersionResponse: Codable {
     let version: String
-    let min_app_version: String? // 【新增】
-    let store_url: String?       // 【新增】
+    let server_date: String?
+    let min_app_version: String?
+    let store_url: String?
     
     let daily_free_limit: Int?
     // 【新增】扣点配置字典
@@ -134,6 +135,10 @@ class UpdateManager: ObservableObject {
         
         switch result {
         case .success(let serverVersionResponse):
+            if let serverDate = serverVersionResponse.server_date {
+                UsageManager.shared.checkResetWithServerDate(serverDate)
+            }
+
             // 1. 更新每日免费限制
             if let limit = serverVersionResponse.daily_free_limit {
                 UsageManager.shared.updateLimit(limit)
