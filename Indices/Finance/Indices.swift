@@ -458,7 +458,7 @@ struct IndicesContentView: View {
     // 【新增】辅助 ViewBuilder，帮助编译器拆解复杂的 ForEach 内部逻辑
     @ViewBuilder
     private func view(for groupName: String, sectors: [IndicesSector], weekLowSectors: [IndicesSector]) -> some View {
-        if groupName == "WeekLow" {
+        if groupName == "52NewLow" {
             Button {
                 if usageManager.canProceed(authManager: authManager, action: .openSpecialList) {
                     self.weekLowSectorsData = weekLowSectors
@@ -547,14 +547,16 @@ struct IndicesContentView: View {
         case "Economic_All": return "globe"
         case "Short_W": return "chart.line.downtrend.xyaxis"
         case "Short": return "arrow.down.circle"
-        case "PE_Deep": return "arrow.up.circle"
+        case "PE_Volume": return "arrow.up.circle"
         case "OverSell_W": return "flame.fill"
         case "PE_invalid": return "1.circle"
         case "PE_valid": return "2.circle"
         case "PE_W": return "4.circle"
+        case "PE_Deeper": return "5.circle"
+        case "PE_Deep": return "6.circle"
         case "Strategy12": return "3.circle"
         case "Strategy34": return "4.circle"
-        case "WeekLow": return "arrow.down.right.circle.fill"
+        case "52NewLow": return "arrow.down.right.circle.fill"
         case "TenYearHigh": return "arrow.up.right.circle.fill"
         case "OptionRank": return "chart.line.uptrend.xyaxis"
         default: return "chart.pie.fill"
