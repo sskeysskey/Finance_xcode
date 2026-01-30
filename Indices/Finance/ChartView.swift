@@ -406,36 +406,40 @@ struct ChartView: View {
                     )
                 }
                 .frame(height: 320)
+                // 【关键修复1】强制图表区域宽度等于屏幕宽度，防止被撑大
+                .frame(width: UIScreen.main.bounds.width)
+                .clipped() // 确保内容不溢出
                 // 关键：当正在拖动时，禁用导航返回手势
                 .navigationPopGestureDisabled(isDragging || isMultiTouch)
                 .padding(.bottom, 30)
             }
             
             // Time Range Buttons
-            GeometryReader { geo in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 7) {
-                        ForEach([TimeRange.oneMonth, .threeMonths, .sixMonths, .oneYear, .all, .twoYears, .fiveYears, .tenYears], id: \.title) { range in
-                            Button(action: {
-                                selectedTimeRange = range
-                                loadChartData()
-                            }) {
-                                Text(range.title)
-                                    .font(.system(size: 14, weight: selectedTimeRange == range ? .bold : .regular))
-                                    .padding(.vertical, 6)
-                                    .padding(.horizontal, 12)
-                                    .background(selectedTimeRange == range ? Color.blue.opacity(0.2) : Color.clear)
-                                    .foregroundColor(selectedTimeRange == range ? .blue : .primary)
-                                    .cornerRadius(8)
-                            }
+            // 【关键修复2】强制 ScrollView 宽度不超过屏幕宽度
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 7) {
+                    ForEach([TimeRange.oneMonth, .threeMonths, .sixMonths, .oneYear, .all, .twoYears, .fiveYears, .tenYears], id: \.title) { range in
+                        Button(action: {
+                            selectedTimeRange = range
+                            loadChartData()
+                        }) {
+                            Text(range.title)
+                                .font(.system(size: 14, weight: selectedTimeRange == range ? .bold : .regular))
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 12)
+                                .background(selectedTimeRange == range ? Color.blue.opacity(0.2) : Color.clear)
+                                .foregroundColor(selectedTimeRange == range ? .blue : .primary)
+                                .cornerRadius(8)
                         }
                     }
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .frame(minWidth: geo.size.width) // 居中关键点
                 }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                // 居中逻辑：让 HStack 最小宽度为屏幕宽度，这样内容少时会自动居中
+                .frame(minWidth: UIScreen.main.bounds.width)
             }
             .frame(height: 50)
+            .frame(maxWidth: UIScreen.main.bounds.width) // 限制 ScrollView 自身宽度
             .padding(.vertical, 10)
             
             // Toggles
