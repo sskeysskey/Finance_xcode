@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import SwiftUI
+import Network // 【新增】引入 Network 框架
 
 struct FileInfo: Codable {
     let name: String
@@ -117,6 +118,26 @@ class ResourceManager: ObservableObject {
         configuration.waitsForConnectivity = true
         return URLSession(configuration: configuration)
     }()
+    
+    // 【新增】网络监视器
+    private let networkMonitor = NWPathMonitor()
+    private let monitorQueue = DispatchQueue(label: "NetworkMonitor")
+    @Published var isWifiConnected: Bool = false
+
+    // ✅ 修复 1: 去掉 override 关键字
+    init() {
+        // 启动网络监听
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                self?.isWifiConnected = path.usesInterfaceType(.wifi)
+            }
+        }
+        networkMonitor.start(queue: monitorQueue)
+    }
+    
+    deinit {
+        networkMonitor.cancel()
+    }
 
     // 【修改】特效数据获取失败时的默认词汇
     func fetchSourceNames() async -> [String] {
@@ -339,6 +360,104 @@ class ResourceManager: ObservableObject {
             } catch {
                 print("⚠️ [静默预载] 失败 \(imageName): \(error.localizedDescription)")
                 throw error
+            }
+        }
+    }
+
+    // MARK: - 【新增】批量离线下载所有图片
+    func downloadAllOfflineImages(progressHandler: @escaping @MainActor (Int, Int) -> Void) async throws {
+        // ✅ 修复 2: 在主线程获取 URL，因为 documentsDirectory 是 @MainActor 隔离的
+        let docDir = self.documentsDirectory
+        
+        // 2. 遍历 JSON，解析出所有需要的图片
+        // ✅ 修复 3: 使用捕获列表 [docDir] 将 URL 传入后台任务
+        // ✅ 修复 4: 在后台任务中使用 FileManager.default，而不是 self.fileManager
+        let allImagesToDownload = await Task.detached(priority: .userInitiated) { [docDir] in
+            let fm = FileManager.default // 使用本地实例
+            var tasks: [(urlPath: String, localPath: URL)] = []
+            
+            // 获取本地所有 onews_*.json 文件
+            guard let localFiles = try? fm.contentsOfDirectory(at: docDir, includingPropertiesForKeys: nil) else {
+                return tasks
+            }
+            
+            let jsonFiles = localFiles.filter { $0.lastPathComponent.starts(with: "onews_") && $0.pathExtension == "json" }
+            let decoder = JSONDecoder()
+            
+            for fileURL in jsonFiles {
+                guard let data = try? Data(contentsOf: fileURL),
+                      let articlesMap = try? decoder.decode([String: [Article]].self, from: data) else {
+                    continue
+                }
+                
+                // 提取时间戳 (例如 onews_260131.json -> 260131)
+                let filename = fileURL.deletingPathExtension().lastPathComponent
+                let timestamp = filename.replacingOccurrences(of: "onews_", with: "")
+                let directoryName = "news_images_\(timestamp)"
+                
+                // 扁平化所有文章的所有图片
+                let allArticles = articlesMap.values.flatMap { $0 }
+                let allImageNames = allArticles.flatMap { $0.images }
+                
+                // 去重
+                let uniqueImages = Set(allImageNames)
+                
+                for imageName in uniqueImages {
+                    let cleanName = imageName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if cleanName.isEmpty { continue }
+                    
+                    // 构造下载路径和本地保存路径
+                    // 服务器路径格式: news_images_260131/xxx.jpg
+                    let downloadPath = "\(directoryName)/\(cleanName)"
+                    let localDir = docDir.appendingPathComponent(directoryName)
+                    let localFile = localDir.appendingPathComponent(cleanName)
+                    
+                    // 检查本地是否已存在
+                    if !fm.fileExists(atPath: localFile.path) {
+                        try? fm.createDirectory(at: localDir, withIntermediateDirectories: true)
+                        tasks.append((urlPath: downloadPath, localPath: localFile))
+                    }
+                }
+            }
+            return tasks
+        }.value // 等待后台任务完成
+        
+        // 3. 开始下载
+        let total = allImagesToDownload.count
+        if total == 0 {
+            print("所有图片均已离线缓存，无需下载。")
+            progressHandler(0, 0)
+            return
+        }
+        
+        print("开始离线下载，共缺 \(total) 张图片...")
+        progressHandler(0, total)
+        
+        for (index, task) in allImagesToDownload.enumerated() {
+            guard var components = URLComponents(string: "\(serverBaseURL)/download") else { continue }
+            components.queryItems = [URLQueryItem(name: "filename", value: task.urlPath)]
+            guard let url = components.url else { continue }
+            
+            do {
+                let (tempURL, response) = try await urlSession.download(from: url)
+                
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    // 如果单张失败，打印日志但不中断整个流程
+                    print("⚠️ 下载失败: \(task.urlPath)")
+                    continue
+                }
+                
+                // 移动文件 (回到主线程操作文件是安全的，或者这里使用 fileManager 也可以，因为是串行)
+                if fileManager.fileExists(atPath: task.localPath.path) {
+                    try fileManager.removeItem(at: task.localPath)
+                }
+                try fileManager.moveItem(at: tempURL, to: task.localPath)
+                
+                // 更新进度
+                progressHandler(index + 1, total)
+                
+            } catch {
+                print("⚠️ 下载异常: \(task.urlPath) - \(error.localizedDescription)")
             }
         }
     }

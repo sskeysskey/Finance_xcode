@@ -87,6 +87,8 @@ struct NotificationBannerView: View {
 // MARK: - 【新增】个人中心视图 (User Profile)
 struct UserProfileView: View {
     @EnvironmentObject var authManager: AuthManager
+    // 【新增】获取 ResourceManager
+    @EnvironmentObject var resourceManager: ResourceManager
     @Environment(\.dismiss) var dismiss
     // 【新增】为了让界面随语言刷新
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false 
@@ -94,120 +96,256 @@ struct UserProfileView: View {
     // 【新增】控制退出登录确认框的状态
     @State private var showLogoutConfirmation = false
     
+    // 【新增】离线下载相关状态
+    @State private var showCellularAlert = false
+    @State private var isBulkDownloading = false
+    @State private var bulkProgress: Double = 0.0
+    @State private var bulkProgressText = ""
+    @State private var bulkDownloadError = false
+    @State private var bulkDownloadErrorMessage = ""
+    @State private var showSuccessToast = false
+    
     var body: some View {
-        NavigationView {
-            List {
-                // 1. 用户信息部分
-                Section {
-                    HStack {
-                        Image(systemName: "person.circle.fill")
-                            .font(.system(size: 60))
-                            .foregroundColor(.gray)
-                        VStack(alignment: .leading, spacing: 4) {
-                            if authManager.isSubscribed {
-                                Text(Localized.premiumUser) // 【双语化】
-                                    .font(.subheadline)
-                                    .foregroundColor(.yellow)
-                                    .bold()
-                                if let dateStr = authManager.subscriptionExpiryDate {
-                                    // 【双语化】有效期至
-                                    Text("\(Localized.validUntil): \(formatDateLocal(dateStr, isEnglish: isGlobalEnglishMode))")
+        ZStack { // 使用 ZStack 以便显示遮罩
+            NavigationView {
+                List {
+                    // 1. 用户信息部分 (保持不变)
+                    Section {
+                        HStack {
+                            Image(systemName: "person.circle.fill")
+                                .font(.system(size: 60))
+                                .foregroundColor(.gray)
+                            VStack(alignment: .leading, spacing: 4) {
+                                if authManager.isSubscribed {
+                                    Text(Localized.premiumUser)
+                                        .font(.subheadline)
+                                        .foregroundColor(.yellow)
+                                        .bold()
+                                    if let dateStr = authManager.subscriptionExpiryDate {
+                                        Text("\(Localized.validUntil): \(formatDateLocal(dateStr, isEnglish: isGlobalEnglishMode))")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                } else {
+                                     Text(Localized.freeUser)
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                if let userId = authManager.userIdentifier {
+                                    Text("ID: \(userId.prefix(6))...")
+                                        .font(.caption2)
+                                        .foregroundColor(.gray)
+                                } else {
+                                    Text(Localized.notLoggedIn)
+                                        .font(.caption2)
+                                        .foregroundColor(.gray)
+                                }
+                            }
+                            .padding(.leading, 8)
+                        }
+                        .padding(.vertical, 10)
+                    }
+                    
+                    // 【新增】功能部分：离线下载
+                    Section(header: Text(isGlobalEnglishMode ? "Features" : "功能")) {
+                        Button {
+                            handleOfflineDownloadTap()
+                        } label: {
+                            HStack {
+                                Image(systemName: "arrow.down.circle.fill")
+                                    .foregroundColor(.green)
+                                VStack(alignment: .leading) {
+                                    Text(isGlobalEnglishMode ? "Offline Image Download" : "离线下载所有图片")
+                                        .foregroundColor(.primary)
+                                    Text(isGlobalEnglishMode ? "Download images for cached articles" : "下载已缓存文章的图片，离线可读")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
-                            } else {
-                                 Text(Localized.freeUser) // 【双语化】
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
                             }
-                            
-                            if let userId = authManager.userIdentifier {
-                                Text("ID: \(userId.prefix(6))...")
-                                    .font(.caption2)
-                                    .foregroundColor(.gray)
-                            } else {
-                                Text(Localized.notLoggedIn) // 【双语化】
-                                    .font(.caption2)
-                                    .foregroundColor(.gray)
-                            }
-                        }
-                        .padding(.leading, 8)
-                    }
-                    .padding(.vertical, 10)
-                }
-                
-                // 2. 支持与反馈部分 (类似 Finance App)
-                Section(header: Text(Localized.feedback)) {
-                    Button {
-                        let email = "728308386@qq.com"
-                        // 使用 mailto 协议唤起邮件客户端
-                        if let url = URL(string: "mailto:\(email)") {
-                            if UIApplication.shared.canOpenURL(url) {
-                                UIApplication.shared.open(url)
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            Image(systemName: "envelope.fill")
-                                .foregroundColor(.blue)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(Localized.feedback)
-                                    .foregroundColor(.primary)
-                                Text("728308386@qq.com")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            // 加一个图标提示用户可以点击
-                            Image(systemName: "arrow.up.right")
-                                .font(.caption)
-                                .foregroundColor(.gray)
                         }
                     }
-                    .contextMenu {
-                        // 长按复制邮箱
+                    
+                    // 2. 支持与反馈部分 (保持不变)
+                    Section(header: Text(Localized.feedback)) {
                         Button {
-                            UIPasteboard.general.string = "728308386@qq.com"
-                        } label: {
-                            // 【双语化建议】可以在 Localized 增加 copyEmail 词条，此处先硬编码演示
-                            Label(isGlobalEnglishMode ? "Copy Email" : "复制邮箱地址", systemImage: "doc.on.doc")
-                        }
-                    }
-                }
-                
-                // 3. 退出登录部分
-                Section {
-                    if authManager.isLoggedIn {
-                        Button(role: .destructive) {
-                            // 不再直接退出，而是弹出确认框
-                            showLogoutConfirmation = true
+                            let email = "728308386@qq.com"
+                            if let url = URL(string: "mailto:\(email)") {
+                                if UIApplication.shared.canOpenURL(url) {
+                                    UIApplication.shared.open(url)
+                                }
+                            }
                         } label: {
                             HStack {
-                                Image(systemName: "rectangle.portrait.and.arrow.right")
-                                Text(Localized.logout) // 【双语化】
+                                Image(systemName: "envelope.fill")
+                                    .foregroundColor(.blue)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(Localized.feedback)
+                                        .foregroundColor(.primary)
+                                    Text("728308386@qq.com")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "arrow.up.right")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        .contextMenu {
+                            Button {
+                                UIPasteboard.general.string = "728308386@qq.com"
+                            } label: {
+                                Label(isGlobalEnglishMode ? "Copy Email" : "复制邮箱地址", systemImage: "doc.on.doc")
+                            }
+                        }
+                    }
+                    
+                    // 3. 退出登录部分 (保持不变)
+                    Section {
+                        if authManager.isLoggedIn {
+                            Button(role: .destructive) {
+                                showLogoutConfirmation = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                                    Text(Localized.logout)
+                                }
                             }
                         }
                     }
                 }
-            }
-            .navigationTitle(Localized.profileTitle) // 【双语化】
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(Localized.close) { dismiss() } // 【双语化】
+                .navigationTitle(Localized.profileTitle)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(Localized.close) { dismiss() }
+                    }
+                }
+                .alert(isGlobalEnglishMode ? "Sign Out" : "确认退出登录", isPresented: $showLogoutConfirmation) {
+                    Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
+                    Button(isGlobalEnglishMode ? "Sign Out" : "退出登录", role: .destructive) {
+                        authManager.signOut()
+                        dismiss()
+                    }
+                } message: {
+                    Text(isGlobalEnglishMode ? 
+                         "After signing out, you will no longer be able to access premium content. You can restore access by signing back in with the same Apple ID." : 
+                         "退出登录后，您将无法查看受限内容。重新登录同一 Apple 账号即可恢复权限。")
+                }
+                // 【新增】蜂窝网络警告弹窗
+                .alert(isGlobalEnglishMode ? "Cellular Network Detected" : "正在使用蜂窝网络", isPresented: $showCellularAlert) {
+                    Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
+                    Button(isGlobalEnglishMode ? "Download Anyway" : "继续下载") {
+                        startBulkDownload()
+                    }
+                } message: {
+                    Text(isGlobalEnglishMode ? 
+                         "You are currently using cellular data. Downloading all images may consume a significant amount of data. Do you want to continue?" : 
+                         "当前检测到非 Wi-Fi 环境。离线下载所有图片可能会消耗较多流量，是否继续？")
+                }
+                // 【新增】错误弹窗
+                .alert(isGlobalEnglishMode ? "Download Failed" : "下载失败", isPresented: $bulkDownloadError) {
+                    Button("OK", role: .cancel) { }
+                } message: {
+                    Text(bulkDownloadErrorMessage)
                 }
             }
-            // 【新增】退出登录的二次确认弹窗
-            .alert(isGlobalEnglishMode ? "Sign Out" : "确认退出登录", isPresented: $showLogoutConfirmation) {
-                Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
-                Button(isGlobalEnglishMode ? "Sign Out" : "退出登录", role: .destructive) {
-                    authManager.signOut()
-                    dismiss()
+            
+            // 【新增】下载进度遮罩
+            if isBulkDownloading {
+                Color.black.opacity(0.6).ignoresSafeArea()
+                VStack(spacing: 20) {
+                    ProgressView()
+                        .scaleEffect(1.5)
+                        .tint(.white)
+                    
+                    VStack(spacing: 8) {
+                        Text(isGlobalEnglishMode ? "Downloading Images..." : "正在离线缓存图片...")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                        
+                        ProgressView(value: bulkProgress)
+                            .progressViewStyle(LinearProgressViewStyle(tint: .white))
+                            .frame(width: 200)
+                        
+                        Text(bulkProgressText)
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.8))
+                            .monospacedDigit()
+                    }
                 }
-            } message: {
-                Text(isGlobalEnglishMode ? 
-                     "After signing out, you will no longer be able to access premium content. You can restore access by signing back in with the same Apple ID." : 
-                     "退出登录后，您将无法查看受限内容。重新登录同一 Apple 账号即可恢复权限。")
+                .padding(30)
+                .background(Material.ultraThinMaterial)
+                .cornerRadius(20)
+                .shadow(radius: 10)
+            }
+            
+            // 【新增】成功提示 Toast
+            if showSuccessToast {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text(isGlobalEnglishMode ? "All images downloaded!" : "所有图片已离线缓存！")
+                            .foregroundColor(.primary)
+                            .fontWeight(.medium)
+                    }
+                    .padding()
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(30)
+                    .shadow(radius: 10)
+                    .padding(.bottom, 50)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                .zIndex(100)
+            }
+        }
+    }
+    
+    // 【新增】处理点击逻辑
+    private func handleOfflineDownloadTap() {
+        // 1. 检查是否连接了 Wi-Fi
+        if resourceManager.isWifiConnected {
+            // 是 Wi-Fi，直接开始
+            startBulkDownload()
+        } else {
+            // 不是 Wi-Fi，弹窗警告
+            showCellularAlert = true
+        }
+    }
+    
+    // 【新增】执行下载
+    private func startBulkDownload() {
+        isBulkDownloading = true
+        bulkProgress = 0.0
+        bulkProgressText = isGlobalEnglishMode ? "Preparing..." : "准备中..."
+        
+        Task {
+            do {
+                try await resourceManager.downloadAllOfflineImages { current, total in
+                    // 更新进度
+                    self.bulkProgress = total > 0 ? Double(current) / Double(total) : 1.0
+                    self.bulkProgressText = "\(current) / \(total)"
+                }
+                
+                await MainActor.run {
+                    isBulkDownloading = false
+                    showSuccessToast = true
+                    // 2秒后隐藏 Toast
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        withAnimation {
+                            showSuccessToast = false
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isBulkDownloading = false
+                    bulkDownloadErrorMessage = error.localizedDescription
+                    bulkDownloadError = true
+                }
             }
         }
     }
@@ -731,16 +869,6 @@ struct SourceListView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 16) {
-                        // 1. 顶部大标题
-//                        HStack {
-//                            Text(Localized.mySubscriptions) 
-//                                .font(.system(size: 34, weight: .bold))
-//                                .foregroundColor(.primary)
-//                            Spacer()
-//                        }
-//                        .padding(.horizontal, 20)
-//                        .padding(.top, 10)
-                        
                         // 使用 VStack 将卡片和下方的时间条组合在一起，作为一个整体单元
                         VStack(alignment: .leading, spacing: 6) {
                             NavigationLink(value: NavigationTarget.allArticles) {
