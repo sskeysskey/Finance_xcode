@@ -244,6 +244,8 @@ class DataService: ObservableObject {
     
     @Published var marketCapData: [String: MarketCapDataItem] = [:]
     @Published var sectorsData: [String: [String]] = [:]
+
+    @Published var earningHistoryData: [String: [String: [String]]] = [:]
     
     // 原 compareData（你已有的“合并大小写键”的策略）
     @Published var compareData: [String: String] = [:]
@@ -312,6 +314,7 @@ class DataService: ObservableObject {
             return nil
         }
     }
+
     
     // 【新增】在不修改服务器的情况下，客户端自行处理逻辑
     func fetchRecentEarningPriceIfNeeded(for symbol: String) {
@@ -454,6 +457,7 @@ class DataService: ObservableObject {
             // 【新增】加载 10年新高数据
             await self.loadTenYearHighData()
             await self.loadOptionsData() // 加载期权数据
+            await self.loadEarningHistory()
 
             await MainActor.run {
                 self.isDataLoaded = true
@@ -473,6 +477,28 @@ class DataService: ObservableObject {
         self.isDataLoaded = false
         self.isLoading = false // 强制刷新时允许重新进入
         self.loadData()
+    }
+
+    private func loadEarningHistory() async {
+        // 匹配 Earning_History_*.json
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "Earning_History") else {
+            if !isInitialLoad {
+                print("DataService: Earning_History 文件未在 Documents 中找到")
+            }
+            return
+        }
+        
+        do {
+            let data = try Data(contentsOf: url)
+            // 解析 JSON
+            let decodedData = try JSONDecoder().decode([String: [String: [String]]].self, from: data)
+            
+            await MainActor.run {
+                self.earningHistoryData = decodedData
+            }
+        } catch {
+            print("DataService: 解析 Earning_History 失败: \(error)")
+        }
     }
     
     // MARK: - 【新增】加载并解析 10年新高数据

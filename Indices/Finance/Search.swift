@@ -109,6 +109,10 @@ struct SearchContentView: View {
     @State private var showSearch = false
     @State private var showCompare = false
     @State private var navigateToEarnings = false
+    
+    // 1. 【新增】控制跳转到复盘页面的状态
+    @State private var navigateToHistory = false
+    
     @EnvironmentObject var dataService: DataService
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
@@ -116,7 +120,7 @@ struct SearchContentView: View {
     
     var body: some View {
         // 移除 NavigationStack，因为外层已经有了
-        HStack(spacing: 15) {
+        HStack(spacing: 12) { // 【微调】将间距从 15 改为 12，以容纳 4 个按钮
             // 1. 比较按钮
             ToolButton(
                 title: "对比",
@@ -127,11 +131,12 @@ struct SearchContentView: View {
             }
             
             // 2. 搜索按钮 (占据中间主要位置)
+            // 使用 layoutPriority 让搜索按钮在空间不足时优先压缩，或者保持弹性
             Button(action: { showSearch = true }) {
                 HStack {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 18, weight: .bold))
-                    Text("搜索股票/ETF")
+                    Text("搜索") // 【微调】缩短文字以节省空间，原为"搜索股票/ETF"
                         .font(.headline)
                 }
                 .foregroundColor(.white)
@@ -156,6 +161,18 @@ struct SearchContentView: View {
                     showSubscriptionSheet = true
                 }
             }
+            
+            // 4. 【新增】复盘按钮
+            ToolButton(
+                title: "复盘",
+                icon: "clock.arrow.circlepath", // 使用回溯/历史相关的图标
+                color: .purple // 使用紫色区分
+            ) {
+                // 这里假设复盘功能也需要权限，或者你可以直接设为 true
+                // 如果没有定义 .openHistory，可以暂时复用 .openEarnings 或不检查
+                // 这里演示直接跳转
+                navigateToHistory = true
+            }
         }
         .padding(.horizontal, 16)
         // 【修改点】将原本的 .padding(.vertical, 8) 改为分别控制
@@ -173,6 +190,10 @@ struct SearchContentView: View {
         }
         .navigationDestination(isPresented: $navigateToEarnings) {
             EarningReleaseView()
+        }
+        // 5. 【新增】复盘页面跳转目标
+        .navigationDestination(isPresented: $navigateToHistory) {
+            EarningHistoryView()
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
     }
