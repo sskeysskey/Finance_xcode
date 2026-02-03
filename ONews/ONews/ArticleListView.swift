@@ -695,33 +695,39 @@ struct ArticleListView: View {
     private func handleArticleTap(_ item: ArticleItem) async {
         let article = item.article
         
-        // --- ✅ 修正后的代码 (中心化逻辑) ---
-        // 只要没订阅且被锁定，直接弹订阅页。
-        // 如果用户没登录，SubscriptionView 会自己弹登录窗，这里不用管。
+        // 1. 订阅检查
         if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
             showSubscriptionSheet = true
             return
         }
         
+        // 2. 【关键修复】定义跳转闭包（必须在所有逻辑之前定义）
+        // 使用 @MainActor 确保 UI 更新在主线程
+        let proceedToArticle = {
+            await MainActor.run {
+                selectedArticle = article
+                isNavigationActive = true
+            }
+        }
+        
+        // 3. 无图直接跳转
         guard !article.images.isEmpty else {
-            selectedArticle = article
-            isNavigationActive = true
+            await proceedToArticle()
             return
         }
         
+        // 4. 图片已存在直接跳转
         let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
             timestamp: article.timestamp,
             imageNames: article.images
         )
         
         if imagesAlreadyExist {
-            await MainActor.run {
-                selectedArticle = article
-                isNavigationActive = true
-            }
+            await proceedToArticle()
             return
         }
         
+        // 5. 开始下载
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
@@ -738,16 +744,31 @@ struct ArticleListView: View {
                 }
             )
             
-            await MainActor.run {
-                isDownloadingImages = false
-                selectedArticle = article
-                isNavigationActive = true
-            }
+            // 下载成功：停止转圈并跳转
+            await MainActor.run { isDownloadingImages = false }
+            await proceedToArticle()
+            
         } catch {
-            await MainActor.run {
-                isDownloadingImages = false
-                errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)"
-                showErrorAlert = true
+            // 【关键修复】不要把整个 catch 包在 MainActor.run 里
+            // 1. 先在主线程停止转圈
+            await MainActor.run { isDownloadingImages = false }
+            
+            // 2. 判断错误类型
+            let isNetworkError = (error as? URLError)?.code == .notConnectedToInternet ||
+                                 (error as? URLError)?.code == .timedOut ||
+                                 (error as? URLError)?.code == .networkConnectionLost ||
+                                 (error as? URLError)?.code == .cannotConnectToHost
+
+            if isNetworkError {
+                print("网络不可用，进入离线阅读模式")
+                // 3. 网络错误，直接调用 async 闭包（不需要 Task 包装）
+                await proceedToArticle()
+            } else {
+                // 4. 其他错误，在主线程弹窗
+                await MainActor.run {
+                    errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)"
+                    showErrorAlert = true
+                }
             }
         }
     }
@@ -1104,31 +1125,39 @@ struct AllArticlesListView: View {
         let article = item.article
         guard let sourceName = item.sourceName else { return }
         
-        // 【修改后】简化逻辑：只要被锁定，就显示 SubscriptionView
+        // 1. 订阅检查
         if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
             showSubscriptionSheet = true
             return
         }
         
+        // 2. 【关键修复】补上这里缺失的闭包定义
+        let proceedToArticle = {
+            await MainActor.run {
+                // 注意：这里是 selectedArticleItem，和上面那个 View 不一样
+                selectedArticleItem = (article, sourceName)
+                isNavigationActive = true
+            }
+        }
+        
+        // 3. 无图直接跳转
         guard !article.images.isEmpty else {
-            selectedArticleItem = (article, sourceName)
-            isNavigationActive = true
+            await proceedToArticle()
             return
         }
         
+        // 4. 图片已存在直接跳转
         let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
             timestamp: article.timestamp,
             imageNames: article.images
         )
         
         if imagesAlreadyExist {
-            await MainActor.run {
-                selectedArticleItem = (article, sourceName)
-                isNavigationActive = true
-            }
+            await proceedToArticle()
             return
         }
         
+        // 5. 开始下载
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
@@ -1145,16 +1174,32 @@ struct AllArticlesListView: View {
                 }
             )
             
-            await MainActor.run {
-                isDownloadingImages = false
-                selectedArticleItem = (article, sourceName)
-                isNavigationActive = true
-            }
+            // 下载成功
+            await MainActor.run { isDownloadingImages = false }
+            await proceedToArticle()
+            
         } catch {
-            await MainActor.run {
-                isDownloadingImages = false
-                errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)"
-                showErrorAlert = true
+            // 【关键修复】解耦 MainActor 和 Async 逻辑
+            
+            // 1. 停止转圈
+            await MainActor.run { isDownloadingImages = false }
+            
+            // 2. 判断错误
+            let isNetworkError = (error as? URLError)?.code == .notConnectedToInternet ||
+                                 (error as? URLError)?.code == .timedOut ||
+                                 (error as? URLError)?.code == .networkConnectionLost ||
+                                 (error as? URLError)?.code == .cannotConnectToHost
+
+            if isNetworkError {
+                print("网络不可用，进入离线阅读模式")
+                // 3. 强制跳转
+                await proceedToArticle()
+            } else {
+                // 4. 弹窗报错
+                await MainActor.run {
+                    errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)"
+                    showErrorAlert = true
+                }
             }
         }
     }

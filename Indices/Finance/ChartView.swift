@@ -183,6 +183,9 @@ struct ChartView: View {
 
     // ⬇️⬇️⬇️ 【请补上这一行】 ⬇️⬇️⬇️
     @State private var showSubscriptionSheet = false 
+
+    // ⬇️⬇️⬇️ 【新增这一行】 ⬇️⬇️⬇️
+    @State private var navigateToBacktest = false 
     
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.presentationMode) var presentationMode
@@ -513,7 +516,19 @@ struct ChartView: View {
                             .padding(.leading, 20)
                             .foregroundColor(.purple)
                     }
-                    // 注意：navigationDestination 需要配合上面的 navigateToOptionsDetail 状态
+                }
+                
+                // ⬇️⬇️⬇️ 【新增：回溯按钮】 ⬇️⬇️⬇️
+                // 放在期权按钮的右边
+                Button(action: {
+                    // 这里你可以决定是否要加权限检查，如果不需要直接设为 true
+                    // if usageManager.canProceed(...) { ... }
+                    navigateToBacktest = true
+                }) {
+                    Text("回溯")
+                        .font(.system(size: 22, weight: .medium))
+                        .padding(.leading, 20)
+                        .foregroundColor(.green) // 使用绿色区分，对应 Python 里的风格
                 }
             }
             .padding(.horizontal, 20).padding(.vertical, 10)
@@ -566,6 +581,10 @@ struct ChartView: View {
         // 【新增】期权详情页跳转
         .navigationDestination(isPresented: $navigateToOptionsDetail) {
             OptionsDetailView(symbol: symbol.uppercased())
+        }
+        // 在其他的 .navigationDestination 下面添加这个
+        .navigationDestination(isPresented: $navigateToBacktest) {
+            BacktestView(symbol: symbol)
         }
         .onDisappear {
             // 确保离开页面时恢复手势

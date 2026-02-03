@@ -112,10 +112,15 @@ class ResourceManager: ObservableObject {
         fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
     
+    // 【核心修改 1】配置 URLSession
     private let urlSession: URLSession = {
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 10
-        configuration.waitsForConnectivity = true
+        // 1. 请求超时时间 (连接服务器的时间)
+        configuration.timeoutIntervalForRequest = 5.0
+        // 2. 资源超时时间 (整个下载过程的时间)
+        configuration.timeoutIntervalForResource = 30.0
+        // 3. 【关键】设置为 false。如果没网，立即报错，不要傻等。
+        configuration.waitsForConnectivity = false
         return URLSession(configuration: configuration)
     }()
     
@@ -123,6 +128,8 @@ class ResourceManager: ObservableObject {
     private let networkMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "NetworkMonitor")
     @Published var isWifiConnected: Bool = false
+    // 【新增】增加一个通用的网络可用性标记
+    @Published var isNetworkAvailable: Bool = true
 
     // ✅ 修复 1: 去掉 override 关键字
     init() {
@@ -130,6 +137,8 @@ class ResourceManager: ObservableObject {
         networkMonitor.pathUpdateHandler = { [weak self] path in
             DispatchQueue.main.async {
                 self?.isWifiConnected = path.usesInterfaceType(.wifi)
+                // 只要有网（WiFi或蜂窝）都算可用
+                self?.isNetworkAvailable = path.status == .satisfied
             }
         }
         networkMonitor.start(queue: monitorQueue)
@@ -137,6 +146,13 @@ class ResourceManager: ObservableObject {
     
     deinit {
         networkMonitor.cancel()
+    }
+    
+    // 【新增】网络检查辅助函数
+    private func ensureNetworkReachable() throws {
+        if !isNetworkAvailable {
+            throw URLError(.notConnectedToInternet)
+        }
     }
 
     // 【修改】特效数据获取失败时的默认词汇
@@ -229,6 +245,8 @@ class ResourceManager: ObservableObject {
         imageNames: [String],
         progressHandler: @escaping @MainActor (Int, Int) -> Void
     ) async throws {
+        // 【核心修改 2】下载前先检查网络，如果是离线，直接抛出错误，触发 UI 层的降级逻辑
+        try ensureNetworkReachable()
         let sanitizedNames = imageNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -278,6 +296,7 @@ class ResourceManager: ObservableObject {
                 let (tempURL, response) = try await urlSession.download(from: url)
                 
                 guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    // 如果是 404 等服务器错误，抛出异常
                     throw URLError(.badServerResponse)
                 }
                 
@@ -295,6 +314,8 @@ class ResourceManager: ObservableObject {
                 
             } catch {
                 print("⚠️ 下载图片失败 \(imageName): \(error.localizedDescription)")
+                // 【关键】这里抛出错误，让上层捕获。
+                // 如果是网络断开，urlSession 现在会立即抛出错误
                 throw error
             }
         }
@@ -543,11 +564,34 @@ class ResourceManager: ObservableObject {
     }
 
     func checkAndDownloadUpdates(isManual: Bool = false) async throws {
+        // 【核心修改 3】如果是自动同步且没网，直接静默返回，不要转圈
+        if !isManual && !isNetworkAvailable {
+            print("自动同步：检测到无网络，跳过同步，使用本地数据。")
+            return
+        }
+        
+        // 如果是手动同步且没网，ensureNetworkReachable 会抛错，UI层会弹窗提示
+        if isManual {
+            try ensureNetworkReachable()
+        }
+
         self.isSyncing = true
         self.isDownloading = false
-        self.syncMessage = Localized.checkingUpdates // 【修改】
+        self.syncMessage = Localized.checkingUpdates
         self.progressText = ""
         self.downloadProgress = 0.0
+        
+        // 使用 defer 确保 isSyncing 最终关闭
+        // 这防止了 UI 永久卡死在 loading 状态
+        defer {
+            Task { @MainActor in
+                // 注意：这里不要立即设为 false，否则弹窗还没出来 loading 就没了
+                // 我们会在 resetStateAfterDelay 里处理
+                if !self.showAlreadyUpToDateAlert {
+                    self.isSyncing = false
+                }
+            }
+        }
         
         do {
             let serverVersion = try await getServerVersion()
@@ -589,7 +633,6 @@ class ResourceManager: ObservableObject {
                         print("警告: 无法获取 \(jsonInfo.name) 的 MD5，跳过检查。")
                         continue
                     }
-                    
                     if serverMD5 != localMD5 {
                         print("MD5不匹配: \(jsonInfo.name)。计划更新。")
                         downloadTasks.append((fileInfo: jsonInfo, isIncremental: false))
@@ -598,7 +641,6 @@ class ResourceManager: ObservableObject {
                     } else {
                         print("MD5匹配: \(jsonInfo.name) 已是最新。")
                     }
-                    
                 } else {
                     print("新文件: \(jsonInfo.name)。计划下载。")
                     downloadTasks.append((fileInfo: jsonInfo, isIncremental: false))
@@ -614,10 +656,16 @@ class ResourceManager: ObservableObject {
             
             if downloadTasks.isEmpty {
                 if isManual {
-                    self.syncMessage = Localized.upToDate // 【修改】
-                    resetStateAfterDelay()
-                } else {
-                    self.isSyncing = false
+                    await MainActor.run {
+                        // 使用 Localized.upToDate 设置提示文字
+                        self.syncMessage = Localized.upToDate // "已是最新版本"
+                        // 2. 触发 UI 弹窗标记
+                        self.showAlreadyUpToDateAlert = true
+                        // 稍微延迟一点关闭 syncing 状态，或者立即关闭让弹窗独立显示
+                        self.isSyncing = false 
+                    }
+                    // 1.5秒后自动重置状态（让弹窗消失）
+                    resetStateAfterDelay(seconds: 1)
                 }
                 return
             }
@@ -632,23 +680,24 @@ class ResourceManager: ObservableObject {
                 self.downloadProgress = Double(index + 1) / Double(totalTasks)
                 
                 if task.fileInfo.type == "json" {
-                    self.syncMessage = Localized.downloadingFiles // 【修改】
+                    self.syncMessage = Localized.downloadingFiles
                     try await downloadSingleFile(named: task.fileInfo.name)
                 }
             }
             
             self.isDownloading = false
-            self.syncMessage = Localized.updateComplete // 【修改】
+            self.syncMessage = Localized.updateComplete
             self.progressText = ""
             resetStateAfterDelay()
             
         } catch {
-            self.isSyncing = false
             self.isDownloading = false
+            self.isSyncing = false // 出错时立即停止
             throw error
         }
     }
-    
+
+    // 【辅助方法】确保 resetStateAfterDelay 能正确重置 alert 状态
     private func resetStateAfterDelay(seconds: TimeInterval = 2) {
         Task {
             try? await Task.sleep(for: .seconds(seconds))
@@ -656,6 +705,10 @@ class ResourceManager: ObservableObject {
                 self.isSyncing = false
                 self.syncMessage = ""
                 self.progressText = ""
+                // 【新增】自动关闭“已是最新”的弹窗
+                withAnimation {
+                    self.showAlreadyUpToDateAlert = false
+                }
             }
         }
     }

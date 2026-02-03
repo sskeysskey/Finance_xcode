@@ -735,11 +735,12 @@ struct SourceListView: View {
         .overlay(
             // 【修改】将两个遮罩层组合在一起，避免互相覆盖
             ZStack {
-                // 原有的同步状态遮罩
-                if resourceManager.isSyncing {
-                    // 简单的同步 HUD
+                // 1. 原有的同步状态遮罩 (Loading / 下载进度)
+                // 注意：加一个判断 !resourceManager.showAlreadyUpToDateAlert，防止两个弹窗重叠
+                if resourceManager.isSyncing && !resourceManager.showAlreadyUpToDateAlert {
                     VStack(spacing: 15) {
                         if resourceManager.syncMessage.contains("最新") || resourceManager.syncMessage.contains("date") {
+                            // 这一步其实是为了兼容旧逻辑，但现在我们有专门的弹窗了，可以保留作为双重保险
                             Image(systemName: "checkmark.circle.fill").font(.largeTitle).foregroundColor(.white)
                             Text(resourceManager.syncMessage).font(.headline).foregroundColor(.white)
                         } else if resourceManager.isDownloading {
@@ -758,8 +759,32 @@ struct SourceListView: View {
                     .cornerRadius(20)
                 }
                 
+                // 2. 【新增】"已是最新" 的自动消失弹窗
+                if resourceManager.showAlreadyUpToDateAlert {
+                    VStack(spacing: 15) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 50))
+                            .foregroundColor(.green) // 或者 .white
+                        
+                        // 这里直接调用 Localized.upToDate
+                        Text(Localized.upToDate) // "已是最新版本"
+                            .font(.headline)
+                            .foregroundColor(.white)
+                    }
+                    .frame(width: 180, height: 160) // 方形 HUD
+                    .background(Material.ultraThinMaterial)
+                    .background(Color.black.opacity(0.6)) // 深色背景
+                    .cornerRadius(20)
+                    .transition(.opacity.combined(with: .scale)) // 出现动画
+                    .zIndex(100) // 确保在最上层
+                }
+                
+                // 3. 图片下载遮罩
                 DownloadOverlay(isDownloading: isDownloadingImages, progress: downloadProgress, progressText: downloadProgressText)
             }
+            // 添加动画支持
+            .animation(.easeInOut, value: resourceManager.isSyncing)
+            .animation(.easeInOut, value: resourceManager.showAlreadyUpToDateAlert)
         )
         .alert(Localized.ok, isPresented: $showErrorAlert, actions: { Button(Localized.ok, role: .cancel) { } }, message: { Text(errorMessage) })
     }
@@ -1036,7 +1061,7 @@ struct SourceListView: View {
             return
         }
         
-        // 准备导航
+        // 准备导航的闭包
         let prepareNavigation = {
             await MainActor.run {
                 self.shouldAutoPlayNextNav = autoPlay // 【新增】设置自动播放状态
@@ -1045,6 +1070,7 @@ struct SourceListView: View {
             }
         }
 
+        // 3. 检查是否有图片需要下载
         guard !article.images.isEmpty else {
             await prepareNavigation()
             return
@@ -1056,7 +1082,7 @@ struct SourceListView: View {
             imageNames: article.images
         )
         
-        // 3. 如果图片已存在，直接导航
+        // 3. 如果图片已存在，直接进
         if imagesAlreadyExist {
             await prepareNavigation()
             return
@@ -1066,11 +1092,11 @@ struct SourceListView: View {
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
-            downloadProgressText = Localized.imagePrepare // 【双语化】
+            downloadProgressText = Localized.imagePrepare
         }
         
         do {
-            // 调用下载方法，并传入进度更新的闭包
+            // 尝试下载
             try await resourceManager.downloadImagesForArticle(
                 timestamp: article.timestamp,
                 imageNames: article.images,
@@ -1082,18 +1108,31 @@ struct SourceListView: View {
                 }
             )
             
-            // 5. 下载成功后，隐藏遮罩并执行导航
-            await MainActor.run {
-                isDownloadingImages = false
-            }
-            await prepareNavigation() // 下载成功后跳转
+            // 下载成功
+            await MainActor.run { isDownloadingImages = false }
+            await prepareNavigation()
             
         } catch {
-            // 6. 下载失败，隐藏遮罩并显示错误提示
+            // 【核心修改】下载失败时的降级处理
             await MainActor.run {
+                // 无论什么错误，先关闭遮罩
                 isDownloadingImages = false
-                errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)" // 【双语化】
-                showErrorAlert = true
+                
+                // 判断是否为网络错误
+                let isNetworkError = (error as? URLError)?.code == .notConnectedToInternet ||
+                                     (error as? URLError)?.code == .timedOut ||
+                                     (error as? URLError)?.code == .networkConnectionLost ||
+                                     (error as? URLError)?.code == .cannotConnectToHost
+
+                if isNetworkError {
+                    print("网络不可用，进入离线阅读模式")
+                    // 网络错误：直接进入文章（降级）
+                    Task { await prepareNavigation() }
+                } else {
+                    // 其他错误（如服务器文件丢失）：弹窗提示
+                    errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)"
+                    showErrorAlert = true
+                }
             }
         }
     }
@@ -1104,24 +1143,35 @@ struct SourceListView: View {
             // 【修改】同步完成后，确保 ViewModel 也更新了配置
             viewModel.loadNews()
         } catch {
+            // 只有手动同步才弹窗报错，自动同步失败（如没网）则静默失败，加载本地旧数据
             if isManual {
-                switch error {
-                case is DecodingError:
-                    self.errorMessage = isGlobalEnglishMode ? "Data parsing failed, please try again later." : "数据解析失败，请稍后重试。"
-                    self.showErrorAlert = true
-                case let urlError as URLError where
-                    urlError.code == .cannotConnectToHost ||
-                    urlError.code == .timedOut ||
-                    urlError.code == .notConnectedToInternet:
-                    self.errorMessage = Localized.networkError
-                    self.showErrorAlert = true
-                default:
-                    self.errorMessage = isGlobalEnglishMode ? "Something unknown happened, plz try again later." : "发生未知错误，请稍后重试。"
-                    self.showErrorAlert = true
+                await MainActor.run {
+                    // 确保遮罩消失
+                    resourceManager.isSyncing = false
+                    
+                    switch error {
+                    case is DecodingError:
+                        self.errorMessage = isGlobalEnglishMode ? "Data parsing failed." : "数据解析失败。"
+                        self.showErrorAlert = true
+                    case let urlError as URLError where
+                        urlError.code == .cannotConnectToHost ||
+                        urlError.code == .timedOut ||
+                        urlError.code == .notConnectedToInternet:
+                        self.errorMessage = Localized.networkError
+                        self.showErrorAlert = true
+                    default:
+                        self.errorMessage = isGlobalEnglishMode ? "Unknown error." : "发生未知错误。"
+                        self.showErrorAlert = true
+                    }
                 }
                 print("手动同步失败: \(error)")
             } else {
-                print("自动同步静默失败: \(error)")
+                print("自动同步失败 (离线模式): \(error)")
+                // 即使同步失败，也要加载本地已有的新闻
+                await MainActor.run {
+                    resourceManager.isSyncing = false
+                    viewModel.loadNews()
+                }
             }
         }
     }
