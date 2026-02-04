@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 // MARK: - 数据模型 (无修改)
 struct VersionResponse: Codable {
@@ -87,6 +88,12 @@ enum ServerVersionResult {
     case failure(NetworkErrorType)
 }
 
+// MARK: - 【新增】数据库下载结果枚举
+enum DBDownloadResult {
+    case success            // 下载成功
+    case skippedAlreadyLatest // 跳过：已经是最新
+    case failed             // 失败
+}
 
 // MARK: - UpdateManager
 @MainActor
@@ -99,9 +106,17 @@ class UpdateManager: ObservableObject {
     @Published var showForceUpdate: Bool = false
     @Published var appStoreURL: String = ""
     
-    // 请确保此 IP 与 AppServer 运行的 IP 一致
+    // 【新增】数据库下载进度 (0.0 - 1.0)
+    @Published var dbDownloadProgress: Double = 0.0
+    @Published var isDownloadingDB: Bool = false
+    
+    // 服务器配置
     private let serverBaseURL = "http://106.15.183.158:5001/api/Finance"
     private let localVersionKey = "FinanceAppLocalDataVersion"
+    
+    // 【新增】本地数据库相关 Key
+    private let dbDownloadDateKey = "FinanceDBDownloadDate"
+    private let dbFilename = "Finance.db"
     
     private init() {}
     
@@ -373,6 +388,124 @@ class UpdateManager: ObservableObject {
             return false
         }
     }
+
+    // MARK: - 离线数据库管理逻辑
+    
+    /// 检查本地数据库是否有效（存在且是今天下载的）
+    func isLocalDatabaseValid() -> Bool {
+        // 1. 检查文件是否存在
+        guard FileManagerHelper.fileExists(named: dbFilename) else { return false }
+        
+        // 2. 检查记录的下载日期
+        guard let savedDateStr = UserDefaults.standard.string(forKey: dbDownloadDateKey) else { return false }
+        
+        // 3. 获取今天的日期字符串
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let todayStr = formatter.string(from: Date())
+        
+        // 4. 比较
+        return savedDateStr == todayStr
+    }
+    
+    /// 获取本地数据库路径
+    func getLocalDatabasePath() -> String {
+        return FileManagerHelper.documentsDirectory.appendingPathComponent(dbFilename).path
+    }
+    
+    // MARK: - 【修改点】下载数据库（返回结果枚举）
+    // 之前返回 Void，现在返回 DBDownloadResult 以便 UI 做出响应
+    @discardableResult
+    func downloadDatabase(force: Bool = false) async -> DBDownloadResult {
+        // 1. 防重复检查
+        if !force && isLocalDatabaseValid() {
+            print("UpdateManager: 本地数据库已是最新（今日已下载），跳过下载。")
+            return .skippedAlreadyLatest // 【修改】返回跳过状态
+        }
+        
+        let fileURL = FileManagerHelper.documentsDirectory.appendingPathComponent(dbFilename)
+        try? FileManager.default.removeItem(at: fileURL)
+        
+        await MainActor.run {
+            self.isDownloadingDB = true
+            self.dbDownloadProgress = 0.0
+        }
+        
+        guard let url = URL(string: "\(serverBaseURL)/download?filename=\(dbFilename)") else {
+            print("UpdateManager: 无效的数据库下载 URL")
+            await MainActor.run { self.isDownloadingDB = false }
+            return .failed // 【修改】返回失败
+        }
+        
+        var downloadSuccess = false
+        
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                // 创建 Delegate 实例
+                let delegate = DownloadDelegate(
+                    onProgress: { progress in
+                        // 回调在 Session 队列，需切回主线程更新 UI
+                        Task { @MainActor in
+                            self.dbDownloadProgress = progress
+                        }
+                    },
+                    onCompletion: { tempURL, error in
+                        if let error = error {
+                            continuation.resume(throwing: error)
+                            return
+                        }
+                        
+                        guard let tempURL = tempURL else {
+                            continuation.resume(throwing: URLError(.badServerResponse))
+                            return
+                        }
+                        
+                        do {
+                            // 移动临时文件到目标位置
+                            // 如果目标存在先删除（虽然上面删过了，但为了保险）
+                            if FileManager.default.fileExists(atPath: fileURL.path) {
+                                try FileManager.default.removeItem(at: fileURL)
+                            }
+                            try FileManager.default.moveItem(at: tempURL, to: fileURL)
+                            continuation.resume()
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                )
+                
+                // 创建自定义 Session
+                let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+                let task = session.downloadTask(with: url)
+                task.resume()
+                
+                // 保持 delegate 引用，防止被释放（虽然 session 会持有 delegate，但显式持有更安全）
+                // 在这个闭包作用域内 session 是活着的
+                session.finishTasksAndInvalidate() 
+            }
+            
+            // 下载成功后的逻辑
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            let todayStr = formatter.string(from: Date())
+            UserDefaults.standard.set(todayStr, forKey: dbDownloadDateKey)
+            
+            print("UpdateManager: 数据库下载完成，已保存。日期: \(todayStr)")
+            DatabaseManager.shared.reconnectToLatestDatabase()
+            downloadSuccess = true
+            
+        } catch {
+            print("UpdateManager: 数据库下载失败: \(error)")
+            downloadSuccess = false
+        }
+        
+        await MainActor.run {
+            self.isDownloadingDB = false
+            self.dbDownloadProgress = 1.0
+        }
+        
+        return downloadSuccess ? .success : .failed // 【修改】返回最终结果
+    }
     
     // MARK: - 修改后的清理逻辑
     private func cleanupOldFiles(keeping newFiles: [FileInfo]) {
@@ -411,6 +544,48 @@ class UpdateManager: ObservableObject {
             }
         } catch {
             print("清理旧文件时出错: \(error)")
+        }
+    }
+}
+
+// MARK: - 【修改】下载代理类 (增加节流逻辑)
+class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
+    let onProgress: (Double) -> Void
+    let onCompletion: (URL?, Error?) -> Void
+    
+    // 增加一个时间戳记录，用于节流
+    private var lastUpdateTime: TimeInterval = 0
+    
+    init(onProgress: @escaping (Double) -> Void, onCompletion: @escaping (URL?, Error?) -> Void) {
+        self.onProgress = onProgress
+        self.onCompletion = onCompletion
+    }
+    
+    // 进度回调：系统底层每下载一块数据调用一次，效率极高
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        if totalBytesExpectedToWrite > 0 {
+            let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+            
+            // 【核心优化】节流逻辑：
+            // 只有当距离上次更新超过 0.1 秒，或者进度已经完成 (1.0) 时，才回调 UI 更新。
+            // 这避免了高速下载时主线程被成千上万次 UI 刷新请求卡死。
+            let now = Date().timeIntervalSince1970
+            if now - lastUpdateTime > 0.1 || progress >= 1.0 {
+                lastUpdateTime = now
+                onProgress(progress)
+            }
+        }
+    }
+    
+    // 下载完成回调：文件已下载到临时位置 location
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        onCompletion(location, nil)
+    }
+    
+    // 任务结束回调（处理错误）
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            onCompletion(nil, error)
         }
     }
 }

@@ -4,7 +4,6 @@ struct SubscriptionView: View {
 
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
-    // 【新增】
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false 
     
     @State private var isPurchasing = false
@@ -21,8 +20,18 @@ struct SubscriptionView: View {
     @State private var showRestoreAlert = false
     @State private var restoreMessage = ""
     
-    // 【新增 1】控制登录弹窗显示
+    // 控制登录弹窗显示
     @State private var showLoginSheet = false
+    
+    // 【新增 1】定义挂起的操作类型
+    enum PendingAction {
+        case none
+        case purchase
+        case redeem
+        case restore
+    }
+    // 【新增 2】记录登录后需要自动执行的操作
+    @State private var pendingAction: PendingAction = .none
     
     var body: some View {
         ZStack {
@@ -32,12 +41,19 @@ struct SubscriptionView: View {
             VStack(spacing: 25) {
                 // 标题
                 VStack(spacing: 10) {
-                    Text(Localized.subTitle) // "最近三天..."
+                    Text(Localized.subTitle)
                         .font(.largeTitle.bold())
                         .foregroundColor(.primary)
-                        // 连续点击5次触发
+                        // 【修改 1】连按5次触发逻辑优化
                         .onTapGesture(count: 5) {
-                            showRedeemAlert = true
+                            if authManager.isLoggedIn {
+                                // 已登录，直接弹窗
+                                showRedeemAlert = true
+                            } else {
+                                // 未登录，记录意图并跳转登录
+                                pendingAction = .redeem
+                                showLoginSheet = true
+                            }
                         }
                     
                     Text(Localized.subDesc)
@@ -84,7 +100,13 @@ struct SubscriptionView: View {
                 
                 // 付费套餐卡片
                 Button(action: {
-                    handlePurchase()
+                    // 【修改 2】购买按钮逻辑优化
+                    if authManager.isLoggedIn {
+                        handlePurchase()
+                    } else {
+                        pendingAction = .purchase
+                        showLoginSheet = true
+                    }
                 }) {
                     HStack {
                         VStack(alignment: .leading, spacing: 8) {
@@ -117,12 +139,17 @@ struct SubscriptionView: View {
                 
                 Spacer()
                 
-                // 【新增】底部链接区域，加入恢复购买按钮
+                // 底部链接区域
                 HStack(spacing: 20) {
-                    
                     // 恢复购买按钮
                     Button(action: {
-                        performRestore()
+                        // 【修改 3】恢复购买逻辑优化
+                        if authManager.isLoggedIn {
+                            performRestore()
+                        } else {
+                            pendingAction = .restore
+                            showLoginSheet = true
+                        }
                     }) {
                         Text(Localized.restorePurchase)
                             .font(.footnote)
@@ -199,11 +226,14 @@ struct SubscriptionView: View {
         } message: {
             Text(errorMessage)
         }
-        // 【修改】兑换码 Alert 双语化
+        // 兑换码 Alert
         .alert(Localized.internalTestTitle, isPresented: $showRedeemAlert) {
             TextField(Localized.enterInviteCode, text: $inviteCode)
                 .textInputAutocapitalization(.characters)
-            Button(Localized.cancel, role: .cancel) { }
+            Button(Localized.cancel, role: .cancel) { 
+                // 取消时清空挂起状态
+                pendingAction = .none
+            }
             Button(Localized.redeem) {
                 handleRedeem()
             }
@@ -227,30 +257,50 @@ struct SubscriptionView: View {
         // ================== 【新增修复代码开始】 ==================
         // 监听登录状态，登录成功后自动关闭当前视图弹出的 LoginView
         .onChange(of: authManager.isLoggedIn) { _, newValue in
+            // 只有当登录成功(true) 且 登录窗正在显示时才处理
             if newValue == true && showLoginSheet {
                 showLoginSheet = false
-                // 登录成功后，给系统一点时间去同步服务器状态和 Apple 凭证
-                Task {
-                    // 延迟 1.5 秒，给用户一个“正在同步状态”的视觉缓冲，也确保网络请求完成
-                    try? await Task.sleep(nanoseconds: 1_500_000_000) 
+                
+                // 延迟一点点，等待 LoginSheet 关闭动画完成，再执行挂起的操作
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    // 1. 优先检查是否有挂起的操作
+                    switch pendingAction {
+                    case .redeem:
+                        print("登录成功，恢复挂起操作：弹出兑换框")
+                        showRedeemAlert = true
+                        
+                    case .purchase:
+                        print("登录成功，恢复挂起操作：开始购买")
+                        handlePurchase()
+                        
+                    case .restore:
+                        print("登录成功，恢复挂起操作：开始恢复")
+                        performRestore()
+                        
+                    case .none:
+                        // 2. 如果没有挂起操作，再检查是否已经自动识别了订阅（之前的逻辑）
+                        // 比如用户在别的设备买了，刚登录同步下来了
+                        if authManager.isSubscribed {
+                            print("登录成功且识别到订阅，自动关闭订阅页面。")
+                            dismiss()
+                        }
+                    }
                     
-                    if authManager.isSubscribed {
-                        // 如果识别到已经是订阅用户，直接关闭订阅窗口
-                        print("登录成功且识别到订阅，自动关闭订阅页面。")
-                        dismiss()
-                    } else {
-                        // 如果登录了但还没订阅，可以保持在当前页面，让用户继续选购
-                        print("登录成功但未发现有效订阅。")
+                    // 执行完后，重置状态（注意：redeem 是弹窗，不要立即重置，等弹窗关闭或提交时重置，
+                    // 但这里重置为 none 也没事，因为 showRedeemAlert 已经设为 true 了）
+                    if pendingAction != .redeem {
+                        pendingAction = .none
                     }
                 }
             }
         }
     }
     
-    // 【修改】处理购买：先检查登录
+    // 处理购买
     private func handlePurchase() {
-        // 1. 检查是否已登录
+        // 双重检查，虽然调用前通常已经检查过了
         guard authManager.isLoggedIn else {
+            pendingAction = .purchase
             showLoginSheet = true
             return
         }
@@ -265,20 +315,18 @@ struct SubscriptionView: View {
                 
                 await MainActor.run {
                     isPurchasing = false
+                    pendingAction = .none // 结束后清空状态
                     
                     if isSuccess {
                         // 只有明确成功时，才关闭页面
                         print("支付成功，关闭订阅页面")
                         dismiss()
-                    } else {
-                        // 如果是取消(.userCancelled)或挂起，保持页面打开
-                        print("用户取消或未完成支付，保留订阅页面")
-                        // 这里不需要做任何操作，SubscriptionView 会继续显示
                     }
                 }
             } catch {
                 await MainActor.run {
                     isPurchasing = false
+                    pendingAction = .none
                     errorMessage = error.localizedDescription
                     showError = true
                 }
@@ -290,6 +338,7 @@ struct SubscriptionView: View {
     private func performRestore() {
         // 1. 检查是否已登录
         guard authManager.isLoggedIn else {
+            pendingAction = .restore
             showLoginSheet = true
             return
         }
@@ -301,7 +350,7 @@ struct SubscriptionView: View {
                 try await authManager.restorePurchases()
                 await MainActor.run {
                     isRestoring = false
-                    // 【修改】恢复结果文案双语化
+                    pendingAction = .none
                     if authManager.isSubscribed {
                         restoreMessage = Localized.restoreSuccess
                     } else {
@@ -312,7 +361,7 @@ struct SubscriptionView: View {
             } catch {
                 await MainActor.run {
                     isRestoring = false
-                    // 使用专门的“恢复失败”词条
+                    pendingAction = .none
                     restoreMessage = "\(Localized.restoreFailed): \(error.localizedDescription)"
                     showRestoreAlert = true
                 }
@@ -324,8 +373,9 @@ struct SubscriptionView: View {
     private func handleRedeem() {
         guard !inviteCode.isEmpty else { return }
         
-        // 建议加上：确保有 UserID 绑定
+        // 确保已登录（理论上走到这里肯定是已登录的，因为弹窗前检查了）
         guard authManager.isLoggedIn else {
+            pendingAction = .redeem
             showLoginSheet = true
             return
         }
@@ -337,12 +387,20 @@ struct SubscriptionView: View {
                 try await authManager.redeemInviteCode(inviteCode)
                 await MainActor.run {
                     isRedeeming = false
+                    pendingAction = .none // 成功：清空挂起状态
                     inviteCode = ""
+                    // 兑换成功后，直接关闭订阅页面
                     dismiss()
                 }
             } catch {
                 await MainActor.run {
                     isRedeeming = false
+                    // 【关键修改点】
+                    // 即使失败了，也清空 pendingAction。
+                    // 因为此时兑换框已经弹出来了，用户的“登录并自动触发兑换”意图已经完成。
+                    // 剩下的重试操作由用户在当前 Alert 界面手动完成即可。
+                    pendingAction = .none 
+                    
                     inviteCode = ""
                     errorMessage = error.localizedDescription
                     showError = true

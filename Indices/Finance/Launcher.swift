@@ -1,7 +1,25 @@
-// /Users/yanzhang/Documents/Xcode/Indices/Finance/Launcher.swift
-
 import SwiftUI
 import Foundation
+import Network
+
+class NetworkMonitor: ObservableObject {
+    static let shared = NetworkMonitor()
+    private let monitor = NWPathMonitor()
+    private let queue = DispatchQueue(label: "NetworkMonitor")
+
+    @Published var isWifi: Bool = false
+    @Published var isConnected: Bool = false
+
+    init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                self?.isConnected = path.status == .satisfied
+                self?.isWifi = path.usesInterfaceType(.wifi)
+            }
+        }
+        monitor.start(queue: queue)
+    }
+}
 
 // 扩展颜色定义（保留 V2 的定义，以防后续需要）
 extension Color {
@@ -224,123 +242,249 @@ struct StatusView: View {
     }
 }
 
+// MARK: - 【新增】简单的 Toast 提示组件
+struct ToastView: View {
+    let message: String
+    
+    var body: some View {
+        Text(message)
+            .font(.subheadline)
+            .foregroundColor(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color.black.opacity(0.75))
+            .cornerRadius(20)
+            .shadow(radius: 5)
+            .padding(.bottom, 50) // 距离底部一点距离
+    }
+}
+
 // MARK: - 用户个人中心视图
 struct UserProfileView: View {
     @EnvironmentObject var authManager: AuthManager
+    @StateObject private var updateManager = UpdateManager.shared
+    @StateObject private var networkMonitor = NetworkMonitor.shared
+    
+    @State private var showDownloadAlert = false
     @Environment(\.dismiss) var dismiss
+    
+    // 【新增】Toast 状态
+    @State private var toastMessage: String? = nil
     
     var body: some View {
         NavigationView {
-            List {
-                // 用户信息部分
-                Section {
-                    HStack {
-                        Image(systemName: "person.circle.fill")
-                            .font(.system(size: 60))
-                            .foregroundColor(.gray)
-                        VStack(alignment: .leading, spacing: 4) {
-                            if authManager.isSubscribed {
-                                Text("专业版会员")
-                                    .font(.subheadline)
-                                    .foregroundColor(.yellow)
-                                    .bold()
-                                if let dateStr = authManager.subscriptionExpiryDate {
-                                    // 这样显示出来的就是 "2025年12月29日 11:02" (根据手机时区自动变)
-                                    Text("有效期至: \(formatDateLocal(dateStr))")
+            ZStack {
+                List {
+                    Section {
+                        HStack {
+                            Image(systemName: "person.circle.fill")
+                                .font(.system(size: 60))
+                                .foregroundColor(.gray)
+                            VStack(alignment: .leading, spacing: 4) {
+                                if authManager.isSubscribed {
+                                    Text("专业版会员")
+                                        .font(.subheadline)
+                                        .foregroundColor(.yellow)
+                                        .bold()
+                                    if let dateStr = authManager.subscriptionExpiryDate {
+                                        Text("有效期至: \(formatDateLocal(dateStr))")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                } else {
+                                    Text("免费用户")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                if let userId = authManager.userIdentifier {
+                                    Text("ID: \(userId.prefix(6))...")
+                                        .font(.caption2)
+                                        .foregroundColor(.gray)
+                                } else {
+                                    Text("未登录")
+                                        .font(.caption2)
+                                        .foregroundColor(.gray)
+                                }
+                            }
+                            .padding(.leading, 8)
+                        }
+                        .padding(.vertical, 10)
+                    }
+
+                    Section(header: Text("离线数据")) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text("离线数据库")
+                                        .font(.headline)
+                                    Text(getOfflineStatusText())
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
-                            } else {
-                                Text("免费用户")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
+                                Spacer()
+                                
+                                if updateManager.isDownloadingDB {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle())
+                                } else {
+                                    Button(action: handleDownloadClick) {
+                                        Image(systemName: "arrow.down.circle")
+                                            .font(.title2)
+                                            .foregroundColor(.blue)
+                                    }
+                                }
                             }
                             
-                            if let userId = authManager.userIdentifier {
-                                Text("ID: \(userId.prefix(6))...")
-                                    .font(.caption2)
-                                    .foregroundColor(.gray)
-                            } else {
-                                Text("未登录")
-                                    .font(.caption2)
-                                    .foregroundColor(.gray)
-                            }
-                        }
-                        .padding(.leading, 8)
-                    }
-                    .padding(.vertical, 10)
-                }
-                
-                // MARK: - 问题反馈部分
-                Section(header: Text("支持与反馈")) {
-                    Button {
-                        let email = "728308386@qq.com"
-                        // 使用 mailto 协议唤起邮件客户端
-                        if let url = URL(string: "mailto:\(email)") {
-                            if UIApplication.shared.canOpenURL(url) {
-                                UIApplication.shared.open(url)
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            Image(systemName: "envelope.fill")
-                                .foregroundColor(.blue)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("问题反馈")
-                                    .foregroundColor(.primary)
-                                Text("728308386@qq.com")
+                            if updateManager.isDownloadingDB {
+                                ProgressView(value: updateManager.dbDownloadProgress)
+                                    .progressViewStyle(LinearProgressViewStyle())
+                                Text("\(Int(updateManager.dbDownloadProgress * 100))%")
                                     .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
                             }
-                            Spacer()
-                            // 加一个复制图标提示用户可以点击
-                            Image(systemName: "arrow.up.right")
-                                .font(.caption)
-                                .foregroundColor(.gray)
                         }
+                        .padding(.vertical, 4)
                     }
-                    .contextMenu {
-                        // 长按复制邮箱，防止用户没装邮件App
+                    
+                    Section(header: Text("支持与反馈")) {
                         Button {
-                            UIPasteboard.general.string = "728308386@qq.com"
-                        } label: {
-                            Label("复制邮箱地址", systemImage: "doc.on.doc")
-                        }
-                    }
-                }
-                
-                // 退出登录部分
-                Section {
-                    if authManager.isLoggedIn {
-                        Button(role: .destructive) {
-                            authManager.signOut()
-                            dismiss()
+                            let email = "728308386@qq.com"
+                            if let url = URL(string: "mailto:\(email)") {
+                                if UIApplication.shared.canOpenURL(url) {
+                                    UIApplication.shared.open(url)
+                                }
+                            }
                         } label: {
                             HStack {
-                                Image(systemName: "rectangle.portrait.and.arrow.right")
-                                Text("退出登录")
+                                Image(systemName: "envelope.fill")
+                                    .foregroundColor(.blue)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("问题反馈")
+                                        .foregroundColor(.primary)
+                                    Text("728308386@qq.com")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "arrow.up.right")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
                             }
                         }
-                    } else {
-                        // 未登录时的提示（可选）
-                        Text("您当前使用的是匿名模式")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        .contextMenu {
+                            Button {
+                                UIPasteboard.general.string = "728308386@qq.com"
+                            } label: {
+                                Label("复制邮箱地址", systemImage: "doc.on.doc")
+                            }
+                        }
+                    }
+                    
+                    Section {
+                        if authManager.isLoggedIn {
+                            Button(role: .destructive) {
+                                authManager.signOut()
+                                dismiss()
+                            } label: {
+                                HStack {
+                                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                                    Text("退出登录")
+                                }
+                            }
+                        } else {
+                            Text("您当前使用的是匿名模式")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
-            }
-            .navigationTitle("账户")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("关闭") { dismiss() }
+                .navigationTitle("账户")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("关闭") { dismiss() }
+                    }
                 }
+                
+                // 【新增】Toast 覆盖层
+                if let message = toastMessage {
+                    VStack {
+                        Spacer()
+                        ToastView(message: message)
+                            .transition(.opacity)
+                    }
+                    .zIndex(100)
+                }
+            }
+            .alert(isPresented: $showDownloadAlert) {
+                Alert(
+                    title: Text("下载确认"),
+                    message: Text("当前处于移动网络，下载数据库可能消耗较多流量（约 50MB+）。是否继续？"),
+                    primaryButton: .default(Text("继续下载"), action: {
+                        // 【修改】处理 Alert 确认后的下载，并显示结果
+                        Task {
+                            let result = await updateManager.downloadDatabase(force: true)
+                            handleDownloadResult(result)
+                        }
+                    }),
+                    secondaryButton: .cancel(Text("取消"))
+                )
+            }
+        }
+    }
+    
+    private func getOfflineStatusText() -> String {
+        if updateManager.isLocalDatabaseValid() {
+            return "已下载 (最新)"
+        } else if FileManagerHelper.fileExists(named: "Finance.db") {
+            return "已过期 (点击更新)"
+        } else {
+            return "未下载"
+        }
+    }
+    
+    // 【修改】处理下载点击
+    private func handleDownloadClick() {
+        // 1. 检查网络
+        if networkMonitor.isWifi {
+            Task {
+                // 获取返回值
+                let result = await updateManager.downloadDatabase()
+                handleDownloadResult(result)
+            }
+        } else {
+            // 蜂窝网络弹窗提示
+            showDownloadAlert = true
+        }
+    }
+    
+    // 【新增】统一处理下载结果并显示 Toast
+    private func handleDownloadResult(_ result: DBDownloadResult) {
+        switch result {
+        case .skippedAlreadyLatest:
+            showToast("当前数据库已是最新，无需下载")
+        case .success:
+            showToast("数据库下载完成")
+        case .failed:
+            showToast("下载失败，请检查网络")
+        }
+    }
+    
+    // 【新增】显示 Toast 的辅助方法
+    private func showToast(_ message: String) {
+        withAnimation {
+            self.toastMessage = message
+        }
+        // 2秒后自动消失
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation {
+                self.toastMessage = nil
             }
         }
     }
 }
 
-// 辅助函数：放在 View 结构体外面或内部
 func formatDateLocal(_ isoString: String) -> String {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds] // 兼容带毫秒的情况
@@ -380,10 +524,8 @@ struct MainContentView: View {
 
     // 【新增】控制“财经要闻”弹窗显示
     @State private var showNewsPromoSheet = false 
+    @State private var showGuestMenu = false
 
-    @State private var showGuestMenu = false        // 【新增】：控制未登录用户的菜单
-
-    // 监控 App 的生命周期状态
     @Environment(\.scenePhase) private var scenePhase
 
     // 判断更新流程是否在进行中，用来 disable 刷新按钮
