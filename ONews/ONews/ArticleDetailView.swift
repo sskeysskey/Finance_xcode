@@ -78,6 +78,8 @@ struct ArticleDetailView: View {
     @State private var cachedRemainingImages: [String] = []
     @State private var cachedInsertionInterval: Int = 1
     @State private var cachedDistributeEvenly: Bool = false
+    // 【新增】标记内容是否准备就绪，防止闪烁
+    @State private var isContentReady = false
 
     // 【修改】控制自定义分享菜单
     @State private var showCustomShareSheet = false
@@ -143,7 +145,11 @@ struct ArticleDetailView: View {
     var body: some View {
         ZStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                // 【优化 1】使用 LazyVStack 替代 VStack
+                // 这使得只有进入屏幕的段落和图片才会被渲染，极大减少长文章的内存占用和卡顿
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    
+                    // 头部信息区域
                     VStack(alignment: .leading, spacing: 8) {
                         // --- 修改开始 ---
                         HStack(alignment: .center, spacing: 10) {
@@ -170,46 +176,61 @@ struct ArticleDetailView: View {
                             .animation(.none, value: isEnglishMode) 
                     }
                     .padding(.horizontal, 20)
+                    // 【优化】给头部一个固定的 ID，防止 LazyVStack 刷新时跳动
+                    .id("Header-\(article.id)")
                     
                     if let firstImage = article.images.first {
                         ArticleImageView(imageName: firstImage, timestamp: article.timestamp)
+                            .padding(.horizontal, 0) // 图片内部已有 padding
                     }
                     
-                    // 使用缓存的段落 (内容已在 prepareContent 中根据语言切换)
-                    ForEach(cachedParagraphs.indices, id: \.self) { pIndex in
-                        Text(cachedParagraphs[pIndex])
-                            .font(.custom("NewYork-Regular", size: 21))
-                            .lineSpacing(15)
-                            .padding(.horizontal, 18)
-                            .gesture(
-                                LongPressGesture()
-                                    .onEnded { _ in
-                                        UIPasteboard.general.string = cachedParagraphs[pIndex]
-                                        self.toastMessage = Localized.paragraphCopied
-                                        withAnimation(.spring()) { self.showCopyToast = true }
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                            withAnimation(.spring()) {
-                                                self.showCopyToast = false
+                    // 【优化】仅当内容准备好后才显示段落，避免布局跳变
+                    if isContentReady {
+                        ForEach(cachedParagraphs.indices, id: \.self) { pIndex in
+                            Text(cachedParagraphs[pIndex])
+                                .font(.custom("NewYork-Regular", size: 21))
+                                .lineSpacing(15)
+                                .padding(.horizontal, 18)
+                                // 【优化】给每个段落添加 id，帮助 LazyVStack 识别
+                                .id("p-\(article.id)-\(pIndex)")
+                                .gesture(
+                                    LongPressGesture()
+                                        .onEnded { _ in
+                                            UIPasteboard.general.string = cachedParagraphs[pIndex]
+                                            self.toastMessage = Localized.paragraphCopied
+                                            withAnimation(.spring()) { self.showCopyToast = true }
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                                withAnimation(.spring()) {
+                                                    self.showCopyToast = false
+                                                }
                                             }
                                         }
-                                    }
-                            )
-                        if (pIndex + 1) % cachedInsertionInterval == 0 {
-                            let imageIndexToInsert = (pIndex + 1) / cachedInsertionInterval - 1
-                            if imageIndexToInsert < cachedRemainingImages.count {
-                                ArticleImageView(
-                                    imageName: cachedRemainingImages[imageIndexToInsert],
-                                    timestamp: article.timestamp
                                 )
+                            
+                            // 图片插入逻辑
+                            if (pIndex + 1) % cachedInsertionInterval == 0 {
+                                let imageIndexToInsert = (pIndex + 1) / cachedInsertionInterval - 1
+                                if imageIndexToInsert < cachedRemainingImages.count {
+                                    ArticleImageView(
+                                        imageName: cachedRemainingImages[imageIndexToInsert],
+                                        timestamp: article.timestamp
+                                    )
+                                    .id("img-\(article.id)-\(imageIndexToInsert)")
+                                }
                             }
                         }
-                    }
-                    
-                    if !cachedDistributeEvenly && cachedRemainingImages.count > cachedParagraphs.count {
-                        let extraImages = cachedRemainingImages.dropFirst(cachedParagraphs.count)
-                        ForEach(Array(extraImages), id: \.self) { imageName in
-                            ArticleImageView(imageName: imageName, timestamp: article.timestamp)
+                        
+                        if !cachedDistributeEvenly && cachedRemainingImages.count > cachedParagraphs.count {
+                            let extraImages = cachedRemainingImages.dropFirst(cachedParagraphs.count)
+                            ForEach(Array(extraImages), id: \.self) { imageName in
+                                ArticleImageView(imageName: imageName, timestamp: article.timestamp)
+                            }
                         }
+                    } else {
+                        // 占位符，防止进入页面时一片空白
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 50)
                     }
                     
                     Button(action: {
@@ -279,6 +300,8 @@ struct ArticleDetailView: View {
             prepareContent()
         }
         .onChange(of: article) { _, _ in
+            // 文章切换时，先标记未就绪，避免显示旧内容
+            isContentReady = false
             prepareContent()
         }
         // 【新增 4】监听语言模式切换，重新计算段落布局
@@ -411,31 +434,47 @@ struct ArticleDetailView: View {
         return displayTopic + "\n\n" + bodyText
     }
     
-    // 【核心修改】prepareContent 逻辑升级
+    // 【优化 2】将耗时的文本处理移至后台线程
     private func prepareContent() {
-        // 1. 根据当前模式选择文本源
-        let contentToParse: String
-        if isEnglishMode, let contentEng = article.article_eng, !contentEng.isEmpty {
-            contentToParse = contentEng
-        } else {
-            contentToParse = article.article
+        let currentArticle = self.article
+        let currentMode = self.isEnglishMode
+        
+        // 使用 Task.detached 避免阻塞主线程
+        Task.detached(priority: .userInitiated) {
+            // 1. 根据当前模式选择文本源
+            let contentToParse: String
+            if currentMode, let contentEng = currentArticle.article_eng, !contentEng.isEmpty {
+                contentToParse = contentEng
+            } else {
+                contentToParse = currentArticle.article
+            }
+            
+            // 2. 解析段落 (耗时操作)
+            let paras = contentToParse
+                .components(separatedBy: .newlines)
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            
+            // 3. 图片逻辑
+            let imgs = Array(currentArticle.images.dropFirst())
+            let distribute = !imgs.isEmpty && imgs.count < paras.count
+            let interval = distribute ? max(1, paras.count / (imgs.count + 1)) : 1
+            
+            // 4. 回到主线程更新 UI
+            await MainActor.run {
+                // 再次检查 article ID，防止快速切换时数据错乱
+                if self.article.id == currentArticle.id {
+                    self.cachedParagraphs = paras
+                    self.cachedRemainingImages = imgs
+                    self.cachedDistributeEvenly = distribute
+                    self.cachedInsertionInterval = interval
+                    
+                    // 添加一个小动画让内容出现更自然
+                    withAnimation(.easeIn(duration: 0.2)) {
+                        self.isContentReady = true
+                    }
+                }
+            }
         }
-        
-        // 2. 解析段落
-        let paras = contentToParse
-            .components(separatedBy: .newlines)
-            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        
-        // 3. 图片逻辑保持不变（图片通常是通用的）
-        let imgs = Array(article.images.dropFirst())
-        let distribute = !imgs.isEmpty && imgs.count < paras.count
-        let interval = distribute ? paras.count / (imgs.count + 1) : 1
-        
-        // 4. 更新状态
-        self.cachedParagraphs = paras
-        self.cachedRemainingImages = imgs
-        self.cachedDistributeEvenly = distribute
-        self.cachedInsertionInterval = interval
     }
     
     private func openNewsApp() {
@@ -474,7 +513,7 @@ struct ArticleDetailView: View {
     }
 }
 
-// MARK: - ArticleImageView
+// MARK: - ArticleImageView (保持不变，或确保 ImageLoader 是异步的)
 struct ArticleImageView: View {
     let imageName: String
     let timestamp: String
@@ -502,8 +541,9 @@ struct ArticleImageView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                 } else if imageLoader.isLoading {
+                    // 【优化】给 ProgressView 一个固定高度，防止 LazyVStack 布局抖动
                     ProgressView()
-                        .frame(maxWidth: .infinity, minHeight: 150)
+                        .frame(maxWidth: .infinity, minHeight: 200) 
                         .background(Color(UIColor.secondarySystemBackground))
                         .cornerRadius(12)
                         .padding(.horizontal, horizontalPadding)
@@ -512,7 +552,7 @@ struct ArticleImageView: View {
                         Image(systemName: "photo.fill").font(.largeTitle).foregroundColor(.gray)
                         Text(Localized.imageLoadFailed).font(.caption).foregroundColor(.secondary)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 150)
+                    .frame(maxWidth: .infinity, minHeight: 200)
                     .background(Color(UIColor.secondarySystemBackground))
                     .cornerRadius(12)
                     .padding(.horizontal, horizontalPadding)
@@ -533,6 +573,7 @@ struct ArticleImageView: View {
         }
         .padding(.vertical, 10)
         .onAppear {
+            // LazyVStack 会确保只有出现在屏幕上时才调用这里
             imageLoader.load(from: imagePath)
         }
     }

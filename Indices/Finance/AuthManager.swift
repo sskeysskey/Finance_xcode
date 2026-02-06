@@ -36,9 +36,17 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     // 【新增】用于监听交易更新的任务
     private var updateListenerTask: Task<Void, Error>?
 
+    // 【新增】缓存 Key
+    private let cacheIsSubscribedKey = "AuthCache_IsSubscribed"
+    private let cacheExpiryDateKey = "AuthCache_ExpiryDate"
+
     override init() {
         super.init()
-        // 应用启动时检查钥匙串中是否已有登录凭证
+        
+        // 【核心修改 1】初始化时，先加载本地缓存的订阅状态
+        // 这样即使 checkUserInKeychain 里的网络请求失败，用户也是 VIP
+        loadSubscriptionCache()
+        
         checkUserInKeychain()
         
         // 【新增】启动交易监听器（处理应用外购买或自动续费）
@@ -161,6 +169,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             // 即使删除失败，也在 UI 上表现为登出
             self.userIdentifier = nil
             self.isLoggedIn = false
+            // ✅ 清理缓存
+            clearSubscriptionCache() 
             print("AuthManager: 登出错误: \(error.localizedDescription)")
         }
     }
@@ -392,6 +402,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             if finalStatus {
                 self.isSubscribed = true
                 self.subscriptionExpiryDate = finalDateStr
+                // ✅ 保存缓存
+                self.saveSubscriptionCache(isSubscribed: true, expiryDate: finalDateStr)
             }
             print("AuthManager: 本地 StoreKit 检查完成。结果: \(self.isSubscribed)")
         }
@@ -458,12 +470,41 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                 if status.is_subscribed {
                     self.isSubscribed = true
                     self.subscriptionExpiryDate = status.subscription_expires_at
+                    // ✅ 保存缓存
+                    self.saveSubscriptionCache(isSubscribed: true, expiryDate: status.subscription_expires_at)
                 }
                 print("AuthManager: 服务器状态同步完成，订阅状态: \(status.is_subscribed)")
             }
         } catch {
             print("AuthManager: 检查状态失败: \(error)")
         }
+    }
+
+    // MARK: - 【新增】缓存逻辑实现
+    private func saveSubscriptionCache(isSubscribed: Bool, expiryDate: String?) {
+        UserDefaults.standard.set(isSubscribed, forKey: cacheIsSubscribedKey)
+        if let date = expiryDate {
+            UserDefaults.standard.set(date, forKey: cacheExpiryDateKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: cacheExpiryDateKey)
+        }
+    }
+    
+    private func loadSubscriptionCache() {
+        let cachedStatus = UserDefaults.standard.bool(forKey: cacheIsSubscribedKey)
+        let cachedExpiry = UserDefaults.standard.string(forKey: cacheExpiryDateKey)
+        
+        if cachedStatus {
+            // 简单校验日期（可选），如果缓存是 true，先给权限，后续网络请求会校正
+            self.isSubscribed = true
+            self.subscriptionExpiryDate = cachedExpiry
+            print("AuthManager: 已加载本地缓存，暂时赋予 VIP 权限。")
+        }
+    }
+    
+    private func clearSubscriptionCache() {
+        UserDefaults.standard.removeObject(forKey: cacheIsSubscribedKey)
+        UserDefaults.standard.removeObject(forKey: cacheExpiryDateKey)
     }
     
     // ... (Keychain Helpers 保持不变) ...

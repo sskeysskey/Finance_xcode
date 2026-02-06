@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import Network // ✅ 引入 Network
 
 // MARK: - 数据模型 (无修改)
 struct VersionResponse: Codable {
@@ -118,7 +119,21 @@ class UpdateManager: ObservableObject {
     private let dbDownloadDateKey = "FinanceDBDownloadDate"
     private let dbFilename = "Finance.db"
     
-    private init() {}
+    // 【新增】网络监视器
+    private let networkMonitor = NWPathMonitor()
+    private let monitorQueue = DispatchQueue(label: "UpdateManagerNetworkMonitor")
+    @Published var isNetworkAvailable: Bool = true
+    
+    private init() {
+        // 【新增】启动监听
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            DispatchQueue.main.async {
+                // 只要有网（WiFi或蜂窝）都算可用
+                self?.isNetworkAvailable = path.status == .satisfied
+            }
+        }
+        networkMonitor.start(queue: monitorQueue)
+    }
     
     // 【新增】版本号比对辅助方法
     private func isVersion(_ current: String, lessThan min: String) -> Bool {
@@ -136,6 +151,21 @@ class UpdateManager: ObservableObject {
     }
     
     func checkForUpdates(isManual: Bool = false) async -> Bool {
+        // 【核心修改】如果是自动检查（启动时）且没有网络，直接返回 false
+        // 这样就不会卡在 fetchServerVersion 的超时上
+        if !isManual && !isNetworkAvailable {
+            print("UpdateManager: 自动检查更新 - 检测到无网络，跳过网络请求，使用本地数据。")
+            return false
+        }
+        
+        // 如果是手动刷新，我们允许它尝试，因为用户预期会有加载过程
+        // 或者也可以在这里弹窗提示
+        if isManual && !isNetworkAvailable {
+            self.updateState = .error(message: "当前无网络连接")
+            resetStateAfterDelay()
+            return false
+        }
+
         if case .checking = updateState, !isManual { return false }
         
         await MainActor.run { self.updateState = .checking }

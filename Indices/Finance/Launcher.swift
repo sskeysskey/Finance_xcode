@@ -824,6 +824,10 @@ struct MainContentView: View {
 
     // 统一的数据加载逻辑
     private func handleInitialDataLoad() async {
+        // 0. 无论如何，先尝试连接本地数据库
+        // 这样 DBManager.shared.isOfflineMode 就会被正确设置
+        DatabaseManager.shared.reconnectToLatestDatabase()
+        
         // 双重检查：如果数据已经完全加载（isDataReady 且 sectorsPanel 非空），则跳过
         if isDataReady && dataService.sectorsPanel != nil {
             print("Data is already populated. Skipping load.")
@@ -833,39 +837,53 @@ struct MainContentView: View {
         // 检查本地是否已有关键数据文件
         let hasLocalDescription = FileManagerHelper.getLatestFileUrl(for: "description") != nil
 
-        if !hasLocalDescription {
-            // 情况一：无本地数据（首次安装或被清理）
-            print("No local data found. Starting initial sync...")
-            // isManual: false 表示这是自动流程
-            let updated = await updateManager.checkForUpdates(isManual: false)
-            if updated {
-                // 更新成功后，重新连接数据库并强制加载所有数据到内存
-                DatabaseManager.shared.reconnectToLatestDatabase()
-                dataService.forceReloadData()
-                await MainActor.run { isDataReady = true }
-                print("Initial sync successful.")
-            } else {
-                print("Initial sync failed or no update found (unexpected for first run).")
-            }
-        } else {
-            // 情况二：有本地数据（常规冷启动）
-            print("Local data found. Loading existing data...")
+        if hasLocalDescription {
+            // === 场景 A: 有缓存 (常规启动/离线启动) ===
+            print("Local data found. Loading existing data immediately...")
             
-            // 1. 立即加载本地数据
+            // 1. 立即加载本地文件到内存，渲染 UI
+            // DataService.loadData() 会读取本地 JSON 和 DB (如果 DB 存在)
+            // 如果 DB 不存在，DBManager 会自动回退到网络模式，但因为是在 detached Task 里，不会卡 UI
             dataService.loadData()
             
-            // 2. 强制主线程更新 UI 状态
+            // 2. 告诉 UI 数据准备好了 (显示界面，隐藏马赛克)
             await MainActor.run {
                 isDataReady = true
             }
 
-            // 3. 后台静默检查更新
+            // 3. 界面显示出来后，在后台静默检查更新
+            // 如果没网，UpdateManager 会在第一步直接 return false，毫无感知
             Task {
+                // 延迟一点点，让 UI 动画先跑完
+                try? await Task.sleep(nanoseconds: 1 * 1_000_000_000)
+                
                 if await updateManager.checkForUpdates(isManual: false) {
                     print("Background update found. Reloading...")
+                    // 只有当确实下载了新文件/新DB后，才刷新 UI
                     DatabaseManager.shared.reconnectToLatestDatabase()
                     dataService.forceReloadData()
                 }
+            }
+            
+        } else {
+            // === 场景 B: 无缓存 (首次安装/数据被清空) ===
+            print("No local data found. Starting initial sync...")
+            
+            // 这种情况下没办法，必须联网下载，否则显示不了内容
+            // 这里会显示马赛克 Loading
+            let updated = await updateManager.checkForUpdates(isManual: false)
+            
+            if updated {
+                DatabaseManager.shared.reconnectToLatestDatabase()
+                dataService.forceReloadData()
+                await MainActor.run { isDataReady = true }
+            } else {
+                // 如果首次安装还没网，或者服务器挂了
+                // 这里可以处理错误，比如显示一个重试按钮
+                print("Initial sync failed.")
+                // 也可以尝试加载一下 (万一有部分数据)
+                dataService.loadData()
+                await MainActor.run { isDataReady = true }
             }
         }
     }

@@ -276,6 +276,9 @@ struct ArticleContainerView: View {
         case .fromAllArticles: sourceNameToSearch = nil
         }
         
+        // 【优化】寻找下一篇文章的操作虽然很快，但在极大数据量下可能微卡
+        // 由于 viewModel 是 MainActor，我们直接调用即可。
+        // 关键在于：获取到 next 之后，不要立即做太重的同步操作
         guard let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch) else {
             await MainActor.run {
                 showToast { shouldShow in self.showNoNextToast = shouldShow }
@@ -284,7 +287,8 @@ struct ArticleContainerView: View {
             return
         }
         
-        // ... (图片下载逻辑保持不变，为了节省篇幅这里省略，请保留原有的图片下载代码) ...
+        // ... (图片下载逻辑保持不变) ...
+        // 这里的图片下载已经是异步的，不会卡顿
         if !next.article.images.isEmpty {
              // ... 图片下载代码 ...
              let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
@@ -336,10 +340,10 @@ struct ArticleContainerView: View {
         // 这样下一篇如果有英文，依然会自动显示英文。
         
         await MainActor.run {
+            // 使用 easeInOut 动画，配合 LazyVStack，切换应该是丝滑的
             withAnimation(.easeInOut(duration: 0.4)) {
                 self.currentArticle = next.article
                 self.currentSourceName = next.sourceName
-                // 【删除】self.isEnglishMode = shouldKeepEnglish
             }
         }
         
