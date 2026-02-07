@@ -319,10 +319,9 @@ class SimilarViewModel: ObservableObject {
             for await (symbol, trend) in group {
                 if trend != .insufficientData {
                     await MainActor.run {
-                        // 找到对应的 item 并更新它的 trend
-                        if let index = self.relatedSymbols.firstIndex(where: { $0.symbol == symbol }) {
-                            // 触发 SwiftUI 更新的小技巧：重新赋值
-                            // 由于 RelatedSymbol 是 struct，我们需要创建一个新的副本
+                    if let index = self.relatedSymbols.firstIndex(where: { $0.symbol == symbol }) {
+                        // 【建议】加上 withAnimation，让颜色变化有淡入效果
+                        withAnimation(.easeInOut(duration: 0.3)) { 
                             let oldItem = self.relatedSymbols[index]
                             let newItem = RelatedSymbol(
                                 symbol: oldItem.symbol,
@@ -330,11 +329,12 @@ class SimilarViewModel: ObservableObject {
                                 compareValue: oldItem.compareValue,
                                 allTags: oldItem.allTags,
                                 marketCap: oldItem.marketCap,
-                                earningTrend: trend // 更新这里
+                                earningTrend: trend
                             )
                             self.relatedSymbols[index] = newItem
                         }
                     }
+                }
                 }
             }
         }

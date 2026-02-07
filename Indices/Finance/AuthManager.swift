@@ -42,11 +42,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
 
     override init() {
         super.init()
-        
-        // 【核心修改 1】初始化时，先加载本地缓存的订阅状态
-        // 这样即使 checkUserInKeychain 里的网络请求失败，用户也是 VIP
-        loadSubscriptionCache()
-        
+        // 2. 检查登录状态
         checkUserInKeychain()
         
         // 【新增】启动交易监听器（处理应用外购买或自动续费）
@@ -74,8 +70,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
         let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             throw URLError(.badServerResponse)
         }
         
@@ -93,6 +88,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                 if result.is_subscribed {
                     self.isSubscribed = true
                     self.subscriptionExpiryDate = result.subscription_expires_at
+                    // 兑换成功也更新缓存
+                    self.saveSubscriptionCache(isSubscribed: true, expiryDate: result.subscription_expires_at)
                     print("AuthManager: 兑换码使用成功，已升级为 VIP")
                 }
             }
@@ -111,17 +108,25 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     private func checkUserInKeychain() {
         do {
             if let userId = try loadUserIdentifierFromKeychain() {
+                // 1. 先确立身份
                 self.userIdentifier = userId
                 self.isLoggedIn = true
                 print("AuthManager: 本地已登录，User ID: \(userId)")
                 
-                // 【核心修复】
-                // 启动时，不仅要检查服务器，更要直接检查 Apple 本地的 Entitlements (权限)。
+                // 【优化点 1】立即加载上次缓存的订阅状态
+                // 这样用户一打开 App 就能看到皇冠，不用等待网络请求
+                loadSubscriptionCache() 
+                
+                // 2. 启动后台检查
                 Task {
-                    // 1. 优先检查 Apple 本地凭证 (这是最快且最准确的源头)
+                    // 【优化点 2】执行顺序很重要
+                    // 先查 Apple (StoreKit)
+                    // 如果你是亲友码，这里可能会把 isSubscribed 设为 false
                     await updateSubscriptionStatus()
                     
-                    // 2. 同时/随后检查服务器状态
+                    // 后查服务器 (Server)
+                    // 这一步是“最终裁决”。如果服务器说是 VIP，它会把 isSubscribed 改回 true
+                    // 这样就保证了亲友码用户的最终状态是正确的
                     await checkServerSubscriptionStatus()
                 }
             } else {
@@ -133,17 +138,15 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             }
         } catch {
             self.isLoggedIn = false
-            self.isSubscribed = false
-            print("AuthManager: 检查钥匙串时出错: \(error.localizedDescription)")
+            print("AuthManager: 检查钥匙串出错: \(error)")
         }
     }
 
-    // 触发 Apple 登录流程
+    // MARK: - Sign In / Sign Out
     func signInWithApple() {
         guard !isLoggingIn else { return }
         isLoggingIn = true
         errorMessage = nil
-        
         let request = ASAuthorizationAppleIDProvider().createRequest()
         request.requestedScopes = [.fullName, .email] // 请求获取用户全名和邮箱
 
@@ -153,25 +156,26 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         controller.performRequests()
     }
     
-    // 登出
+    // 【核心修复 1】登出逻辑优化
     func signOut() {
-        do {
-            try deleteUserIdentifierFromKeychain()
-            self.userIdentifier = nil
-            self.isLoggedIn = false
-            // 注意：登出不应直接取消订阅状态，因为用户可能通过 StoreKit 本地购买了
-            // 但为了安全起见或逻辑统一，可以重新检查一次 StoreKit
-            Task { await updateSubscriptionStatus() }
-            
-            self.subscriptionExpiryDate = nil
-            print("AuthManager: 用户已成功登出。")
-        } catch {
-            // 即使删除失败，也在 UI 上表现为登出
-            self.userIdentifier = nil
-            self.isLoggedIn = false
-            // ✅ 清理缓存
-            clearSubscriptionCache() 
-            print("AuthManager: 登出错误: \(error.localizedDescription)")
+        // 1. 仅清除“账号相关”的状态
+        self.isLoggedIn = false
+        self.userIdentifier = nil
+        self.subscriptionExpiryDate = nil // 清除服务器下发的过期时间
+        
+        // 2. 尝试删除钥匙串中的账号（不影响 VIP 状态）
+        try? deleteUserIdentifierFromKeychain()
+        
+        // 3. 【重要】不要在这里直接 clearSubscriptionCache()！
+        // 因为如果用户是通过 Apple 订阅的，缓存应该保留。
+        // 我们立即调用 updateSubscriptionStatus()，让它去决定是保留还是清除。
+        
+        Task {
+            // 这次检查会决定：
+            // - 如果有 Apple 订阅 -> isSubscribed 保持 true，缓存更新。
+            // - 如果无 Apple 订阅 -> isSubscribed 变为 false，缓存清除。
+            await updateSubscriptionStatus()
+            print("AuthManager: 登出完成，已重新校验本地权限")
         }
     }
 
@@ -199,176 +203,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
     
-    // 【修改】购买订阅 - 强制要求登录
-    func purchaseSubscription() async throws {
-        // 1. 【核心修改】恢复强制登录检查
-        guard let userId = userIdentifier else {
-            throw URLError(.userAuthenticationRequired)
-        }
-        
-        // 2. 获取商品信息
-        let products = try await Product.products(for: [subscriptionProductID])
-        guard let product = products.first else {
-            throw NSError(domain: "StoreError", code: 404, userInfo: [NSLocalizedDescriptionKey: "未找到商品信息，请检查 App Store Connect 配置"])
-        }
-        
-        // 3. 发起购买
-        let result = try await product.purchase()
-        
-        switch result {
-        case .success(let verification):
-            // 验证交易
-            let transaction = try checkVerified(verification)
-            
-            // 购买成功，更新本地状态
-            await updateSubscriptionStatus()
-            
-            // 【重要】同步给服务器 (现在 userId 必定存在)
-            try await syncPurchaseToServer(userId: userId)
-            
-            // 完成交易
-            await transaction.finish()
-            
-            await MainActor.run {
-                self.showSubscriptionSheet = false
-            }
-            
-        case .userCancelled:
-            print("用户取消支付")
-        case .pending:
-            print("交易挂起（如家长控制）")
-        @unknown default:
-            print("未知状态")
-        }
-    }
-
-    // 【修改】恢复购买功能 - 强制要求登录
-    func restorePurchases() async throws {
-        // 1. 【核心修改】为了数据同步，强制要求先登录才能恢复
-        guard let userId = userIdentifier else {
-            throw URLError(.userAuthenticationRequired)
-        }
-
-        // 2. 强制同步 App Store 交易信息
-        try await AppStore.sync()
-        
-        // 3. 重新检查所有权限
-        await updateSubscriptionStatus()
-        
-        // 4. 同步到服务器
-        if isSubscribed {
-            try await syncPurchaseToServer(userId: userId)
-        }
-    }
-
-    // MARK: - ASAuthorizationControllerDelegate
-
-    // 授权成功回调
-    func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
-        if let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential {
-            guard let identityTokenData = appleIDCredential.identityToken,
-                  let identityToken = String(data: identityTokenData, encoding: .utf8) else {
-                handleSignInError("无法获取 Identity Token。")
-                return
-            }
-            
-            let userId = appleIDCredential.user
-            
-            // 发送 Token 和 UserID 到服务器进行验证和注册
-            Task {
-                do {
-                    // 验证并获取订阅状态
-                    try await sendTokenToServer(token: identityToken, userId: userId)
-                    // 服务器验证成功后，在本地保存用户凭证
-                    try saveUserIdentifierToKeychain(userId)
-                    
-                    // 登录成功后，也立即检查一下本地 Apple 权限，双重保险
-                    await updateSubscriptionStatus()
-                    
-                    // 更新 UI 状态
-                    await MainActor.run {
-                        self.userIdentifier = userId
-                        self.isLoggedIn = true
-                        self.isLoggingIn = false
-                        
-                        // 注意：这里不再强制弹出订阅页，因为调用方（SymbolItemView）会处理后续流程
-                        print("AuthManager: 登录成功。订阅状态: \(self.isSubscribed)")
-                    }
-                } catch {
-                    handleSignInError("服务器验证失败: \(error.localizedDescription)")
-                }
-            }
-        } else {
-            handleSignInError("获取 Apple ID 凭证失败。")
-        }
-    }
-
-    // 授权失败回调
-    func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-        // 用户取消登录操作不算作错误
-        if (error as? ASAuthorizationError)?.code == .canceled {
-            print("AuthManager: 用户取消了 Apple 登录。")
-            handleSignInError(nil) // nil 表示是用户主动取消，不显示错误信息
-        } else {
-            print("AuthManager: Apple 登录授权失败: \(error.localizedDescription)")
-            handleSignInError("登录失败，请稍后重试。")
-        }
-    }
-    
-    private func handleSignInError(_ message: String?) {
-        DispatchQueue.main.async {
-            self.isLoggingIn = false
-            self.errorMessage = message
-        }
-    }
-
-    // MARK: - ASAuthorizationControllerPresentationContextProviding
-
-    // 告诉控制器在哪个窗口上显示登录界面
-    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        return UIApplication.shared.connectedScenes
-            .filter { $0.activationState == .foregroundActive }
-            .compactMap { $0 as? UIWindowScene }
-            .first?
-            .windows
-            .first { $0.isKeyWindow } ?? ASPresentationAnchor()
-    }
-    
-    // MARK: - Server Communication
-    
-    private func sendTokenToServer(token: String, userId: String) async throws {
-        let url = URL(string: "\(serverBaseURL)/auth/apple")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let body = ["identity_token": token, "user_id": userId]
-        request.httpBody = try JSONEncoder().encode(body)
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
-        
-        // 解析服务器返回的订阅状态
-        struct AuthResponse: Codable {
-            let is_subscribed: Bool
-            let subscription_expires_at: String?
-        }
-        
-        let authResponse = try JSONDecoder().decode(AuthResponse.self, from: data)
-        
-        await MainActor.run {
-            // 只有当服务器明确说已订阅时才覆盖为 true，否则保留本地可能存在的 StoreKit 状态
-            if authResponse.is_subscribed {
-                self.isSubscribed = true
-                self.subscriptionExpiryDate = authResponse.subscription_expires_at
-            }
-        }
-    }
-    
-    // 【新增】检查当前订阅状态（从 Apple 获取）
+    // 【核心修复 2】权限检查逻辑优化
+    // 这个方法现在不仅负责“开启”权限，也负责在没权限且未登录时“关闭”权限
     func updateSubscriptionStatus() async {
         var hasActiveSubscription = false
         var latestExpirationDate: Date? = nil
@@ -400,17 +236,29 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         
         await MainActor.run {
             if finalStatus {
+                // 情况 A: 找到了有效的 Apple 订阅
+                // 无论是否登录，都视为 VIP，并更新缓存
                 self.isSubscribed = true
                 self.subscriptionExpiryDate = finalDateStr
                 // ✅ 保存缓存
                 self.saveSubscriptionCache(isSubscribed: true, expiryDate: finalDateStr)
+                print("AuthManager: 发现有效 Apple 订阅 (VIP)")
+            } else {
+                // 情况 B: 没找到 Apple 订阅
+                // 这里要小心：如果用户是“服务器端 VIP”（比如安卓买的），我们不能因为 Apple 没查到就取消 VIP。
+                // 所以：只有在【未登录】的情况下，Apple 没查到，我们才敢断定他不是 VIP。
+                
+                if !self.isLoggedIn {
+                    self.isSubscribed = false
+                    self.subscriptionExpiryDate = nil
+                    self.clearSubscriptionCache() // 只有这时才真正清除缓存
+                    print("AuthManager: 无 Apple 订阅且未登录 -> 重置为免费版")
+                }
+                // 如果 isLoggedIn == true，我们不做任何操作，保留服务器可能下发的状态
             }
-            print("AuthManager: 本地 StoreKit 检查完成。结果: \(self.isSubscribed)")
         }
     }
     
-    // 辅助函数：验证 JWS 签名
-    // 【修复】删除了 static 关键字，使其成为实例方法，解决 "cannot be used on instance" 错误
     func checkVerified<T>(_ result: VerificationResult<T>) throws -> T {
         switch result {
         case .unverified:
@@ -419,10 +267,39 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             return safe
         }
     }
-    
-    // MARK: - Server Sync (保留与 Python 的通信)
-    
-    // 复用你之前的逻辑，但在 StoreKit 成功后调用
+
+    func purchaseSubscription() async throws {
+        guard let userId = userIdentifier else { throw URLError(.userAuthenticationRequired) }
+        
+        let products = try await Product.products(for: [subscriptionProductID])
+        guard let product = products.first else { throw NSError(domain: "StoreError", code: 404, userInfo: nil) }
+        
+        let result = try await product.purchase()
+        
+        switch result {
+        case .success(let verification):
+            let transaction = try checkVerified(verification)
+            await updateSubscriptionStatus()
+            try await syncPurchaseToServer(userId: userId)
+            await transaction.finish()
+            await MainActor.run { self.showSubscriptionSheet = false }
+        case .userCancelled, .pending:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    func restorePurchases() async throws {
+        guard let userId = userIdentifier else { throw URLError(.userAuthenticationRequired) }
+        try await AppStore.sync()
+        await updateSubscriptionStatus()
+        if isSubscribed {
+            try await syncPurchaseToServer(userId: userId)
+        }
+    }
+
+    // MARK: - Server Sync
     private func syncPurchaseToServer(userId: String) async throws {
         let url = URL(string: "\(serverBaseURL)/payment/subscribe")!
         var request = URLRequest(url: url)
@@ -468,19 +345,165 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             
             await MainActor.run {
                 if status.is_subscribed {
+                    // 1. 服务器确认是 VIP
                     self.isSubscribed = true
                     self.subscriptionExpiryDate = status.subscription_expires_at
                     // ✅ 保存缓存
                     self.saveSubscriptionCache(isSubscribed: true, expiryDate: status.subscription_expires_at)
+                    print("AuthManager: 服务器确认 VIP")
+                } else {
+                    // 2. 【修复这里】服务器说不是 VIP (过期了)
+                    print("AuthManager: 服务器显示无订阅/已过期")
+                    
+                    // A. 先假设用户没权限，清理状态
+                    self.isSubscribed = false
+                    self.subscriptionExpiryDate = nil
+                    self.clearSubscriptionCache()
+                    
+                    // B. 但是！为了防止误杀 Apple 订阅用户
+                    // 立即重新触发一次 Apple 权限检查。
+                    // 如果用户有 Apple 订阅，updateSubscriptionStatus 会把 isSubscribed 重新设回 true。
+                    Task { [weak self] in
+                        await self?.updateSubscriptionStatus()
+                    }
                 }
-                print("AuthManager: 服务器状态同步完成，订阅状态: \(status.is_subscribed)")
             }
         } catch {
-            print("AuthManager: 检查状态失败: \(error)")
+            print("AuthManager: Server status check failed: \(error)")
+        }
+    }
+    
+    // 辅助方法：快速检查当前内存中是否有有效的 Apple 订阅证据
+    // 你可以在 updateSubscriptionStatus 里维护一个变量，或者直接判断 subscriptionProductID
+    private func hasActiveAppleSubscription() -> Bool {
+        // 这是一个简化的判断，更严谨的做法是在 updateSubscriptionStatus 里记录一个 Bool 变量
+        // 这里我们可以假设：如果当前是 VIP，但服务器说是 false，
+        // 唯一的希望就是 Apple。如果 updateSubscriptionStatus 刚刚运行过，
+        // 且没找到 Apple 订阅，它虽然没改 isSubscribed (因为 loggedIn)，
+        // 但它肯定没更新 subscriptionExpiryDate (或者更新的是 nil)。
+        
+        // 最稳妥的方法：复用 updateSubscriptionStatus 的逻辑，
+        // 但为了不写重复代码，建议在类里加一个属性：
+        // @Published var hasAppleEntitlement: Bool = false
+        // 在 updateSubscriptionStatus 里更新这个属性。
+        
+        // 如果不想大改，可以用下面的临时逻辑：
+        // 如果当前是 VIP，我们假设它是服务器给的。现在服务器收回了，我们就收回。
+        // 除非... 用户刚刚买了 Apple。
+        // 鉴于你的架构，最简单的修补是：
+        // 既然 checkServerSubscriptionStatus 是最后一步“裁决者”，
+        // 如果服务器返回 false，我们应该信任服务器（前提是服务器知道 Apple 的购买状态）。
+        // 但如果服务器不知道 Apple 的状态（同步失败），这里直接 false 会误杀。
+        
+        // ⭐️ 最佳轻量级方案：
+        // 不要在这里纠结，而是修改 updateSubscriptionStatus
+        return false // 占位，看下面的“最终建议”
+    }
+
+    // MARK: - ASAuthorization Delegate
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
+        if let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential {
+            guard let identityTokenData = appleIDCredential.identityToken,
+                  let identityToken = String(data: identityTokenData, encoding: .utf8) else { return }
+            
+            let userId = appleIDCredential.user
+            
+            Task {
+                do {
+                    // 1. 先保存 Keychain
+                    try saveUserIdentifierToKeychain(userId)
+                    
+                    // 2. 【关键修复】先在 UI 上确立“已登录”状态
+                    // 这样后续的检查就不会因为“未登录”而误删权限
+                    await MainActor.run {
+                        self.userIdentifier = userId
+                        self.isLoggedIn = true
+                        self.isLoggingIn = true // 保持 loading 状态直到服务器返回
+                    }
+                    
+                    // 3. 请求服务器 (获取亲友码/服务器端 VIP 状态)
+                    // 如果服务器返回 VIP，这里会把 isSubscribed 设为 true
+                    try await sendTokenToServer(token: identityToken, userId: userId)
+                    
+                    // 4. 最后再同步 Apple 本地权限
+                    // 此时 isLoggedIn 已经是 true 了，所以即使 Apple 返回 false，
+                    // updateSubscriptionStatus 里的逻辑也不会清除服务器给的 VIP。
+                    await updateSubscriptionStatus() 
+                    
+                    // 5. 结束 Loading
+                    await MainActor.run {
+                        self.isLoggingIn = false
+                    }
+                } catch {
+                    // 如果出错，回滚状态
+                    await MainActor.run {
+                        self.isLoggedIn = false
+                        self.userIdentifier = nil
+                        try? self.deleteUserIdentifierFromKeychain()
+                    }
+                    handleSignInError("登录失败: \(error.localizedDescription)")
+                }
+            }
         }
     }
 
-    // MARK: - 【新增】缓存逻辑实现
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+        if (error as? ASAuthorizationError)?.code != .canceled {
+            handleSignInError("登录失败")
+        }
+    }
+    
+    private func handleSignInError(_ message: String?) {
+        DispatchQueue.main.async {
+            self.isLoggingIn = false
+            self.errorMessage = message
+        }
+    }
+    
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        return UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.windows.first { $0.isKeyWindow } ?? ASPresentationAnchor()
+    }
+    
+    private func sendTokenToServer(token: String, userId: String) async throws {
+        let url = URL(string: "\(serverBaseURL)/auth/apple")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["identity_token": token, "user_id": userId]
+        request.httpBody = try JSONEncoder().encode(body)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        
+        struct AuthResponse: Codable {
+            let status: String?
+            let is_subscribed: Bool
+            let subscription_expires_at: String?
+        }
+        
+        let authResponse = try JSONDecoder().decode(AuthResponse.self, from: data)
+        
+        await MainActor.run {
+            // 如果服务器说是 VIP，直接覆盖本地状态
+            if authResponse.is_subscribed {
+                self.isSubscribed = true
+                self.subscriptionExpiryDate = authResponse.subscription_expires_at
+                // 立即保存缓存，防止闪烁
+                self.saveSubscriptionCache(isSubscribed: true, expiryDate: authResponse.subscription_expires_at)
+                print("AuthManager: 服务器认证成功，用户是 VIP (亲友/订阅)")
+            } else {
+                // 如果服务器说不是 VIP，我们暂时不设为 false，
+                // 因为可能还要等 updateSubscriptionStatus 检查 Apple 的收据
+                print("AuthManager: 服务器认证成功，用户暂无服务器端订阅")
+            }
+        }
+    }
+
+    // MARK: - Caching
     private func saveSubscriptionCache(isSubscribed: Bool, expiryDate: String?) {
         UserDefaults.standard.set(isSubscribed, forKey: cacheIsSubscribedKey)
         if let date = expiryDate {
@@ -506,8 +529,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         UserDefaults.standard.removeObject(forKey: cacheIsSubscribedKey)
         UserDefaults.standard.removeObject(forKey: cacheExpiryDateKey)
     }
-    
-    // ... (Keychain Helpers 保持不变) ...
+
+    // MARK: - Keychain Helpers
     private func saveUserIdentifierToKeychain(_ identifier: String) throws {
         guard let data = identifier.data(using: .utf8) else { throw KeychainError.dataConversionError }
         try? deleteUserIdentifierFromKeychain()
@@ -518,15 +541,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
-
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            if status == errSecDuplicateItem {
-                throw KeychainError.duplicateItem
-            }
-            throw KeychainError.unknown(status)
-        }
-        print("AuthManager: 用户 ID 已保存到钥匙串。")
+        SecItemAdd(query as CFDictionary, nil)
     }
 
     private func loadUserIdentifierFromKeychain() throws -> String? {
@@ -539,18 +554,10 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
 
         var dataTypeRef: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &dataTypeRef)
-
-        if status == errSecSuccess {
-            guard let data = dataTypeRef as? Data,
-                  let identifier = String(data: data, encoding: .utf8) else {
-                return nil
-            }
-            return identifier
-        } else if status == errSecItemNotFound {
-            return nil // 找不到是正常情况
-        } else {
-            throw KeychainError.unknown(status)
+        if status == errSecSuccess, let data = dataTypeRef as? Data {
+            return String(data: data, encoding: .utf8)
         }
+        return nil
     }
 
     private func deleteUserIdentifierFromKeychain() throws {

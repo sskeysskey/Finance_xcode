@@ -94,6 +94,7 @@ enum DBDownloadResult {
     case success            // 下载成功
     case skippedAlreadyLatest // 跳过：已经是最新
     case failed             // 失败
+    case cancelled          // 【新增】用户取消
 }
 
 // MARK: - UpdateManager
@@ -123,6 +124,15 @@ class UpdateManager: ObservableObject {
     private let networkMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "UpdateManagerNetworkMonitor")
     @Published var isNetworkAvailable: Bool = true
+    
+    // 【新增】下载任务控制相关
+    private var currentDownloadTask: URLSessionDownloadTask?
+    // 【新增】用于保存断点续传的数据
+    private var resumeData: Data?
+    // 【新增】对外暴露是否处于“暂停/有断点”状态
+    var isPaused: Bool {
+        return resumeData != nil
+    }
     
     private init() {
         // 【新增】启动监听
@@ -418,7 +428,7 @@ class UpdateManager: ObservableObject {
             
             var request = URLRequest(url: url)
             // 针对大文件稍微增加超时时间，或者保持 15s 也可以，取决于文件大小和网速
-            request.timeoutInterval = 20 
+            request.timeoutInterval = 60 
             request.cachePolicy = .reloadIgnoringLocalCacheData // 确保不读缓存，强制从服务器拉取
             
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -470,22 +480,54 @@ class UpdateManager: ObservableObject {
         return FileManagerHelper.documentsDirectory.appendingPathComponent(dbFilename).path
     }
     
-    // MARK: - 【修改点】下载数据库（返回结果枚举）
-    // 之前返回 Void，现在返回 DBDownloadResult 以便 UI 做出响应
+    // MARK: - 【新增】取消数据库下载
+    func cancelDatabaseDownload() {
+        guard isDownloadingDB, let task = currentDownloadTask else { return }
+        
+        print("UpdateManager: 用户请求取消下载...")
+        
+        task.cancel(byProducingResumeData: { [weak self] data in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                
+                if let data = data {
+                    print("UpdateManager: 已保存断点续传数据...")
+                    self.resumeData = data
+                }
+                
+                // 【关键】确保这里立即更新状态，UI 才会从“进度条”变回“继续按钮”
+                self.isDownloadingDB = false 
+                // 注意：不要把 progress 设为 0，保留当前进度给用户看
+                // self.dbDownloadProgress = 0.0 // <--- 这行代码建议注释掉或删除
+                
+                // 强制 UI 刷新 (因为 isPaused 是计算属性，依赖 resumeData)
+                self.objectWillChange.send() 
+            }
+        })
+    }
+    
+    // MARK: - 【修改】下载数据库（支持断点续传 + 优化配置）
     @discardableResult
     func downloadDatabase(force: Bool = false) async -> DBDownloadResult {
         // 1. 防重复检查
         if !force && isLocalDatabaseValid() {
-            print("UpdateManager: 本地数据库已是最新（今日已下载），跳过下载。")
-            return .skippedAlreadyLatest // 【修改】返回跳过状态
+            print("UpdateManager: 本地数据库已是最新，跳过。")
+            return .skippedAlreadyLatest
         }
         
         let fileURL = FileManagerHelper.documentsDirectory.appendingPathComponent(dbFilename)
-        try? FileManager.default.removeItem(at: fileURL)
+        
+        // 如果是强制重新下载，且没有断点数据，才删除旧文件
+        if force && resumeData == nil {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
         
         await MainActor.run {
             self.isDownloadingDB = true
-            self.dbDownloadProgress = 0.0
+            // 如果有断点数据，进度条可能不会从0开始，但这取决于UI怎么画，这里置0比较安全
+            if self.resumeData == nil {
+                self.dbDownloadProgress = 0.0
+            }
         }
         
         guard let url = URL(string: "\(serverBaseURL)/download?filename=\(dbFilename)") else {
@@ -494,7 +536,7 @@ class UpdateManager: ObservableObject {
             return .failed // 【修改】返回失败
         }
         
-        var downloadSuccess = false
+        var finalResult: DBDownloadResult = .failed
         
         do {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -516,7 +558,6 @@ class UpdateManager: ObservableObject {
                             continuation.resume(throwing: URLError(.badServerResponse))
                             return
                         }
-                        
                         do {
                             // 移动临时文件到目标位置
                             // 如果目标存在先删除（虽然上面删过了，但为了保险）
@@ -531,14 +572,38 @@ class UpdateManager: ObservableObject {
                     }
                 )
                 
-                // 创建自定义 Session
-                let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-                let task = session.downloadTask(with: url)
-                task.resume()
+                // 【优化配置】
+                let config = URLSessionConfiguration.default
+                config.timeoutIntervalForResource = 1000 // 防止大文件慢速下载中断
+                config.waitsForConnectivity = true // 网络波动时等待而不是直接失败
                 
-                // 保持 delegate 引用，防止被释放（虽然 session 会持有 delegate，但显式持有更安全）
-                // 在这个闭包作用域内 session 是活着的
-                session.finishTasksAndInvalidate() 
+                let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+                
+                // 【核心修改：尝试恢复，失败则全新下载】
+                var taskCreated = false
+                
+                if let data = self.resumeData {
+                    // 尝试使用断点数据创建任务
+                    let task = session.downloadTask(withResumeData: data)
+                    // 检查任务描述是否包含原来的 URL，简单的校验
+                    if let originalRequest = task.originalRequest, originalRequest.url == url {
+                        print("UpdateManager: 发现有效断点数据，正在恢复下载...")
+                        self.currentDownloadTask = task
+                        taskCreated = true
+                    } else {
+                        print("UpdateManager: 断点数据与当前 URL 不匹配或无效，丢弃。")
+                        self.resumeData = nil // 数据无效，丢弃
+                    }
+                }
+                
+                // 如果没有成功创建恢复任务（resumeData 为空或无效），则创建新任务
+                if !taskCreated {
+                    print("UpdateManager: 开始全新下载...")
+                    self.currentDownloadTask = session.downloadTask(with: url)
+                }
+                
+                self.currentDownloadTask?.resume()
+                session.finishTasksAndInvalidate()
             }
             
             // 下载成功后的逻辑
@@ -547,21 +612,56 @@ class UpdateManager: ObservableObject {
             let todayStr = formatter.string(from: Date())
             UserDefaults.standard.set(todayStr, forKey: dbDownloadDateKey)
             
-            print("UpdateManager: 数据库下载完成，已保存。日期: \(todayStr)")
-            DatabaseManager.shared.reconnectToLatestDatabase()
-            downloadSuccess = true
+            // 下载成功后，清除断点数据
+            self.resumeData = nil
+            
+            print("UpdateManager: 数据库下载完成。")
+            DatabaseManager.shared.reconnectToLatestDatabase() // 假设你有这个单例
+            finalResult = .success
             
         } catch {
-            print("UpdateManager: 数据库下载失败: \(error)")
-            downloadSuccess = false
+            // 处理错误
+            let nsError = error as NSError
+            
+            // 处理用户取消
+            if nsError.code == NSURLErrorCancelled {
+                print("UpdateManager: 下载任务已取消。")
+                finalResult = .cancelled
+            } 
+            // 【修改点 1】将 if let resumeData = ... 改为直接判断 != nil
+            // 原代码警告：Immutable value 'resumeData' was never used
+            else if self.resumeData != nil, nsError.userInfo[NSURLErrorBackgroundTaskCancelledReasonKey] != nil {
+                print("UpdateManager: 断点续传数据似乎已过期或损坏，尝试重新下载...")
+                self.resumeData = nil // 清除坏数据
+                
+                // 递归调用自己，强制重新下载
+                Task {
+                    // 【修改点 2】将 let retryResult = ... 改为 _ = ...
+                    // 原代码警告：Initialization of immutable value 'retryResult' was never used
+                    _ = await self.downloadDatabase(force: true)
+                }
+                // 这里标记为 failed，让本次调用结束，实际工作交给了上面的递归重试
+                finalResult = .failed 
+            } else {
+                print("UpdateManager: 数据库下载失败: \(error)")
+                // 如果失败（非取消），也可以考虑保存 resumeData，但这需要从 error userInfo 中提取
+                // 这里简单处理，失败就失败了
+                finalResult = .failed
+            }
         }
         
-        await MainActor.run {
-            self.isDownloadingDB = false
-            self.dbDownloadProgress = 1.0
+        // 只有在非取消状态下，才重置 UI 状态
+        // 如果是取消，cancelDatabaseDownload 里的闭包会处理 UI
+        if finalResult != .cancelled {
+            await MainActor.run {
+                self.isDownloadingDB = false
+                // 如果成功，进度设为1；如果失败，设为0
+                self.dbDownloadProgress = finalResult == .success ? 1.0 : 0.0
+                self.currentDownloadTask = nil
+            }
         }
         
-        return downloadSuccess ? .success : .failed // 【修改】返回最终结果
+        return finalResult
     }
     
     // MARK: - 修改后的清理逻辑
@@ -627,6 +727,7 @@ class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
             // 只有当距离上次更新超过 0.1 秒，或者进度已经完成 (1.0) 时，才回调 UI 更新。
             // 这避免了高速下载时主线程被成千上万次 UI 刷新请求卡死。
             let now = Date().timeIntervalSince1970
+            // 0.1秒节流，避免UI卡顿
             if now - lastUpdateTime > 0.1 || progress >= 1.0 {
                 lastUpdateTime = now
                 onProgress(progress)

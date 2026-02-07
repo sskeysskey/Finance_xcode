@@ -335,30 +335,60 @@ struct UserProfileView: View {
                                 VStack(alignment: .leading) {
                                     Text("离线数据库")
                                         .font(.headline)
-                                    Text(getOfflineStatusText())
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                    
+                                    // 根据状态显示更详细的文本
+                                    if updateManager.isDownloadingDB {
+                                        Text("正在下载...")
+                                            .font(.caption)
+                                            .foregroundColor(.blue)
+                                    } else if updateManager.isPaused {
+                                        Text("已暂停 - 点击继续")
+                                            .font(.caption)
+                                            .foregroundColor(.orange)
+                                    } else {
+                                        Text(getOfflineStatusText())
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
                                 Spacer()
                                 
+                                // 【核心修改】按钮交互逻辑
                                 if updateManager.isDownloadingDB {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle())
-                                } else {
-                                    Button(action: handleDownloadClick) {
-                                        Image(systemName: "arrow.down.circle")
+                                    // 状态 1: 下载中 -> 只显示取消/暂停按钮 (移除了圆环)
+                                    Button {
+                                        // 点击触发取消逻辑
+                                        updateManager.cancelDatabaseDownload()
+                                    } label: {
+                                        Image(systemName: "pause.circle.fill") // 或者 "xmark.circle.fill"
                                             .font(.title2)
-                                            .foregroundColor(.blue)
+                                            .foregroundColor(.red)
                                     }
+                                    .buttonStyle(BorderlessButtonStyle()) // 防止点击穿透整个List Row
+                                    
+                                } else {
+                                    // 状态 2: 未下载 或 已暂停 -> 显示下载/继续按钮
+                                    Button(action: handleDownloadClick) {
+                                        // 如果有断点数据，显示“播放/继续”图标，否则显示“下载”图标
+                                        Image(systemName: updateManager.isPaused ? "play.circle.fill" : "arrow.down.circle")
+                                            .font(.title2)
+                                            .foregroundColor(updateManager.isPaused ? .orange : .blue)
+                                    }
+                                    .buttonStyle(BorderlessButtonStyle())
                                 }
                             }
                             
-                            if updateManager.isDownloadingDB {
-                                ProgressView(value: updateManager.dbDownloadProgress)
-                                    .progressViewStyle(LinearProgressViewStyle())
-                                Text("\(Int(updateManager.dbDownloadProgress * 100))%")
-                                    .font(.caption)
-                                    .frame(maxWidth: .infinity, alignment: .trailing)
+                            // 进度条文本 (仅在下载或暂停且有进度时显示)
+                            if updateManager.isDownloadingDB || (updateManager.isPaused && updateManager.dbDownloadProgress > 0) {
+                                HStack {
+                                    ProgressView(value: updateManager.dbDownloadProgress)
+                                        .progressViewStyle(LinearProgressViewStyle())
+                                    
+                                    Text("\(Int(updateManager.dbDownloadProgress * 100))%")
+                                        .font(.caption)
+                                        .monospacedDigit() // 数字等宽，防止跳动
+                                        .frame(width: 35, alignment: .trailing)
+                                }
                             }
                         }
                         .padding(.vertical, 4)
@@ -485,6 +515,8 @@ struct UserProfileView: View {
             showToast("数据库下载完成")
         case .failed:
             showToast("下载失败，请检查网络")
+        case .cancelled:
+            showToast("已取消")
         }
     }
     
@@ -601,32 +633,59 @@ struct MainContentView: View {
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         if authManager.isLoggedIn {
-                            // 已登录：点击显示个人中心
+                            // MARK: - 状态 A：已登录
                             Button {
                                 showProfileSheet = true
                             } label: {
-                                HStack {
+                                HStack(spacing: 6) {
+                                    // 1. 已登录显示实心头像
                                     Image(systemName: "person.circle.fill")
+                                        .font(.title3)
+                                    
+                                    // 2. 显示部分 ID 或 "已登录" (可选，这里保持简洁只显示头像，或者加名字)
+                                    // 如果你想显示名字，可以解开下面这行
+                                    // Text(authManager.userIdentifier?.prefix(4) ?? "User") 
+                                    
+                                    // 3. 皇冠 (仅 VIP 显示)
                                     if authManager.isSubscribed {
-                                        Image(systemName: "crown.fill").foregroundColor(.yellow).font(.caption)
+                                        Image(systemName: "crown.fill")
+                                            .foregroundColor(.yellow)
+                                            .font(.caption)
                                     }
                                 }
+                                .foregroundColor(.primary) // 适配深色/浅色模式
                             }
                         } else {
-                            // MARK: - 【修改】未登录状态：点击弹出底部菜单
+                            // MARK: - 状态 B：未登录 (点击弹出菜单)
                             Button {
-                                showGuestMenu = true // 触发底部弹窗
+                                showGuestMenu = true
                             } label: {
-                                HStack {
+                                HStack(spacing: 6) {
+                                    // 1. 未登录显示空心头像
                                     Image(systemName: "person.circle")
-                                    // 即使是匿名购买的会员也显示皇冠
+                                        .font(.title3)
+                                    
+                                    // 2. 【核心修改】强制显示 "登录" 文字
+                                    Text("登录")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                    
+                                    // 3. 皇冠 (匿名 VIP 也显示，但逻辑上是分开的)
                                     if authManager.isSubscribed {
-                                        Image(systemName: "crown.fill").foregroundColor(.yellow).font(.caption)
+                                        Image(systemName: "crown.fill")
+                                            .foregroundColor(.yellow)
+                                            .font(.caption)
+                                            // 可以加个小背景区分，表示这是“设备权限”
+                                            .padding(2)
+                                            .background(Color.black.opacity(0.1))
+                                            .clipShape(Circle())
                                     }
                                 }
+                                .foregroundColor(.blue) // 未登录用蓝色引导点击
                             }
                         }
                     }
+
                     // 中间位置：自定义额度显示
                     ToolbarItem(placement: .principal) {
                         if !authManager.isSubscribed {
@@ -1133,5 +1192,14 @@ struct ForceUpdateView: View {
             }
             .padding()
         }
+    }
+}
+
+// MARK: - 辅助样式
+struct BorderlessButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.5 : 1.0)
+            // 关键：BorderlessButtonStyle 在 List 中可以独立响应点击，不触发 Cell 选中
     }
 }
