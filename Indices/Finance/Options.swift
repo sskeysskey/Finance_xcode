@@ -1363,13 +1363,19 @@ struct BigOrderCard: View {
     let order: OptionBigOrder
     @EnvironmentObject var dataService: DataService
     
-    // 颜色逻辑：Call=红(看涨), Put=绿(看跌)
+    // 1. 保持原有的 Call/Put 颜色定义 (用于左上角的 CALL/PUT 标签)
     var isCall: Bool {
         return order.type.uppercased().contains("CALL") || order.type.uppercased() == "C"
     }
     
     var themeColor: Color {
         isCall ? .red : .green
+    }
+    
+    // 2. 【新增】定义成交额颜色 (跟价外程度 Distance 保持一致)
+    // 逻辑：Distance 包含 "-" (负数) 显示绿色，否则显示红色
+    var priceColor: Color {
+        return order.distance.contains("-") ? .green : .red
     }
     
     var body: some View {
@@ -1435,7 +1441,8 @@ struct BigOrderCard: View {
                 HStack(alignment: .lastTextBaseline, spacing: 4) {
                     Text(formatLargeNumber(order.price))
                         .font(.system(size: 22, weight: .bold, design: .rounded))
-                        .foregroundColor(themeColor)
+                        // 【修改点】这里改成 priceColor (基于 Distance)
+                        .foregroundColor(priceColor) 
                 }
             }
             .padding(.horizontal, 16)
@@ -1465,8 +1472,8 @@ struct BigOrderCard: View {
                 DetailColumn(
                     title: "价外程度",
                     value: order.distance,
-                    isHighlight: true, // 开启高亮
-                    highlightColor: order.distance.contains("-") ? .green : .red
+                    isHighlight: true,
+                    highlightColor: priceColor // 这里也用 priceColor
                 )
                 
                 // 4. Change

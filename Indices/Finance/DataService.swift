@@ -36,7 +36,7 @@ final class DataService1 {
 }
 
 struct OptionBigOrder: Identifiable, Codable {
-    let id = UUID()
+    var id = UUID() // <--- 把 'let' 改为 'var'，消除 Codable 警告
     let date: String
     let symbol: String
     let type: String       // Calls / Puts
@@ -557,8 +557,13 @@ class DataService: ObservableObject {
                 return o1.price > o2.price
             }
             
+            // 【核心修复】创建不可变副本 (Freeze the variable)
+            // 将 'var' 冻结为 'let'，这样就可以安全地传给 MainActor 了
+            let finalOrders = newOrders
+            
             await MainActor.run {
-                self.optionBigOrders = newOrders
+                // 使用 finalOrders 而不是 newOrders
+                self.optionBigOrders = finalOrders
             }
             
         } catch {
