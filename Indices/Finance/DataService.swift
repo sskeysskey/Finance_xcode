@@ -537,8 +537,25 @@ class DataService: ObservableObject {
                 }
             }
             
-            // 按金额倒序排列 (金额最大的在前面)
-            newOrders.sort { $0.price > $1.price }
+            // 【核心修改】在这里加入三级排序逻辑
+            newOrders.sort { o1, o2 in
+                // 1. 第一优先级：Run_Date
+                // 假设日期格式是 YYYY-MM-DD，直接字符串比较即可
+                // 使用 > 表示降序 (最新的日期排在最前面)
+                if o1.date != o2.date {
+                    return o1.date > o2.date
+                }
+                
+                // 2. 第二优先级：Symbol
+                // 日期相同的情况下，按 Symbol 字母顺序排列 (A -> Z)
+                if o1.symbol != o2.symbol {
+                    return o1.symbol < o2.symbol
+                }
+                
+                // 3. 第三优先级：Price
+                // Symbol 也相同的情况下，按金额大到小排列 (大单在前)
+                return o1.price > o2.price
+            }
             
             await MainActor.run {
                 self.optionBigOrders = newOrders
