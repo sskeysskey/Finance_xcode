@@ -64,6 +64,7 @@ struct OptionItem: Identifiable, Hashable {
     let distance: String   // 【新增】Distance
     let openInterest: String // Open Interest
     let change: String     // 1-Day Chg
+    let price: String      // 【新增】最新价格字段
 }
 
 // 【新增】期权榜单单项模型
@@ -687,7 +688,7 @@ class DataService: ObservableObject {
                 parts = parts.map { $0.trimmingCharacters(in: .whitespaces) }
                 
                 // 3. 解析列 (新格式 7列: Symbol, Type, Expiry, Strike, Distance, OI, Chg)
-                if parts.count >= 7 {
+                if parts.count >= 8 {
                     let symbol = parts[0].uppercased()
                     let type = parts[1]
                     let expiry = parts[2]
@@ -704,11 +705,12 @@ class DataService: ObservableObject {
                     // 【注意】原来的 OI 和 Chg 索引顺延了
                     let rawOi = parts[5]    // 原来是 4，现在是 5
                     let rawChg = parts[6]   // 原来是 5，现在是 6
+                    let rawPrice = parts[7] // 【新增】获取第 8 列数据
                     
                     // 去除小数点处理
                     let oi = String(format: "%.0f", Double(rawOi) ?? 0)
                     let chg = String(format: "%.0f", Double(rawChg) ?? 0)
-                    
+                    let price = String(format: "%.2f", Double(rawPrice) ?? 0) // 价格保留两位小数
                     let item = OptionItem(
                         symbol: symbol,
                         type: type,
@@ -716,7 +718,8 @@ class DataService: ObservableObject {
                         strike: strike,
                         distance: distance, // 传入格式化后的 distance
                         openInterest: oi,
-                        change: chg
+                        change: chg,
+                        price: price // 【传入新增字段】
                     )
                     
                     if tempOptions[symbol] == nil {

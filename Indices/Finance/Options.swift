@@ -919,10 +919,11 @@ struct OptionsDetailView: View {
     private var tableHeaderView: some View {
         HStack(spacing: 4) {
             Text("Expiry").frame(maxWidth: .infinity, alignment: .leading)
-            Text("Strike").frame(width: 55, alignment: .trailing)
-            Text("Dist").frame(width: 55, alignment: .trailing)
-            Text("Open Int").frame(width: 65, alignment: .trailing)
-            Text("1-Day").frame(width: 60, alignment: .trailing)
+            Text("Strike").frame(width: 50, alignment: .trailing)
+            Text("Dist").frame(width: 50, alignment: .trailing)
+            Text("OI").frame(width: 55, alignment: .trailing)
+            Text("1-Day").frame(width: 55, alignment: .trailing)
+            Text("Price").frame(width: 55, alignment: .trailing) // 【新增表头】
         }
         .font(.caption)
         .foregroundColor(.secondary)
@@ -1216,15 +1217,24 @@ struct OptionRowView: View {
         HStack(spacing: 4) {
             OptionCellView(text: item.expiryDate, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            
             OptionCellView(text: item.strike, alignment: .trailing)
-                .frame(width: 55, alignment: .trailing)
+                .frame(width: 50, alignment: .trailing)
+            
             OptionCellView(text: item.distance, alignment: .trailing)
-                .frame(width: 55, alignment: .trailing)
-                .font(.system(size: 12))
+                .frame(width: 50, alignment: .trailing)
+                .font(.system(size: 11)) // 缩小一点点防止拥挤
+            
             OptionCellView(text: item.openInterest, alignment: .trailing)
-                .frame(width: 65, alignment: .trailing)
+                .frame(width: 55, alignment: .trailing)
+            
             OptionCellView(text: item.change, alignment: .trailing)
-                .frame(width: 60, alignment: .trailing)
+                .frame(width: 55, alignment: .trailing)
+            
+            // 【新增 Price 单元格】
+            OptionCellView(text: item.price, alignment: .trailing)
+                .frame(width: 55, alignment: .trailing)
+                .foregroundColor(.blue) // 用蓝色区分一下价格列，或者保持原样
         }
         .padding(.vertical, 10)
         .padding(.horizontal)
