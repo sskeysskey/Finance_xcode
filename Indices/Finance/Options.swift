@@ -1221,30 +1221,66 @@ struct OptionRowView: View {
     
     var body: some View {
         HStack(spacing: 4) {
-            OptionCellView(text: item.expiryDate, alignment: .leading)
+            
+            // 1. Expiry: 2026/06/18 -> 26/06/18
+            OptionCellView(text: formatExpiry(item.expiryDate), alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             
+            // 2. Strike
             OptionCellView(text: item.strike, alignment: .trailing)
                 .frame(width: 50, alignment: .trailing)
             
+            // 3. Distance
             OptionCellView(text: item.distance, alignment: .trailing)
                 .frame(width: 50, alignment: .trailing)
-                .font(.system(size: 11)) // 缩小一点点防止拥挤
+                .font(.system(size: 11))
             
+            // 4. OI
             OptionCellView(text: item.openInterest, alignment: .trailing)
                 .frame(width: 55, alignment: .trailing)
             
+            // 5. Change
             OptionCellView(text: item.change, alignment: .trailing)
                 .frame(width: 55, alignment: .trailing)
             
-            // 【新增 Price 单元格】
-            OptionCellView(text: item.price, alignment: .trailing)
+            // 6. Price: 37923360.00 -> 37.9M
+            OptionCellView(text: formatPrice(item.price), alignment: .trailing)
                 .frame(width: 55, alignment: .trailing)
-                .foregroundColor(.blue) // 用蓝色区分一下价格列，或者保持原样
+                .foregroundColor(.blue)
         }
         .padding(.vertical, 10)
         .padding(.horizontal)
         .background(Color(UIColor.systemBackground))
+    }
+    
+    // --- 辅助函数 ---
+    
+    // 格式化日期: 2026/06/18 -> 26/06/18
+    // 同时也兼容 2026-06-18 -> 26-06-18
+    private func formatExpiry(_ dateStr: String) -> String {
+        // 简单暴力法：如果前4位是年份，直接截取后2位
+        // 假设格式固定为 YYYY...
+        if dateStr.count >= 4 {
+            // 移除前两个字符 (20)
+            let shortYear = String(dateStr.dropFirst(2))
+            return shortYear
+        }
+        return dateStr
+    }
+    
+    // 格式化价格: 37923360.00 -> 37.9M
+    private func formatPrice(_ priceStr: String) -> String {
+        guard let value = Double(priceStr) else { return priceStr }
+        
+        if value >= 1_000_000_000 {
+            return String(format: "%.1fB", value / 1_000_000_000)
+        } else if value >= 1_000_000 {
+            return String(format: "%.1fM", value / 1_000_000)
+        } else if value >= 1_000 {
+            return String(format: "%.0fK", value / 1_000)
+        } else {
+            return String(format: "%.0f", value)
+        }
     }
 }
 
