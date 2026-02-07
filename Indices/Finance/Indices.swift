@@ -388,7 +388,7 @@ struct IndicesContentView: View {
                                     self.navigateToOptionsList = true
                                 } label: {
                                     CompactSectorCard(
-                                        sectorName: "期权",
+                                        sectorName: "期权异动",
                                         icon: "doc.text.magnifyingglass",
                                         baseColor: .purple,
                                         isSpecial: false
@@ -490,23 +490,35 @@ struct IndicesContentView: View {
                 )
             }
             } else if groupName == "OptionRank" {
-            // 【修改点 3】修改按钮逻辑和显示名称
-            Button {
+                // 【修改点 3】修改按钮逻辑和显示名称
+                Button {
                 // 【修改点】将原来的 .viewOptionsRank 改为 .viewBigOrders
-        // 这样点击这里就会扣 50 点
-        if usageManager.canProceed(authManager: authManager, action: .viewBigOrders) {
-                    self.navigateToBigOrders = true // 触发跳转到大单页面
-                } else {
-                    self.showSubscriptionSheet = true
+                // 这样点击这里就会扣 50 点
+                if usageManager.canProceed(authManager: authManager, action: .viewBigOrders) {
+                        self.navigateToBigOrders = true // 触发跳转到大单页面
+                    } else {
+                        self.showSubscriptionSheet = true
+                    }
+                } label: {
+                    CompactSectorCard(
+                        sectorName: "期权大单", // 【修改】强制显示名称为“期权大单”
+                        icon: getIcon(for: groupName), // 图标保持不变 (或者你可以去 getIcon 改)
+                        baseColor: .indigo,
+                        isSpecial: true // 【修改】设为 true，这样 CompactSectorCard 就会直接显示 sectorName 而不去查表
+                    )
                 }
-            } label: {
-                CompactSectorCard(
-                    sectorName: "期权大单", // 【修改】强制显示名称为“期权大单”
-                    icon: getIcon(for: groupName), // 图标保持不变 (或者你可以去 getIcon 改)
-                    baseColor: .indigo,
-                    isSpecial: true // 【修改】设为 true，这样 CompactSectorCard 就会直接显示 sectorName 而不去查表
-                )
-            }
+            // 【新增】专门处理 PE_Volume_up (放量反转)，开启特殊配色
+            }else if groupName == "PE_Volume_up", let sector = sectors.first(where: { $0.name == groupName }) {
+                Button {
+                    handleSectorClick(sector) // 保持原有的点击跳转逻辑
+                } label: {
+                    CompactSectorCard(
+                        sectorName: sector.name,
+                        icon: getIcon(for: sector.name),
+                        baseColor: .indigo, // 设置为靛蓝色或紫色，让阴影颜色(shadow)与渐变色更协调
+                        isSpecial: true     // 【关键】设为 true，触发 [.blue, .purple] 渐变
+                    )
+                }
         } else if let sector = sectors.first(where: { $0.name == groupName }) {
             Button {
                 handleSectorClick(sector)
@@ -813,10 +825,17 @@ struct CompactSectorCard: View {
     @EnvironmentObject var dataService: DataService
     
     private var displayName: String {
-        if isSpecial { return sectorName }
+        // 【修改前】
+        // if isSpecial { return sectorName } 
+        // 这一行导致了直接返回英文 Key，删掉或注释掉它
+        
+        // 【修改后】
+        // 1. 优先查表 (version.json 中的 group_display_names)
         if let remoteName = dataService.groupDisplayMap[sectorName] {
             return remoteName
         }
+        
+        // 2. 查不到（比如"期权大单"这种手动写的中文，或者没有配置的key），就直接显示原名
         return sectorName.replacingOccurrences(of: "_", with: " ")
     }
     
@@ -838,7 +857,7 @@ struct CompactSectorCard: View {
         .frame(height: 65)
         .background(
             LinearGradient(
-                gradient: Gradient(colors: isSpecial ? [.blue, .blue] : [baseColor.opacity(0.8), baseColor.opacity(0.5)]),
+                gradient: Gradient(colors: isSpecial ? [.purple, .blue] : [baseColor.opacity(0.8), baseColor.opacity(0.5)]),
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )

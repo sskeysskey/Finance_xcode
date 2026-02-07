@@ -34,32 +34,36 @@ struct BacktestView: View {
         return Array(Set(results)).sorted() // 去重并排序
     }
     
-    // 计算属性：查找 Earning History
-    // 返回格式：[(CategoryName, [DateStrings])]
-    private var foundHistory: [(category: String, dates: [String])] {
+    // MARK: - 修改点 1: 重构数据聚合逻辑
+    // 改为：[(日期, [策略组名])]，按日期降序排列
+    private var foundHistory: [(date: String, categories: [String])] {
         let target = symbol.uppercased()
-        var results: [(String, [String])] = []
+        // 临时字典：Key = 日期, Value = [策略组名]
+        var tempDateMap: [String: [String]] = [:]
         
-        // 遍历 DataService 中已加载的 earningHistoryData
-        // 结构: [Category : [Date : [SymbolList]]]
+        // 遍历原始数据: [Category : [Date : [SymbolList]]]
         for (category, dateMap) in dataService.earningHistoryData {
-            var matchedDates: [String] = []
-            
             for (date, symbolList) in dateMap {
-                // 检查 symbol 是否在列表里 (忽略大小写)
+                // 检查 symbol 是否在当天的列表中
                 if symbolList.contains(where: { $0.uppercased() == target }) {
-                    matchedDates.append(date)
+                    // 如果存在，将该 category 加入到该日期的列表中
+                    if tempDateMap[date] == nil {
+                        tempDateMap[date] = []
+                    }
+                    tempDateMap[date]?.append(category)
                 }
-            }
-            
-            if !matchedDates.isEmpty {
-                // 日期降序排列 (最新的在上面)
-                results.append((category, matchedDates.sorted(by: >)))
             }
         }
         
-        // 按分类名称排序
-        return results.sorted { $0.0 < $1.0 }
+        // 转换为数组并排序
+        // 1. Map 字典为元组数组
+        // 2. 内部 categories 排序 (字母顺序)
+        // 3. 外部 date 排序 (降序，最近的日期在最上面)
+        let results = tempDateMap.map { (date, categories) in
+            return (date: date, categories: categories.sorted())
+        }.sorted { $0.date > $1.date }
+        
+        return results
     }
     
     var body: some View {
@@ -90,23 +94,29 @@ struct BacktestView: View {
                 .foregroundColor(.green) // 对应 Python 中的 success_green
             }
             
-            // MARK: - 2. 历史记录区域
+            // MARK: - 2. 历史记录区域 (修改点 2: UI渲染逻辑)
             Section {
                 if foundHistory.isEmpty {
                     Text("未找到历史复盘记录")
                         .foregroundColor(.secondary)
                         .italic()
                 } else {
-                    ForEach(foundHistory, id: \.category) { item in
+                    // 这里 item.date 是日期，item.categories 是当天的策略列表
+                    ForEach(foundHistory, id: \.date) { item in
                         DisclosureGroup(
                             content: {
-                                ForEach(item.dates, id: \.self) { date in
+                                ForEach(item.categories, id: \.self) { category in
                                     HStack {
-                                        Image(systemName: "calendar")
-                                            .foregroundColor(.gray)
+                                        // 换个图标表示“策略/组别”
+                                        Image(systemName: "tag.fill")
+                                            .foregroundColor(.blue) // 使用蓝色区分
                                             .font(.system(size: 12))
-                                        Text(date)
-                                            .font(.system(.body, design: .monospaced))
+                                        
+                                        // 显示策略名 (处理掉下划线)
+                                        Text(formatName(category))
+                                            .font(.system(.body, design: .rounded))
+                                        
+                                        Spacer()
                                     }
                                     .padding(.leading, 10)
                                     .padding(.vertical, 2)
@@ -114,11 +124,15 @@ struct BacktestView: View {
                             },
                             label: {
                                 HStack {
-                                    Text(formatName(item.category))
+                                    // 标题显示日期
+                                    Text(item.date)
                                         .font(.headline)
                                         .foregroundColor(.primary)
+                                    
                                     Spacer()
-                                    Text("\(item.dates.count) 次")
+                                    
+                                    // 计数显示：当天命中了几个策略
+                                    Text("\(item.categories.count) 组")
                                         .font(.caption)
                                         .padding(4)
                                         .background(Color.gray.opacity(0.2))
@@ -133,7 +147,7 @@ struct BacktestView: View {
             } header: {
                 HStack {
                     Image(systemName: "clock.arrow.circlepath")
-                    Text("复盘历史记录")
+                    Text("复盘历史记录 (按日期)")
                 }
                 .font(.system(size: 14, weight: .bold))
                 .foregroundColor(.green) // 对应 Python 中的 success_green
