@@ -422,6 +422,9 @@ struct OptionsListView: View {
     @State private var selectedSymbol: String?
     @State private var navigateToDetail = false
     @State private var showSubscriptionSheet = false
+
+    // 【修改状态变量名，或者直接复用 navigateToRank，这里建议复用但改个注释】
+    @State private var navigateToBigOrders = false // 原 navigateToRank
     
     // 【新增】控制跳转到榜单页面
     @State private var navigateToRank = false
@@ -542,30 +545,33 @@ struct OptionsListView: View {
                     
                     // 原有的 Rank 按钮
                     Button(action: {
+                        // 复用原来的权限检查，或者创建新的枚举 .viewBigOrders
                         if usageManager.canProceed(authManager: authManager, action: .viewOptionsRank) {
-                            self.navigateToRank = true
+                            self.navigateToBigOrders = true
                         } else {
                             self.showSubscriptionSheet = true
                         }
                     }) {
                         HStack(spacing: 4) {
-                            Image(systemName: "chart.line.uptrend.xyaxis")
-                                .font(.system(size: 12, weight: .bold))
-                            Text("涨跌预测榜")
+                            // 图标改为美元符号或列表符号，体现“大单”
+                            Image(systemName: "dollarsign.circle.fill") 
+                                .font(.system(size: 14, weight: .bold))
+                            Text("期权大单") // 修改文字
                                 .font(.system(size: 13, weight: .bold))
                         }
                         .padding(.vertical, 6)
                         .padding(.horizontal, 12)
                         .foregroundColor(.white)
                         .background(
+                            // 改用深金色/黑金渐变，或者保持蓝紫色，这里用蓝紫显得科技感
                             LinearGradient(
-                                gradient: Gradient(colors: [Color.blue, Color.indigo]),
+                                gradient: Gradient(colors: [Color.purple, Color.blue]),
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
                         .clipShape(Capsule())
-                        .shadow(color: Color.blue.opacity(0.3), radius: 4, x: 0, y: 2)
+                        .shadow(color: Color.purple.opacity(0.3), radius: 4, x: 0, y: 2)
                         .overlay(
                             Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1)
                         )
@@ -578,9 +584,9 @@ struct OptionsListView: View {
                 OptionsDetailView(symbol: sym)
             }
         }
-        // 【新增】跳转目的地
-        .navigationDestination(isPresented: $navigateToRank) {
-            OptionsRankView()
+        // 【修改】跳转目的地
+        .navigationDestination(isPresented: $navigateToBigOrders) {
+            OptionBigOrdersView() // 跳转到新页面
         }
         // 【新增】跳转目的地
         .navigationDestination(isPresented: $navigateToChart) {
@@ -1273,5 +1279,246 @@ struct OptionCellView: View {
         case .center: return .center
         default: return .leading
         }
+    }
+}
+
+// MARK: - 【新增】期权大单页面 (替代原 OptionsRankView)
+struct OptionBigOrdersView: View {
+    @EnvironmentObject var dataService: DataService
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    
+    // 跳转详情
+    @State private var selectedSymbol: String?
+    @State private var navigateToDetail = false
+    @State private var showSubscriptionSheet = false
+    
+    var body: some View {
+        ZStack {
+            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+            
+            if dataService.optionBigOrders.isEmpty {
+                VStack(spacing: 16) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 50))
+                        .foregroundColor(.gray)
+                    Text("暂无大单数据")
+                        .foregroundColor(.secondary)
+                    Text("请确保 Options_History 文件已更新")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        // 顶部说明
+                        HStack {
+                            Image(systemName: "chart.bar.doc.horizontal.fill")
+                                .foregroundColor(.blue)
+                            Text("机构资金流向监控")
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("\(dataService.optionBigOrders.count) 笔交易")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                        .padding(.horizontal)
+                        .padding(.top, 10)
+                        
+                        ForEach(dataService.optionBigOrders) { order in
+                            BigOrderCard(order: order)
+                                .onTapGesture {
+                                    handleSelection(order.symbol)
+                                }
+                        }
+                    }
+                    .padding(.bottom, 20)
+                }
+            }
+        }
+        .navigationTitle("期权大单")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $navigateToDetail) {
+            if let sym = selectedSymbol {
+                OptionsDetailView(symbol: sym)
+            }
+        }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+    }
+    
+    private func handleSelection(_ symbol: String) {
+        if usageManager.canProceed(authManager: authManager, action: .viewOptionsDetail) {
+            self.selectedSymbol = symbol
+            self.navigateToDetail = true
+        } else {
+            self.showSubscriptionSheet = true
+        }
+    }
+}
+
+// 单个大单卡片视图
+struct BigOrderCard: View {
+    let order: OptionBigOrder
+    @EnvironmentObject var dataService: DataService
+    
+    // 逻辑：Call 为红色(看涨)，Put 为绿色(看跌)
+    // 如果你的 App 习惯相反，请互换颜色
+    var isCall: Bool {
+        return order.type.uppercased().contains("CALL") || order.type.uppercased() == "C"
+    }
+    
+    var themeColor: Color {
+        isCall ? .red : .green
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // 上半部分：主要信息
+            HStack(alignment: .center) {
+                // 1. Symbol + Name
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(order.symbol)
+                            .font(.title3)
+                            .fontWeight(.heavy)
+                            .foregroundColor(.primary)
+                        
+                        // Type Badge
+                        Text(isCall ? "CALL" : "PUT")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(themeColor)
+                            .cornerRadius(4)
+                    }
+                    
+                    // 获取中文名称
+                    let info = getInfo(for: order.symbol)
+                    if !info.name.isEmpty {
+                        Text(info.name)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+                
+                // 2. 金额 (Price) - 重点突出
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(formatLargeNumber(order.price))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(themeColor)
+                    
+                    Text("成交额")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(16)
+            
+            Divider()
+                .padding(.horizontal, 16)
+            
+            // 下半部分：详细参数
+            HStack(spacing: 0) {
+                // Expiry
+                DetailColumn(title: "到期日", value: formatDate(order.expiry))
+                
+                // Strike
+                DetailColumn(title: "行权价", value: order.strike)
+                
+                // Distance (加粗显示，因为很重要)
+                VStack(spacing: 4) {
+                    Text("价外程度")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text(order.distance)
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(order.distance.contains("-") ? .green : .red)
+                }
+                .frame(maxWidth: .infinity)
+                
+                // 1-Day Change
+                VStack(spacing: 4) {
+                    Text("权利金变动")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text(formatChange(order.dayChange))
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.vertical, 12)
+            .background(Color(UIColor.secondarySystemGroupedBackground)) // 略微不同的背景色
+        }
+        .background(Color(UIColor.systemBackground))
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
+        .padding(.horizontal, 16)
+    }
+    
+    // 辅助视图：列
+    struct DetailColumn: View {
+        let title: String
+        let value: String
+        
+        var body: some View {
+            VStack(spacing: 4) {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Text(value)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+    
+    // 格式化金额 (e.g. 17903952 -> $17.9M)
+    func formatLargeNumber(_ value: Double) -> String {
+        if value >= 1_000_000_000 {
+            return String(format: "$%.2fB", value / 1_000_000_000)
+        } else if value >= 1_000_000 {
+            return String(format: "$%.2fM", value / 1_000_000)
+        } else if value >= 1_000 {
+            return String(format: "$%.0fK", value / 1_000)
+        } else {
+            return String(format: "$%.0f", value)
+        }
+    }
+    
+    // 简单格式化日期 (2026/03/20 -> 03/20)
+    func formatDate(_ dateStr: String) -> String {
+        let parts = dateStr.split(separator: "/")
+        if parts.count >= 3 {
+            return "\(parts[1])/\(parts[2])"
+        }
+        return dateStr
+    }
+    
+    func formatChange(_ change: String) -> String {
+        // 如果是纯数字，可以加个 + 号
+        if let val = Double(change), val > 0 {
+            return "+\(change)"
+        }
+        return change
+    }
+    
+    private func getInfo(for symbol: String) -> (name: String, tags: [String]) {
+        let upperSymbol = symbol.uppercased()
+        if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == upperSymbol }) {
+            return (stock.name, stock.tag)
+        }
+        if let etf = dataService.descriptionData?.etfs.first(where: { $0.symbol.uppercased() == upperSymbol }) {
+            return (etf.name, etf.tag)
+        }
+        return ("", [])
     }
 }

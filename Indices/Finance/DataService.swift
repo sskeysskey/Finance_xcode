@@ -35,6 +35,19 @@ final class DataService1 {
     }
 }
 
+struct OptionBigOrder: Identifiable, Codable {
+    let id = UUID()
+    let date: String
+    let symbol: String
+    let type: String       // Calls / Puts
+    let expiry: String
+    let strike: String
+    let distance: String
+    // let openInterest: String // 不显示，但在解析时会遇到，跳过即可
+    let dayChange: String  // 1-Day Chg
+    let price: Double      // Price (成交总额/名义价值)
+}
+
 // MARK: - 新增：High/Low 数据模型
 struct HighLowItem: Identifiable, Codable {
     var id = UUID()
@@ -207,6 +220,9 @@ class DataService: ObservableObject {
     // 【新增】存储更新时间文案
     @Published var ecoDataTimestamp: String? = nil
     @Published var introSymbolTimestamp: String? = nil
+
+    // 【新增】存储期权大单数据
+    @Published var optionBigOrders: [OptionBigOrder] = []
     
     // 【新增】UserDefaults Keys
     private let ecoDataKey = "FinanceAppEcoDataTime"
@@ -458,6 +474,8 @@ class DataService: ObservableObject {
             // 【新增】加载 10年新高数据
             await self.loadTenYearHighData()
             await self.loadOptionsData() // 加载期权数据
+            // 【新增】加载期权大单 CSV
+            await self.loadOptionBigOrders() 
             await self.loadEarningHistory()
 
             await MainActor.run {
@@ -468,6 +486,66 @@ class DataService: ObservableObject {
             
             // 3. 启动网络请求 (本身就是 async 的)
             await self.loadMarketCapData()
+        }
+    }
+
+    // 4. 添加具体的加载方法
+    private func loadOptionBigOrders() async {
+        // 自动匹配 Options_History_xxxxxx.csv
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "Options_History") else {
+            print("DataService: Options_History 文件未找到")
+            return
+        }
+
+        do {
+            let content = try String(contentsOf: url, encoding: .utf8)
+            let lines = content.split(separator: "\n", omittingEmptySubsequences: true)
+            
+            var newOrders: [OptionBigOrder] = []
+            
+            // 遍历行，跳过表头
+            for (index, line) in lines.enumerated() {
+                if index == 0 { continue } // 跳过 Header
+                
+                // CSV 格式: Run_Date,Symbol,Type,Expiry Date,Strike,Distance,OI,1-Day Chg,Price
+                let parts = line.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
+                
+                if parts.count >= 9 {
+                    let date = parts[0]
+                    let symbol = parts[1]
+                    let type = parts[2]
+                    let expiry = parts[3]
+                    let strike = parts[4]
+                    let distance = parts[5]
+                    // parts[6] 是 OI，跳过
+                    let change = parts[7]
+                    let priceStr = parts[8]
+                    
+                    let price = Double(priceStr) ?? 0.0
+                    
+                    let order = OptionBigOrder(
+                        date: date,
+                        symbol: symbol,
+                        type: type,
+                        expiry: expiry,
+                        strike: strike,
+                        distance: distance,
+                        dayChange: change,
+                        price: price
+                    )
+                    newOrders.append(order)
+                }
+            }
+            
+            // 按金额倒序排列 (金额最大的在前面)
+            newOrders.sort { $0.price > $1.price }
+            
+            await MainActor.run {
+                self.optionBigOrders = newOrders
+            }
+            
+        } catch {
+            print("DataService: 解析 Options_History 失败: \(error)")
         }
     }
 
