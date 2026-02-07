@@ -332,8 +332,8 @@ struct IndicesContentView: View {
     // 【新增】控制跳转到“10年新高”页面
     @State private var navigateToTenYearHigh = false
 
-    // 【新增】控制跳转到期权预测 (OptionRank) 页面
-    @State private var navigateToOptionRank = false 
+    // 原代码: @State private var navigateToOptionRank = false 
+    @State private var navigateToBigOrders = false 
     
     // 【新增】控制跳转到期权列表页面
     @State private var navigateToOptionsList = false
@@ -432,9 +432,9 @@ struct IndicesContentView: View {
                 .navigationDestination(isPresented: $navigateToTenYearHigh) {
                     TenYearHighView()
                 }
-                // 【新增】处理 OptionRank 跳转
-                .navigationDestination(isPresented: $navigateToOptionRank) {
-                    OptionsRankView()
+                // 【修改点 2】修改导航目的地，指向 OptionBigOrdersView
+                .navigationDestination(isPresented: $navigateToBigOrders) {
+                    OptionBigOrdersView()
                 }
                 // 【新增】跳转到期权列表 (现在这部分代码在 Options.swift 中)
                 .navigationDestination(isPresented: $navigateToOptionsList) {
@@ -490,21 +490,21 @@ struct IndicesContentView: View {
                 )
             }
             } else if groupName == "OptionRank" {
-            // 【新增】期权预测按钮逻辑
+            // 【修改点 3】修改按钮逻辑和显示名称
             Button {
-                // 这里假设你的 UsageManager 有对应的枚举 .viewOptionsRank
-                // 如果没有，请确保在 UsageManager 中添加，或者复用 .openSpecialList
-                if usageManager.canProceed(authManager: authManager, action: .viewOptionsRank) {
-                    self.navigateToOptionRank = true
+                // 【修改点】将原来的 .viewOptionsRank 改为 .viewBigOrders
+        // 这样点击这里就会扣 50 点
+        if usageManager.canProceed(authManager: authManager, action: .viewBigOrders) {
+                    self.navigateToBigOrders = true // 触发跳转到大单页面
                 } else {
                     self.showSubscriptionSheet = true
                 }
             } label: {
                 CompactSectorCard(
-                    sectorName: groupName, // 这里会去查 groupDisplayMap 显示 "期权预测"
-                    icon: getIcon(for: groupName),
-                    baseColor: .indigo, // 使用紫色/靛蓝色区分，或者用 .blue 保持一致
-                    isSpecial: false
+                    sectorName: "期权大单", // 【修改】强制显示名称为“期权大单”
+                    icon: getIcon(for: groupName), // 图标保持不变 (或者你可以去 getIcon 改)
+                    baseColor: .indigo,
+                    isSpecial: true // 【修改】设为 true，这样 CompactSectorCard 就会直接显示 sectorName 而不去查表
                 )
             }
         } else if let sector = sectors.first(where: { $0.name == groupName }) {

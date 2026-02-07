@@ -1328,6 +1328,7 @@ struct OptionBigOrdersView: View {
     @State private var selectedSymbol: String?
     @State private var navigateToDetail = false
     @State private var showSubscriptionSheet = false
+    @State private var navigateToRank = false 
     
     // --- 数据结构定义 ---
     
@@ -1415,11 +1416,35 @@ struct OptionBigOrdersView: View {
         }
         .navigationTitle("期权大单")
         .navigationBarTitleDisplayMode(.inline)
+        
+        // 【修改点 2】在 Toolbar 添加“期权榜单”入口
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    if usageManager.canProceed(authManager: authManager, action: .viewOptionsRank) {
+                        self.navigateToRank = true
+                    } else {
+                        self.showSubscriptionSheet = true
+                    }
+                }) {
+                    // 你可以使用文字或图标，这里使用文字更直观
+                    Text("期权榜单")
+                        .font(.system(size: 14, weight: .bold))
+                }
+            }
+        }
+
         .navigationDestination(isPresented: $navigateToDetail) {
             if let sym = selectedSymbol {
                 OptionsDetailView(symbol: sym)
             }
         }
+        
+        // 【修改点 3】添加跳转目的地：OptionsRankView
+        .navigationDestination(isPresented: $navigateToRank) {
+            OptionsRankView()
+        }
+
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
     }
     

@@ -12,6 +12,8 @@ enum UsageAction: String {
     case openSpecialList = "open_special_list" // 【新增】打开特殊榜单 (52周新低/10年新高)
     case viewOptionsDetail = "view_options_detail" // 【新增】期权详情页
     case viewOptionsRank = "view_options_rank" // 【新增】期权涨跌幅榜单
+    // 【新增】专门用于期权大单的动作 ID
+    case viewBigOrders = "view_big_orders"
 }
 
 @MainActor
@@ -31,7 +33,9 @@ class UsageManager: ObservableObject {
         UsageAction.compare.rawValue: 1,
         UsageAction.openSpecialList.rawValue: 10,
         UsageAction.viewOptionsDetail.rawValue: 10,
-        UsageAction.viewOptionsRank.rawValue: 30
+        UsageAction.viewOptionsRank.rawValue: 30,
+        // 【新增】期权大单默认扣 50
+        UsageAction.viewBigOrders.rawValue: 50
     ]
     
     private let countKey = "FinanceDailyUsageCount"
