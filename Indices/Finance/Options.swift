@@ -1293,6 +1293,61 @@ struct OptionBigOrdersView: View {
     @State private var navigateToDetail = false
     @State private var showSubscriptionSheet = false
     
+    // --- 数据结构定义 ---
+    
+    // 1. 最内层：Symbol 分组
+    struct SymbolGroup: Identifiable {
+        var id: String { symbol }
+        let symbol: String
+        var orders: [OptionBigOrder]
+    }
+    
+    // 2. 最外层：日期分组
+    struct DateGroup: Identifiable {
+        var id: String { date }
+        let date: String
+        var symbolGroups: [SymbolGroup]
+    }
+    
+    // --- 分组逻辑 ---
+    
+    var groupedData: [DateGroup] {
+        var dateGroups: [DateGroup] = []
+        let source = dataService.optionBigOrders // 假设已按 日期 > Symbol > 价格 排序
+        
+        for order in source {
+            // A. 处理日期层级
+            if dateGroups.isEmpty || dateGroups.last?.date != order.date {
+                // 如果是新日期，创建一个新的 DateGroup
+                let newDateGroup = DateGroup(date: order.date, symbolGroups: [])
+                dateGroups.append(newDateGroup)
+            }
+            
+            // 获取当前正在处理的 DateGroup 的索引
+            let dateIndex = dateGroups.count - 1
+            
+            // B. 处理 Symbol 层级 (在当前的 DateGroup 内)
+            var currentSymbolGroups = dateGroups[dateIndex].symbolGroups
+            
+            if currentSymbolGroups.isEmpty || currentSymbolGroups.last?.symbol != order.symbol {
+                // 如果是该日期下的新 Symbol，创建新的 SymbolGroup
+                let newSymbolGroup = SymbolGroup(symbol: order.symbol, orders: [])
+                currentSymbolGroups.append(newSymbolGroup)
+            }
+            
+            // 获取当前正在处理的 SymbolGroup 的索引
+            let symbolIndex = currentSymbolGroups.count - 1
+            
+            // C. 添加订单
+            currentSymbolGroups[symbolIndex].orders.append(order)
+            
+            // D. 回写数据 (因为 Struct 是值类型)
+            dateGroups[dateIndex].symbolGroups = currentSymbolGroups
+        }
+        
+        return dateGroups
+    }
+    
     var body: some View {
         ZStack {
             Color(UIColor.systemGroupedBackground).ignoresSafeArea()
@@ -1310,28 +1365,12 @@ struct OptionBigOrdersView: View {
                 }
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 12) {
-                        // 顶部说明
-                        HStack {
-                            Image(systemName: "chart.bar.doc.horizontal.fill")
-                                .foregroundColor(.blue)
-                            Text("机构资金流向监控")
-                                .font(.subheadline)
-                                .fontWeight(.bold)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text("\(dataService.optionBigOrders.count) 笔交易")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                        .padding(.horizontal)
-                        .padding(.top, 10)
-                        
-                        ForEach(dataService.optionBigOrders) { order in
-                            BigOrderCard(order: order)
-                                .onTapGesture {
-                                    handleSelection(order.symbol)
-                                }
+                    LazyVStack(spacing: 20) { // 日期组之间的间距大一点
+                        // 【第一层循环】遍历日期
+                        ForEach(groupedData) { dateGroup in
+                            DateGroupView(dateGroup: dateGroup) { symbol in
+                                handleSelection(symbol)
+                            }
                         }
                     }
                     .padding(.bottom, 20)
@@ -1358,199 +1397,147 @@ struct OptionBigOrdersView: View {
     }
 }
 
-// 单个大单卡片视图
-struct BigOrderCard: View {
-    let order: OptionBigOrder
+// MARK: - 【第一层视图】日期分组 (DateGroupView)
+struct DateGroupView: View {
+    let dateGroup: OptionBigOrdersView.DateGroup
+    let onTapOrder: (String) -> Void
+    
+    // 默认展开最新的日期，其他日期折叠？或者全部展开。这里默认展开。
+    @State private var isExpanded: Bool = true
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // 1. 日期头 (点击折叠)
+            Button(action: {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    isExpanded.toggle()
+                }
+            }) {
+                HStack {
+                    Image(systemName: "calendar")
+                        .foregroundColor(.blue)
+                    
+                    Text(formatDateFull(dateGroup.date)) // 显示 "2026年02月07日"
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                    
+                    Spacer()
+                    
+                    // 统计该日有多少个 Symbol 发生异动
+                    Text("\(dateGroup.symbolGroups.count) 只股票")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color(UIColor.systemGroupedBackground)) // 与背景融合，或者稍微亮一点
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            // 2. 日期下的 Symbol 列表
+            if isExpanded {
+                VStack(spacing: 12) {
+                    // 【第二层循环】遍历 Symbol
+                    ForEach(dateGroup.symbolGroups) { symbolGroup in
+                        SymbolGroupView(group: symbolGroup, onTapOrder: onTapOrder)
+                    }
+                }
+                .padding(.top, 8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        // 不需要额外的背景，直接平铺在 ScrollView 上看起来更像 Section Header
+    }
+    
+    // 辅助格式化: 2026-02-07 -> 2026年02月07日 (可选)
+    func formatDateFull(_ dateStr: String) -> String {
+        return dateStr 
+    }
+}
+
+// MARK: - 【第二层视图】Symbol 分组 (SymbolGroupView)
+struct SymbolGroupView: View {
+    let group: OptionBigOrdersView.SymbolGroup
+    let onTapOrder: (String) -> Void
+    
     @EnvironmentObject var dataService: DataService
     
-    // 1. 保持原有的 Call/Put 颜色定义 (用于左上角的 CALL/PUT 标签)
-    var isCall: Bool {
-        return order.type.uppercased().contains("CALL") || order.type.uppercased() == "C"
-    }
-    
-    var themeColor: Color {
-        isCall ? .red : .green
-    }
-    
-    // 2. 【新增】定义成交额颜色 (跟价外程度 Distance 保持一致)
-    // 逻辑：Distance 包含 "-" (负数) 显示绿色，否则显示红色
-    var priceColor: Color {
-        return order.distance.contains("-") ? .green : .red
-    }
+    // 【修改点】将 true 改为 false，默认折叠
+    @State private var isExpanded: Bool = false 
     
     var body: some View {
         VStack(spacing: 0) {
             
-            // --- 顶部 Header：日期 + Symbol ---
-            HStack(alignment: .center) {
-                // 左侧：Symbol + 标签
-                HStack(spacing: 8) {
-                    Text(order.symbol)
+            // 1. 组头 (Header) - 点击可折叠/展开
+            Button(action: {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    isExpanded.toggle()
+                }
+            }) {
+                HStack {
+                    // Symbol
+                    Text(group.symbol)
                         .font(.title3)
                         .fontWeight(.heavy)
                         .foregroundColor(.primary)
                     
-                    // Type Badge (CALL/PUT)
-                    Text(isCall ? "CALL" : "PUT")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(themeColor)
-                        .cornerRadius(6)
-                }
-                
-                Spacer()
-                
-                // 【新增】右上角显示 Run_Date
-                HStack(spacing: 4) {
-                    Image(systemName: "calendar")
-                        .font(.caption2)
-                    Text(order.date) // 显示 Run_Date
-                        .font(.caption)
-                        .fontWeight(.medium)
-                }
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color(UIColor.secondarySystemBackground))
-                .cornerRadius(8)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 8) // 稍微减少底部内边距
-            
-            // --- 中间：金额展示 ---
-            HStack {
-                // 中文名称
-                let info = getInfo(for: order.symbol)
-                if !info.name.isEmpty {
-                    Text(info.name)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                } else {
-                    Text("美股期权")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary.opacity(0.5))
-                }
-                
-                Spacer()
-                
-                // 金额大字
-                HStack(alignment: .lastTextBaseline, spacing: 4) {
-                    Text(formatLargeNumber(order.price))
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                        // 【修改点】这里改成 priceColor (基于 Distance)
-                        .foregroundColor(priceColor) 
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
-            
-            // 分割线
-            Divider()
-                .padding(.horizontal, 16)
-            
-            // --- 底部：详细参数 (4列布局) ---
-            HStack(spacing: 0) {
-                // 1. Expiry
-                DetailColumn(
-                    title: "到期日",
-                    value: formatDate(order.expiry),
-                    isHighlight: false
-                )
-                
-                // 2. Strike
-                DetailColumn(
-                    title: "行权价",
-                    value: order.strike,
-                    isHighlight: false
-                )
-                
-                // 3. Distance (加粗高亮)
-                DetailColumn(
-                    title: "价外程度",
-                    value: order.distance,
-                    isHighlight: true,
-                    highlightColor: priceColor // 这里也用 priceColor
-                )
-                
-                // 4. Change
-                DetailColumn(
-                    title: "权利金变动",
-                    value: formatChange(order.dayChange),
-                    isHighlight: false
-                )
-            }
-            .padding(.vertical, 12)
-            .background(Color(UIColor.secondarySystemGroupedBackground).opacity(0.5)) // 极淡的背景
-        }
-        .background(Color(UIColor.systemBackground))
-        .cornerRadius(16) // 圆角稍微大一点，更现代
-        .shadow(color: Color.black.opacity(0.05), radius: 6, x: 0, y: 3) // 阴影柔和一点
-        .padding(.horizontal, 16)
-    }
-    
-    // 辅助视图：列
-    struct DetailColumn: View {
-        let title: String
-        let value: String
-        var isHighlight: Bool = false
-        var highlightColor: Color = .primary
-        
-        var body: some View {
-            VStack(spacing: 4) {
-                Text(title)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                
-                Text(value)
-                    .font(.system(size: 13, weight: isHighlight ? .bold : .medium))
-                    .foregroundColor(isHighlight ? highlightColor : .primary)
-            }
-            .frame(maxWidth: .infinity)
-            // 加上侧边分割线（除了最后一个）
-            .overlay(
-                HStack {
+                    // 中文名
+                    let info = getInfo(for: group.symbol)
+                    if !info.name.isEmpty {
+                        Text(info.name)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    
                     Spacer()
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.2))
-                        .frame(width: 1, height: 20)
-                },
-                alignment: .trailing
-            )
+                    
+                    // 订单数量角标
+                    Text("\(group.orders.count)单")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.1))
+                        .foregroundColor(.blue)
+                        .cornerRadius(6)
+                    
+                    // 折叠箭头
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color(UIColor.secondarySystemGroupedBackground))
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            // 2. 组内容 (大单卡片列表)
+            if isExpanded {
+                VStack(spacing: 12) {
+                    // 【第三层循环】遍历订单
+                    ForEach(group.orders) { order in
+                        BigOrderCard(order: order)
+                            .onTapGesture {
+                                onTapOrder(order.symbol)
+                            }
+                    }
+                }
+                .padding(.vertical, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
-    }
-    
-    // 格式化金额 (e.g. 17903952 -> $17.9M)
-    func formatLargeNumber(_ value: Double) -> String {
-        if value >= 1_000_000_000 {
-            return String(format: "$%.2fB", value / 1_000_000_000)
-        } else if value >= 1_000_000 {
-            return String(format: "$%.2fM", value / 1_000_000)
-        } else if value >= 1_000 {
-            return String(format: "$%.0fK", value / 1_000)
-        } else {
-            return String(format: "$%.0f", value)
-        }
-    }
-    
-    // 简单格式化日期 (2026/03/20 -> 03/20)
-    func formatDate(_ dateStr: String) -> String {
-        let parts = dateStr.split(separator: "/")
-        if parts.count >= 3 {
-            return "\(parts[1])/\(parts[2])" // 只显示 MM/dd
-        }
-        return dateStr
-    }
-    
-    func formatChange(_ change: String) -> String {
-        // 如果是纯数字，可以加个 + 号
-        if let val = Double(change), val > 0 {
-            return "+\(change)"
-        }
-        return change
+        .background(Color(UIColor.secondarySystemGroupedBackground).opacity(0.5))
+        .cornerRadius(16)
+        .padding(.horizontal, 16)
     }
     
     private func getInfo(for symbol: String) -> (name: String, tags: [String]) {
@@ -1562,5 +1549,114 @@ struct BigOrderCard: View {
             return (etf.name, etf.tag)
         }
         return ("", [])
+    }
+}
+
+// MARK: - 【第三层视图】单个大单卡片 (BigOrderCard)
+struct BigOrderCard: View {
+    let order: OptionBigOrder
+    @EnvironmentObject var dataService: DataService
+    
+    // 1. Call/Put 颜色
+    var isCall: Bool {
+        return order.type.uppercased().contains("CALL") || order.type.uppercased() == "C"
+    }
+    var themeColor: Color { isCall ? .red : .green }
+    
+    // 2. 成交额颜色
+    var priceColor: Color {
+        return order.distance.contains("-") ? .green : .red
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            
+            // --- 顶部行：Type + Price ---
+            // 【修改】移除了右上角的 Date 显示，因为最外层已经是 Date 分组了，这里显示冗余
+            
+            HStack(alignment: .center) {
+                // Type Badge
+                Text(isCall ? "CALL" : "PUT")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(themeColor)
+                    .cornerRadius(6)
+                
+                Spacer()
+                
+                // 金额
+                HStack(spacing: 2) {
+                    Text(formatLargeNumber(order.price))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(priceColor)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            
+            Divider().padding(.horizontal, 16)
+            
+            // --- 底部：详细参数 ---
+            HStack(spacing: 0) {
+                DetailColumn(title: "到期日", value: formatDate(order.expiry))
+                DetailColumn(title: "行权价", value: order.strike)
+                DetailColumn(title: "价外程度", value: order.distance, isHighlight: true, highlightColor: priceColor)
+                DetailColumn(title: "变动", value: formatChange(order.dayChange))
+            }
+            .padding(.vertical, 10)
+            .background(Color(UIColor.tertiarySystemGroupedBackground))
+        }
+        .background(Color(UIColor.systemBackground))
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.03), radius: 3, x: 0, y: 1)
+        .padding(.horizontal, 12)
+    }
+    
+    // 辅助视图：列
+    struct DetailColumn: View {
+        let title: String
+        let value: String
+        var isHighlight: Bool = false
+        var highlightColor: Color = .primary
+        
+        var body: some View {
+            VStack(spacing: 3) {
+                Text(title)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text(value)
+                    .font(.system(size: 13, weight: isHighlight ? .bold : .medium))
+                    .foregroundColor(isHighlight ? highlightColor : .primary)
+            }
+            .frame(maxWidth: .infinity)
+            .overlay(
+                HStack {
+                    Spacer()
+                    Rectangle().fill(Color.gray.opacity(0.15)).frame(width: 1, height: 16)
+                }, alignment: .trailing
+            )
+        }
+    }
+    
+    // ... 格式化函数 ...
+    func formatLargeNumber(_ value: Double) -> String {
+        if value >= 1_000_000_000 { return String(format: "$%.2fB", value / 1_000_000_000) }
+        else if value >= 1_000_000 { return String(format: "$%.2fM", value / 1_000_000) }
+        else if value >= 1_000 { return String(format: "$%.0fK", value / 1_000) }
+        else { return String(format: "$%.0f", value) }
+    }
+    
+    func formatDate(_ dateStr: String) -> String {
+        let parts = dateStr.split(separator: "/")
+        if parts.count >= 3 { return "\(parts[1])/\(parts[2])" }
+        return dateStr
+    }
+    
+    func formatChange(_ change: String) -> String {
+        if let val = Double(change), val > 0 { return "+\(change)" }
+        return change
     }
 }
