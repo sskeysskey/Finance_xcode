@@ -395,6 +395,19 @@ class UpdateManager: ObservableObject {
     }
     
     private func downloadFile(named filename: String) async -> Bool {
+        // MARK: - 【优化方案一】针对特定大文件的增量更新策略
+        // 逻辑：只有 description_ 开头的文件，才检查本地是否存在。
+        // 如果存在且文件名（含时间戳）一致，说明无需更新，直接返回 true 跳过。
+        if filename.hasPrefix("description_") {
+            if FileManagerHelper.fileExists(named: filename) {
+                print("UpdateManager: [增量优化] \(filename) 已存在且未变更，跳过下载。")
+                return true
+            }
+        }
+        
+        // 对于其他文件（如 Sectors_All, version.json 等），
+        // 即使本地有同名文件，代码也会继续执行下方的下载逻辑，并覆盖旧文件。
+        
         guard let url = URL(string: "\(serverBaseURL)/download?filename=\(filename)") else {
             print("无效的下载URL for \(filename)")
             return false
@@ -403,14 +416,11 @@ class UpdateManager: ObservableObject {
         do {
             print("正在下载最新数据: \(filename)")
             
-            // MARK: - 【修改点】优化网络请求配置
-            // 1. 缩短超时时间：文本文件通常很小，15秒足够。如果15秒下不下来，说明网络有问题，不如快速失败。
-            // 2. 禁用等待连接：避免在网络切换时无限挂起。
             var request = URLRequest(url: url)
-            request.timeoutInterval = 15 // 从 60 改为 15
-            request.cachePolicy = .reloadIgnoringLocalCacheData // 确保不读缓存
+            // 针对大文件稍微增加超时时间，或者保持 15s 也可以，取决于文件大小和网速
+            request.timeoutInterval = 20 
+            request.cachePolicy = .reloadIgnoringLocalCacheData // 确保不读缓存，强制从服务器拉取
             
-            // 使用配置更严格的 Session (可选，这里直接用 request 配置即可)
             let (data, response) = try await URLSession.shared.data(for: request)
             
             // 检查 HTTP 状态码
@@ -426,6 +436,7 @@ class UpdateManager: ObservableObject {
             }
             
             let destinationURL = FileManagerHelper.documentsDirectory.appendingPathComponent(filename)
+            // 写入文件（如果存在则覆盖）
             try data.write(to: destinationURL)
             print("成功保存: \(filename) 到 Documents")
             return true

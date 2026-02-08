@@ -1533,7 +1533,9 @@ struct SymbolGroupView: View {
     // 默认折叠
     @State private var isExpanded: Bool = false
     
-    // 【新增 1】计算属性：统计做空数量 (Green / Distance contains "-")
+    // 【新增】防止快速连击的状态锁
+    @State private var isAnimating: Bool = false
+    
     var shortCount: Int {
         group.orders.filter { $0.distance.contains("-") }.count
     }
@@ -1546,74 +1548,77 @@ struct SymbolGroupView: View {
     var body: some View {
         VStack(spacing: 0) {
             
-            // 1. 组头 (Header) - 点击可折叠/展开
-            Button(action: {
+            // 1. 组头 (Header)
+            HStack {
+                // Symbol
+                Text(group.symbol)
+                    .font(.title3)
+                    .fontWeight(.heavy)
+                    .foregroundColor(.primary)
+                
+                // 中文名
+                let info = getInfo(for: group.symbol)
+                if !info.name.isEmpty {
+                    Text(info.name)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                // 多/空 分开显示
+                HStack(spacing: 6) {
+                    if shortCount > 0 {
+                        Text("\(shortCount)单做空")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundColor(.green)
+                    }
+                    if longCount > 0 {
+                        Text("\(longCount)单做多")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundColor(.red)
+                    }
+                    if shortCount == 0 && longCount == 0 {
+                        Text("0单")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color(UIColor.tertiarySystemFill))
+                .cornerRadius(6)
+                
+                // 折叠箭头
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .contentShape(Rectangle()) // 确保点击区域完整
+            .onTapGesture {
+                // 【关键修复 1】如果正在动画中，忽略点击，防止状态错乱
+                if isAnimating { return }
+                
+                isAnimating = true
+                
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                     isExpanded.toggle()
                 }
-            }) {
-                HStack {
-                    // Symbol
-                    Text(group.symbol)
-                        .font(.title3)
-                        .fontWeight(.heavy)
-                        .foregroundColor(.primary)
-                    
-                    // 中文名
-                    let info = getInfo(for: group.symbol)
-                    if !info.name.isEmpty {
-                        Text(info.name)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                    
-                    Spacer()
-                    
-                    // 【修改点 3】替换原有的总单数显示，改为 多/空 分开显示
-                    HStack(spacing: 6) {
-                        // 显示做空 (绿色)
-                        if shortCount > 0 {
-                            Text("\(shortCount)单做空")
-                                .font(.caption)
-                                .fontWeight(.bold)
-                                .foregroundColor(.green)
-                        }
-                        
-                        // 如果同时有两种单子，加个分隔符或空格，这里直接靠 HStack 间距即可
-                        
-                        // 显示做多 (红色)
-                        if longCount > 0 {
-                            Text("\(longCount)单做多")
-                                .font(.caption)
-                                .fontWeight(.bold)
-                                .foregroundColor(.red)
-                        }
-                        
-                        // 极少情况：如果都没有（防御性代码），显示 0单
-                        if shortCount == 0 && longCount == 0 {
-                            Text("0单")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    // 背景色改为中性色，以免和红绿文字冲突 (原为 blue.opacity(0.1))
-                    .background(Color(UIColor.tertiarySystemFill)) 
-                    .cornerRadius(6)
-                    
-                    // 折叠箭头
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.secondary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                
+                // 动画结束后释放锁 (0.4s 对应上面的 response)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    isAnimating = false
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color(UIColor.secondarySystemGroupedBackground))
             }
-            .buttonStyle(PlainButtonStyle())
+            // 【关键修复 2】提高 Header 的层级，确保它永远盖在正在折叠的内容之上
+            .zIndex(1)
             
             // 2. 组内容 (大单卡片列表)
             if isExpanded {
@@ -1622,17 +1627,26 @@ struct SymbolGroupView: View {
                     ForEach(group.orders) { order in
                         BigOrderCard(order: order)
                             .onTapGesture {
-                                onTapOrder(order.symbol)
+                                // 【关键修复 3】再次确保只有在完全展开且非动画状态下才能触发跳转
+                                // 虽然 allowsHitTesting 也能做，但双重保险更安全
+                                if !isAnimating {
+                                    onTapOrder(order.symbol)
+                                }
                             }
                     }
                 }
                 .padding(.vertical, 12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
+                // 【关键修复 4】当正在关闭动画时，强制禁止内容的点击测试
+                // 这能彻底防止"幽灵点击"穿透到正在消失的卡片上
+                .allowsHitTesting(isExpanded && !isAnimating)
             }
         }
         .background(Color(UIColor.secondarySystemGroupedBackground).opacity(0.5))
         .cornerRadius(16)
         .padding(.horizontal, 16)
+        // 【关键修复 5】为整个组设置 clipped，防止子视图在动画期间溢出绘制导致误触
+        .clipped()
     }
     
     private func getInfo(for symbol: String) -> (name: String, tags: [String]) {
