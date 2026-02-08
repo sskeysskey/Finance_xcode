@@ -224,7 +224,11 @@ class SimilarViewModel: ObservableObject {
         Task {
             let dataService1 = DataService1.shared
             
-            // 1. 异步获取市值映射
+            // ==========================================
+            // 第一阶段：快速加载（本地计算 + 基础数据）
+            // ==========================================
+            
+            // 1. 异步获取市值映射 (这个通常很快，或者可以考虑缓存)
             let rows = await DatabaseManager.shared.fetchAllMarketCapData(from: "MNSPP")
             var marketCapMap: [String: Double] = [:]
             marketCapMap.reserveCapacity(rows.count)
@@ -243,7 +247,7 @@ class SimilarViewModel: ObservableObject {
                 return
             }
             
-            // 查找相似的 symbols
+            // 3. 查找相似的 symbols
             let relatedSymbolsDict = self.findSymbolsByTags(targetTagsWithWeight: targetTagsWithWeight, weightGroups: dataService1.tagsWeightConfig, data: dataService1.descriptionData1)
             
             var stocks = relatedSymbolsDict["stocks"] ?? []
@@ -251,69 +255,115 @@ class SimilarViewModel: ObservableObject {
             stocks.removeAll { $0.symbol.uppercased() == self.symbol.uppercased() }
             etfs.removeAll { $0.symbol.uppercased() == self.symbol.uppercased() }
             
-            // 3. 处理结果并异步获取财报趋势
-            // 由于需要对每个结果进行网络请求，这里使用 TaskGroup 并发处理以提高速度
-            var processedSymbols: [RelatedSymbol] = []
             let allCandidates = stocks + etfs
             
-            await withTaskGroup(of: RelatedSymbol?.self) { group in
-                for item in allCandidates {
-                    group.addTask {
-                        let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
-                        let compareValue = dataService1.compareData1[item.symbol.uppercased()] ?? ""
-                        // 过滤掉没有 compareValue 的
-                        if compareValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
-                        
-                        let allTags = item.allTags
-                        let mc = marketCapMap[item.symbol.uppercased()]
-                        
-                        // 异步获取财报趋势
-                        var trend: EarningTrend = .insufficientData
-                        let sortedEarnings = await DatabaseManager.shared.fetchEarningData(forSymbol: item.symbol).sorted { $0.date > $1.date }
-                        
-                        if sortedEarnings.count >= 2 {
-                            let latestEarning = sortedEarnings[0]
-                            let previousEarning = sortedEarnings[1]
-                            
-                            if let tableName = dataService1.getCategory(for: item.symbol) {
-                                async let latestClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: item.symbol, onDate: latestEarning.date, tableName: tableName)
-                                async let previousClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: item.symbol, onDate: previousEarning.date, tableName: tableName)
-                                
-                                if let latest = await latestClose, let previous = await previousClose {
-                                    if latestEarning.price > 0 {
-                                        trend = (latest > previous) ? .positiveAndUp : .positiveAndDown
-                                    } else {
-                                        trend = (latest > previous) ? .negativeAndUp : .negativeAndDown
-                                    }
-                                }
-                            }
-                        }
-                        
-                        return RelatedSymbol(symbol: item.symbol, totalWeight: totalWeight, compareValue: compareValue, allTags: allTags, marketCap: mc, earningTrend: trend)
-                    }
-                }
+            // 4. 【核心优化】先生成基础列表，Trend 暂时设为 .insufficientData
+            var initialSymbols: [RelatedSymbol] = allCandidates.compactMap { item in
+                let totalWeight = item.matchedTags.reduce(0.0) { $0 + $1.weight }
+                let compareValue = dataService1.compareData1[item.symbol.uppercased()] ?? ""
                 
-                for await result in group {
-                    if let res = result {
-                        processedSymbols.append(res)
-                    }
-                }
+                // 过滤掉没有 compareValue 的
+                if compareValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
+                
+                let allTags = item.allTags
+                let mc = marketCapMap[item.symbol.uppercased()]
+                
+                // 注意：这里先给默认值，不进行网络请求
+                return RelatedSymbol(
+                    symbol: item.symbol,
+                    totalWeight: totalWeight,
+                    compareValue: compareValue,
+                    allTags: allTags,
+                    marketCap: mc,
+                    earningTrend: .insufficientData // 占位符
+                )
             }
             
-            // 排序
-            let sortedSymbols = processedSymbols.sorted { a, b in
+            // 5. 排序并截取前 50
+            initialSymbols.sort { a, b in
                 if a.totalWeight != b.totalWeight { return a.totalWeight > b.totalWeight }
                 let amc = a.marketCap ?? -Double.greatestFiniteMagnitude
                 let bmc = b.marketCap ?? -Double.greatestFiniteMagnitude
                 if amc != bmc { return amc > bmc }
                 return a.symbol < b.symbol
-            }.prefix(50)
+            }
+            let finalSymbols = Array(initialSymbols.prefix(50))
             
+            // 6. 【立即更新 UI】用户此时已经可以看到列表了（虽然颜色还没出来）
             await MainActor.run {
-                self.relatedSymbols = Array(sortedSymbols)
-                self.isLoading = false
+                self.relatedSymbols = finalSymbols
+                self.isLoading = false // 停止转圈
+            }
+            
+            // ==========================================
+            // 第二阶段：静默加载（网络请求趋势数据）
+            // ==========================================
+            
+            await fetchTrendsForSymbols(finalSymbols)
+        }
+    }
+    
+    // 新增：批量/并发获取趋势数据并更新 UI
+    private func fetchTrendsForSymbols(_ symbols: [RelatedSymbol]) async {
+        // 使用 TaskGroup 并发请求
+        await withTaskGroup(of: (String, EarningTrend).self) { group in
+            for item in symbols {
+                group.addTask {
+                    let trend = await self.calculateTrend(for: item.symbol)
+                    return (item.symbol, trend)
+                }
+            }
+            
+            // 这里的逻辑是：每当有一个请求完成，就去更新一下 UI
+            // 这样用户会看到颜色一个个跳出来，体验很好
+            for await (symbol, trend) in group {
+                if trend != .insufficientData {
+                    await MainActor.run {
+                        // 找到对应的 item 并更新它的 trend
+                        if let index = self.relatedSymbols.firstIndex(where: { $0.symbol == symbol }) {
+                            // 触发 SwiftUI 更新的小技巧：重新赋值
+                            // 由于 RelatedSymbol 是 struct，我们需要创建一个新的副本
+                            let oldItem = self.relatedSymbols[index]
+                            let newItem = RelatedSymbol(
+                                symbol: oldItem.symbol,
+                                totalWeight: oldItem.totalWeight,
+                                compareValue: oldItem.compareValue,
+                                allTags: oldItem.allTags,
+                                marketCap: oldItem.marketCap,
+                                earningTrend: trend // 更新这里
+                            )
+                            self.relatedSymbols[index] = newItem
+                        }
+                    }
+                }
             }
         }
+    }
+    
+    // 抽取出来的单个计算逻辑
+    private func calculateTrend(for symbol: String) async -> EarningTrend {
+        let dataService1 = DataService1.shared
+        let sortedEarnings = await DatabaseManager.shared.fetchEarningData(forSymbol: symbol).sorted { $0.date > $1.date }
+        
+        if sortedEarnings.count >= 2 {
+            let latestEarning = sortedEarnings[0]
+            let previousEarning = sortedEarnings[1]
+            
+            if let tableName = dataService1.getCategory(for: symbol) {
+                // 并行获取两个价格
+                async let latestClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: latestEarning.date, tableName: tableName)
+                async let previousClose = DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: previousEarning.date, tableName: tableName)
+                
+                if let latest = await latestClose, let previous = await previousClose {
+                    if latestEarning.price > 0 {
+                        return (latest > previous) ? .positiveAndUp : .positiveAndDown
+                    } else {
+                        return (latest > previous) ? .negativeAndUp : .negativeAndDown
+                    }
+                }
+            }
+        }
+        return .insufficientData
     }
     
     // MARK: - Helper Functions
