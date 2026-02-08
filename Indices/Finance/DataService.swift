@@ -332,6 +332,20 @@ class DataService: ObservableObject {
         }
     }
 
+    // MARK: - 【新增】黑名单检查辅助函数
+    func isBlacklisted(symbol: String, date: String) -> Bool {
+        // 硬编码黑名单的 Key
+        let blacklistKey = "_Tag_Blacklist"
+        
+        // 1. 获取黑名单组在当天的所有 symbol
+        guard let dateMap = earningHistoryData[blacklistKey],
+              let symbols = dateMap[date] else {
+            return false
+        }
+        
+        // 2. 检查 symbol 是否存在 (忽略大小写)
+        return symbols.contains(where: { $0.uppercased() == symbol.uppercased() })
+    }
     
     // 【新增】在不修改服务器的情况下，客户端自行处理逻辑
     func fetchRecentEarningPriceIfNeeded(for symbol: String) {

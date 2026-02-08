@@ -146,7 +146,9 @@ struct DateSectionView: View {
                 Divider()
                 VStack(spacing: 0) {
                     ForEach(symbols, id: \.self) { symbol in
-                        HistorySymbolRow(symbol: symbol)
+                        // 【修改这里】：传入 dateStr
+                        HistorySymbolRow(symbol: symbol, dateStr: dateStr)
+                        
                         if symbol != symbols.last {
                             Divider().padding(.leading, 16)
                         }
@@ -164,6 +166,8 @@ struct DateSectionView: View {
 // MARK: - Symbol 行组件
 struct HistorySymbolRow: View {
     let symbol: String
+    let dateStr: String // 【新增】：接收日期，用于去查黑名单
+    
     @EnvironmentObject var dataService: DataService
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
@@ -189,27 +193,39 @@ struct HistorySymbolRow: View {
             return (tag, weight)
         }
     }
-    
+
+    // 【新增】：计算属性判断是否黑名单
+    private var isBlacklisted: Bool {
+        dataService.isBlacklisted(symbol: symbol, date: dateStr)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // 上半部分：Symbol 按钮
+            // 上半部分：Symbol 展示
             HStack {
-                Button(action: {
-                    if usageManager.canProceed(authManager: authManager, action: .viewChart) {
-                        navigateToChart = true
-                    } else {
-                        showSubscriptionSheet = true
+                // 【修改点1】：将原来的 Button 改为 Text，仅保留样式
+                Text(symbol)
+                    .font(.system(size: 17, weight: .bold, design: .monospaced))
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(8)
+
+                // MARK: - 【新增】黑名单 UI 指示器
+                if isBlacklisted {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.shield.fill") // 盾牌感叹号图标
+                        Text("Tag黑名单")
                     }
-                }) {
-                    Text(symbol)
-                        .font(.system(size: 17, weight: .bold, design: .monospaced))
-                        .foregroundColor(.blue) // 保持蓝色，表示可点击
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(8)
+                    .font(.caption.bold())
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.red.opacity(0.8)) // 醒目的红色背景
+                    .cornerRadius(6)
                 }
-                
+
                 Spacer()
                 
                 // 这里可以加一些额外信息，比如 PE 或 价格，如果需要的话
@@ -232,6 +248,16 @@ struct HistorySymbolRow: View {
             }
         }
         .padding(12)
+        // 【修改点2】：设置内容形状为矩形，确保点击空白处也有效
+        .contentShape(Rectangle()) 
+        // 【修改点3】：将点击逻辑移到整个 VStack 上
+        .onTapGesture {
+            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+                navigateToChart = true
+            } else {
+                showSubscriptionSheet = true
+            }
+        }
         .navigationDestination(isPresented: $navigateToChart) {
             // 跳转到 ChartView
             ChartView(symbol: symbol, groupName: dataService.getCategory(for: symbol) ?? "Stocks")

@@ -190,10 +190,27 @@ struct UpdateOverlayView: View {
                 .cornerRadius(15)
                 .shadow(radius: 10)
 
-            // MARK: - 修改：隐藏了“正在处理文件”及总进度(1/12)的显示
-            // 原来的 .downloading(let progress, let total) 被修改为不显示任何内容
-            case .downloading:
-                EmptyView()
+            // MARK: - 【修改点】恢复显示批量文件的下载进度
+            // 之前是 EmptyView()，导致用户以为程序卡死
+            case .downloading(let progress, let total):
+                VStack(spacing: 12) {
+                    ProgressView() // 转圈圈
+                    
+                    // 显示进度文字，例如 "正在更新数据 (5/17)"
+                    // 计算当前第几个：progress (0.0~1.0) * total
+                    let current = Int(progress * Double(total))
+                    Text("正在更新数据 (\(current)/\(total))")
+                        .font(.headline)
+                    
+                    // 进度条
+                    ProgressView(value: progress)
+                        .progressViewStyle(LinearProgressViewStyle())
+                        .frame(width: 200)
+                }
+                .padding(20)
+                .background(Color(.systemBackground).opacity(0.9))
+                .cornerRadius(15)
+                .shadow(radius: 10)
                 
             case .alreadyUpToDate:
                 StatusView(icon: "checkmark.circle.fill", iconColor: .green, message: "当前已是最新版本")

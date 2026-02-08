@@ -364,7 +364,10 @@ class UpdateManager: ObservableObject {
         
         if allFiles.isEmpty { return true }
         
-        self.updateState = .downloading(progress: 0, total: totalTasks)
+        // 初始状态
+        await MainActor.run {
+            self.updateState = .downloading(progress: 0, total: totalTasks)
+        }
         
         return await withTaskGroup(of: Bool.self, body: { group in
             for fileInfo in allFiles {
@@ -376,14 +379,15 @@ class UpdateManager: ObservableObject {
             
             var allSuccess = true
             for await success in group {
-                if success {
-                    completedTasks += 1
-                    let progress = Double(completedTasks) / Double(totalTasks)
-                    await MainActor.run {
-                        self.updateState = .downloading(progress: progress, total: totalTasks)
-                    }
-                } else {
+                completedTasks += 1
+                // 只有成功才算 true，但无论成功失败都要更新进度，避免进度条卡住
+                if !success {
                     allSuccess = false
+                }
+                
+                let progress = Double(completedTasks) / Double(totalTasks)
+                await MainActor.run {
+                    self.updateState = .downloading(progress: progress, total: totalTasks)
                 }
             }
             return allSuccess
@@ -398,10 +402,22 @@ class UpdateManager: ObservableObject {
         
         do {
             print("正在下载最新数据: \(filename)")
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 60
             
-            let (data, _) = try await URLSession.shared.data(for: request)
+            // MARK: - 【修改点】优化网络请求配置
+            // 1. 缩短超时时间：文本文件通常很小，15秒足够。如果15秒下不下来，说明网络有问题，不如快速失败。
+            // 2. 禁用等待连接：避免在网络切换时无限挂起。
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 15 // 从 60 改为 15
+            request.cachePolicy = .reloadIgnoringLocalCacheData // 确保不读缓存
+            
+            // 使用配置更严格的 Session (可选，这里直接用 request 配置即可)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            // 检查 HTTP 状态码
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
+                print("下载 \(filename) 失败，HTTP状态码: \(httpResponse.statusCode)")
+                return false
+            }
             
             // 如果是目录类型，先创建目录
             if filename.hasSuffix("/") || filename.contains("/") {

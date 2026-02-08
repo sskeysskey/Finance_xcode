@@ -103,9 +103,14 @@ struct BacktestView: View {
                 } else {
                     // 这里 item.date 是日期，item.categories 是当天的策略列表
                     ForEach(foundHistory, id: \.date) { item in
+                        // 【新增】：提取是否包含黑名单
+                        let isBlacklisted = item.categories.contains("_Tag_Blacklist")
+                        // 【新增】：过滤掉黑名单 Key，剩下的才是真正策略
+                        let displayCategories = item.categories.filter { $0 != "_Tag_Blacklist" }
+                        
                         DisclosureGroup(
                             content: {
-                                ForEach(item.categories, id: \.self) { category in
+                                ForEach(displayCategories, id: \.self) { category in
                                     HStack {
                                         // 换个图标表示“策略/组别”
                                         Image(systemName: "tag.fill")
@@ -129,10 +134,17 @@ struct BacktestView: View {
                                         .font(.headline)
                                         .foregroundColor(.primary)
                                     
+                                    // MARK: - 【新增】 CallBack 界面显示的黑名单警告
+                                    if isBlacklisted {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundColor(.red)
+                                            .font(.system(size: 14))
+                                    }
+                                    
                                     Spacer()
                                     
-                                    // 计数显示：当天命中了几个策略
-                                    Text("\(item.categories.count) 组")
+                                    // 计数显示
+                                    Text("\(displayCategories.count) 组")
                                         .font(.caption)
                                         .padding(4)
                                         .background(Color.gray.opacity(0.2))

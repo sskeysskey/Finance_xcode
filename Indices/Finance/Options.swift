@@ -1523,14 +1523,25 @@ struct DateGroupView: View {
 }
 
 // MARK: - 【第二层视图】Symbol 分组 (SymbolGroupView)
+
 struct SymbolGroupView: View {
     let group: OptionBigOrdersView.SymbolGroup
     let onTapOrder: (String) -> Void
     
     @EnvironmentObject var dataService: DataService
     
-    // 【修改点】将 true 改为 false，默认折叠
-    @State private var isExpanded: Bool = false 
+    // 默认折叠
+    @State private var isExpanded: Bool = false
+    
+    // 【新增 1】计算属性：统计做空数量 (Green / Distance contains "-")
+    var shortCount: Int {
+        group.orders.filter { $0.distance.contains("-") }.count
+    }
+    
+    // 【新增 2】计算属性：统计做多数量 (Red / Distance does NOT contain "-")
+    var longCount: Int {
+        group.orders.filter { !$0.distance.contains("-") }.count
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -1559,15 +1570,38 @@ struct SymbolGroupView: View {
                     
                     Spacer()
                     
-                    // 订单数量角标
-                    Text("\(group.orders.count)单")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.blue.opacity(0.1))
-                        .foregroundColor(.blue)
-                        .cornerRadius(6)
+                    // 【修改点 3】替换原有的总单数显示，改为 多/空 分开显示
+                    HStack(spacing: 6) {
+                        // 显示做空 (绿色)
+                        if shortCount > 0 {
+                            Text("\(shortCount)单做空")
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .foregroundColor(.green)
+                        }
+                        
+                        // 如果同时有两种单子，加个分隔符或空格，这里直接靠 HStack 间距即可
+                        
+                        // 显示做多 (红色)
+                        if longCount > 0 {
+                            Text("\(longCount)单做多")
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .foregroundColor(.red)
+                        }
+                        
+                        // 极少情况：如果都没有（防御性代码），显示 0单
+                        if shortCount == 0 && longCount == 0 {
+                            Text("0单")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    // 背景色改为中性色，以免和红绿文字冲突 (原为 blue.opacity(0.1))
+                    .background(Color(UIColor.tertiarySystemFill)) 
+                    .cornerRadius(6)
                     
                     // 折叠箭头
                     Image(systemName: "chevron.right")
@@ -1612,6 +1646,7 @@ struct SymbolGroupView: View {
         return ("", [])
     }
 }
+
 
 // MARK: - 【第三层视图】单个大单卡片 (BigOrderCard)
 struct BigOrderCard: View {
