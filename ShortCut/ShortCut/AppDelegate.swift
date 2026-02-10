@@ -799,16 +799,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // 在 Terminal 中运行命令 (对应你最复杂的 AppleScript 逻辑)
+    // 在 Terminal 中运行命令 (修复版：使用 Process/osascript 替代 NSAppleScript)
     func runInTerminal(_ command: String) {
-        // 构造 AppleScript。注意：Swift 多行字符串中引用变量写法
-        // 我们需要对 command 里的双引号进行转义，但在 AppleScript 字符串中，通常单引号包裹命令即可
-        // 这里的 command 已经是拼接好的，例如 "/bin/python3 'path' args"
-        
-        // 为了安全起见，转义 command 中的反斜杠和双引号，防止破坏 AppleScript 结构
+        // 1. 转义处理
+        // 我们需要把 command 嵌入到 AppleScript 的字符串中 (do script "...")
+        // 所以需要转义 command 内部的反斜杠和双引号
         let safeCommand = command.replacingOccurrences(of: "\\", with: "\\\\")
                                  .replacingOccurrences(of: "\"", with: "\\\"")
 
+        // 2. 构建 AppleScript 源码
         let appleScriptSource = """
         tell application "System Events"
             set isRunning to exists (process "Terminal")
@@ -827,6 +826,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             tell application "Terminal"
                 activate
                 try
+                    -- 第一次启动时，Terminal 会自动创建一个窗口，所以直接在 window 1 执行
                     do script "\(safeCommand)" in window 1
                 on error errMsg
                     display dialog "Error: " & errMsg
@@ -835,13 +835,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         end if
         """
 
-        var error: NSDictionary?
-        if let scriptObject = NSAppleScript(source: appleScriptSource) {
-            DispatchQueue.global().async {
-                scriptObject.executeAndReturnError(&error)
-                if let error = error {
-                    print("AppleScript Error: \(error)")
-                }
+        // 3. 使用 Process 调用 /usr/bin/osascript 执行
+        // 这样即使在后台线程 (DispatchQueue.global) 运行也没问题
+        let task = Process()
+        task.launchPath = "/usr/bin/osascript"
+        task.arguments = ["-e", appleScriptSource]
+        
+        DispatchQueue.global().async {
+            do {
+                try task.run()
+            } catch {
+                print("无法执行 osascript: \(error)")
             }
         }
     }
