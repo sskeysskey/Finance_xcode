@@ -116,6 +116,83 @@ struct PriceFiveColumnView: View {
     }
 }
 
+// MARK: - 【新增】3列数据显示组件 (Latest IV | Prev IV | Compare)
+// 用于期权大单界面的分组抬头
+struct PriceThreeColumnView: View {
+    let symbol: String
+    
+    // 1. Latest IV (大)
+    let latestIv: String?
+    // 2. Prev IV (小)
+    let prevIv: String?
+    
+    @EnvironmentObject var dataService: DataService
+
+    var body: some View {
+        HStack(spacing: 6) {
+            
+            // 1. Latest IV (大字体)
+            Text(latestIv ?? "--")
+                .font(.system(size: 16, weight: .bold, design: .monospaced))
+                .foregroundColor(getIvColor(latestIv))
+                .fixedSize()
+            
+            // 2. Previous IV (小字体)
+            Text(prevIv ?? "--")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(.secondary)
+                .fixedSize()
+            
+            // 3. CompareStr (涨跌百分比)
+            if let compareStr = dataService.compareDataUppercased[symbol.uppercased()] {
+                let rawPercentage = extractPercentage(from: compareStr)
+                let formattedPercentage = formatToPrecision(rawPercentage, precision: 1)
+                let themeColor = getCompareColor(from: rawPercentage)
+                
+                Text(formattedPercentage)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(themeColor)
+                    .padding(.horizontal, 2)
+                    .background(themeColor.opacity(0.1))
+                    .cornerRadius(4)
+                    .fixedSize()
+            }
+        }
+    }
+    
+    // --- 复用辅助函数 ---
+    
+    private func extractPercentage(from text: String) -> String {
+        let pattern = "([+-]?\\d+(\\.\\d+)?%)"
+        if let range = text.range(of: pattern, options: .regularExpression) {
+            return String(text[range])
+        }
+        return text
+    }
+
+    private func getIvColor(_ text: String?) -> Color {
+        guard let text = text else { return .secondary }
+        let cleanText = text.replacingOccurrences(of: "%", with: "")
+        if let value = Double(cleanText) {
+            return value >= 0 ? .red : .green
+        }
+        return .red
+    }
+    
+    private func formatToPrecision(_ text: String, precision: Int) -> String {
+        let cleanText = text.replacingOccurrences(of: "%", with: "")
+        if let value = Double(cleanText) {
+            return String(format: "%+.\(precision)f%%", value)
+        }
+        return text
+    }
+    
+    private func getCompareColor(from text: String) -> Color {
+        if text.contains("-") { return .green }
+        return .red
+    }
+}
+
 // MARK: - 【重构】期权价格历史图表组件
 // 包含 TabView 容器和时间选择器逻辑
 struct OptionsHistoryChartView: View {
@@ -1533,8 +1610,11 @@ struct SymbolGroupView: View {
     // 默认折叠
     @State private var isExpanded: Bool = false
     
-    // 【新增】防止快速连击的状态锁
+    // 防止快速连击的状态锁
     @State private var isAnimating: Bool = false
+    
+    // 【新增】用于存储 IV 数据
+    @State private var ivData: (latest: String?, prev: String?)? = nil
     
     var shortCount: Int {
         group.orders.filter { $0.distance.contains("-") }.count
@@ -1549,20 +1629,27 @@ struct SymbolGroupView: View {
         VStack(spacing: 0) {
             
             // 1. 组头 (Header)
-            HStack {
+            HStack(alignment: .center) { // 确保垂直居中
                 // Symbol
                 Text(group.symbol)
                     .font(.title3)
                     .fontWeight(.heavy)
                     .foregroundColor(.primary)
                 
-                // 中文名
-                let info = getInfo(for: group.symbol)
-                if !info.name.isEmpty {
-                    Text(info.name)
-                        .font(.subheadline)
+                // 【修改点 1】移除原来的 Name 显示，替换为 3列数据组件
+                if let data = ivData {
+                    PriceThreeColumnView(
+                        symbol: group.symbol,
+                        latestIv: data.latest,
+                        prevIv: data.prev
+                    )
+                    .padding(.leading, 4) // 稍微加点左边距
+                } else {
+                    // 加载中或无数据时的占位
+                    Text("--")
+                        .font(.caption)
                         .foregroundColor(.secondary)
-                        .lineLimit(1)
+                        .padding(.leading, 4)
                 }
                 
                 Spacer()
@@ -1570,13 +1657,13 @@ struct SymbolGroupView: View {
                 // 多/空 分开显示
                 HStack(spacing: 6) {
                     if shortCount > 0 {
-                        Text("\(shortCount)单做空")
+                        Text("\(shortCount)空")
                             .font(.caption)
                             .fontWeight(.bold)
                             .foregroundColor(.green)
                     }
                     if longCount > 0 {
-                        Text("\(longCount)单做多")
+                        Text("\(longCount)多")
                             .font(.caption)
                             .fontWeight(.bold)
                             .foregroundColor(.red)
@@ -1645,19 +1732,24 @@ struct SymbolGroupView: View {
         .background(Color(UIColor.secondarySystemGroupedBackground).opacity(0.5))
         .cornerRadius(16)
         .padding(.horizontal, 16)
-        // 【关键修复 5】为整个组设置 clipped，防止子视图在动画期间溢出绘制导致误触
         .clipped()
+        // 【修改点 2】添加异步加载任务
+        .task {
+            await loadIvData()
+        }
     }
     
-    private func getInfo(for symbol: String) -> (name: String, tags: [String]) {
-        let upperSymbol = symbol.uppercased()
-        if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == upperSymbol }) {
-            return (stock.name, stock.tag)
+    // 【修改点 3】加载数据的方法
+    private func loadIvData() async {
+        // 如果已经加载过，就不重复加载
+        if ivData != nil { return }
+        
+        // 从 DB 获取 Summary
+        if let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: group.symbol) {
+            await MainActor.run {
+                self.ivData = (summary.iv, summary.prev_iv)
+            }
         }
-        if let etf = dataService.descriptionData?.etfs.first(where: { $0.symbol.uppercased() == upperSymbol }) {
-            return (etf.name, etf.tag)
-        }
-        return ("", [])
     }
 }
 
