@@ -800,8 +800,8 @@ class NewsViewModel: ObservableObject {
         sources.flatMap { $0.articles }.filter { !$0.isRead }.count
     }
 
-    /// 按显示顺序寻找下一篇未读：跳过已读和“已暂存为已读”的文章
-    func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
+    /// 按显示顺序寻找下一篇未读：跳过已读、已暂存为已读以及（如果未订阅）锁定的文章
+    func findNextUnread(after id: UUID, inSource sourceName: String?, isSubscribed: Bool) -> (article: Article, sourceName: String)? {
         // 1. 统一数据源类型
         let candidates: [(article: Article, sourceName: String)]
         
@@ -817,14 +817,19 @@ class NewsViewModel: ObservableObject {
             return nil
         }
         
-        // 3. 【修复点】这里必须使用 candidates，而不是旧的 baseList
+        // 3. 从当前位置往后找
         let subsequentItems = candidates.suffix(from: currentIndex + 1)
         
+        // 4. 核心过滤逻辑
         let nextUnreadItem = subsequentItems.first { item in
-            let isPending = isArticlePendingRead(articleID: item.article.id)
-            // 【修改】寻找下一篇时，也要跳过锁定的文章
-            let isLocked = !isLoggedInNow() && isTimestampLocked(timestamp: item.article.timestamp)
-            return !item.article.isRead && !isPending && !isLocked
+            // 检查是否已读（包含内存暂存状态）
+            let isRead = item.article.isRead || isArticlePendingRead(articleID: item.article.id)
+            
+            // 检查是否被锁定：如果用户没订阅，且该文章在锁定天数内，则视为锁定
+            let isLocked = !isSubscribed && isTimestampLocked(timestamp: item.article.timestamp)
+            
+            // 只有【未读】且【未锁定】的文章才是合法的下一篇
+            return !isRead && !isLocked
         }
         
         return nextUnreadItem

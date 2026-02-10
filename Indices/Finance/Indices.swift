@@ -489,22 +489,19 @@ struct IndicesContentView: View {
                     isSpecial: false
                 )
             }
-            } else if groupName == "OptionRank" {
-                // 【修改点 3】修改按钮逻辑和显示名称
+            } else if groupName == "OptionBigOrder" {
                 Button {
-                // 【修改点】将原来的 .viewOptionsRank 改为 .viewBigOrders
-                // 这样点击这里就会扣 50 点
-                if usageManager.canProceed(authManager: authManager, action: .viewBigOrders) {
-                        self.navigateToBigOrders = true // 触发跳转到大单页面
+                    if usageManager.canProceed(authManager: authManager, action: .viewBigOrders) {
+                        self.navigateToBigOrders = true
                     } else {
                         self.showSubscriptionSheet = true
                     }
                 } label: {
                     CompactSectorCard(
-                        sectorName: "期权大单", // 【修改】强制显示名称为“期权大单”
-                        icon: getIcon(for: groupName), // 图标保持不变 (或者你可以去 getIcon 改)
+                        sectorName: groupName, // <--- 改为使用变量 groupName (即 "OptionRank")
+                        icon: getIcon(for: groupName),
                         baseColor: .indigo,
-                        isSpecial: true // 【修改】设为 true，这样 CompactSectorCard 就会直接显示 sectorName 而不去查表
+                        isSpecial: true // 保持 true 以显示特殊的蓝紫渐变色
                     )
                 }
             // 【新增】专门处理 PE_Volume_up (放量反转)，开启特殊配色
@@ -572,6 +569,7 @@ struct IndicesContentView: View {
         case "52NewLow": return "arrow.down.right.circle.fill"
         case "TenYearHigh": return "arrow.up.right.circle.fill"
         case "OptionRank": return "chart.line.uptrend.xyaxis"
+        case "OptionBigOrder": return "dollarsign.circle.fill" // 大单用美金图标
         default: return "chart.pie.fill"
         }
     }

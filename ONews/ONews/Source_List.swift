@@ -1033,20 +1033,30 @@ struct SourceListView: View {
         // 1. 获取所有排序后的文章列表
         let allItems = viewModel.allArticlesSortedForDisplay
         
-        // 2. 筛选出所有“未读”的文章
-        let unreadItems = allItems.filter { item in
+        // 2. 获取当前的订阅状态
+        let isSubscribed = authManager.isSubscribed
+        
+        // 3. 筛选出当前用户“有权播放”的文章池
+        // 如果已订阅，池子是全部文章；如果未订阅，池子仅包含未锁定的文章
+        let playableItems = allItems.filter { item in
+            isSubscribed || !viewModel.isTimestampLocked(timestamp: item.article.timestamp)
+        }
+        
+        // 4. 在有权播放的池子里，优先找“未读”的
+        let unreadPlayableItems = playableItems.filter { item in
             !viewModel.isArticleEffectivelyRead(item.article)
         }
         
-        // 3. 优先取第一篇未读；如果全部已读，则兜底取整个列表的第一篇（最新的那篇）
-        guard let targetItem = unreadItems.first ?? allItems.first else {
+        // 5. 确定目标：优先从未读的开始，如果都读过了，就从该池子的第一篇（最新的免费文章）开始
+        guard let targetItem = unreadPlayableItems.first ?? playableItems.first else {
+            // 如果池子为空（通常不会，除非没有任何数据），则直接返回
             return
         }
         
-        // 4. 构造数据结构
+        // 6. 构造数据结构并跳转
         let itemToPlay = (article: targetItem.article, sourceName: targetItem.sourceName, isContentMatch: false)
         
-        // 5. 调用复用的逻辑，并开启自动播放
+        // 开启自动播放导航
         await handleArticleTap(itemToPlay, autoPlay: true)
     }
 

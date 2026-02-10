@@ -157,8 +157,8 @@ struct Localized {
     static var errTransactionUnverified: String { tr("交易验证失败", "Transaction unverified") }
 
     // MARK: - 订阅页与支付 (Subscription)
-    static var subTitle: String { tr("最近三天的新闻需付费观看🥲", "Recent news requires Pro🥲") }
-    static var subDesc: String { tr("推荐选择“专业版”套餐\n订阅成功后的一个月内畅享所有日期资讯\n如果实在不想付费😓\n三天前资讯也可永久免费享用", "Unlock full access with Pro.\nOr enjoy older news (3+ days) for free forever.") }
+    static var subTitle: String { tr("最近三天的新闻\n需付费观看🥲", "Recent news requires Pro🥲") }
+    static var subDesc: String { tr("如果实在不想付费😓\n三天前新闻可永久免费享用\n成功付费后一个月内畅享所有新闻资讯", "Unlock full access with Pro.\nOr enjoy older news (3+ days) for free forever.") }
     static var planFree: String { tr("【当前】免费版", "[Current] Free Plan") }
     static var planFreeDetail: String { tr("可免费浏览 三天前 的所有文章", "Access articles older than 3 days") }
     static var planFreeDetailSubbed: String { tr("可免费浏览 全部 文章", "Access ALL articles") }
