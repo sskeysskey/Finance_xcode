@@ -1480,9 +1480,17 @@ struct OptionBigOrdersView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 20) { // 日期组之间的间距大一点
-                        // 【第一层循环】遍历日期
-                        ForEach(groupedData) { dateGroup in
-                            DateGroupView(dateGroup: dateGroup) { symbol in
+                        // 【修改点 A】获取当前数据中的最新日期字符串
+                        let groups = groupedData
+                        let latestDateString = groups.first?.date
+                        
+                        // 遍历日期
+                        ForEach(groups) { dateGroup in
+                            DateGroupView(
+                                dateGroup: dateGroup,
+                                // 【修改点 B】判断当前组是否为最新日期，并传入
+                                isLatestDate: dateGroup.date == latestDateString
+                            ) { symbol in
                                 handleSelection(symbol)
                             }
                         }
@@ -1538,6 +1546,8 @@ struct OptionBigOrdersView: View {
 // MARK: - 【第一层视图】日期分组 (DateGroupView)
 struct DateGroupView: View {
     let dateGroup: OptionBigOrdersView.DateGroup
+    // 【修改点 C】新增参数接收是否为最新日期
+    let isLatestDate: Bool
     let onTapOrder: (String) -> Void
     
     // 默认展开最新的日期，其他日期折叠？或者全部展开。这里默认展开。
@@ -1581,9 +1591,13 @@ struct DateGroupView: View {
             // 2. 日期下的 Symbol 列表
             if isExpanded {
                 VStack(spacing: 12) {
-                    // 【第二层循环】遍历 Symbol
                     ForEach(dateGroup.symbolGroups) { symbolGroup in
-                        SymbolGroupView(group: symbolGroup, onTapOrder: onTapOrder)
+                        SymbolGroupView(
+                            group: symbolGroup,
+                            onTapOrder: onTapOrder,
+                            // 【修改点 D】将标识继续传给 SymbolGroupView
+                            isLatestDate: isLatestDate 
+                        )
                     }
                 }
                 .padding(.top, 8)
@@ -1605,6 +1619,9 @@ struct SymbolGroupView: View {
     let group: OptionBigOrdersView.SymbolGroup
     let onTapOrder: (String) -> Void
     
+    // 【修改点 E】新增属性
+    let isLatestDate: Bool
+
     @EnvironmentObject var dataService: DataService
     
     // 默认折叠
@@ -1636,20 +1653,22 @@ struct SymbolGroupView: View {
                     .fontWeight(.heavy)
                     .foregroundColor(.primary)
                 
-                // 【修改点 1】移除原来的 Name 显示，替换为 3列数据组件
-                if let data = ivData {
-                    PriceThreeColumnView(
-                        symbol: group.symbol,
-                        latestIv: data.latest,
-                        prevIv: data.prev
-                    )
-                    .padding(.leading, 4) // 稍微加点左边距
-                } else {
-                    // 加载中或无数据时的占位
-                    Text("--")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                // 【修改点 F】仅在是最新日期时，才显示三组数字
+                if isLatestDate {
+                    if let data = ivData {
+                        PriceThreeColumnView(
+                            symbol: group.symbol,
+                            latestIv: data.latest,
+                            prevIv: data.prev
+                        )
                         .padding(.leading, 4)
+                    } else {
+                        // 加载占位
+                        Text("--")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.leading, 4)
+                    }
                 }
                 
                 Spacer()
@@ -1733,9 +1752,11 @@ struct SymbolGroupView: View {
         .cornerRadius(16)
         .padding(.horizontal, 16)
         .clipped()
-        // 【修改点 2】添加异步加载任务
+        // 【修改点 G】仅在是最新日期时，才触发数据加载
         .task {
-            await loadIvData()
+            if isLatestDate {
+                await loadIvData()
+            }
         }
     }
     
