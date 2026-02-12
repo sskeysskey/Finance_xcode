@@ -262,14 +262,20 @@ struct SectorsPanel: Decodable {
                     sectors.append(currenciesSector)
                 }
             } else {
-                // 其他分组常规处理
+                // 其他分组常规处理 (包含 Strategy12, Strategy34, PE_Volume 等)
                 var symbols: [IndicesSymbol] = []
                 for symbolKey in orderedSymbolKeys {
                     let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
-                    let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
+                    
+                    // 这里获取的就是冒号后面的字符串，例如 "CRL听" 或 ""
+                    let jsonValue = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
+                    
+                    // 如果 JSON 里的值是空的，我们默认让 name 等于 symbolKey，确保 UI 有内容显示
+                    let displayName = jsonValue.isEmpty ? symbolKey : jsonValue
+                    
                     symbols.append(IndicesSymbol(
-                        symbol: symbolKey,
-                        name: symbolName,
+                        symbol: symbolKey,   // 存储原始代码，如 "CRL"
+                        name: displayName,   // 存储显示名，如 "CRL听"
                         value: "",
                         tags: nil
                     ))
@@ -1121,7 +1127,9 @@ struct SymbolItemView: View {
         }) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text(symbol.symbol)
+                    // 【修改点】：这里由原来的 symbol.symbol 改为 symbol.name
+                    // 这样列表就会显示 "CRL听"
+                    Text(symbol.name)
                         .font(.headline)
                         .foregroundColor(colorForEarningTrend(earningTrend))
                     
