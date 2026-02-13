@@ -407,6 +407,16 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                 self.subscriptionExpiryDate = finalDateStr
                 // 本地 StoreKit 检查最权威，更新缓存
                 self.saveSubscriptionCache(isSubscribed: true, expiryDate: finalDateStr)
+                
+                // ====================================================
+                // 【核心修复】自动续费检测到后，必须同步给服务器！
+                // ====================================================
+                if let userId = self.userIdentifier {
+                    Task {
+                        print("AuthManager: 检测到有效订阅，正在同步至服务器...")
+                        try? await self.syncPurchaseToServer(userId: userId)
+                    }
+                }
             }
             print("AuthManager: 本地 StoreKit 检查完成。结果: \(self.isSubscribed)")
         }
