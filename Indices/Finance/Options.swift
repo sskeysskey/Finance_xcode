@@ -25,7 +25,6 @@ struct PriceFiveColumnView: View {
             // 1. Latest IV (大字体)
             Text(latestIv ?? "--")
                 .font(.system(size: 16, weight: .bold, design: .monospaced))
-                // 【修改点】调用辅助函数判断颜色
                 .foregroundColor(getIvColor(latestIv)) 
                 .fixedSize()
             
@@ -35,7 +34,7 @@ struct PriceFiveColumnView: View {
                 .foregroundColor(.secondary)
                 .fixedSize()
             
-            // 2. 第二项：CompareStr (涨跌百分比) - 保持不变
+            // 3. CompareStr (涨跌百分比)
             if let compareStr = dataService.compareDataUppercased[symbol.uppercased()] {
                 let rawPercentage = extractPercentage(from: compareStr)
                 let formattedPercentage = formatToPrecision(rawPercentage, precision: 1)
@@ -66,11 +65,7 @@ struct PriceFiveColumnView: View {
             if let lPrice = latestPrice {
                 Text(String(format: "%.2f", lPrice))
                     .font(.system(size: 16, weight: .bold, design: .monospaced))
-                    
-                    // 【修改了这里】：直接根据 lPrice 的值判断颜色
-                    // 正数(>=0)变红，负数(<0)变绿
                     .foregroundColor(lPrice >= 0 ? .red : .green)
-                    
                     .fixedSize()
             } else {
                 Text("--")
@@ -80,7 +75,7 @@ struct PriceFiveColumnView: View {
         }
     }
     
-    // 复用之前的辅助函数
+    // 辅助函数
     private func extractPercentage(from text: String) -> String {
         let pattern = "([+-]?\\d+(\\.\\d+)?%)"
         if let range = text.range(of: pattern, options: .regularExpression) {
@@ -89,16 +84,12 @@ struct PriceFiveColumnView: View {
         return text
     }
 
-    // 【新增辅助函数】解析 IV 字符串并返回颜色
     private func getIvColor(_ text: String?) -> Color {
         guard let text = text else { return .secondary }
-        // 去除可能存在的百分号或其他符号
         let cleanText = text.replacingOccurrences(of: "%", with: "")
-        // 转为 Double 判断
         if let value = Double(cleanText) {
             return value >= 0 ? .red : .green
         }
-        // 解析失败默认红色 (因为 IV 通常是正数)
         return .red
     }
     
@@ -116,34 +107,207 @@ struct PriceFiveColumnView: View {
     }
 }
 
-// MARK: - 【新增】3列数据显示组件 (Latest IV | Prev IV | Compare)
-// 用于期权大单界面的分组抬头
+// MARK: - 【修改后】Strike vs Price 分布图组件 (优化X轴空间)
+struct OptionsStrikePriceChartView: View {
+    let allItems: [OptionItem]
+    
+    @State private var selectedExpiry: String = ""
+    @State private var selectedType: ChartType = .all
+    
+    enum ChartType: String, CaseIterable, Identifiable {
+        case all = "All"
+        case call = "Call"
+        case put = "Put"
+        var id: String { self.rawValue }
+    }
+    
+    struct ChartDataPoint: Identifiable {
+        let id = UUID()
+        let strike: Double
+        let price: Double
+        let type: String
+    }
+    
+    var uniqueExpiries: [String] {
+        let expiries = Set(allItems.map { $0.expiryDate })
+        return expiries.sorted()
+    }
+    
+    // 计算图表数据
+    var chartData: [ChartDataPoint] {
+        let targetExpiry = selectedExpiry.isEmpty ? (uniqueExpiries.first ?? "") : selectedExpiry
+        
+        let filtered = allItems.filter { $0.expiryDate == targetExpiry }
+            .compactMap { item -> ChartDataPoint? in
+                let cleanStrike = item.strike.replacingOccurrences(of: ",", with: "")
+                guard let strikeVal = Double(cleanStrike) else { return nil }
+                
+                let cleanPrice = item.price.replacingOccurrences(of: ",", with: "")
+                guard let priceVal = Double(cleanPrice) else { return nil }
+                
+                // 过滤掉 Price 为 0 的点
+                if priceVal <= 0 { return nil }
+                
+                let type = (item.type.uppercased().contains("CALL") || item.type.uppercased() == "C") ? "Call" : "Put"
+                
+                // 根据开关过滤
+                if selectedType == .call && type != "Call" { return nil }
+                if selectedType == .put && type != "Put" { return nil }
+                
+                return ChartDataPoint(strike: strikeVal, price: priceVal, type: type)
+            }
+            .sorted { $0.strike < $1.strike } // 确保按 Strike 排序，方便取首尾
+        
+        return filtered
+    }
+    
+    // 获取所有的 Strike 值用于 X 轴标签
+    var allStrikes: [Double] {
+        // 使用 Set 去重，然后排序
+        let strikes = Set(chartData.map { $0.strike })
+        return strikes.sorted()
+    }
+    
+    // 【关键修改】计算 X 轴的显示范围
+    var xDomain: ClosedRange<Double> {
+        guard let min = chartData.first?.strike,
+              let max = chartData.last?.strike else {
+            return 0...100 // 默认值防崩溃
+        }
+        
+        // 如果只有一个点，或者最小等于最大，手动给一点范围，否则图表会报错
+        if min == max {
+            return (min - 1)...(max + 1)
+        }
+        
+        return min...max
+    }
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            // 顶部控制栏
+            HStack {
+                Text("Strike vs Price")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                // Call/Put 切换开关
+                Picker("Type", selection: $selectedType) {
+                    ForEach(ChartType.allCases) { type in
+                        Text(type.rawValue).tag(type)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .scaleEffect(0.8)
+                
+                Spacer()
+                
+                // 日期选择
+                Menu {
+                    ForEach(uniqueExpiries, id: \.self) { expiry in
+                        Button(expiry) {
+                            selectedExpiry = expiry
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 2) {
+                        Text(selectedExpiry.isEmpty ? (uniqueExpiries.first ?? "Select Date") : selectedExpiry)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(6)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+            .zIndex(1)
+            
+            // 图表区域
+            if chartData.isEmpty {
+                Spacer()
+                Text("该筛选条件下无数据")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+            } else {
+                Chart {
+                    ForEach(chartData) { point in
+                        LineMark(
+                            x: .value("Strike", point.strike),
+                            y: .value("Price", point.price)
+                        )
+                        .foregroundStyle(by: .value("Type", point.type))
+                        .interpolationMethod(.catmullRom)
+                        
+                        PointMark(
+                            x: .value("Strike", point.strike),
+                            y: .value("Price", point.price)
+                        )
+                        .foregroundStyle(by: .value("Type", point.type))
+                        .symbolSize(30)
+                    }
+                }
+                .chartForegroundStyleScale([
+                    "Call": .red,
+                    "Put": .green
+                ])
+                // 【关键修改】设置 X 轴范围，强制撑满
+                .chartXScale(domain: xDomain)
+                .chartXAxis {
+                    // 每一个 Strike 都显示出来
+                    AxisMarks(values: allStrikes) { value in
+                        AxisGridLine()
+                        AxisTick()
+                        AxisValueLabel(format: Decimal.FormatStyle.number.precision(.fractionLength(0)), orientation: .vertical)
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks { value in
+                        AxisGridLine()
+                        AxisValueLabel()
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
+            }
+        }
+        .onAppear {
+            if selectedExpiry.isEmpty, let first = uniqueExpiries.first {
+                selectedExpiry = first
+            }
+        }
+    }
+}
+
+// MARK: - 【新增】3列数据显示组件
 struct PriceThreeColumnView: View {
     let symbol: String
-    
-    // 1. Latest IV (大)
     let latestIv: String?
-    // 2. Prev IV (小)
     let prevIv: String?
     
     @EnvironmentObject var dataService: DataService
 
     var body: some View {
         HStack(spacing: 6) {
-            
-            // 1. Latest IV (大字体)
             Text(latestIv ?? "--")
                 .font(.system(size: 16, weight: .bold, design: .monospaced))
                 .foregroundColor(getIvColor(latestIv))
                 .fixedSize()
             
-            // 2. Previous IV (小字体)
             Text(prevIv ?? "--")
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundColor(.secondary)
                 .fixedSize()
             
-            // 3. CompareStr (涨跌百分比)
             if let compareStr = dataService.compareDataUppercased[symbol.uppercased()] {
                 let rawPercentage = extractPercentage(from: compareStr)
                 let formattedPercentage = formatToPrecision(rawPercentage, precision: 1)
@@ -159,8 +323,6 @@ struct PriceThreeColumnView: View {
             }
         }
     }
-    
-    // --- 复用辅助函数 ---
     
     private func extractPercentage(from text: String) -> String {
         let pattern = "([+-]?\\d+(\\.\\d+)?%)"
@@ -194,22 +356,16 @@ struct PriceThreeColumnView: View {
 }
 
 // MARK: - 【重构】期权价格历史图表组件
-// 包含 TabView 容器和时间选择器逻辑
 struct OptionsHistoryChartView: View {
     let symbol: String
+    let currentOptions: [OptionItem] 
     
-    // 状态管理
     @State private var historyData: [DatabaseManager.OptionHistoryItem] = []
-    // 默认值设为 .threeMonths (或者你想改成 .oneMonth 也可以)
     @State private var selectedTimeRange: TimeRangeOption = .oneMonth
     @State private var isLoading = false
+    @State private var currentPage = 0 
     
-    // 控制当前显示的页面索引 (0: IV, 1: Price)
-    @State private var currentPage = 0
-    
-    // 定义时间范围枚举
     enum TimeRangeOption: String, CaseIterable, Identifiable {
-        // 【修改点 1】修改 Case 定义：增加 1M，保留 3M/1Y/10Y，删除 6M/2Y/5Y
         case oneMonth = "1M"
         case threeMonths = "3M"
         case oneYear = "1Y"
@@ -219,7 +375,6 @@ struct OptionsHistoryChartView: View {
         
         var monthsBack: Int {
             switch self {
-            // 【修改点 2】更新对应的月份数值
             case .oneMonth: return 1
             case .threeMonths: return 3
             case .oneYear: return 12
@@ -228,7 +383,6 @@ struct OptionsHistoryChartView: View {
         }
     }
     
-    // 过滤后的数据
     var filteredData: [DatabaseManager.OptionHistoryItem] {
         let calendar = Calendar.current
         guard let startDate = calendar.date(byAdding: .month, value: -selectedTimeRange.monthsBack, to: Date()) else {
@@ -240,22 +394,18 @@ struct OptionsHistoryChartView: View {
     var body: some View {
         VStack(spacing: 8) {
             
-            // 1. 【新增】顶部指示点 (Page Indicator)
-            // 只有当有数据时才显示指示器
-            if !historyData.isEmpty {
-                HStack(spacing: 8) {
+            // 1. 顶部指示点
+            HStack(spacing: 8) {
+                ForEach(0..<3) { index in
                     Circle()
-                        .fill(currentPage == 0 ? Color.primary : Color.secondary.opacity(0.3))
-                        .frame(width: 6, height: 6)
-                    Circle()
-                        .fill(currentPage == 1 ? Color.primary : Color.secondary.opacity(0.3))
+                        .fill(currentPage == index ? Color.primary : Color.secondary.opacity(0.3))
                         .frame(width: 6, height: 6)
                 }
-                .padding(.top, 4)
-                .animation(.easeInOut, value: currentPage)
             }
+            .padding(.top, 4)
+            .animation(.easeInOut, value: currentPage)
             
-            // 2. 图表主体区域 (包含 Loading 和 TabView)
+            // 2. 图表主体
             ZStack {
                 RoundedRectangle(cornerRadius: 16)
                     .fill(Color(UIColor.secondarySystemGroupedBackground))
@@ -272,38 +422,48 @@ struct OptionsHistoryChartView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
-                    // 【核心修改】使用 TabView 实现左右滑动
                     TabView(selection: $currentPage) {
                         
-                        // 页面 0: IV 图表 (默认)
-                        SingleChartContent(
-                            data: filteredData,
-                            dataType: .iv
-                        )
-                        .tag(0)
+                        // Page 0: Strike vs Price
+                        OptionsStrikePriceChartView(allItems: currentOptions)
+                            .tag(0)
+                            .padding(.bottom, 10)
                         
-                        // 页面 1: Price 图表
-                        SingleChartContent(
-                            data: filteredData,
-                            dataType: .price
-                        )
-                        .tag(1)
+                        // Page 1: IV
+                        if isLoading {
+                            ProgressView().tag(1)
+                        } else if historyData.isEmpty {
+                            Text("暂无历史数据").tag(1)
+                        } else {
+                            SingleChartContent(data: filteredData, dataType: .iv)
+                                .tag(1)
+                        }
+                        
+                        // Page 2: Price
+                        if isLoading {
+                            ProgressView().tag(2)
+                        } else if historyData.isEmpty {
+                            Text("暂无历史数据").tag(2)
+                        } else {
+                            SingleChartContent(data: filteredData, dataType: .price)
+                                .tag(2)
+                        }
                     }
-                    .tabViewStyle(.page(indexDisplayMode: .never)) // 隐藏系统自带的底部指示器
+                    .tabViewStyle(.page(indexDisplayMode: .never))
                 }
             }
-            .frame(height: 240) // 稍微增加高度以容纳 TabView
+            .frame(height: 280)
             .padding(.horizontal)
             
-            // 3. 时间切换条 (公用)
+            // 3. 时间切换条
             timeRangeSelector
+                .opacity(currentPage == 0 ? 0 : 1)
+                .animation(.easeInOut, value: currentPage)
         }
         .task {
             await loadData()
         }
     }
-    
-    // 【关键修复】这里把 timeRangeSelector 和 loadData 放回了 struct 内部
     
     private var timeRangeSelector: some View {
         HStack(spacing: 0) {
@@ -348,7 +508,6 @@ struct OptionsHistoryChartView: View {
 }
 
 // MARK: - 【新增】单一图表绘制组件
-// 负责具体的 Chart 绘制逻辑
 struct SingleChartContent: View {
     let data: [DatabaseManager.OptionHistoryItem]
     let dataType: ChartDataType
@@ -359,28 +518,18 @@ struct SingleChartContent: View {
         
         var title: String {
             switch self {
-            case .price: return "Calls+Puts" // 【修改点 1】标题改为 Calls+Puts
+            case .price: return "Calls+Puts"
             case .iv: return "IV Trend"
-            }
-        }
-        
-        // baseColor 属性实际上在下面 barGradient 里被覆盖了，这里保留或删除都可以，不影响
-        var baseColor: Color {
-            switch self {
-            case .price: return .red
-            case .iv: return .red // 让 IV 基础色也变为红色
             }
         }
     }
     
-    // 1. 日期格式化 (显示用)
     private var dayFormatter: DateFormatter {
         let formatter = DateFormatter()
         formatter.dateFormat = "dd"
         return formatter
     }
     
-    // 2. 唯一ID格式化 (X轴唯一性)
     private var uniqueIDFormatter: DateFormatter {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -389,7 +538,6 @@ struct SingleChartContent: View {
     
     var body: some View {
         VStack(spacing: 4) {
-            // 小标题，提示当前是什么图
             Text(dataType.title)
                 .font(.caption2)
                 .fontWeight(.bold)
@@ -403,16 +551,9 @@ struct SingleChartContent: View {
     }
     
     private var chartBody: some View {
-        // 1. 数据排序
         let sortedData = data.sorted { $0.date < $1.date }
-        
-        // 2. 准备 X 轴的唯一 ID
         let allDateIDs = sortedData.map { uniqueIDFormatter.string(from: $0.date) }
-        
-        // 3. 计算步长
         let stride = getAxisStride(count: sortedData.count)
-        
-        // 4. 计算 Tick Values
         let totalCount = allDateIDs.count
         let tickValues = allDateIDs.enumerated().compactMap { index, idValue in
             let distanceFromEnd = totalCount - 1 - index
@@ -424,19 +565,16 @@ struct SingleChartContent: View {
         
         return Chart {
             ForEach(sortedData) { item in
-                // 根据类型获取数值
                 let value = (dataType == .price) ? item.price : item.iv
                 
                 BarMark(
                     x: .value("Date", uniqueIDFormatter.string(from: item.date)),
                     y: .value("Value", value)
                 )
-                // 【修改点 2】颜色逻辑现在统一了，正数自动变红
                 .foregroundStyle(barGradient(for: value))
                 .cornerRadius(4)
             }
             
-            // 0 线
             RuleMark(y: .value("Zero", 0))
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [5]))
                 .foregroundStyle(.gray.opacity(0.5))
@@ -461,7 +599,6 @@ struct SingleChartContent: View {
         .padding(.horizontal, 8)
     }
     
-    // 辅助：获取步长
     private func getAxisStride(count: Int) -> Int {
         switch count {
         case 0...10: return 1
@@ -472,15 +609,11 @@ struct SingleChartContent: View {
         }
     }
     
-    // 辅助：渐变色
-    // 【修改点 2 核心】：移除了 if dataType == .iv 的判断
-    // 现在无论什么图表，只要数值是正数(>=0)就是红色渐变，负数是绿色渐变
     private func barGradient(for value: Double) -> LinearGradient {
-        
         let isPositive = value >= 0
         let colors: [Color] = isPositive
-            ? [.red.opacity(0.8), .red.opacity(0.4)]   // 正数 = 红色
-            : [.green.opacity(0.8), .green.opacity(0.4)] // 负数 = 绿色
+            ? [.red.opacity(0.8), .red.opacity(0.4)]
+            : [.green.opacity(0.8), .green.opacity(0.4)]
         
         return LinearGradient(
             colors: colors,
@@ -499,21 +632,12 @@ struct OptionsListView: View {
     @State private var selectedSymbol: String?
     @State private var navigateToDetail = false
     @State private var showSubscriptionSheet = false
-
-    // 【修改状态变量名，或者直接复用 navigateToRank，这里建议复用但改个注释】
-    @State private var navigateToBigOrders = false // 原 navigateToRank
-    
-    // 【新增】控制跳转到榜单页面
-    @State private var navigateToRank = false
-    
-    // 【新增 1】控制跳转到股价图的状态
+    @State private var navigateToBigOrders = false
     @State private var navigateToChart = false
     
-    // 【新增 1】搜索相关的状态
-    @State private var showSearchBar = false      // 控制搜索框是否显示
-    @State private var searchText = ""            // 输入的内容
-    @State private var highlightedSymbol: String? // 当前高亮的 Symbol
-    // 【新增】焦点状态控制
+    @State private var showSearchBar = false
+    @State private var searchText = ""
+    @State private var highlightedSymbol: String?
     @FocusState private var isSearchFieldFocused: Bool 
     
     var sortedSymbols: [String] {
@@ -535,11 +659,8 @@ struct OptionsListView: View {
     }
     
     var body: some View {
-        // 【核心修改 1】使用 ScrollViewReader 包裹
         ScrollViewReader { proxy in
             VStack(spacing: 0) {
-                
-                // 【新增 2】搜索栏区域 (当点击图标时显示)
                 if showSearchBar {
                     HStack {
                         Image(systemName: "magnifyingglass")
@@ -548,24 +669,20 @@ struct OptionsListView: View {
                         TextField("输入 Symbol 跳转 (如 AAPL)", text: $searchText)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .submitLabel(.search)
-                            // 【新增 1】绑定焦点状态
                             .focused($isSearchFieldFocused) 
-                            // 【新增 2】当视图出现时，自动激活焦点
                             .onAppear {
                                 isSearchFieldFocused = true
                             }
-                            // 键盘点击“搜索/确认”时触发
                             .onSubmit {
                                 performSearch(proxy: proxy)
                             }
                         
                         Button("取消") {
                             withAnimation {
-                                // 【优化】取消时先收起键盘
                                 isSearchFieldFocused = false 
                                 showSearchBar = false
                                 searchText = ""
-                                highlightedSymbol = nil // 取消高亮
+                                highlightedSymbol = nil
                             }
                         }
                     }
@@ -584,29 +701,23 @@ struct OptionsListView: View {
                                 symbol: symbol,
                                 action: { handleSelection(symbol) },
                                 longPressAction: { handleLongPress(symbol) },
-                                // 【新增 3】传入高亮状态
                                 isHighlighted: symbol == highlightedSymbol
                             )
-                            // 【关键】为每一行设置 id，以便 ScrollViewReader 能够找到它
                             .id(symbol) 
                         }
                     }
                 }
-                .listStyle(PlainListStyle()) // 保持列表样式一致
+                .listStyle(PlainListStyle())
             }
         }
         .navigationTitle("期权异动")
         .navigationBarTitleDisplayMode(.inline)
-        // 【新增】右上角按钮
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 12) { // 增加间距
-                    
-                    // 【新增 4】搜索按钮图标
+                HStack(spacing: 12) {
                     Button(action: {
                         withAnimation {
                             showSearchBar.toggle()
-                            // 如果打开搜索框，可以自动重置一下状态
                             if !showSearchBar {
                                 highlightedSymbol = nil
                             }
@@ -620,9 +731,7 @@ struct OptionsListView: View {
                             .clipShape(Circle())
                     }
                     
-                    // 原有的 Rank 按钮
                     Button(action: {
-                        // 复用原来的权限检查，或者创建新的枚举 .viewBigOrders
                         if usageManager.canProceed(authManager: authManager, action: .viewOptionsRank) {
                             self.navigateToBigOrders = true
                         } else {
@@ -630,17 +739,15 @@ struct OptionsListView: View {
                         }
                     }) {
                         HStack(spacing: 4) {
-                            // 图标改为美元符号或列表符号，体现“大单”
                             Image(systemName: "dollarsign.circle.fill") 
                                 .font(.system(size: 14, weight: .bold))
-                            Text("期权大单") // 修改文字
+                            Text("期权大单")
                                 .font(.system(size: 13, weight: .bold))
                         }
                         .padding(.vertical, 6)
                         .padding(.horizontal, 12)
                         .foregroundColor(.white)
                         .background(
-                            // 改用深金色/黑金渐变，或者保持蓝紫色，这里用蓝紫显得科技感
                             LinearGradient(
                                 gradient: Gradient(colors: [Color.purple, Color.blue]),
                                 startPoint: .topLeading,
@@ -661,14 +768,11 @@ struct OptionsListView: View {
                 OptionsDetailView(symbol: sym)
             }
         }
-        // 【修改】跳转目的地
         .navigationDestination(isPresented: $navigateToBigOrders) {
-            OptionBigOrdersView() // 跳转到新页面
+            OptionBigOrdersView()
         }
-        // 【新增】跳转目的地
         .navigationDestination(isPresented: $navigateToChart) {
             if let sym = selectedSymbol {
-                // 这里的 groupName 逻辑
                 let groupName = dataService.getCategory(for: sym) ?? "US"
                 ChartView(symbol: sym, groupName: groupName)
             }
@@ -685,13 +789,10 @@ struct OptionsListView: View {
         }
     }
     
-    // 【修复点 1】补全 handleLongPress 函数
     private func handleLongPress(_ symbol: String) {
-        // 权限检查：跳转股价模式通常对应 .viewChart 行为
         if usageManager.canProceed(authManager: authManager, action: .viewChart) {
             self.selectedSymbol = symbol
             self.navigateToChart = true
-            // 触发一个轻微震动反馈
             let impact = UIImpactFeedbackGenerator(style: .medium)
             impact.impactOccurred()
         } else {
@@ -699,51 +800,32 @@ struct OptionsListView: View {
         }
     }
 
-    // 【新增 5】执行搜索与跳转逻辑
     private func performSearch(proxy: ScrollViewProxy) {
         let target = searchText.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        
         guard !target.isEmpty else { return }
         
-        // 在 sortedSymbols 中查找是否存在该 Symbol
-        // 为了体验更好，这里做了包含匹配，如果输入 "AAP"，能找到 "AAPL"
-        // 如果想严格匹配，就用 symbol == target
         if let foundSymbol = sortedSymbols.first(where: { $0.contains(target) }) {
-            
-            // 1. 设置高亮
             self.highlightedSymbol = foundSymbol
-            
-            // 2. 滚动跳转
             withAnimation(.spring()) {
-                proxy.scrollTo(foundSymbol, anchor: .center) // anchor: .center 让它滚到屏幕中间
+                proxy.scrollTo(foundSymbol, anchor: .center)
             }
-            
-            // 可选：找到后收起键盘，但不收起搜索框，方便用户继续看
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-            
         } else {
-            // 可选：没找到给个震动反馈
             let generator = UINotificationFeedbackGenerator()
             generator.notificationOccurred(.error)
-            // 也可以把 highlightedSymbol 设为 nil
             self.highlightedSymbol = nil
         }
     }
 }
 
-// 拆分出的列表行视图
 struct OptionListRow: View {
     let symbol: String
     let action: () -> Void
-    // 【新增】接收长按事件
     let longPressAction: () -> Void
-    
-    // 【新增】是否高亮
     var isHighlighted: Bool = false
     
     @EnvironmentObject var dataService: DataService
     
-    // 【修改点 1】Tuple 结构扩展：存储 IV 和 价格信息
     @State private var displayData: (
         iv: String?, 
         prevIv: String?, 
@@ -753,12 +835,8 @@ struct OptionListRow: View {
     )? = nil
     
     var body: some View {
-        // 移除 Button，改用 VStack + 手势
         VStack(alignment: .leading, spacing: 6) {
-            
-            // 第一行
             HStack(alignment: .center) {
-                // 左侧 Symbol (移除 Name)
                 Text(symbol)
                     .font(.headline)
                     .fontWeight(.bold)
@@ -770,12 +848,8 @@ struct OptionListRow: View {
                     .animation(.easeInOut, value: isHighlighted)
                     .layoutPriority(0)
                 
-                // 【修改点 2】移除 Name 的显示代码
-                // 原来的 if !info.name.isEmpty { ... } 代码块删除
-                
                 Spacer(minLength: 8)
                 
-                // 【修改点 3】使用新的 5列组件
                 if let data = displayData {
                     PriceFiveColumnView(
                         symbol: symbol,
@@ -792,7 +866,6 @@ struct OptionListRow: View {
                 }
             }
             
-            // 第二行 Tags
             let info = getInfo(for: symbol)
             if !info.tags.isEmpty {
                 Text(info.tags.joined(separator: ", "))
@@ -806,36 +879,28 @@ struct OptionListRow: View {
         .onTapGesture { action() }
         .onLongPressGesture(minimumDuration: 0.5) { longPressAction() }
         .task { await loadPriceAndCalc() }
-        // 这是一个小动画，让高亮出现时平滑一点
         .animation(.easeInOut, value: isHighlighted)
     }
     
-    // 【修改点 4】计算价格数据
     private func loadPriceAndCalc() async {
         if displayData != nil { return }
-        
-        // 调用新的 Summary 接口
         guard let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol) else {
             return
         }
         
-        // 提取 IV
         let iv = summary.iv
         let prevIv = summary.prev_iv
         
-        // 计算最新价格
         var latestPrice: Double? = nil
         if let p = summary.price, let c = summary.change {
             latestPrice = p + c
         }
         
-        // 计算次新价格
         var prevPrice: Double? = nil
         if let pp = summary.prev_price, let pc = summary.prev_change {
             prevPrice = pp + pc
         }
         
-        // 保存 change 用于判断颜色
         let change = summary.change
         
         await MainActor.run {
@@ -860,8 +925,6 @@ struct OptionListRow: View {
 struct OptionsDetailView: View {
     let symbol: String
     @EnvironmentObject var dataService: DataService
-    
-    // --- 注入权限和点数管理对象 ---
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
     
@@ -869,16 +932,9 @@ struct OptionsDetailView: View {
     @State private var navigateToChart = false
     @State private var summaryCall: String = ""
     @State private var summaryPut: String = ""
-    // 【修改】用于存储计算后的最新价格 (Price + Change)
     @State private var displayPrice: Double? = nil 
-    
-    // 【新增】用于存储计算后的次新价格 (Prev Price + Prev Change)
     @State private var displayPrevPrice: Double? = nil 
-    
-    // 【新增】用于存储从数据库获取的涨跌额 change
     @State private var dbChange: Double? = nil
-    
-    // --- 控制订阅页显示 ---
     @State private var showSubscriptionSheet = false
     
     var filteredData: [OptionItem] {
@@ -900,43 +956,33 @@ struct OptionsDetailView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // 图表组件
-            OptionsHistoryChartView(symbol: symbol)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
+            OptionsHistoryChartView(
+                symbol: symbol,
+                currentOptions: dataService.optionsData[symbol] ?? []
+            )
+            .padding(.top, 10)
+            .padding(.bottom, 4)
             
-            // 顶部切换开关 (Picker)
             typePickerView
-            
-            // 表格头
             tableHeaderView
-            
             Divider()
-            
-            // 数据列表
             dataListView
         }
-        // 【修改 1】设置一个基础标题 (用于返回按钮的文字)
         .navigationTitle(symbol)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(UIColor.systemGroupedBackground))
         .toolbar {
-            // 【修改点】ToolbarItem (principal) 只需要显示 Symbol
             ToolbarItem(placement: .principal) {
-                // 移除原来的 HStack 和 Price 显示逻辑
                 Text(symbol)
                     .font(.headline)
                     .foregroundColor(.primary)
             }
             
             ToolbarItem(placement: .navigationBarTrailing) {
-                // --- 修改点：在按钮点击时执行扣点检查 ---
                 Button(action: {
                     if usageManager.canProceed(authManager: authManager, action: .viewChart) { 
-                        // 如果有足够点数（或已订阅），则允许跳转
                         navigateToChart = true 
                     } else {
-                        // 点数不足，弹出订阅/登录页
                         showSubscriptionSheet = true
                     }
                 }) {
@@ -955,26 +1001,20 @@ struct OptionsDetailView: View {
             let groupName = dataService.getCategory(for: symbol) ?? "US"
             ChartView(symbol: symbol, groupName: groupName)
         }
-        // --- 新增：挂载订阅页面 ---
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .task {
-            // 【修改 3】获取数据
             if let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol) {
                 await MainActor.run {
                     if let c = summary.call { self.summaryCall = c }
                     if let p = summary.put { self.summaryPut = p }
                     
-                    // 1. 处理最新数据
                     if let chg = summary.change {
                         self.dbChange = chg
-                        
-                        // 【新增】计算 Price + Change
                         if let price = summary.price {
                             self.displayPrice = price + chg
                         }
                     }
                     
-                    // 2. 【本次新增】处理次新数据
                     if let prevPrice = summary.prev_price, let prevChg = summary.prev_change {
                         self.displayPrevPrice = prevPrice + prevChg
                     }
@@ -983,11 +1023,6 @@ struct OptionsDetailView: View {
         }
     }
     
-    // MARK: - 辅助逻辑
-    
-    // (displayTitle 属性已不再需要，可以删除)
-    
-    // 拆分出 Picker
     private var typePickerView: some View {
         Picker("Type", selection: $selectedTypeIndex) {
             Text(summaryCall.isEmpty ? "Calls" : "Calls \(summaryCall)").tag(0)
@@ -998,7 +1033,6 @@ struct OptionsDetailView: View {
         .background(Color(UIColor.systemBackground))
     }
     
-    // 拆分出表头
     private var tableHeaderView: some View {
         HStack(spacing: 4) {
             Text("Expiry").frame(maxWidth: .infinity, alignment: .leading)
@@ -1006,7 +1040,7 @@ struct OptionsDetailView: View {
             Text("Dist").frame(width: 50, alignment: .trailing)
             Text("OI").frame(width: 55, alignment: .trailing)
             Text("1-Day").frame(width: 55, alignment: .trailing)
-            Text("Price").frame(width: 55, alignment: .trailing) // 【新增表头】
+            Text("Price").frame(width: 55, alignment: .trailing)
         }
         .font(.caption)
         .foregroundColor(.secondary)
@@ -1015,7 +1049,6 @@ struct OptionsDetailView: View {
         .background(Color(UIColor.systemBackground))
     }
     
-    // 拆分出列表部分
     private var dataListView: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -1048,16 +1081,15 @@ struct OptionsRankView: View {
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
     
-    @State private var selectedTab = 0 // 0: 最可能涨, 1: 最可能跌
+    @State private var selectedTab = 0
     @State private var rankUp: [OptionRankItem] = []
     @State private var rankDown: [OptionRankItem] = []
     @State private var isLoading = true
     
-    // 详情跳转
     @State private var selectedSymbol: String?
     @State private var navigateToDetail = false
     @State private var showSubscriptionSheet = false
-    @State private var navigateToChart = false // 控制直接跳转股价图
+    @State private var navigateToChart = false
     
     var currentList: [OptionRankItem] {
         selectedTab == 0 ? rankUp : rankDown
@@ -1065,7 +1097,6 @@ struct OptionsRankView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // 1. 分段控制器
             Picker("Filter", selection: $selectedTab) {
                 Text("最可能涨").tag(0)
                 Text("最可能跌").tag(1)
@@ -1074,43 +1105,41 @@ struct OptionsRankView: View {
             .padding()
             .background(Color(UIColor.secondarySystemGroupedBackground))
             
-            // 2. 列表内容
-        ZStack { // 使用 ZStack 让加载菊花盖在列表上，而不是替换列表
-            if isLoading && rankUp.isEmpty {
-                VStack {
+            ZStack {
+                if isLoading && rankUp.isEmpty {
+                    VStack {
+                        Spacer()
+                        ProgressView("正在计算大数据榜单...")
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity)
+                } else if !isLoading && currentList.isEmpty {
+                    VStack(spacing: 10) {
+                        Spacer()
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.largeTitle)
+                            .foregroundColor(.gray)
+                        Text("暂无符合条件的数据")
+                            .foregroundColor(.secondary)
+                        Text("当前市值筛选阀值: \(formatMarketCap(dataService.optionCapLimit))")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
                     Spacer()
-                    ProgressView("正在计算大数据榜单...")
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-            } else if !isLoading && currentList.isEmpty {
-                VStack(spacing: 10) {
-                    Spacer()
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .font(.largeTitle)
-                        .foregroundColor(.gray)
-                    Text("暂无符合条件的数据")
-                        .foregroundColor(.secondary)
-                    Text("当前市值筛选阀值: \(formatMarketCap(dataService.optionCapLimit))")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-                Spacer()
-            } else {
-                // 只要有数据，List 就一直存在于这里，不会被销毁
-                List {
-                    ForEach(currentList) { item in
-                        OptionRankRow(item: item, isUp: selectedTab == 0) {
-                            handleSelection(item.symbol) // 这是原有的短按
-                        } longPressAction: {
-                            handleLongPress(item.symbol) // 【新增】传入长按逻辑
+                } else {
+                    List {
+                        ForEach(currentList) { item in
+                            OptionRankRow(item: item, isUp: selectedTab == 0) {
+                                handleSelection(item.symbol)
+                            } longPressAction: {
+                                handleLongPress(item.symbol)
+                            }
                         }
                     }
+                    .listStyle(InsetGroupedListStyle())
+                    .id(selectedTab) 
                 }
-                .listStyle(InsetGroupedListStyle())
-                .id(selectedTab) 
             }
-        }
         }
         .navigationTitle("期权榜单")
         .navigationBarTitleDisplayMode(.inline)
@@ -1125,7 +1154,6 @@ struct OptionsRankView: View {
         }
         .navigationDestination(isPresented: $navigateToChart) {
             if let sym = selectedSymbol {
-                // 这里的 groupName 逻辑参考 OptionsDetailView 里的逻辑
                 let groupName = dataService.getCategory(for: sym) ?? "US"
                 ChartView(symbol: sym, groupName: groupName)
             }
@@ -1134,33 +1162,20 @@ struct OptionsRankView: View {
     }
     
     private func loadData() async {
-        // 关键点：如果已经有数据了，就不要设置 isLoading = true
-        // 这样就不会触发 UI 的大切换，List 就不会被销毁
         if rankUp.isEmpty && rankDown.isEmpty {
             isLoading = true
         }
         
         if let (up, down) = await dataService.fetchOptionsRankData() {
-            
-            // 【新增步骤 1】过滤 "最可能涨" 列表
-            // 逻辑：只要 (IV > 0) 或 (Price > 0) 即可保留。
-            // 如果 (IV < 0 且 Price < 0)，则剔除。
             let filteredUp = up.filter { item in
                 let ivVal = parseIvValue(item.iv)
                 let priceVal = (item.price ?? 0) + (item.change ?? 0)
-                
-                // 保留条件：IV 是正数 OR 价格是正数
                 return ivVal > 0 || priceVal > 0
             }
             
-            // 【新增步骤 2】过滤 "最可能跌" 列表
-            // 逻辑：只要 (IV < 0) 或 (Price < 0) 即可保留。
-            // 如果 (IV > 0 且 Price > 0)，则剔除。
             let filteredDown = down.filter { item in
                 let ivVal = parseIvValue(item.iv)
                 let priceVal = (item.price ?? 0) + (item.change ?? 0)
-                
-                // 保留条件：IV 是负数 OR 价格是负数
                 return ivVal < 0 || priceVal < 0
             }
 
@@ -1174,14 +1189,12 @@ struct OptionsRankView: View {
         }
     }
 
-    // 【新增辅助函数】解析 IV 字符串为 Double (去掉百分号)
     private func parseIvValue(_ text: String?) -> Double {
         guard let t = text else { return 0.0 }
         let clean = t.replacingOccurrences(of: "%", with: "")
         return Double(clean) ?? 0.0
     }
 
-    
     private func handleSelection(_ symbol: String) {
         if usageManager.canProceed(authManager: authManager, action: .viewOptionsDetail) {
             self.selectedSymbol = symbol
@@ -1199,13 +1212,10 @@ struct OptionsRankView: View {
         }
     }
     
-    // 【修复点 2】删除了重复的 handleLongPress，只保留这一个
     private func handleLongPress(_ symbol: String) {
-        // 权限检查：跳转股价模式通常对应 .viewChart 行为
         if usageManager.canProceed(authManager: authManager, action: .viewChart) {
             self.selectedSymbol = symbol
             self.navigateToChart = true
-            // 触发一个轻微震动反馈
             let impact = UIImpactFeedbackGenerator(style: .medium)
             impact.impactOccurred()
         } else {
@@ -1214,7 +1224,6 @@ struct OptionsRankView: View {
     }
 }
 
-// 【新增】榜单行视图
 struct OptionRankRow: View {
     let item: OptionRankItem
     let isUp: Bool
@@ -1223,13 +1232,10 @@ struct OptionRankRow: View {
     @EnvironmentObject var dataService: DataService
     
     var body: some View {
-        // 使用 VStack 垂直排列三行内容
         VStack(alignment: .leading, spacing: 8) {
-            
-            // --- 第一行：Symbol + Name ---
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(item.symbol)
-                    .font(.system(size: 18, weight: .bold, design: .monospaced)) // 稍微加大字号突出显示
+                    .font(.system(size: 18, weight: .bold, design: .monospaced))
                     .foregroundColor(.primary)
                 
                 let info = getInfo(for: item.symbol)
@@ -1244,42 +1250,37 @@ struct OptionRankRow: View {
                 Spacer()
             }
             
-            // --- 第二行：五个数字 (PriceFiveColumnView) ---
-            // 依然需要先计算价格
             let latestPriceVal = (item.price != nil && item.change != nil) ? (item.price! + item.change!) : nil
             let prevPriceVal = (item.prev_price != nil && item.prev_change != nil) ? (item.prev_price! + item.prev_change!) : nil
             
             PriceFiveColumnView(
                 symbol: item.symbol,
-                latestIv: item.iv,        // Latest IV
-                prevIv: item.prev_iv,     // Previous IV
-                prevPrice: prevPriceVal,  // Prev Price
-                latestPrice: latestPriceVal, // Latest Price
+                latestIv: item.iv,
+                prevIv: item.prev_iv,
+                prevPrice: prevPriceVal,
+                latestPrice: latestPriceVal,
                 latestChange: item.change
             )
-            // 因为 VStack 是 leading 对齐，这里不需要 Spacer，它会自动靠左显示
             
-            // --- 第三行：Tags ---
             let info = getInfo(for: item.symbol)
             if !info.tags.isEmpty {
                 Text(info.tags.joined(separator: ", "))
                     .font(.system(size: 12))
-                    .foregroundColor(.gray) // 使用稍微淡一点的颜色
+                    .foregroundColor(.gray)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.vertical, 8)
-        .contentShape(Rectangle()) // 保证点击区域覆盖整个块
+        .contentShape(Rectangle())
         .onTapGesture {
-            action() // 点击执行：进入期权详情
+            action()
         }
         .onLongPressGesture(minimumDuration: 0.5) {
-            longPressAction() // 长按执行：跳转股价模式
+            longPressAction()
         }
     }
     
-    // ... getInfo 等辅助函数保持不变 (或者你也可以把 getInfo 提出来，但暂时放在这里没问题)
     private func getInfo(for symbol: String) -> (name: String, tags: [String]) {
         let upperSymbol = symbol.uppercased()
         if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == upperSymbol }) {
@@ -1292,35 +1293,27 @@ struct OptionRankRow: View {
     }
 }
 
-// 拆分出单行数据视图
 struct OptionRowView: View {
     let item: OptionItem
     
     var body: some View {
         HStack(spacing: 4) {
-            
-            // 1. Expiry: 2026/06/18 -> 26/06/18
             OptionCellView(text: formatExpiry(item.expiryDate), alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             
-            // 2. Strike
             OptionCellView(text: item.strike, alignment: .trailing)
                 .frame(width: 50, alignment: .trailing)
             
-            // 3. Distance
             OptionCellView(text: item.distance, alignment: .trailing)
                 .frame(width: 50, alignment: .trailing)
                 .font(.system(size: 11))
             
-            // 4. OI
             OptionCellView(text: item.openInterest, alignment: .trailing)
                 .frame(width: 55, alignment: .trailing)
             
-            // 5. Change
             OptionCellView(text: item.change, alignment: .trailing)
                 .frame(width: 55, alignment: .trailing)
             
-            // 6. Price: 37923360.00 -> 37.9M
             OptionCellView(text: formatPrice(item.price), alignment: .trailing)
                 .frame(width: 55, alignment: .trailing)
                 .foregroundColor(.blue)
@@ -1330,22 +1323,14 @@ struct OptionRowView: View {
         .background(Color(UIColor.systemBackground))
     }
     
-    // --- 辅助函数 ---
-    
-    // 格式化日期: 2026/06/18 -> 26/06/18
-    // 同时也兼容 2026-06-18 -> 26-06-18
     private func formatExpiry(_ dateStr: String) -> String {
-        // 简单暴力法：如果前4位是年份，直接截取后2位
-        // 假设格式固定为 YYYY...
         if dateStr.count >= 4 {
-            // 移除前两个字符 (20)
             let shortYear = String(dateStr.dropFirst(2))
             return shortYear
         }
         return dateStr
     }
     
-    // 格式化价格: 37923360.00 -> 37.9M
     private func formatPrice(_ priceStr: String) -> String {
         guard let value = Double(priceStr) else { return priceStr }
         
@@ -1361,7 +1346,6 @@ struct OptionRowView: View {
     }
 }
 
-// MARK: - 辅助视图
 struct OptionCellView: View {
     let text: String
     var alignment: Alignment = .leading
@@ -1401,64 +1385,45 @@ struct OptionBigOrdersView: View {
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
     
-    // 跳转详情
     @State private var selectedSymbol: String?
     @State private var navigateToDetail = false
     @State private var showSubscriptionSheet = false
     @State private var navigateToRank = false 
     
-    // --- 数据结构定义 ---
-    
-    // 1. 最内层：Symbol 分组
     struct SymbolGroup: Identifiable {
         var id: String { symbol }
         let symbol: String
         var orders: [OptionBigOrder]
     }
     
-    // 2. 最外层：日期分组
     struct DateGroup: Identifiable {
         var id: String { date }
         let date: String
         var symbolGroups: [SymbolGroup]
     }
     
-    // --- 分组逻辑 ---
-    
     var groupedData: [DateGroup] {
         var dateGroups: [DateGroup] = []
-        let source = dataService.optionBigOrders // 假设已按 日期 > Symbol > 价格 排序
+        let source = dataService.optionBigOrders
         
         for order in source {
-            // A. 处理日期层级
             if dateGroups.isEmpty || dateGroups.last?.date != order.date {
-                // 如果是新日期，创建一个新的 DateGroup
                 let newDateGroup = DateGroup(date: order.date, symbolGroups: [])
                 dateGroups.append(newDateGroup)
             }
             
-            // 获取当前正在处理的 DateGroup 的索引
             let dateIndex = dateGroups.count - 1
-            
-            // B. 处理 Symbol 层级 (在当前的 DateGroup 内)
             var currentSymbolGroups = dateGroups[dateIndex].symbolGroups
             
             if currentSymbolGroups.isEmpty || currentSymbolGroups.last?.symbol != order.symbol {
-                // 如果是该日期下的新 Symbol，创建新的 SymbolGroup
                 let newSymbolGroup = SymbolGroup(symbol: order.symbol, orders: [])
                 currentSymbolGroups.append(newSymbolGroup)
             }
             
-            // 获取当前正在处理的 SymbolGroup 的索引
             let symbolIndex = currentSymbolGroups.count - 1
-            
-            // C. 添加订单
             currentSymbolGroups[symbolIndex].orders.append(order)
-            
-            // D. 回写数据 (因为 Struct 是值类型)
             dateGroups[dateIndex].symbolGroups = currentSymbolGroups
         }
-        
         return dateGroups
     }
     
@@ -1479,16 +1444,13 @@ struct OptionBigOrdersView: View {
                 }
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 20) { // 日期组之间的间距大一点
-                        // 【修改点 A】获取当前数据中的最新日期字符串
+                    LazyVStack(spacing: 20) {
                         let groups = groupedData
                         let latestDateString = groups.first?.date
                         
-                        // 遍历日期
                         ForEach(groups) { dateGroup in
                             DateGroupView(
                                 dateGroup: dateGroup,
-                                // 【修改点 B】判断当前组是否为最新日期，并传入
                                 isLatestDate: dateGroup.date == latestDateString
                             ) { symbol in
                                 handleSelection(symbol)
@@ -1501,8 +1463,6 @@ struct OptionBigOrdersView: View {
         }
         .navigationTitle("期权大单")
         .navigationBarTitleDisplayMode(.inline)
-        
-        // 【修改点 2】在 Toolbar 添加“期权榜单”入口
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
@@ -1512,24 +1472,19 @@ struct OptionBigOrdersView: View {
                         self.showSubscriptionSheet = true
                     }
                 }) {
-                    // 你可以使用文字或图标，这里使用文字更直观
                     Text("期权榜单")
                         .font(.system(size: 14, weight: .bold))
                 }
             }
         }
-
         .navigationDestination(isPresented: $navigateToDetail) {
             if let sym = selectedSymbol {
                 OptionsDetailView(symbol: sym)
             }
         }
-        
-        // 【修改点 3】添加跳转目的地：OptionsRankView
         .navigationDestination(isPresented: $navigateToRank) {
             OptionsRankView()
         }
-
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
     }
     
@@ -1546,16 +1501,13 @@ struct OptionBigOrdersView: View {
 // MARK: - 【第一层视图】日期分组 (DateGroupView)
 struct DateGroupView: View {
     let dateGroup: OptionBigOrdersView.DateGroup
-    // 【修改点 C】新增参数接收是否为最新日期
     let isLatestDate: Bool
     let onTapOrder: (String) -> Void
     
-    // 默认展开最新的日期，其他日期折叠？或者全部展开。这里默认展开。
     @State private var isExpanded: Bool = true
     
     var body: some View {
         VStack(spacing: 0) {
-            // 1. 日期头 (点击折叠)
             Button(action: {
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                     isExpanded.toggle()
@@ -1565,14 +1517,13 @@ struct DateGroupView: View {
                     Image(systemName: "calendar")
                         .foregroundColor(.blue)
                     
-                    Text(formatDateFull(dateGroup.date)) // 显示 "2026年02月07日"
+                    Text(formatDateFull(dateGroup.date))
                         .font(.headline)
                         .fontWeight(.bold)
                         .foregroundColor(.primary)
                     
                     Spacer()
                     
-                    // 统计该日有多少个 Symbol 发生异动
                     Text("\(dateGroup.symbolGroups.count) 只股票")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -1584,18 +1535,16 @@ struct DateGroupView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .background(Color(UIColor.systemGroupedBackground)) // 与背景融合，或者稍微亮一点
+                .background(Color(UIColor.systemGroupedBackground))
             }
             .buttonStyle(PlainButtonStyle())
             
-            // 2. 日期下的 Symbol 列表
             if isExpanded {
                 VStack(spacing: 12) {
                     ForEach(dateGroup.symbolGroups) { symbolGroup in
                         SymbolGroupView(
                             group: symbolGroup,
                             onTapOrder: onTapOrder,
-                            // 【修改点 D】将标识继续传给 SymbolGroupView
                             isLatestDate: isLatestDate 
                         )
                     }
@@ -1604,10 +1553,8 @@ struct DateGroupView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        // 不需要额外的背景，直接平铺在 ScrollView 上看起来更像 Section Header
     }
     
-    // 辅助格式化: 2026-02-07 -> 2026年02月07日 (可选)
     func formatDateFull(_ dateStr: String) -> String {
         return dateStr 
     }
@@ -1618,26 +1565,18 @@ struct DateGroupView: View {
 struct SymbolGroupView: View {
     let group: OptionBigOrdersView.SymbolGroup
     let onTapOrder: (String) -> Void
-    
-    // 【修改点 E】新增属性
     let isLatestDate: Bool
 
     @EnvironmentObject var dataService: DataService
     
-    // 默认折叠
     @State private var isExpanded: Bool = false
-    
-    // 防止快速连击的状态锁
     @State private var isAnimating: Bool = false
-    
-    // 【新增】用于存储 IV 数据
     @State private var ivData: (latest: String?, prev: String?)? = nil
     
     var shortCount: Int {
         group.orders.filter { $0.distance.contains("-") }.count
     }
     
-    // 【新增 2】计算属性：统计做多数量 (Red / Distance does NOT contain "-")
     var longCount: Int {
         group.orders.filter { !$0.distance.contains("-") }.count
     }
@@ -1646,14 +1585,12 @@ struct SymbolGroupView: View {
         VStack(spacing: 0) {
             
             // 1. 组头 (Header)
-            HStack(alignment: .center) { // 确保垂直居中
-                // Symbol
+            HStack(alignment: .center) {
                 Text(group.symbol)
                     .font(.title3)
                     .fontWeight(.heavy)
                     .foregroundColor(.primary)
                 
-                // 【修改点 F】仅在是最新日期时，才显示三组数字
                 if isLatestDate {
                     if let data = ivData {
                         PriceThreeColumnView(
@@ -1663,7 +1600,6 @@ struct SymbolGroupView: View {
                         )
                         .padding(.leading, 4)
                     } else {
-                        // 加载占位
                         Text("--")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -1673,7 +1609,6 @@ struct SymbolGroupView: View {
                 
                 Spacer()
                 
-                // 多/空 分开显示
                 HStack(spacing: 6) {
                     if shortCount > 0 {
                         Text("\(shortCount)空")
@@ -1698,7 +1633,6 @@ struct SymbolGroupView: View {
                 .background(Color(UIColor.tertiarySystemFill))
                 .cornerRadius(6)
                 
-                // 折叠箭头
                 Image(systemName: "chevron.right")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.secondary)
@@ -1707,34 +1641,25 @@ struct SymbolGroupView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(Color(UIColor.secondarySystemGroupedBackground))
-            .contentShape(Rectangle()) // 确保点击区域完整
+            .contentShape(Rectangle())
             .onTapGesture {
-                // 【关键修复 1】如果正在动画中，忽略点击，防止状态错乱
                 if isAnimating { return }
-                
                 isAnimating = true
-                
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                     isExpanded.toggle()
                 }
-                
-                // 动画结束后释放锁 (0.4s 对应上面的 response)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                     isAnimating = false
                 }
             }
-            // 【关键修复 2】提高 Header 的层级，确保它永远盖在正在折叠的内容之上
             .zIndex(1)
             
-            // 2. 组内容 (大单卡片列表)
+            // 2. 组内容
             if isExpanded {
                 VStack(spacing: 12) {
-                    // 【第三层循环】遍历订单
                     ForEach(group.orders) { order in
                         BigOrderCard(order: order)
                             .onTapGesture {
-                                // 【关键修复 3】再次确保只有在完全展开且非动画状态下才能触发跳转
-                                // 虽然 allowsHitTesting 也能做，但双重保险更安全
                                 if !isAnimating {
                                     onTapOrder(order.symbol)
                                 }
@@ -1743,8 +1668,6 @@ struct SymbolGroupView: View {
                 }
                 .padding(.vertical, 12)
                 .transition(.opacity.combined(with: .move(edge: .top)))
-                // 【关键修复 4】当正在关闭动画时，强制禁止内容的点击测试
-                // 这能彻底防止"幽灵点击"穿透到正在消失的卡片上
                 .allowsHitTesting(isExpanded && !isAnimating)
             }
         }
@@ -1752,7 +1675,6 @@ struct SymbolGroupView: View {
         .cornerRadius(16)
         .padding(.horizontal, 16)
         .clipped()
-        // 【修改点 G】仅在是最新日期时，才触发数据加载
         .task {
             if isLatestDate {
                 await loadIvData()
@@ -1760,12 +1682,8 @@ struct SymbolGroupView: View {
         }
     }
     
-    // 【修改点 3】加载数据的方法
     private func loadIvData() async {
-        // 如果已经加载过，就不重复加载
         if ivData != nil { return }
-        
-        // 从 DB 获取 Summary
         if let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: group.symbol) {
             await MainActor.run {
                 self.ivData = (summary.iv, summary.prev_iv)
@@ -1774,31 +1692,23 @@ struct SymbolGroupView: View {
     }
 }
 
-
 // MARK: - 【第三层视图】单个大单卡片 (BigOrderCard)
 struct BigOrderCard: View {
     let order: OptionBigOrder
     @EnvironmentObject var dataService: DataService
     
-    // 1. Call/Put 颜色
     var isCall: Bool {
         return order.type.uppercased().contains("CALL") || order.type.uppercased() == "C"
     }
     var themeColor: Color { isCall ? .red : .green }
     
-    // 2. 成交额颜色
     var priceColor: Color {
         return order.distance.contains("-") ? .green : .red
     }
     
     var body: some View {
         VStack(spacing: 0) {
-            
-            // --- 顶部行：Type + Price ---
-            // 【修改】移除了右上角的 Date 显示，因为最外层已经是 Date 分组了，这里显示冗余
-            
             HStack(alignment: .center) {
-                // Type Badge
                 Text(isCall ? "CALL" : "PUT")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(.white)
@@ -1809,7 +1719,6 @@ struct BigOrderCard: View {
                 
                 Spacer()
                 
-                // 金额
                 HStack(spacing: 2) {
                     Text(formatLargeNumber(order.price))
                         .font(.system(size: 18, weight: .bold, design: .rounded))
@@ -1822,7 +1731,6 @@ struct BigOrderCard: View {
             
             Divider().padding(.horizontal, 16)
             
-            // --- 底部：详细参数 ---
             HStack(spacing: 0) {
                 DetailColumn(title: "到期日", value: formatDate(order.expiry))
                 DetailColumn(title: "行权价", value: order.strike)
@@ -1838,7 +1746,7 @@ struct BigOrderCard: View {
         .padding(.horizontal, 12)
     }
     
-    // 辅助视图：列
+    // 辅助视图：列 (确保在 body 外部定义)
     struct DetailColumn: View {
         let title: String
         let value: String
@@ -1864,7 +1772,6 @@ struct BigOrderCard: View {
         }
     }
     
-    // ... 格式化函数 ...
     func formatLargeNumber(_ value: Double) -> String {
         if value >= 1_000_000_000 { return String(format: "$%.2fB", value / 1_000_000_000) }
         else if value >= 1_000_000 { return String(format: "$%.2fM", value / 1_000_000) }
