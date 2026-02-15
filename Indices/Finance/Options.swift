@@ -133,49 +133,63 @@ struct OptionsStrikePriceChartView: View {
         return expiries.sorted()
     }
     
-    // 计算图表数据
+    // 【修改】计算图表数据 - 新增动态阈值过滤
     var chartData: [ChartDataPoint] {
         let targetExpiry = selectedExpiry.isEmpty ? (uniqueExpiries.first ?? "") : selectedExpiry
         
-        let filtered = allItems.filter { $0.expiryDate == targetExpiry }
-            .compactMap { item -> ChartDataPoint? in
+        // 第一步：获取该日期下所有有效数据点（先不做类型过滤）
+        let allPointsForExpiry = allItems.filter { $0.expiryDate == targetExpiry }
+            .compactMap { item -> (strike: Double, price: Double, type: String)? in
                 let cleanStrike = item.strike.replacingOccurrences(of: ",", with: "")
                 guard let strikeVal = Double(cleanStrike) else { return nil }
                 
                 let cleanPrice = item.price.replacingOccurrences(of: ",", with: "")
                 guard let priceVal = Double(cleanPrice) else { return nil }
                 
-                // 过滤掉 Price 为 0 的点
+                // 保留 Price > 0 的数据用于计算最大值
                 if priceVal <= 0 { return nil }
                 
                 let type = (item.type.uppercased().contains("CALL") || item.type.uppercased() == "C") ? "Call" : "Put"
-                
-                // 根据开关过滤
-                if selectedType == .call && type != "Call" { return nil }
-                if selectedType == .put && type != "Put" { return nil }
-                
-                return ChartDataPoint(strike: strikeVal, price: priceVal, type: type)
+                return (strikeVal, priceVal, type)
             }
-            .sorted { $0.strike < $1.strike } // 确保按 Strike 排序，方便取首尾
+        
+        // 第二步：计算当前日期所有期权的最大 Price
+        let maxPrice = allPointsForExpiry.map { $0.price }.max() ?? 0
+        
+        // 第三步：计算阈值（最大值的 5%）
+        let threshold = maxPrice * 0.05
+        
+        // 第四步：过滤并应用类型筛选
+        let filtered = allPointsForExpiry
+            .filter { point in
+                // 过滤掉低于阈值的数据点
+                if point.price < threshold { return false }
+                
+                // 根据开关过滤类型
+                if selectedType == .call && point.type != "Call" { return false }
+                if selectedType == .put && point.type != "Put" { return false }
+                
+                return true
+            }
+            .map { ChartDataPoint(strike: $0.strike, price: $0.price, type: $0.type) }
+            .sorted { $0.strike < $1.strike }
         
         return filtered
     }
     
     // 获取所有的 Strike 值用于 X 轴标签
     var allStrikes: [Double] {
-        // 使用 Set 去重，然后排序
         let strikes = Set(chartData.map { $0.strike })
         return strikes.sorted()
     }
     
-    // 【关键修改】计算 X 轴的显示范围
+    // 计算 X 轴的显示范围
     var xDomain: ClosedRange<Double> {
         guard let min = chartData.first?.strike,
               let max = chartData.last?.strike else {
-            return 0...100 // 默认值防崩溃
+            return 0...100
         }
         
-        // 如果只有一个点，或者最小等于最大，手动给一点范围，否则图表会报错
         if min == max {
             return (min - 1)...(max + 1)
         }
