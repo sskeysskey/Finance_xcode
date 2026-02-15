@@ -212,8 +212,12 @@ struct SectorsPanel: Decodable {
                 
                 for symbolKey in orderedSymbolKeys {
                     let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
-                    let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
-                    let symbol = IndicesSymbol(symbol: symbolKey, name: symbolName, value: "", tags: nil)
+                    
+                    // 【逻辑 1】Commodities: 优先显示 Value，为空则显示 Key
+                    let jsonValue = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
+                    let displayName = jsonValue.isEmpty ? symbolKey : jsonValue
+                    
+                    let symbol = IndicesSymbol(symbol: symbolKey, name: displayName, value: "", tags: nil)
                     
                     if symbolKey == "CrudeOil" || symbolKey == "Huangjin" || symbolKey == "Naturalgas" || symbolKey == "Silver" || symbolKey == "Copper"  {
                         importantSymbols.append(symbol)
@@ -241,8 +245,14 @@ struct SectorsPanel: Decodable {
                 let importantKeys = ["USDJPY", "USDCNY", "DXY", "CNYI", "JPYI", "CHFI", "EURI"]
                 for symbolKey in orderedSymbolKeys {
                     let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
-                    let symbolName = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
-                    let symbol = IndicesSymbol(symbol: symbolKey, name: symbolName, value: "", tags: nil)
+                    
+                    // 【逻辑 2】Currencies: 强制只显示 Symbol (Key)，忽略冒号后面的 Value
+                    // 注意：必须执行 decode 以消耗掉这个 token，否则解析会出错，但我们不使用它的返回值
+                    let _ = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
+                    let displayName = symbolKey // <--- 强制使用 Key
+                    
+                    let symbol = IndicesSymbol(symbol: symbolKey, name: displayName, value: "", tags: nil)
+                    
                     if importantKeys.contains(symbolKey) {
                         importantSymbols.append(symbol)
                     } else {
@@ -267,7 +277,7 @@ struct SectorsPanel: Decodable {
                 for symbolKey in orderedSymbolKeys {
                     let symbolCodingKey = DynamicCodingKeys(stringValue: symbolKey)!
                     
-                    // 这里获取的就是冒号后面的字符串，例如 "CRL听" 或 ""
+                    // 【逻辑 3】常规处理: 优先显示 Value，为空则显示 Key
                     let jsonValue = try symbolsContainer.decode(String.self, forKey: symbolCodingKey)
                     
                     // 如果 JSON 里的值是空的，我们默认让 name 等于 symbolKey，确保 UI 有内容显示
