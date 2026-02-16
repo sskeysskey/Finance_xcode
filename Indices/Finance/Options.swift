@@ -110,6 +110,7 @@ struct PriceFiveColumnView: View {
 // MARK: - 【修改后】Strike vs Price 分布图组件 (优化X轴空间)
 struct OptionsStrikePriceChartView: View {
     let allItems: [OptionItem]
+    let latestStockPrice: Double? // 【新增】接收最新标的价格
     
     @State private var selectedExpiry: String = ""
     @State private var selectedType: ChartType = .all
@@ -254,6 +255,7 @@ struct OptionsStrikePriceChartView: View {
                 Spacer()
             } else {
                 Chart {
+                    // 1. 绘制期权分布曲线
                     ForEach(chartData) { point in
                         LineMark(
                             x: .value("Strike", point.strike),
@@ -268,6 +270,24 @@ struct OptionsStrikePriceChartView: View {
                         )
                         .foregroundStyle(by: .value("Type", point.type))
                         .symbolSize(30)
+                    }
+                    
+                    // 2. 【核心新增】绘制最新标的价格垂直虚线
+                    if let currentPrice = latestStockPrice {
+                        RuleMark(
+                            x: .value("Current Price", currentPrice)
+                        )
+                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5])) // 虚线
+                        .foregroundStyle(.primary.opacity(0.6)) // 使用半透明主色
+                        .annotation(position: .top, alignment: .center) {
+                            Text(String(format: "%.2f", currentPrice))
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(Color.blue.opacity(0.8))
+                                .cornerRadius(4)
+                        }
                     }
                 }
                 .chartForegroundStyleScale([
@@ -373,6 +393,7 @@ struct PriceThreeColumnView: View {
 struct OptionsHistoryChartView: View {
     let symbol: String
     let currentOptions: [OptionItem] 
+    let latestStockPrice: Double? // 【新增】
     
     @State private var historyData: [DatabaseManager.OptionHistoryItem] = []
     @State private var selectedTimeRange: TimeRangeOption = .oneMonth
@@ -439,9 +460,13 @@ struct OptionsHistoryChartView: View {
                     TabView(selection: $currentPage) {
                         
                         // Page 0: Strike vs Price
-                        OptionsStrikePriceChartView(allItems: currentOptions)
-                            .tag(0)
-                            .padding(.bottom, 10)
+                        // 【修改】传入最新标的价格
+                        OptionsStrikePriceChartView(
+                            allItems: currentOptions, 
+                            latestStockPrice: latestStockPrice
+                        )
+                        .tag(0)
+                        .padding(.bottom, 10)
                         
                         // Page 1: IV
                         if isLoading {
@@ -942,6 +967,7 @@ struct OptionsDetailView: View {
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
     
+    @State private var latestStockPrice: Double? = nil // 【新增】存储真正的标的最新收盘价
     @State private var selectedTypeIndex = 0
     @State private var navigateToChart = false
     @State private var summaryCall: String = ""
@@ -970,9 +996,11 @@ struct OptionsDetailView: View {
     
     var body: some View {
         VStack(spacing: 0) {
+            // 【修改】将最新的标的价格传给图表
             OptionsHistoryChartView(
                 symbol: symbol,
-                currentOptions: dataService.optionsData[symbol] ?? []
+                currentOptions: dataService.optionsData[symbol] ?? [],
+                latestStockPrice: latestStockPrice // 传入新获取的价格
             )
             .padding(.top, 10)
             .padding(.bottom, 4)
@@ -1017,6 +1045,7 @@ struct OptionsDetailView: View {
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .task {
+            // 1. 原有的获取期权汇总逻辑 (用于显示 Calls/Puts 旁边的数字)
             if let summary = await DatabaseManager.shared.fetchOptionsSummary(forSymbol: symbol) {
                 await MainActor.run {
                     if let c = summary.call { self.summaryCall = c }
@@ -1032,6 +1061,25 @@ struct OptionsDetailView: View {
                     if let prevPrice = summary.prev_price, let prevChg = summary.prev_change {
                         self.displayPrevPrice = prevPrice + prevChg
                     }
+                }
+            }
+            
+            // 2. 【核心新增】获取标的资产真正的最新收盘价
+            // 首先获取该 symbol 所在的表名 (例如 AAPL 对应 Technology)
+            let category = dataService.getCategory(for: symbol) ?? "US" 
+            
+            // 从数据库请求最近的历史数据 (1个月即可，我们只需要最后一条)
+            let history = await DatabaseManager.shared.fetchHistoricalData(
+                symbol: symbol, 
+                tableName: category, 
+                dateRange: .timeRange(.oneMonth)
+            )
+            
+            // 取最后一条记录的 price
+            if let lastRecord = history.last {
+                await MainActor.run {
+                    self.latestStockPrice = lastRecord.price
+                    print("OptionsDetail: 成功获取标的最新收盘价: \(lastRecord.price)")
                 }
             }
         }
