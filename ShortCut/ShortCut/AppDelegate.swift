@@ -645,11 +645,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Cmd + Alt + 8 : Holiday_Insert (Sequence)
         bind(key: .eight, modifiers: [.command, .option]) {
             self.notify("正在启动 Holiday_Insert 序列...")
-            let scripts = [
-                "\(USER_HOME)/Coding/Financial_System/Selenium/TE_Merged.py",
-                "\(USER_HOME)/Coding/Financial_System/Operations/Insert_Holiday.py"
-            ]
-            let cmd = scripts.map { "\(PYTHON_PATH) '\($0)'" }.joined(separator: " && ")
+            let cmd = "\(PYTHON_PATH) '\(USER_HOME)/Coding/Financial_System/Selenium/TE_Merged.py' skip && \(PYTHON_PATH) '\(USER_HOME)/Coding/Financial_System/Operations/Insert_Holiday.py'"
             self.runInTerminal(cmd)
         }
         

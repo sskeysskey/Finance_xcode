@@ -407,7 +407,8 @@ struct IndicesContentView: View {
                                         sectorName: "期权异动",
                                         icon: "doc.text.magnifyingglass",
                                         baseColor: .purple,
-                                        isSpecial: false
+                                        isSpecial: false, // 这里保持 false 或 true 均可，因为 customGradient 优先级更高
+                                        customGradient: [.purple, .blue] // 【修改】传入以紫色为主的渐变
                                     )
                                 }
                             }
@@ -506,6 +507,7 @@ struct IndicesContentView: View {
                 )
             }
             } else if groupName == "OptionBigOrder" {
+                // 期权大单：蓝紫配色
                 Button {
                     if usageManager.canProceed(authManager: authManager, action: .viewBigOrders) {
                         self.navigateToBigOrders = true
@@ -517,22 +519,27 @@ struct IndicesContentView: View {
                         sectorName: groupName, // <--- 改为使用变量 groupName (即 "OptionRank")
                         icon: getIcon(for: groupName),
                         baseColor: .indigo,
-                        isSpecial: true // 保持 true 以显示特殊的蓝紫渐变色
+                        isSpecial: true,
+                        customGradient: [.blue, .purple] // 【修改】传入以蓝色为主的渐变
                     )
                 }
             // 【新增】专门处理 PE_Volume_up (放量反转)，开启特殊配色
-            }else if groupName == "PE_Volume_up", let sector = sectors.first(where: { $0.name == groupName }) {
+            // 【修改点】将 PE_Volume (左侧) 和 PE_Volume_up (右侧) 合并处理，都使用蓝紫配色
+            } else if (groupName == "PE_Volume" || groupName == "PE_Volume_up"), 
+                  let sector = sectors.first(where: { $0.name == groupName }) {
                 Button {
                     handleSectorClick(sector) // 保持原有的点击跳转逻辑
                 } label: {
                     CompactSectorCard(
                         sectorName: sector.name,
                         icon: getIcon(for: sector.name),
-                        baseColor: .indigo, // 设置为靛蓝色或紫色，让阴影颜色(shadow)与渐变色更协调
-                        isSpecial: true     // 【关键】设为 true，触发 [.blue, .purple] 渐变
+                        baseColor: .indigo,
+                        isSpecial: true,
+                        customGradient: [.blue, .purple] // 【修改】传入以蓝色为主的渐变
                     )
                 }
         } else if let sector = sectors.first(where: { $0.name == groupName }) {
+            // 其他普通板块
             Button {
                 handleSectorClick(sector)
             } label: {
@@ -836,6 +843,9 @@ struct CompactSectorCard: View {
     let icon: String
     let baseColor: Color
     var isSpecial: Bool = false
+    // 【新增】允许传入自定义渐变色数组
+    var customGradient: [Color]? = nil
+    
     @EnvironmentObject var dataService: DataService
     
     private var displayName: String {
@@ -871,7 +881,8 @@ struct CompactSectorCard: View {
         .frame(height: 65)
         .background(
             LinearGradient(
-                gradient: Gradient(colors: isSpecial ? [.purple, .blue] : [baseColor.opacity(0.8), baseColor.opacity(0.5)]),
+                // 【修改】优先使用 customGradient，其次是 isSpecial 的默认紫蓝，最后是 baseColor
+                gradient: Gradient(colors: customGradient ?? (isSpecial ? [.purple, .blue] : [baseColor.opacity(0.8), baseColor.opacity(0.5)])),
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )

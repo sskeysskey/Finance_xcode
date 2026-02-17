@@ -119,6 +119,7 @@ struct OptionsStrikePriceChartView: View {
         case all = "All"
         case call = "Call"
         case put = "Put"
+        case cp = "CP" // 【新增】CP 模式
         var id: String { self.rawValue }
     }
     
@@ -126,7 +127,7 @@ struct OptionsStrikePriceChartView: View {
         let id = UUID()
         let strike: Double
         let price: Double
-        let type: String
+        let type: String // "Call", "Put", "Total"
     }
     
     var uniqueExpiries: [String] {
@@ -138,8 +139,8 @@ struct OptionsStrikePriceChartView: View {
     var chartData: [ChartDataPoint] {
         let targetExpiry = selectedExpiry.isEmpty ? (uniqueExpiries.first ?? "") : selectedExpiry
         
-        // 第一步：获取该日期下所有有效数据点（先不做类型过滤）
-        let allPointsForExpiry = allItems.filter { $0.expiryDate == targetExpiry }
+        // 1. 获取该日期下所有有效的基础数据点 (Call 和 Put)
+        let basePoints = allItems.filter { $0.expiryDate == targetExpiry }
             .compactMap { item -> (strike: Double, price: Double, type: String)? in
                 let cleanStrike = item.strike.replacingOccurrences(of: ",", with: "")
                 guard let strikeVal = Double(cleanStrike) else { return nil }
@@ -154,31 +155,42 @@ struct OptionsStrikePriceChartView: View {
                 return (strikeVal, priceVal, type)
             }
         
-        // 第二步：计算当前日期所有期权的最大 Price
-        let maxPrice = allPointsForExpiry.map { $0.price }.max() ?? 0
+        // 2. 计算 Total 数据 (Call + Put)
+        // 按 strike 分组
+        let groupedByStrike = Dictionary(grouping: basePoints, by: { $0.strike })
+        let totalPoints = groupedByStrike.map { (strike, points) in
+            let sum = points.reduce(0) { $0 + $1.price }
+            return ChartDataPoint(strike: strike, price: sum, type: "Total")
+        }
         
-        // 第三步：计算阈值（最大值的 5%）
+        // 3. 根据选中的 Picker 类型组装最终显示的数据
+        var finalPoints: [ChartDataPoint] = []
+        
+        switch selectedType {
+        case .all:
+            // 显示红、绿、蓝三条线
+            finalPoints.append(contentsOf: basePoints.map { ChartDataPoint(strike: $0.strike, price: $0.price, type: $0.type) })
+            finalPoints.append(contentsOf: totalPoints)
+        case .call:
+            // 只显示红线
+            finalPoints.append(contentsOf: basePoints.filter { $0.type == "Call" }.map { ChartDataPoint(strike: $0.strike, price: $0.price, type: $0.type) })
+        case .put:
+            // 只显示绿线
+            finalPoints.append(contentsOf: basePoints.filter { $0.type == "Put" }.map { ChartDataPoint(strike: $0.strike, price: $0.price, type: $0.type) })
+        case .cp:
+            // 只显示蓝线 (Call + Put)
+            finalPoints.append(contentsOf: totalPoints)
+        }
+        
+        // 4. 应用价格阈值过滤 (防止极小值干扰)
+        let maxPrice = basePoints.map { $0.price }.max() ?? 0
         let threshold = maxPrice * 0.05
         
-        // 第四步：过滤并应用类型筛选
-        let filtered = allPointsForExpiry
-            .filter { point in
-                // 过滤掉低于阈值的数据点
-                if point.price < threshold { return false }
-                
-                // 根据开关过滤类型
-                if selectedType == .call && point.type != "Call" { return false }
-                if selectedType == .put && point.type != "Put" { return false }
-                
-                return true
-            }
-            .map { ChartDataPoint(strike: $0.strike, price: $0.price, type: $0.type) }
+        return finalPoints
+            .filter { $0.price >= threshold }
             .sorted { $0.strike < $1.strike }
-        
-        return filtered
     }
     
-    // 获取所有的 Strike 值用于 X 轴标签
     var allStrikes: [Double] {
         let strikes = Set(chartData.map { $0.strike })
         return strikes.sorted()
@@ -186,16 +198,9 @@ struct OptionsStrikePriceChartView: View {
     
     // 计算 X 轴的显示范围
     var xDomain: ClosedRange<Double> {
-        guard let min = chartData.first?.strike,
-              let max = chartData.last?.strike else {
-            return 0...100
-        }
-        
-        if min == max {
-            return (min - 1)...(max + 1)
-        }
-        
-        return min...max
+        let strikes = chartData.map { $0.strike }
+        guard let min = strikes.min(), let max = strikes.max() else { return 0...100 }
+        return min == max ? (min - 1)...(max + 1) : min...max
     }
     
     var body: some View {
@@ -209,7 +214,7 @@ struct OptionsStrikePriceChartView: View {
                 
                 Spacer()
                 
-                // Call/Put 切换开关
+                // 这里的 Picker 会自动包含 CP 选项
                 Picker("Type", selection: $selectedType) {
                     ForEach(ChartType.allCases) { type in
                         Text(type.rawValue).tag(type)
@@ -263,36 +268,36 @@ struct OptionsStrikePriceChartView: View {
                         )
                         .foregroundStyle(by: .value("Type", point.type))
                         .interpolationMethod(.catmullRom)
+                        // 如果是 Total 线，可以稍微加粗一点
+                        .lineStyle(StrokeStyle(lineWidth: point.type == "Total" ? 3 : 2))
                         
                         PointMark(
                             x: .value("Strike", point.strike),
                             y: .value("Price", point.price)
                         )
                         .foregroundStyle(by: .value("Type", point.type))
-                        .symbolSize(30)
+                        .symbolSize(point.type == "Total" ? 20 : 30)
                     }
                     
                     // 2. 【核心新增】绘制最新标的价格垂直虚线
                     if let currentPrice = latestStockPrice {
-                        RuleMark(
-                            x: .value("Current Price", currentPrice)
-                        )
-                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5])) // 虚线
-                        .foregroundStyle(.primary.opacity(0.6)) // 使用半透明主色
-                        .annotation(position: .top, alignment: .center) {
-                            Text(String(format: "%.2f", currentPrice))
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 2)
-                                .background(Color.blue.opacity(0.8))
-                                .cornerRadius(4)
-                        }
+                        RuleMark(x: .value("Current Price", currentPrice))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5]))
+                            .foregroundStyle(.primary.opacity(0.6))
+                            .annotation(position: .top, alignment: .center) {
+                                Text(String(format: "%.2f", currentPrice))
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 4).padding(.vertical, 2)
+                                    .background(Color.blue.opacity(0.8)).cornerRadius(4)
+                            }
                     }
                 }
+                // 【关键修改】添加 Total 对应的蓝色映射
                 .chartForegroundStyleScale([
                     "Call": .red,
-                    "Put": .green
+                    "Put": .green,
+                    "Total": .blue
                 ])
                 // 【关键修改】设置 X 轴范围，强制撑满
                 .chartXScale(domain: xDomain)
@@ -301,11 +306,19 @@ struct OptionsStrikePriceChartView: View {
                     AxisMarks(values: allStrikes) { value in
                         AxisGridLine()
                         AxisTick()
-                        AxisValueLabel(format: Decimal.FormatStyle.number.precision(.fractionLength(0)), orientation: .vertical)
+                        AxisValueLabel(orientation: .vertical) {
+                            if let strikeValue = value.as(Double.self) {
+                                let label = strikeValue.truncatingRemainder(dividingBy: 1) == 0 
+                                    ? String(format: "%.0f", strikeValue) 
+                                    : String(format: "%.1f", strikeValue)
+                                Text(label)
+                                    .font(.system(size: 10, design: .monospaced))
+                            }
+                        }
                     }
                 }
                 .chartYAxis {
-                    AxisMarks { value in
+                    AxisMarks { _ in
                         AxisGridLine()
                         AxisValueLabel()
                     }
