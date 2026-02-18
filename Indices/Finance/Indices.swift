@@ -283,6 +283,12 @@ struct SectorsPanel: Decodable {
                     // 如果 JSON 里的值是空的，我们默认让 name 等于 symbolKey，确保 UI 有内容显示
                     let displayName = jsonValue.isEmpty ? symbolKey : jsonValue
                     
+                    // MARK: - 【修改点】针对 PE_Volume 进行过滤
+                    // 如果是 PE_Volume 分组，且显示名称中不包含“听”，则跳过
+                    if key == "PE_Volume" && !displayName.contains("听") {
+                        continue
+                    }
+                    
                     symbols.append(IndicesSymbol(
                         symbol: symbolKey,   // 存储原始代码，如 "CRL"
                         name: displayName,   // 存储显示名，如 "CRL听"
