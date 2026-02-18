@@ -191,6 +191,12 @@ struct OptionsStrikePriceChartView: View {
             .sorted { $0.strike < $1.strike }
     }
     
+    // 【新增】计算 Y 轴最大值，用于锁定 Scale
+    var yAxisMax: Double {
+        let maxVal = chartData.map { $0.price }.max() ?? 10
+        return maxVal * 1.1 // 留出 10% 的顶部空间
+    }
+    
     var allStrikes: [Double] {
         let strikes = Set(chartData.map { $0.strike })
         return strikes.sorted()
@@ -201,6 +207,45 @@ struct OptionsStrikePriceChartView: View {
         let strikes = chartData.map { $0.strike }
         guard let min = strikes.min(), let max = strikes.max() else { return 0...100 }
         return min == max ? (min - 1)...(max + 1) : min...max
+    }
+    
+    // 【新增】计算 Call+Put (Total) 所有点的价格加权平均 Strike
+    // 公式：Σ(strike_i × totalPrice_i) / Σ(totalPrice_i)
+    // 代表期权活动在 Strike 轴上的"重心"位置
+    var weightedAverageStrike: Double? {
+        let targetExpiry = selectedExpiry.isEmpty ? (uniqueExpiries.first ?? "") : selectedExpiry
+        
+        // 获取基础数据点 (与 chartData 逻辑一致)
+        let basePoints = allItems.filter { $0.expiryDate == targetExpiry }
+            .compactMap { item -> (strike: Double, price: Double)? in
+                let cleanStrike = item.strike.replacingOccurrences(of: ",", with: "")
+                guard let strikeVal = Double(cleanStrike) else { return nil }
+                let cleanPrice = item.price.replacingOccurrences(of: ",", with: "")
+                guard let priceVal = Double(cleanPrice), priceVal > 0 else { return nil }
+                return (strikeVal, priceVal)
+            }
+        
+        // 按 Strike 分组，计算 Call+Put 合计
+        let groupedByStrike = Dictionary(grouping: basePoints, by: { $0.strike })
+        let totalPoints = groupedByStrike.map { (strike, points) -> (strike: Double, totalPrice: Double) in
+            let sum = points.reduce(0.0) { $0 + $1.price }
+            return (strike, sum)
+        }
+        
+        guard !totalPoints.isEmpty else { return nil }
+        
+        // 应用与 chartData 相同的阈值过滤
+        let maxPrice = totalPoints.map { $0.totalPrice }.max() ?? 0
+        let threshold = maxPrice * 0.05
+        let filteredTotal = totalPoints.filter { $0.totalPrice >= threshold }
+        guard !filteredTotal.isEmpty else { return nil }
+        
+        // 计算加权平均 Strike
+        let totalWeight = filteredTotal.reduce(0.0) { $0 + $1.totalPrice }
+        guard totalWeight > 0 else { return nil }
+        let weightedSum = filteredTotal.reduce(0.0) { $0 + $1.strike * $1.totalPrice }
+        
+        return weightedSum / totalWeight
     }
     
     var body: some View {
@@ -279,17 +324,31 @@ struct OptionsStrikePriceChartView: View {
                         .symbolSize(point.type == "Total" ? 20 : 30)
                     }
                     
-                    // 2. 【核心新增】绘制最新标的价格垂直虚线
+                    // 2. 【新增】Call+Put 加权平均 Strike 竖直虚线 (蓝色)
+                    if let avgStrike = weightedAverageStrike {
+                        RuleMark(x: .value("Avg Strike", avgStrike))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5]))
+                            .foregroundStyle(.blue.opacity(0.6))
+                            .annotation(position: .bottom, alignment: .center) {
+                                Text(String(format: "Avg:%.1f", avgStrike))
+                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 4).padding(.vertical, 2)
+                                    .background(Color.blue.opacity(0.8)).cornerRadius(4)
+                            }
+                    }
+                    
+                    // 3. 【修改】最新标的价格垂直虚线 (蓝色 → 紫色)
                     if let currentPrice = latestStockPrice {
                         RuleMark(x: .value("Current Price", currentPrice))
                             .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5]))
-                            .foregroundStyle(.primary.opacity(0.6))
+                            .foregroundStyle(.purple.opacity(0.6))
                             .annotation(position: .top, alignment: .center) {
                                 Text(String(format: "%.2f", currentPrice))
                                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                                     .foregroundColor(.white)
                                     .padding(.horizontal, 4).padding(.vertical, 2)
-                                    .background(Color.blue.opacity(0.8)).cornerRadius(4)
+                                    .background(Color.purple.opacity(0.8)).cornerRadius(4)
                             }
                     }
                 }
@@ -301,6 +360,8 @@ struct OptionsStrikePriceChartView: View {
                 ])
                 // 【关键修改】设置 X 轴范围，强制撑满
                 .chartXScale(domain: xDomain)
+                // 【修复点 2】强制 Y 轴从 0 开始，绝不显示负数
+                .chartYScale(domain: 0...yAxisMax)
                 .chartXAxis {
                     // 每一个 Strike 都显示出来
                     AxisMarks(values: allStrikes) { value in
