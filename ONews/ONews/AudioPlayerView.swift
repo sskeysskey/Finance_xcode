@@ -41,16 +41,51 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     private var speechSynthesizer = AVSpeechSynthesizer()
     private var audioPlayer: AVAudioPlayer?
     private var displayLink: CADisplayLink?
-    private var temporaryAudioFileURL: URL?
-    private var audioFile: AVAudioFile?
     private let autoPlayEnabledKey = "audio.autoPlayEnabled"
     private var remoteCommandsRegistered = false
-    
-    // 使用词典中的默认标题
     private var nowPlayingTitle: String = Localized.playingArticle
-
     private var synthesisWatchdogTimer: Timer?
     private var synthesisLastWriteAt: Date?
+
+    // ▶ 新增：分块流式合成相关属性
+    private var textChunks: [String] = []
+    private var chunkFileURLs: [URL?] = []         // nil = 尚未合成完毕
+    private var chunkDurations: [TimeInterval] = [] // 0 = 尚未获取
+    private var currentPlayingChunkIndex = 0
+    private var currentSynthesizingChunkIndex = 0
+    private var isAllSynthesized = false
+    private var waitingForChunk = false
+    private var selectedVoice: AVSpeechSynthesisVoice?
+    private var currentChunkAudioFile: AVAudioFile?
+    private var currentChunkFileURL: URL?
+    private var synthesisGeneration: Int = 0        // 防止旧的合成回调干扰新播放
+
+    // ▶ 新增：计算属性 - 估算总时长
+    private var totalEstimatedDuration: TimeInterval {
+        let knownDuration = chunkDurations.reduce(0, +)
+        guard !textChunks.isEmpty else { return knownDuration }
+        if isAllSynthesized { return knownDuration }
+
+        // 用已知块的「时长/字符数」比值来估算未合成块的时长
+        let synthesizedIndices = chunkDurations.enumerated().filter { $0.element > 0 }
+        guard !synthesizedIndices.isEmpty else { return 0 }
+
+        let synthesizedCharCount = synthesizedIndices.reduce(0) { $0 + textChunks[$1.offset].count }
+        guard synthesizedCharCount > 0 else { return knownDuration }
+        let avgDurationPerChar = knownDuration / Double(synthesizedCharCount)
+
+        let remainingCharCount = textChunks.enumerated()
+            .filter { chunkDurations[$0.offset] == 0 }
+            .reduce(0) { $0 + $1.element.count }
+
+        return knownDuration + avgDurationPerChar * Double(remainingCharCount)
+    }
+
+    // ▶ 新增：当前播放块之前所有块的累计时长
+    private var elapsedTimeBeforeCurrentChunk: TimeInterval {
+        guard currentPlayingChunkIndex > 0 else { return 0 }
+        return chunkDurations.prefix(currentPlayingChunkIndex).reduce(0, +)
+    }
 
     override init() {
         super.init()
@@ -70,19 +105,29 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         audioPlayer = nil
         speechSynthesizer.stopSpeaking(at: .immediate)
         speechSynthesizer.delegate = nil
+        for url in chunkFileURLs {
+            if let url = url { try? FileManager.default.removeItem(at: url) }
+        }
         Task { @MainActor [weak self] in
             self?.invalidateSynthesisWatchdog()
         }
     }
 
     func prepareForNextTransition() {
+        synthesisGeneration += 1
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
         isPlaying = false
         isSynthesizing = false
+        waitingForChunk = false
+        isAllSynthesized = false
         stopDisplayLink()
-        cleanupTemporaryFile()
+        cleanupAllChunkFiles()
         invalidateSynthesisWatchdog()
+        textChunks = []
+        chunkDurations = []
+        currentPlayingChunkIndex = 0
+        currentSynthesizingChunkIndex = 0
     }
 
     private func applyPlaybackRate() {
@@ -125,7 +170,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             return .success
         }
 
-        // 修复点：不要在这里清理播放器状态；仅把“下一曲”意图传回 UI 层处理
         commandCenter.nextTrackCommand.addTarget { [weak self] _ in
             guard let self = self else { return .commandFailed }
             self.onNextRequested?()
@@ -148,11 +192,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
         info[MPMediaItemPropertyTitle] = nowPlayingTitle
         if let player = audioPlayer {
-            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime
-            info[MPMediaItemPropertyPlaybackDuration] = player.duration
+            let overallTime = elapsedTimeBeforeCurrentChunk + player.currentTime
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = overallTime
+            info[MPMediaItemPropertyPlaybackDuration] = totalEstimatedDuration
             info[MPNowPlayingInfoPropertyPlaybackRate] = player.isPlaying ? Double(playbackRate) : 0.0
         }
-        // 使用双语词条
         info[MPMediaItemPropertyArtist] = isAutoPlayEnabled ? Localized.autoPlay : Localized.singlePlay
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
@@ -162,14 +206,15 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         info[MPMediaItemPropertyTitle] = nowPlayingTitle
 
         let speedText = String(format: "%.2fx", playbackRate).replacingOccurrences(of: ".00", with: "x")
-        // 使用双语词条
         let modeText = isAutoPlayEnabled ? Localized.autoPlay : Localized.singlePlay
         info[MPMediaItemPropertyArtist] = "\(modeText) • \(speedText)"
         info[MPMediaItemPropertyAlbumTitle] = "Speed \(speedText)"
 
+        let totalDur = totalEstimatedDuration
         if let player = audioPlayer {
-            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = player.currentTime
-            info[MPMediaItemPropertyPlaybackDuration] = player.duration
+            let overallTime = elapsedTimeBeforeCurrentChunk + player.currentTime
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = overallTime
+            info[MPMediaItemPropertyPlaybackDuration] = totalDur
             let rate: Double
             if let explicitRate = explicitRate {
                 rate = explicitRate
@@ -179,7 +224,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             info[MPNowPlayingInfoPropertyPlaybackRate] = rate
         } else {
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = 0
-            info[MPMediaItemPropertyPlaybackDuration] = 0
+            info[MPMediaItemPropertyPlaybackDuration] = totalDur
             info[MPNowPlayingInfoPropertyPlaybackRate] = 0
         }
 
@@ -219,26 +264,97 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = hasNext
     }
 
-    // MARK: - Public Control Methods
+    // MARK: - ▶ 分块文本拆分
+    private func splitIntoChunks(_ text: String) -> [String] {
+        let firstChunkTarget = 300    // 第一块目标较小，确保快速开始播放
+        let normalChunkTarget = 800   // 后续块较大，减少块间衔接
+
+        guard text.count > firstChunkTarget else { return [text] }
+
+        // 按句子边界拆分
+        let sentenceEnders: Set<Character> = ["。", "！", "？", ".", "!", "?"]
+        var sentences: [String] = []
+        var current = ""
+
+        for char in text {
+            current.append(char)
+            if sentenceEnders.contains(char) {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    sentences.append(current)
+                    current = ""
+                }
+            } else if char == "\n" {
+                // 换行也作为断点
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    sentences.append(current)
+                    current = ""
+                }
+            }
+        }
+        if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sentences.append(current)
+        }
+
+        guard sentences.count > 1 else { return [text] }
+
+        var chunks: [String] = []
+        var currentChunk = ""
+
+        for sentence in sentences {
+            let target = chunks.isEmpty ? firstChunkTarget : normalChunkTarget
+            if currentChunk.count + sentence.count > target && !currentChunk.isEmpty {
+                chunks.append(currentChunk)
+                currentChunk = sentence
+            } else {
+                currentChunk += sentence
+            }
+        }
+        if !currentChunk.isEmpty {
+            chunks.append(currentChunk)
+        }
+
+        return chunks
+    }
+
+    // MARK: - ▶ 核心：流式分块播放入口
     func startPlayback(text: String, title: String? = nil, language: String = "zh-CN") {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            handleError(Localized.errEmptyText) // 双语错误
+            handleError(Localized.errEmptyText)
             return
         }
 
+        // 清理上一次播放状态
+        synthesisGeneration += 1
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
         audioPlayer?.delegate = nil
         audioPlayer = nil
         stopDisplayLink()
-        cleanupTemporaryFile()
+        cleanupAllChunkFiles()
         invalidateSynthesisWatchdog()
 
         self.nowPlayingTitle = title?.isEmpty == false ? title! : Localized.playingArticle
         self.speechSynthesizer.delegate = self
 
-        // 【修改点】传入 language 参数给预处理函数
+        // 确定语音
+        if language.starts(with: "en") {
+            selectedVoice = AVSpeechSynthesisVoice(language: "en-US")
+        } else {
+            selectedVoice = getBestVoice(for: text)
+        }
+
+        // 预处理文本并拆分为块
         let processedText = preprocessText(text, language: language)
+        textChunks = splitIntoChunks(processedText)
+        chunkFileURLs = Array(repeating: nil, count: textChunks.count)
+        chunkDurations = Array(repeating: 0.0, count: textChunks.count)
+        currentPlayingChunkIndex = 0
+        currentSynthesizingChunkIndex = 0
+        isAllSynthesized = false
+        waitingForChunk = false
+
         isSynthesizing = true
         isPlaybackActive = true
 
@@ -252,29 +368,46 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         refreshNowPlayingInfo(playbackRate: 0.0)
 
-        let utterance = AVSpeechUtterance(string: processedText)
-        // 【修改点】使用传入的 language 来获取声音，不再完全依赖自动检测
-        // 如果是英文，直接指定英文声音；如果是中文，保持原有逻辑
-        if language.starts(with: "en") {
-            utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
-        } else {
-            utterance.voice = getBestVoice(for: text)
+        // 开始合成第一个块
+        synthesizeChunk(at: 0)
+    }
+
+    // MARK: - ▶ 合成单个块
+    private func synthesizeChunk(at index: Int) {
+        guard index < textChunks.count else {
+            isAllSynthesized = true
+            invalidateSynthesisWatchdog()
+            // 更新为精确总时长
+            durationString = formatTime(totalEstimatedDuration)
+            return
         }
+
+        currentSynthesizingChunkIndex = index
+        let chunkText = textChunks[index]
+        let generation = synthesisGeneration
+
+        let utterance = AVSpeechUtterance(string: chunkText)
+        utterance.voice = selectedVoice
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.pitchMultiplier = 1.0
-        utterance.postUtteranceDelay = 0.3
-        utterance.preUtteranceDelay = 0.2
+        utterance.postUtteranceDelay = 0.05
+        utterance.preUtteranceDelay = 0.05
 
         let tempDir = FileManager.default.temporaryDirectory
-        let fileName = UUID().uuidString + ".caf"
-        temporaryAudioFileURL = tempDir.appendingPathComponent(fileName)
+        let fileName = "chunk_\(index)_\(UUID().uuidString).caf"
+        let fileURL = tempDir.appendingPathComponent(fileName)
+        currentChunkFileURL = fileURL
+        currentChunkAudioFile = nil
 
         synthesisLastWriteAt = Date()
-        startSynthesisWatchdog()
+        if index == 0 { startSynthesisWatchdog() }
 
         speechSynthesizer.write(utterance) { [weak self] buffer in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                // 防止旧的合成回调干扰新的播放
+                guard self.synthesisGeneration == generation else { return }
+
                 guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
                     self.handleError(Localized.errPCMBuffer)
                     return
@@ -283,65 +416,111 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 self.synthesisLastWriteAt = Date()
 
                 if pcmBuffer.frameLength == 0 {
-                    self.synthesisToFileCompleted()
+                    // 当前块合成完毕
+                    self.onChunkSynthesisComplete(at: index, fileURL: fileURL)
                 } else {
-                    if self.audioFile == nil {
+                    if self.currentChunkAudioFile == nil {
                         do {
-                            guard let url = self.temporaryAudioFileURL else {
-                                self.handleError(Localized.errTempURL)
-                                return
-                            }
-                            self.audioFile = try AVAudioFile(forWriting: url, settings: pcmBuffer.format.settings)
+                            self.currentChunkAudioFile = try AVAudioFile(forWriting: fileURL, settings: pcmBuffer.format.settings)
                         } catch {
                             self.handleError("\(Localized.errPlayerFailed): \(error)")
                             return
                         }
                     }
-                    self.appendBufferToFile(buffer: pcmBuffer)
+                    do {
+                        try self.currentChunkAudioFile?.write(from: pcmBuffer)
+                    } catch {
+                        self.handleError("\(Localized.unknownError): \(error)")
+                    }
                 }
             }
         }
     }
 
+    // MARK: - ▶ 单块合成完成回调
+    private func onChunkSynthesisComplete(at index: Int, fileURL: URL) {
+        currentChunkAudioFile = nil
+        chunkFileURLs[index] = fileURL
+
+        // 获取此块的精确时长
+        if let tempPlayer = try? AVAudioPlayer(contentsOf: fileURL) {
+            chunkDurations[index] = tempPlayer.duration
+        }
+
+        // 更新总时长显示
+        durationString = formatTime(totalEstimatedDuration)
+
+        // 如果这正是等待播放的块，立即开始播放
+        if index == currentPlayingChunkIndex && (!isPlaying || waitingForChunk) {
+            waitingForChunk = false
+            isSynthesizing = false
+            startPlayingCurrentChunk()
+        }
+
+        // 继续合成下一个块
+        let nextIndex = index + 1
+        if nextIndex < textChunks.count {
+            synthesizeChunk(at: nextIndex)
+        } else {
+            isAllSynthesized = true
+            invalidateSynthesisWatchdog()
+            durationString = formatTime(totalEstimatedDuration)
+        }
+    }
+
+    // MARK: - ▶ 播放当前块
+    private func startPlayingCurrentChunk() {
+        guard currentPlayingChunkIndex < chunkFileURLs.count,
+              let url = chunkFileURLs[currentPlayingChunkIndex] else {
+            // 该块尚未合成完毕，进入等待状态
+            waitingForChunk = true
+            isSynthesizing = true
+            return
+        }
+
+        do {
+            try setupAudioSession()
+            audioPlayer = try AVAudioPlayer(contentsOf: url)
+            audioPlayer?.delegate = self
+            audioPlayer?.enableRate = true
+            audioPlayer?.prepareToPlay()
+            applyPlaybackRate()
+            audioPlayer?.play()
+            isPlaying = true
+            isSynthesizing = false
+            startDisplayLink()
+
+            setupRemoteTransportControls()
+            enableRemoteCommandsForActivePlayback()
+            refreshNowPlayingInfo(playbackRate: 1.0)
+        } catch {
+            handleError("\(Localized.errPlayerFailed): \(error)")
+        }
+    }
+
     private func getBestVoice(for text: String) -> AVSpeechSynthesisVoice? {
-        // 1. 移除 URL 避免干扰（保持原逻辑）
         let textForDetection = text.replacingOccurrences(of: "https?://[^\\s]+", with: "", options: .regularExpression)
-        
-        // 2. 【核心修复】最高优先级：检测是否包含汉字
-        // 不需要管 NLLanguageRecognizer 认为它是什么语言。
-        // 只要含有汉字（\p{Han}），为了保证可读性，必须用中文引擎。
-        // (除非你明确知道这是日文，但根据你的业务场景看起来是中文为主)
         let hasChineseChar = textForDetection.range(of: "\\p{Han}", options: .regularExpression) != nil
-        
+
         var finalLanguageCode = "zh-CN"
-        
+
         if hasChineseChar {
-            // 如果有汉字，强制锁定中文
             finalLanguageCode = "zh-CN"
         } else {
-            // 只有在【完全没有汉字】的情况下，才依赖自动检测
-            // 这适用于纯英文、纯法文等场景
             let recognizer = NLLanguageRecognizer()
             recognizer.processString(textForDetection)
-            
             if let detected = recognizer.dominantLanguage?.rawValue {
                 finalLanguageCode = detected
             } else {
-                // 检测失败，兜底
                 finalLanguageCode = Locale.current.language.languageCode?.identifier ?? "zh-CN"
             }
         }
 
-        // 3. 获取对应语言的最佳语音包
         let voices = AVSpeechSynthesisVoice.speechVoices()
         let matches = voices.filter { $0.language.starts(with: finalLanguageCode) }
-        
-        // 优先选择高质量语音
         if let v = matches.first(where: { $0.quality == .premium }) { return v }
         if let v = matches.first(where: { $0.quality == .enhanced }) { return v }
         if let v = matches.first { return v }
-        
-        // 最后的兜底
         return AVSpeechSynthesisVoice(language: finalLanguageCode)
     }
 
@@ -369,12 +548,15 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     func stop() {
+        synthesisGeneration += 1
         speechSynthesizer.stopSpeaking(at: .immediate)
         audioPlayer?.stop()
 
         isPlaying = false
         isPlaybackActive = false
         isSynthesizing = false
+        waitingForChunk = false
+        isAllSynthesized = false
 
         progress = 0.0
         currentTimeString = "00:00"
@@ -389,68 +571,95 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         teardownRemoteTransportControls()
 
         stopDisplayLink()
-        cleanupTemporaryFile()
+        cleanupAllChunkFiles()
         deactivateAudioSession()
         invalidateSynthesisWatchdog()
 
         audioPlayer?.delegate = nil
         audioPlayer = nil
         speechSynthesizer.delegate = nil
+
+        textChunks = []
+        chunkFileURLs = []
+        chunkDurations = []
+        currentPlayingChunkIndex = 0
+        currentSynthesizingChunkIndex = 0
     }
 
-    // 自然结束：仅在“自动连播开启”时请求下一篇；单次播放时不跳转
+    // ▶ 修改：自然结束——当前块播完后衔接下一块
     private func finishNaturally() {
         audioPlayer?.stop()
         isPlaying = false
         isSynthesizing = false
         stopDisplayLink()
 
-        if let player = audioPlayer {
-            progress = 1.0
-            currentTimeString = formatTime(player.duration)
-            refreshNowPlayingInfo(playbackRate: 0.0)
-            enableRemoteCommandsForActivePlayback()
-        }
+        progress = 1.0
+        currentTimeString = formatTime(totalEstimatedDuration)
+        refreshNowPlayingInfo(playbackRate: 0.0)
+        enableRemoteCommandsForActivePlayback()
 
-        // 仅当自动连播时才触发下一篇
         if isAutoPlayEnabled {
             onNextRequested?()
         }
         onPlaybackFinished?()
     }
 
+    // ▶ 修改：跨块 seek
     func seek(to value: Double) {
-        guard let player = audioPlayer else { return }
-        let newTime = player.duration * value
-        player.currentTime = newTime
-        updateProgress()
-    }
+        let totalDur = totalEstimatedDuration
+        guard totalDur > 0 else { return }
+        let targetTime = totalDur * value
 
-    private func appendBufferToFile(buffer: AVAudioPCMBuffer) {
-        do {
-            try self.audioFile?.write(from: buffer)
-        } catch {
-            handleError("\(Localized.unknownError): \(error)") // 或者在 Localized 增加 errWriteFailed
+        // 找到目标块
+        var cumulative: TimeInterval = 0
+        var targetChunk = 0
+        var timeWithinChunk: TimeInterval = 0
+
+        for i in 0..<chunkDurations.count {
+            let dur = chunkDurations[i]
+            if dur <= 0 { break } // 未合成的块不能 seek
+            if cumulative + dur > targetTime {
+                targetChunk = i
+                timeWithinChunk = targetTime - cumulative
+                break
+            }
+            cumulative += dur
+            if i == chunkDurations.count - 1 {
+                targetChunk = i
+                timeWithinChunk = min(dur, targetTime - cumulative + dur)
+            }
+        }
+
+        // 只能 seek 到已合成的块
+        guard chunkFileURLs[targetChunk] != nil else { return }
+
+        if targetChunk == currentPlayingChunkIndex {
+            // 同一块内 seek
+            audioPlayer?.currentTime = timeWithinChunk
+            updateProgress()
+        } else {
+            // 切换到不同的块
+            audioPlayer?.stop()
+            stopDisplayLink()
+            currentPlayingChunkIndex = targetChunk
+            startPlayingCurrentChunk()
+            audioPlayer?.currentTime = timeWithinChunk
+            updateProgress()
         }
     }
 
-    private func synthesisToFileCompleted() {
-        self.audioFile = nil
-        guard let url = self.temporaryAudioFileURL else {
-            handleError(Localized.errTempURL)
-            return
+    // ▶ 修改：块合成完毕后的文件清理
+    private func cleanupAllChunkFiles() {
+        currentChunkAudioFile = nil
+        for url in chunkFileURLs {
+            if let url = url {
+                try? FileManager.default.removeItem(at: url)
+            }
         }
-        invalidateSynthesisWatchdog()
-
-        self.isSynthesizing = false
-        self.setupAndPlayAudioPlayer(from: url)
-    }
-
-    private func cleanupTemporaryFile() {
-        audioFile = nil
-        if let url = temporaryAudioFileURL {
+        chunkFileURLs = []
+        if let url = currentChunkFileURL {
             try? FileManager.default.removeItem(at: url)
-            temporaryAudioFileURL = nil
+            currentChunkFileURL = nil
         }
     }
 
@@ -459,11 +668,13 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         synthesisWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                guard self.isSynthesizing else { self.invalidateSynthesisWatchdog(); return }
+                guard self.isSynthesizing || self.currentSynthesizingChunkIndex < self.textChunks.count else {
+                    self.invalidateSynthesisWatchdog()
+                    return
+                }
                 guard let last = self.synthesisLastWriteAt else { return }
                 let elapsed = Date().timeIntervalSince(last)
                 if elapsed > timeout {
-                    // 【修正点】使用双语词条
                     self.handleError(Localized.errSynthesisTimeout)
                 }
             }
@@ -477,27 +688,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         synthesisLastWriteAt = nil
     }
 
-    private func setupAndPlayAudioPlayer(from url: URL) {
-        do {
-            try setupAudioSession()
-            audioPlayer = try AVAudioPlayer(contentsOf: url)
-            audioPlayer?.delegate = self
-            audioPlayer?.enableRate = true
-            audioPlayer?.prepareToPlay()
-            durationString = formatTime(audioPlayer?.duration ?? 0)
-            applyPlaybackRate()
-            audioPlayer?.play()
-            isPlaying = true
-            startDisplayLink()
-
-            setupRemoteTransportControls()
-            enableRemoteCommandsForActivePlayback()
-            refreshNowPlayingInfo(playbackRate: 1.0)
-        } catch {
-            handleError("\(Localized.errPlayerFailed): \(error)")
-        }
-    }
-
     private func enableRemoteCommandsForActivePlayback() {
         let commandCenter = MPRemoteCommandCenter.shared()
         commandCenter.playCommand.isEnabled = true
@@ -506,8 +696,27 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         commandCenter.nextTrackCommand.isEnabled = true
     }
 
+    // ▶ 修改：播放完当前块 → 衔接下一块 / 全部完成
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        finishNaturally()
+        currentPlayingChunkIndex += 1
+
+        if currentPlayingChunkIndex < textChunks.count {
+            // 还有后续块
+            if chunkFileURLs.indices.contains(currentPlayingChunkIndex),
+               chunkFileURLs[currentPlayingChunkIndex] != nil {
+                // 下一块已就绪，无缝衔接
+                startPlayingCurrentChunk()
+            } else {
+                // 下一块尚未合成完，进入等待
+                waitingForChunk = true
+                isSynthesizing = true
+                isPlaying = false
+                stopDisplayLink()
+            }
+        } else {
+            // 全部播放完毕
+            finishNaturally()
+        }
     }
 
     private func startDisplayLink() {
@@ -521,10 +730,16 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         displayLink = nil
     }
 
+    // ▶ 修改：进度更新使用全局多块视角
     @objc private func updateProgress() {
         guard let player = audioPlayer, player.duration > 0 else { return }
-        progress = player.currentTime / player.duration
-        currentTimeString = formatTime(player.currentTime)
+        let totalDur = totalEstimatedDuration
+        guard totalDur > 0 else { return }
+
+        let overallTime = elapsedTimeBeforeCurrentChunk + player.currentTime
+        progress = min(overallTime / totalDur, 1.0)
+        currentTimeString = formatTime(overallTime)
+        durationString = formatTime(totalDur)
         refreshNowPlayingInfo()
     }
 
@@ -552,14 +767,14 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         let seconds = Int(time) % 60
         return String(format: "%02d:%02d", minutes, seconds)
     }
-    
-    // --- 新增/修复：数字与年份处理 ---
+
+    // MARK: - 以下所有文本预处理方法保持不变
+
     private func removeCommasFromNumbers(_ text: String) -> String {
         let pattern = #"(\d),(\d{3})"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return text
         }
-        
         var result = text
         while regex.firstMatch(in: result, range: NSRange(result.startIndex..., in: result)) != nil {
             result = regex.stringByReplacingMatches(
@@ -579,24 +794,19 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return digits.compactMap { map[$0] }.joined()
     }
 
-    // 将各种连字符统一为普通连字符，便于后续正则匹配
     private func normalizeDash(_ text: String) -> String {
-        // 包含常见的连字符/破折号/波浪号等
         let dashes = ["—", "–", "―", "–", "－", "‑", "‒", "〜", "~", "—", "——"]
         var t = text
         for d in dashes {
             t = t.replacingOccurrences(of: d, with: "-")
         }
-        // 连续多个破折号合并为单个-
         while t.contains("--") {
             t = t.replacingOccurrences(of: "--", with: "-")
         }
         return t
     }
 
-    // 用于将阿拉伯数字按中文数值读法（非逐字年份）读出，例如：2000 -> 两千；5000 -> 五千；21 -> 二十一
     private func readChineseNumber(_ n: Int) -> String {
-        // 仅覆盖到万级，满足 2000-5000 此类需求，避免引入复杂度
         let digits = ["零","一","二","三","四","五","六","七","八","九"]
         if n < 10 { return digits[n] }
         if n < 20 {
@@ -622,13 +832,10 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         if n < 10000 {
             let thousands = n / 1000
             let rest = n % 1000
-            // 按中文习惯：2千通常读作“两千”
             let thousandHead = (thousands == 2 ? "两" : digits[thousands]) + "千"
             if rest == 0 { return thousandHead }
             if rest < 100 {
-                // 2001 -> 两千零一； 2010 -> 两千零一十
                 if rest < 10 { return thousandHead + "零" + digits[rest] }
-                // 介于 10~99
                 if rest < 20 {
                     if rest == 10 { return thousandHead + "零十" }
                     return thousandHead + "零十" + digits[rest % 10]
@@ -638,7 +845,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                     return thousandHead + digits[tens] + "十" + (ones == 0 ? "" : digits[ones])
                 }
             } else {
-                // 余数 >= 100
                 let hundreds = rest / 100
                 let rest2 = rest % 100
                 var res = thousandHead + digits[hundreds] + "百"
@@ -655,26 +861,19 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 }
             }
         }
-        // 简化：>=10000 时粗略读法（满足一般单位场景）
         if n < 100000 {
             let wan = n / 10000
             let rest = n % 10000
             let head = (wan == 2 ? "两" : digits[wan]) + "万"
             if rest == 0 { return head }
-            // 递归处理余数
             return head + readChineseNumber(rest)
         }
-        // 超过本需求范围，退化为逐字
         return String(n).map { String($0) }.joined(separator: "")
     }
 
-    // 修正：仅在“明确存在‘年’字或‘年代’”的上下文中替换年份
     private func replaceYearMentionsForChinese(_ text: String) -> String {
         var result = text
-        
-        // 【新增规则 0】处理并列年份：例如 "2022和2023年" 或 "1998、1999年"
-        // 逻辑：匹配一个4位数字，如果它后面紧跟着（和/与/、）+（4位数字）+（年/年代），则将其视为年份
-        // 这样 "2022" 会被选中，因为它后面是 "和2023年"
+
         let linkedYearPattern = #"(?<!\d)(\d{4})(?=\s*(?:和|与|、)\s*\d{4}\s*(?:年|年代))"#
         if let regex = try? NSRegularExpression(pattern: linkedYearPattern, options: []) {
             let nsRange = NSRange(result.startIndex..<result.endIndex, in: result)
@@ -683,12 +882,10 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 guard let match = match, match.numberOfRanges >= 2 else { return }
                 if let r1 = Range(match.range(at: 1), in: result) {
                     let year = String(result[r1])
-                    // 转换为逐字读法：二零二二
                     let yearZh = formatDigitsToChinesePerChar(year)
                     replacements.append((match.range(at: 1), yearZh))
                 }
             }
-            // 倒序替换，防止坐标偏移
             for (range, rep) in replacements.reversed() {
                 if let r = Range(range, in: result) {
                     result.replaceSubrange(r, with: rep)
@@ -696,8 +893,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
-        // 1) 范围中包含“年”或“年代”的情形：如 2017-2020年 或 2017-2020年代 -> 二零一七到二零二零年/年代
-        // 仅当右侧（或两端）紧跟“年”或“年代”才视为年份范围
         let rangeWithYearPattern = #"(?<!\d)(\d{4})(?:\s*年)?\s*-\s*(\d{4})(?=\s*(?:年|年代))"#
         if let regex = try? NSRegularExpression(pattern: rangeWithYearPattern, options: []) {
             let nsRange = NSRange(result.startIndex..<result.endIndex, in: result)
@@ -721,8 +916,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
-        // 2) 单个年份：仅当紧随“年”或“年代”时才逐字读
-        // (注：上面的"2022"被处理后，剩下的"2023年"会在这里被处理)
         let singleYearPattern = #"(?<!\d)(\d{4})(?=\s*(?:年|年代))"#
         if let regex = try? NSRegularExpression(pattern: singleYearPattern, options: []) {
             let nsRange = NSRange(result.startIndex..<result.endIndex, in: result)
@@ -745,30 +938,19 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return result
     }
 
-    // 调整调用顺序：先去逗号 -> 统一破折号 -> 英文/范围/单位处理 -> 年份逐字化 -> 中英间停顿
     private func preprocessText(_ text: String, language: String) -> String {
-        // 【修正点】使用词典中的“链接”占位符
         let textWithoutURLs = text.replacingOccurrences(of: "https?://[^\\s]+", with: Localized.linkPlaceholder, options: .regularExpression)
-        
-        // 【核心修改】如果是英文模式，直接返回处理过 URL 的文本
-        // 跳过所有针对中文的数字、年份、破折号处理，否则英文数字会被读乱
+
         if language.starts(with: "en") {
             return textWithoutURLs
         }
-        
-        // 去掉数字中的逗号
-        let textWithoutCommas = removeCommasFromNumbers(textWithoutURLs)
-        // 统一破折号等
-        let normalized = normalizeDash(textWithoutCommas)
-        // 先在“百分点/百分比/百分点”前的带小数数字插入“点”
-        let decimalBeforePercentWordFixed = insertDotForDecimalBeforePercentageWords(normalized)
 
-        // 先处理英文与数字范围、单位（核心修复）
+        let textWithoutCommas = removeCommasFromNumbers(textWithoutURLs)
+        let normalized = normalizeDash(textWithoutCommas)
+        let decimalBeforePercentWordFixed = insertDotForDecimalBeforePercentageWords(normalized)
         let processedSpecialTerms = processEnglishText(decimalBeforePercentWordFixed)
-        // 仅对带“年”的位置做年份逐字化
         let withYearFixed = replaceYearMentionsForChinese(processedSpecialTerms)
 
-        // 中英夹杂时加停顿，但避免在“年”附近插入英文逗号
         let pattern = #"(?<!年)([\u4e00-\u9fa5])(\s*[A-Za-z]+\s*)([\u4e00-\u9fa5])(?!年)"#
         let regex = try? NSRegularExpression(pattern: pattern, options: [])
         let range = NSRange(withYearFixed.startIndex..<withYearFixed.endIndex, in: withYearFixed)
@@ -781,57 +963,44 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         return modifiedText
     }
-    
+
     private func insertDotForDecimalBeforePercentageWords(_ text: String) -> String {
-    var result = text
-    // 匹配小数紧跟“个百分点/百分比/百分点”
-    // 示例：0.5个百分点 -> 0.5点个百分点（随后 TTS 会把“点”读出来，整体为“零点五个百分点”）
-    // 为了兼容空格：允许小数与量词之间有可选空白
-    let pattern = #"(?<!\d)(\d+).(\d+)\s*(个百分点|百分比|百分点)"#
-    guard let regex = try? NSRegularExpression(pattern: pattern) else { return result }
+        var result = text
+        let pattern = #"(?<!\d)(\d+).(\d+)\s*(个百分点|百分比|百分点)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return result }
 
-    let nsRange = NSRange(result.startIndex..<result.endIndex, in: result)
-    var replacements: [(NSRange, String)] = []
+        let nsRange = NSRange(result.startIndex..<result.endIndex, in: result)
+        var replacements: [(NSRange, String)] = []
 
-    regex.enumerateMatches(in: result, options: [], range: nsRange) { match, _, _ in
-        guard let match = match, match.numberOfRanges >= 4 else { return }
-        if let r1 = Range(match.range(at: 1), in: result),
-           let r2 = Range(match.range(at: 2), in: result),
-           let r3 = Range(match.range(at: 3), in: result) {
-            let intPart = String(result[r1])   // "0"
-            let fracPart = String(result[r2])  // "5"
-            let unit = String(result[r3])      // "个百分点"/"百分比"/"百分点"
-            // 构造插入“点”的读法提示：0.5 -> 0点5
-            let replacement = "\(intPart)点\(fracPart)\(unit)"
-            replacements.append((match.range, replacement))
+        regex.enumerateMatches(in: result, options: [], range: nsRange) { match, _, _ in
+            guard let match = match, match.numberOfRanges >= 4 else { return }
+            if let r1 = Range(match.range(at: 1), in: result),
+               let r2 = Range(match.range(at: 2), in: result),
+               let r3 = Range(match.range(at: 3), in: result) {
+                let intPart = String(result[r1])
+                let fracPart = String(result[r2])
+                let unit = String(result[r3])
+                let replacement = "\(intPart)点\(fracPart)\(unit)"
+                replacements.append((match.range, replacement))
+            }
         }
-    }
 
-    for (range, rep) in replacements.reversed() {
-        if let r = Range(range, in: result) {
-            result.replaceSubrange(r, with: rep)
+        for (range, rep) in replacements.reversed() {
+            if let r = Range(range, in: result) {
+                result.replaceSubrange(r, with: rep)
+            }
         }
-    }
-    return result
+        return result
     }
 
-    // 修正与增强：
-    // - 新增：优先处理 YYYY-YY年代 格式，确保年份被逐字朗读。
-    // - 新增：优先处理 “数字-数字 岁/岁龄/年龄段” 的中文读法，按中文口语读“两、三、四...十/十一/十二...”，且使用大写（壹贰叁肆伍陆柒捌玖拾）以满足“贰十到贰十四岁”的期望。
-    // - 先做单位范围（数字-数字 + 量词）的中文数值读法，例如 2000-5000人 -> 两千到五千人
-    // - 再做一般纯数字范围（不带单位）的 X-Y -> X到Y，避免覆盖四位数被当作年份
-    // - 其余英文缩写替换维持不变
     private func processEnglishText(_ input: String) -> String {
         var processed = input
-            .replacingOccurrences(of: "“", with: "")
-            .replacingOccurrences(of: "”", with: "")
+            .replacingOccurrences(of: "\u{201C}", with: "")
+            .replacingOccurrences(of: "\u{201D}", with: "")
             .replacingOccurrences(of: "\"", with: "")
 
-        // 统一处理破折号
         processed = normalizeDash(processed)
-        
-        // --- 新增修复：优先处理百分比范围，例如 20-25% -> 百分之二十到二十五 ---
-        // 【修改点 1】: 将数字直接转换为中文读法，避免TTS引擎误读“20”为“两十”
+
         let percentRangePattern = #"(?<!\d)(\d+)\s*-\s*(\d+)\s*%"#
         if let regex = try? NSRegularExpression(pattern: percentRangePattern) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
@@ -842,7 +1011,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                    let r2 = Range(match.range(at: 2), in: processed),
                    let leftNum = Int(processed[r1]),
                    let rightNum = Int(processed[r2]) {
-                    // 直接调用 readChineseNumber 将数字转为 "二十", "二十五" 等
                     let leftZh = self.readChineseNumber(leftNum)
                     let rightZh = self.readChineseNumber(rightNum)
                     let replacement = "百分之\(leftZh)到\(rightZh)"
@@ -856,31 +1024,22 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
-        // --- 【新增】处理分数格式 X/Y -> Y分之X ---
-        // 必须在最后的字典替换之前执行，因为字典里有 "/": "每" 的规则
-        // 逻辑：匹配 "数字/数字"，将其转换为 "分母分之分子"
         let fractionPattern = #"(?<!\d)(\d+)\s*/\s*(\d+)(?!\d)"#
         if let regex = try? NSRegularExpression(pattern: fractionPattern) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
             var replacements: [(NSRange, String)] = []
             regex.enumerateMatches(in: processed, options: [], range: nsRange) { match, _, _ in
                 guard let match = match, match.numberOfRanges >= 3 else { return }
-                // 获取分子和分母
                 if let r1 = Range(match.range(at: 1), in: processed),
                    let r2 = Range(match.range(at: 2), in: processed),
-                   let numerator = Int(processed[r1]),   // 分子 (1)
-                   let denominator = Int(processed[r2]) { // 分母 (6)
-                    
-                    // 转换为中文读法
-                    let denZh = self.readChineseNumber(denominator) // 6 -> 六
-                    let numZh = self.readChineseNumber(numerator)   // 1 -> 一
-                    
-                    // 组合成：六分之一
+                   let numerator = Int(processed[r1]),
+                   let denominator = Int(processed[r2]) {
+                    let denZh = self.readChineseNumber(denominator)
+                    let numZh = self.readChineseNumber(numerator)
                     let replacement = "\(denZh)分之\(numZh)"
                     replacements.append((match.range, replacement))
                 }
             }
-            // 倒序替换
             for (range, rep) in replacements.reversed() {
                 if let r = Range(range, in: processed) {
                     processed.replaceSubrange(r, with: rep)
@@ -888,24 +1047,16 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
-        // --- 新增：将 20-24岁 这类“年龄段”优先转换为中文大写数字读法（贰十到贰十四岁） ---
-        // 支持：20-24岁 / 20 - 24 岁 / 20-24岁龄 / 20-24年龄段（括号内外均可）
-        // 只在两端都在 [10, 99] 的场景下处理（避免涉及 100+ 的异常年龄）
         func toChineseUpperForAge(_ n: Int) -> String {
             let upper = ["零","壹","贰","叁","肆","伍","陆","柒","捌","玖"]
             if n < 10 { return upper[n] }
             let tens = n / 10
             let ones = n % 10
-            _ = "拾"
-            // 20 -> 贰十（不读“贰拾”以避免“贰拾”/“贰十”的风格不一致，这里按你的期望保留“贰十”）
             if ones == 0 {
-                // 10, 20, 30, ...
-                if tens == 1 { return "十" } // 10
+                if tens == 1 { return "十" }
                 return upper[tens] + "十"
             } else {
-                // 11..19：十壹、十贰...
                 if tens == 1 { return "十" + upper[ones] }
-                // 21..99：贰十壹、叁十肆...
                 return upper[tens] + "十" + upper[ones]
             }
         }
@@ -925,7 +1076,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                     (10...99).contains(l),
                     (10...99).contains(r)
                 else { return }
-                let unit = String(processed[r3]) // 岁 / 岁龄 / 年龄段
+                let unit = String(processed[r3])
                 let leftZh = toChineseUpperForAge(l)
                 let rightZh = toChineseUpperForAge(r)
                 let rep = "\(leftZh)到\(rightZh)\(unit)"
@@ -938,8 +1089,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
-        // --- 新增修复：优先处理学术年份范围 ---
-        // 专门匹配 YYYY-YY学年 这样的格式，并进行逐字朗读替换
         let academicYearPattern = #"(?<!\d)(\d{4})\s*-\s*(\d{2})(?=\s*学年)"#
         if let regex = try? NSRegularExpression(pattern: academicYearPattern) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
@@ -950,22 +1099,19 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                    let r2 = Range(match.range(at: 2), in: processed) {
                     let leftYear = String(processed[r1])
                     let rightYear = String(processed[r2])
-                    let leftDigits = formatDigitsToChinesePerChar(leftYear)  // e.g., "2024" -> "二零二四"
-                    let rightDigits = formatDigitsToChinesePerChar(rightYear) // e.g., "25" -> "二五"
-                    let replacement = "\(leftDigits)到\(rightDigits)"         // -> "二零二四到二五"
+                    let leftDigits = formatDigitsToChinesePerChar(leftYear)
+                    let rightDigits = formatDigitsToChinesePerChar(rightYear)
+                    let replacement = "\(leftDigits)到\(rightDigits)"
                     replacements.append((match.range, replacement))
                 }
             }
-            // 从后往前替换，避免 range 变化
             for (range, rep) in replacements.reversed() {
                 if let r = Range(range, in: processed) {
                     processed.replaceSubrange(r, with: rep)
                 }
             }
         }
-        
-        // --- 新增修复：专门处理 YYYY-YY年代 的格式 ---
-        // 例如：1960-70年代 -> 一九六零到七零年代
+
         let decadeRangePattern = #"(?<!\d)(\d{4})\s*-\s*(\d{2})(?=\s*年代)"#
         if let regex = try? NSRegularExpression(pattern: decadeRangePattern) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
@@ -988,9 +1134,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 }
             }
         }
-        
-        // --- 【新增修复 2】处理 YYYY-YY年 的缩写年份范围格式 ---
-        // 例如：1968-79年 -> 一九六八到七九年
+
         let abbreviatedYearRangePattern = #"(?<!\d)(\d{4})\s*-\s*(\d{2})(?=\s*年)"#
         if let regex = try? NSRegularExpression(pattern: abbreviatedYearRangePattern) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
@@ -1003,7 +1147,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                     let rightYearSuffix = String(processed[r2])
                     let leftDigits = formatDigitsToChinesePerChar(leftYear)
                     let rightDigits = formatDigitsToChinesePerChar(rightYearSuffix)
-                    // 替换为“一九六八到七九”
                     let replacement = "\(leftDigits)到\(rightDigits)"
                     replacements.append((match.range, replacement))
                 }
@@ -1015,8 +1158,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
-        // --- 处理“数字-数字 年”的持续时间范围 ---
-        // 例如：50-100年 -> 五十到一百年
         let yearDurationRangePattern = #"(?<!\d)(\d{1,3})\s*-\s*(\d{1,3})\s*年"#
         if let regex = try? NSRegularExpression(pattern: yearDurationRangePattern) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
@@ -1040,8 +1181,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
-        // --- 处理单个“数字 年”的持续时间 ---
-        // 例如：100年 -> 一百年
         let singleYearDurationPattern = #"(?<!\d)(\d{1,3})\s*年"#
         if let regex = try? NSRegularExpression(pattern: singleYearDurationPattern) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
@@ -1062,10 +1201,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
-        // 先处理“数字范围 + 量词”的读法（关键修复点）
-        // 例如：2000-5000人 / 3-5名 / 10-20个 等
-        // 支持的常见量词集合（可按需扩展）
-        // --- 核心修复：从量词列表中移除 '年'，以避免与年份范围规则冲突 ---
         let units = "[人名位个只辆架件次条份所家台篇场例天月周小时分钟秒]"
         let numberRangeWithUnitPattern = #"(?<!\d)(\d{1,6})\s*-\s*(\d{1,6})\s*(\#(units))"#
         if let regex = try? NSRegularExpression(pattern: numberRangeWithUnitPattern, options: []) {
@@ -1094,8 +1229,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
-        // 一般数值范围 X-Y -> X到Y（不带单位；不碰到“年”的逐字规则）
-        // 【修改点 2】: 增加负向先行断言 (?!\s*(?:年|年代))，防止此规则错误地匹配年份范围
         let generalRangePattern = #"(?<!\d)(\d{1,6})\s*-\s*(\d{1,6})(?!\d)(?!\s*(?:年|年代))"#
         if let generalRegex = try? NSRegularExpression(pattern: generalRangePattern, options: []) {
             let nsRange = NSRange(processed.startIndex..<processed.endIndex, in: processed)
@@ -1103,7 +1236,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             var delta = 0
             generalRegex.enumerateMatches(in: processed, options: [], range: nsRange) { match, _, _ in
                 guard let match = match else { return }
-                // 只做直接替换“到”，不进行中文数值读法，以免误读四位数为年份
                 if let leftRange = Range(match.range(at: 1), in: processed),
                    let rightRange = Range(match.range(at: 2), in: processed) {
                     let left = String(processed[leftRange])
@@ -1118,7 +1250,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             processed = result
         }
 
-        // 术语替换（保持原有映射）
         let replacements = [
             "URL": "U.R.L",
             "HTTP": "H.T.T.P",
@@ -1180,7 +1311,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 }
 
-// MARK: - AudioPlayerView (UI 双语化)
+// MARK: - AudioPlayerView (UI 不变)
 struct AudioPlayerView: View {
     @ObservedObject var playerManager: AudioPlayerManager
     @State private var sliderValue: Double = 0.0
@@ -1227,7 +1358,7 @@ struct AudioPlayerView: View {
             if playerManager.isSynthesizing {
                 HStack(spacing: 10) {
                     ProgressView()
-                    Text(Localized.synthesizing) // 双语
+                    Text(Localized.synthesizing)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -1318,7 +1449,7 @@ struct AudioPlayerView: View {
                     .clipShape(Circle())
             }
             .padding(6)
-            .accessibilityLabel(Localized.close), // 【修正点】增加无障碍支持
+            .accessibilityLabel(Localized.close),
             alignment: .topTrailing
         )
         .offset(y: -18)
@@ -1332,37 +1463,28 @@ struct AudioPlayerView: View {
     }
 }
 
-// 【修改】重构 MiniAudioBubbleView 以适应新需求
 struct MiniAudioBubbleView: View {
-    // 【新增】接收播放状态，用于决定图标和动画
     let isPlaybackActive: Bool
-    // 【新增】接收一个通用的点击闭包
     let onTap: () -> Void
-
-    // 【新增】用于控制脉冲动画的状态
     @State private var isPulsing = false
 
     var body: some View {
         VStack {
             Spacer()
-            Button(action: onTap) { // 【修改】使用传入的 onTap 闭包
-                // 直接放置 Image，移除外层的 HStack（如果只有一个图标，HStack 是多余的）
+            Button(action: onTap) {
                 Image(systemName: isPlaybackActive ? "headphones.circle" : "headphones.circle.fill")
-                    .font(.system(size: 40)) // 【可选】稍微调大一点图标尺寸，因为没有背景了
-                    .foregroundColor(.white) // 图标颜色，根据您的背景调整，这里设为白色
-                    .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2) // 【新增】添加一点阴影让图标在复杂背景上更清晰
-                    // 【新增】当播放激活时，应用脉冲缩放效果
+                    .font(.system(size: 40))
+                    .foregroundColor(.white)
+                    .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
                     .scaleEffect(isPulsing && isPlaybackActive ? 1.1 : 1.0)
-                    // 【新增】定义脉冲动画
                     .animation(
                         isPlaybackActive ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default,
                         value: isPulsing
                     )
             }
-            .padding(.leading, 16) // 调整外边距位置
+            .padding(.leading, 16)
             .padding(.bottom, 16)
             .onAppear {
-                // 视图出现时启动动画状态切换
                 self.isPulsing = true
             }
         }

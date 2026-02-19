@@ -531,7 +531,7 @@ struct IndicesContentView: View {
                 }
             // 【新增】专门处理 PE_Volume_up (放量反转)，开启特殊配色
             // 【修改点】将 PE_Volume (左侧) 和 PE_Volume_up (右侧) 合并处理，都使用蓝紫配色
-            } else if (groupName == "PE_Volume" || groupName == "PE_Volume_up"), 
+            } else if (groupName == "PE_Volume" || groupName == "PE_Volume_up" || groupName == "Short" || groupName == "Short_W"), 
                   let sector = sectors.first(where: { $0.name == groupName }) {
                 Button {
                     handleSectorClick(sector) // 保持原有的点击跳转逻辑

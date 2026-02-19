@@ -632,7 +632,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         bind(key: .six, modifiers: [.control, .option]) {
             self.notify("正在启动 Analyse_season 序列...")
             let scripts = [
-                "\(USER_HOME)/Coding/Financial_System/Query/Analyse_OverBuy.py",
+                "\(USER_HOME)/Coding/Financial_System/Query/Analyse_Short.py",
                 "\(USER_HOME)/Coding/Financial_System/Query/Analyse_Earning_Season.py",
                 "\(USER_HOME)/Coding/Financial_System/Query/Analyse_Earning_no_Season.py",
                 "\(USER_HOME)/Coding/Financial_System/Query/Analyse_Earning_Volume.py"
