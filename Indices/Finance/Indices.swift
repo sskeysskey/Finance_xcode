@@ -531,7 +531,7 @@ struct IndicesContentView: View {
                 }
             // 【新增】专门处理 PE_Volume_up (放量反转)，开启特殊配色
             // 【修改点】将 PE_Volume (左侧) 和 PE_Volume_up (右侧) 合并处理，都使用蓝紫配色
-            } else if (groupName == "PE_Volume" || groupName == "PE_Volume_up" || groupName == "Short" || groupName == "Short_W"), 
+            } else if (groupName == "PE_Volume" || groupName == "PE_Volume_up" || groupName == "Short" || groupName == "Short_W" || groupName == "PE_Volume_high"), 
                   let sector = sectors.first(where: { $0.name == groupName }) {
                 Button {
                     handleSectorClick(sector) // 保持原有的点击跳转逻辑
@@ -587,6 +587,7 @@ struct IndicesContentView: View {
         case "Short": return "arrow.down.circle"
         case "PE_Volume": return "7.circle"
         case "PE_Volume_up": return "arrow.up.circle"
+        case "PE_Volume_high": return "arrow.up.circle"
         case "OverSell_W": return "flame.fill"
         case "PE_invalid": return "1.circle"
         case "PE_valid": return "2.circle"

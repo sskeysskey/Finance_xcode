@@ -5,20 +5,43 @@ struct EarningHistoryView: View {
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
     
-    // 【修改点1】：将初始值直接设为 "PE_Volume_up"，这样打开页面时默认就是它
-    @State private var selectedGroup: String = "PE_Volume_up"
+    // 1. 彻底过滤的黑名单（完全不显示）
+    private let excludedGroups = ["season", "no_season", "_Tag_Blacklist"]
+    
+    // 2. 低优先级的名单（显示在最后面，例如 OverSell_W）
+    private let lowPriorityGroups = [ "OverSell_W", "PE_W", "PE_Deep",
+    "PE_Deeper", "PE_valid", "PE_invalid"]
+    
+    @State private var selectedGroup: String = ""
     @State private var expandedDates: Set<String> = []
     @State private var showSubscriptionSheet = false
     
-    // 获取所有组名并排序
+    // 3. 核心逻辑：重新定义 groupNames 的排序规则
     private var groupNames: [String] {
-        dataService.earningHistoryData.keys.sorted()
+        let allKeys = dataService.earningHistoryData.keys
+        
+        // 第一步：过滤掉彻底不需要的组
+        let filtered = allKeys.filter { !excludedGroups.contains($0) }
+        
+        // 第二步：将剩余的组分成两部分
+        // A 部分：普通组（不在低优先级名单里的）
+        let normalGroups = filtered
+            .filter { !lowPriorityGroups.contains($0) }
+            .sorted() // 字母排序
+        
+        // B 部分：低优先级组
+        let lowPrioGroups = filtered
+            .filter { lowPriorityGroups.contains($0) }
+            .sorted() // 字母排序
+        
+        // 第三步：合并，确保 normalGroups 在前，lowPrioGroups 在后
+        return normalGroups + lowPrioGroups
     }
     
     // 获取当前选中组的数据 (按日期降序)
     private var currentGroupDates: [String] {
-        guard let datesMap = dataService.earningHistoryData[selectedGroup] else { return [] }
-        // 日期降序排列 (最新的在上面)
+        guard !selectedGroup.isEmpty, 
+              let datesMap = dataService.earningHistoryData[selectedGroup] else { return [] }
         return datesMap.keys.sorted(by: >)
     }
     
@@ -54,7 +77,13 @@ struct EarningHistoryView: View {
             
             // 2. 内容区域
             if groupNames.isEmpty {
-                EmptyView() // 或者显示 LoadingView
+                // 如果过滤后没有数据，显示一个占位提示
+                VStack {
+                    Spacer()
+                    Text("暂无复盘数据")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
             } else {
                 ScrollView {
                     LazyVStack(spacing: 12) {
@@ -86,16 +115,11 @@ struct EarningHistoryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(UIColor.systemGroupedBackground))
         .onAppear {
-            // 【修改点2】：安全检查
-            // 虽然默认是 PE_Volume_up，但如果数据里没有这个Key（且数据不为空），则回退到第一个组
-            // 这样即使 Python 端数据生成有问题，App 也不会显示空白
-            if !groupNames.isEmpty && !groupNames.contains(selectedGroup) {
-                if let first = groupNames.first {
-                    selectedGroup = first
+            // 自动选中第一个（现在第一个必然是 normalGroups 里的第一个，除非 normal 为空）
+            if !groupNames.isEmpty {
+                if selectedGroup.isEmpty || !groupNames.contains(selectedGroup) {
+                    selectedGroup = groupNames.first ?? ""
                 }
-            } else if selectedGroup.isEmpty, let first = groupNames.first {
-                // 防止极端情况 selectedGroup 变为空字符串
-                selectedGroup = first
             }
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
