@@ -1397,10 +1397,11 @@ struct StrategyHistoryDetailView: View {
     @State private var hasInitialized: Bool = false // 【新增】用于标记是否已初始化
     @State private var showSubscriptionSheet = false
     
-    // 获取当前组的所有日期（按降序排列）
+    // 【修改点 1】只获取最近的 5 个日期
     private var sortedDates: [String] {
         guard let datesMap = dataService.earningHistoryData[groupName] else { return [] }
-        return datesMap.keys.sorted(by: >)
+        // 先排序，然后取前3个，最后转回 Array
+        return Array(datesMap.keys.sorted(by: >).prefix(5))
     }
     
     // 显示名称
@@ -1414,6 +1415,7 @@ struct StrategyHistoryDetailView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
+                // 这里遍历的 sortedDates 已经是限制过数量的了
                 ForEach(Array(sortedDates.enumerated()), id: \.element) { index, dateStr in
                     if let symbols = dataService.earningHistoryData[groupName]?[dateStr] {
                         StrategyDateSectionView(
@@ -1435,6 +1437,14 @@ struct StrategyHistoryDetailView: View {
                             }
                         )
                     }
+                }
+                
+                // 【可选】提示用户仅显示最近数据
+                if let datesMap = dataService.earningHistoryData[groupName], datesMap.keys.count > 5 {
+                    Text("仅显示最近 5 个交易日数据")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 8)
                 }
             }
             .padding(.top, 10)
