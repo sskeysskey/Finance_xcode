@@ -238,8 +238,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.runPythonBackground("\(USER_HOME)/Coding/Financial_System/Query/Chart_Earning.py")
         }
 
-        // Ctrl + K : Check_HighLow
-        bind(key: .k, modifiers: [.control]) {
+        // Ctrl + S : Check_HighLow
+        bind(key: .s, modifiers: [.control]) {
             self.notify("正在打开highlow.txt...")
             self.runPythonBackground("\(USER_HOME)/Coding/Financial_System/Query/Check_HighLow.py")
         }
@@ -252,8 +252,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // --- 3. 运行 AppleScript 文件 (带参数/不带参数) ---
         
-        // Ctrl + S : Insert_PythonFile.scpt -> Insert_Events.py
-        bind(key: .s, modifiers: [.control]) {
+        // Ctrl + K : Insert_PythonFile.scpt -> Insert_Events.py
+        bind(key: .k, modifiers: [.control]) {
             self.notify("正在执行 Insert_PythonFile 脚本...")
             self.runOsascript(
                 scriptPath: "\(USER_HOME)/Coding/ScriptEditor/Insert_PythonFile.scpt",

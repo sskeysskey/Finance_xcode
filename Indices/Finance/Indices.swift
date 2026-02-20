@@ -1392,7 +1392,9 @@ struct StrategyHistoryDetailView: View {
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
     
+    // 【修改】改为计算属性初始化，确保第一个日期默认展开
     @State private var expandedDates: Set<String> = []
+    @State private var hasInitialized: Bool = false // 【新增】用于标记是否已初始化
     @State private var showSubscriptionSheet = false
     
     // 获取当前组的所有日期（按降序排列）
@@ -1418,17 +1420,16 @@ struct StrategyHistoryDetailView: View {
                             dateStr: dateStr,
                             symbols: symbols,
                             groupName: groupName,
-                            isExpanded: index == 0 ? true : expandedDates.contains(dateStr),
+                            // 【修改】统一使用 expandedDates 判断
+                            isExpanded: expandedDates.contains(dateStr),
                             isFirstSection: index == 0,
                             onToggle: {
-                                // 第一个分组不可折叠，或者你也可以允许折叠
-                                if index != 0 {
-                                    withAnimation {
-                                        if expandedDates.contains(dateStr) {
-                                            expandedDates.remove(dateStr)
-                                        } else {
-                                            expandedDates.insert(dateStr)
-                                        }
+                                // 【修改】移除 index != 0 的判断，所有分组都可以折叠
+                                withAnimation {
+                                    if expandedDates.contains(dateStr) {
+                                        expandedDates.remove(dateStr)
+                                    } else {
+                                        expandedDates.insert(dateStr)
                                     }
                                 }
                             }
@@ -1444,6 +1445,12 @@ struct StrategyHistoryDetailView: View {
         .background(Color(UIColor.systemGroupedBackground))
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .onAppear {
+            // 【新增】首次加载时，将第一个日期加入展开集合
+            if !hasInitialized, let firstDate = sortedDates.first {
+                expandedDates.insert(firstDate)
+                hasInitialized = true
+            }
+            
             // 预加载所有日期的财报趋势数据
             let allSymbols = sortedDates.flatMap { date in
                 dataService.earningHistoryData[groupName]?[date] ?? []
