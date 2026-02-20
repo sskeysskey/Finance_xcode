@@ -364,7 +364,16 @@ struct IndicesContentView: View {
     private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "ETFs", "Economic_All", "Economics", "Indices"])
     
     private let weekLowGroupNames = Set(["Basic_Materials", "Communication_Services", "Consumer_Cyclical", "Consumer_Defensive", "Energy", "Financial_Services", "Healthcare", "Industrials", "Real_Estate", "Technology", "Utilities"])
+
+    // 【新增】需要使用历史分组展示的策略组名单
+    private let historyBasedGroups: Set<String> = [
+        "PE_Volume", "PE_Volume_up", "Short", "Short_W", "PE_Volume_high",
+        "OverSell_W", "PE_W", "PE_Deep", "PE_Deeper", "PE_valid", "PE_invalid"
+    ]
     
+    // 【新增】用于导航到历史详情页
+    @State private var selectedHistoryGroup: String?
+    @State private var navigateToHistoryDetail = false
     
     // 【修改点 1】改为 3 列布局
     private let gridLayout = [
@@ -463,7 +472,11 @@ struct IndicesContentView: View {
                 .navigationDestination(isPresented: $navigateToOptionsList) {
                     OptionsListView()
                 }
-                
+                .navigationDestination(isPresented: $navigateToHistoryDetail) {
+                    if let groupName = selectedHistoryGroup {
+                        StrategyHistoryDetailView(groupName: groupName)
+                    }
+                }
             } else {
                 LoadingView()
             }
@@ -481,7 +494,28 @@ struct IndicesContentView: View {
     // 【新增】辅助 ViewBuilder，帮助编译器拆解复杂的 ForEach 内部逻辑
     @ViewBuilder
     private func view(for groupName: String, sectors: [IndicesSector], weekLowSectors: [IndicesSector]) -> some View {
-        if groupName == "52NewLow" {
+        // 【修改】处理需要历史分组展示的策略组
+        if historyBasedGroups.contains(groupName) {
+            Button {
+                if usageManager.canProceed(authManager: authManager, action: .openSector) {
+                    self.selectedHistoryGroup = groupName
+                    self.navigateToHistoryDetail = true
+                } else {
+                    self.showSubscriptionSheet = true
+                }
+            } label: {
+                CompactSectorCard(
+                    sectorName: groupName,
+                    icon: getIcon(for: groupName),
+                    baseColor: .indigo,
+                    isSpecial: groupName == "PE_Volume" || groupName == "PE_Volume_up" || 
+                            groupName == "Short" || groupName == "Short_W" || groupName == "PE_Volume_high",
+                    customGradient: (groupName == "PE_Volume" || groupName == "PE_Volume_up" || 
+                                    groupName == "Short" || groupName == "Short_W" || groupName == "PE_Volume_high") 
+                                    ? [.blue, .purple] : nil
+                )
+            }
+        } else if groupName == "52NewLow" {
             Button {
                 if usageManager.canProceed(authManager: authManager, action: .openSpecialList) {
                     self.weekLowSectorsData = weekLowSectors
@@ -1348,5 +1382,305 @@ struct SymbolItemView: View {
         case .negativeAndDown: return .green
         case .insufficientData: return .primary
         }
+    }
+}
+
+// MARK: - 带日期折叠的策略详情页
+struct StrategyHistoryDetailView: View {
+    let groupName: String
+    @EnvironmentObject var dataService: DataService
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    
+    @State private var expandedDates: Set<String> = []
+    @State private var showSubscriptionSheet = false
+    
+    // 获取当前组的所有日期（按降序排列）
+    private var sortedDates: [String] {
+        guard let datesMap = dataService.earningHistoryData[groupName] else { return [] }
+        return datesMap.keys.sorted(by: >)
+    }
+    
+    // 显示名称
+    private var displayName: String {
+        if let remoteName = dataService.groupDisplayMap[groupName] {
+            return remoteName
+        }
+        return groupName.replacingOccurrences(of: "_", with: " ")
+    }
+    
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 12) {
+                ForEach(Array(sortedDates.enumerated()), id: \.element) { index, dateStr in
+                    if let symbols = dataService.earningHistoryData[groupName]?[dateStr] {
+                        StrategyDateSectionView(
+                            dateStr: dateStr,
+                            symbols: symbols,
+                            groupName: groupName,
+                            isExpanded: index == 0 ? true : expandedDates.contains(dateStr),
+                            isFirstSection: index == 0,
+                            onToggle: {
+                                // 第一个分组不可折叠，或者你也可以允许折叠
+                                if index != 0 {
+                                    withAnimation {
+                                        if expandedDates.contains(dateStr) {
+                                            expandedDates.remove(dateStr)
+                                        } else {
+                                            expandedDates.insert(dateStr)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+            .padding(.top, 10)
+            .padding(.bottom, 20)
+        }
+        .navigationTitle(displayName)
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(UIColor.systemGroupedBackground))
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        .onAppear {
+            // 预加载所有日期的财报趋势数据
+            let allSymbols = sortedDates.flatMap { date in
+                dataService.earningHistoryData[groupName]?[date] ?? []
+            }
+            dataService.fetchEarningTrends(for: allSymbols)
+            
+            // 预加载期权指标
+            Task {
+                await dataService.fetchOptionsMetrics(for: allSymbols)
+            }
+        }
+    }
+}
+
+// MARK: - 策略页的日期折叠组件
+struct StrategyDateSectionView: View {
+    let dateStr: String
+    let symbols: [String]
+    let groupName: String
+    let isExpanded: Bool
+    let isFirstSection: Bool
+    let onToggle: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // 头部点击区域
+            Button(action: onToggle) {
+                HStack {
+                    Image(systemName: isExpanded ? "chevron.down.circle.fill" : "chevron.right.circle.fill")
+                        .foregroundColor(isExpanded ? .blue : .gray)
+                        .font(.system(size: 20))
+                    
+                    Text(dateStr)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    
+                    // 最新日期标记
+                    if isFirstSection {
+                        Text("最新")
+                            .font(.caption)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.blue)
+                            .cornerRadius(4)
+                    }
+                    
+                    Spacer()
+                    
+                    Text("\(symbols.count) 个")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color(UIColor.systemGray5))
+                        .cornerRadius(8)
+                }
+                .padding()
+                .background(Color(UIColor.secondarySystemGroupedBackground))
+            }
+            
+            // 展开的内容
+            if isExpanded {
+                Divider()
+                VStack(spacing: 0) {
+                    ForEach(symbols, id: \.self) { symbol in
+                        StrategySymbolRow(symbol: symbol, dateStr: dateStr, groupName: groupName)
+                        
+                        if symbol != symbols.last {
+                            Divider().padding(.leading, 16)
+                        }
+                    }
+                }
+                .background(Color(UIColor.secondarySystemGroupedBackground))
+            }
+        }
+        .cornerRadius(12)
+        .padding(.horizontal)
+        .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+    }
+}
+
+// MARK: - 策略页的 Symbol 行组件
+struct StrategySymbolRow: View {
+    let symbol: String
+    let dateStr: String
+    let groupName: String
+    
+    @EnvironmentObject var dataService: DataService
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    
+    @State private var navigateToChart = false
+    @State private var showSubscriptionSheet = false
+    
+    // 获取 Tags 及权重
+    private var tags: [(String, Double)] {
+        let upperSymbol = symbol.uppercased()
+        var rawTags: [String] = []
+        
+        if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == upperSymbol }) {
+            rawTags = stock.tag
+        } else if let etf = dataService.descriptionData?.etfs.first(where: { $0.symbol.uppercased() == upperSymbol }) {
+            rawTags = etf.tag
+        }
+        
+        return rawTags.map { tag in
+            let weight = dataService.tagsWeightConfig.first(where: { $0.value.contains(tag) })?.key ?? 1.0
+            return (tag, weight)
+        }
+    }
+    
+    // 判断是否在黑名单
+    private var isBlacklisted: Bool {
+        dataService.isBlacklisted(symbol: symbol, date: dateStr)
+    }
+    
+    // 财报趋势
+    private var earningTrend: EarningTrend {
+        dataService.earningTrends[symbol.uppercased()] ?? .insufficientData
+    }
+    
+    // 期权指标
+    private var optionsMetrics: (iv: String, sum: String)? {
+        dataService.optionsMetricsCache[symbol.uppercased()]
+    }
+    
+    // 获取分类
+    private var category: String {
+        dataService.getCategory(for: symbol) ?? "Stocks"
+    }
+    
+    // 获取涨跌幅前缀
+    private var valuePrefix: String? {
+        guard let value = dataService.compareData[symbol.uppercased()] else { return nil }
+        let pattern = #"^(\d+[前后未])"#
+        if let regex = try? NSRegularExpression(pattern: pattern),
+           let match = regex.firstMatch(in: value, options: [], range: NSRange(value.startIndex..<value.endIndex, in: value)),
+           let r = Range(match.range(at: 1), in: value) {
+            return String(value[r])
+        }
+        return nil
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                // Symbol 名称
+                Text(symbol)
+                    .font(.system(size: 17, weight: .bold, design: .monospaced))
+                    .foregroundColor(colorForEarningTrend(earningTrend))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(8)
+                
+                // 黑名单标记
+                if isBlacklisted {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.shield.fill")
+                        Text("Tag黑名单")
+                    }
+                    .font(.caption.bold())
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.red.opacity(0.8))
+                    .cornerRadius(6)
+                }
+                
+                Spacer()
+                
+                // 右侧信息：前缀 + 期权指标
+                HStack(spacing: 8) {
+                    if let prefix = valuePrefix {
+                        Text(prefix)
+                            .foregroundColor(.orange)
+                            .fontWeight(.semibold)
+                    }
+                    
+                    if let metrics = optionsMetrics {
+                        Text(metrics.iv)
+                            .foregroundColor(colorForValueString(metrics.iv))
+                            .fontWeight(.semibold)
+                        
+                        Text(metrics.sum)
+                            .foregroundColor(colorForValueString(metrics.sum))
+                            .fontWeight(.semibold)
+                    }
+                    
+                    // PE 信息
+                    if let capItem = dataService.marketCapData[symbol.uppercased()], let pe = capItem.peRatio {
+                        Text("PE:\(String(format: "%.1f", pe))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .font(.system(size: 14))
+            }
+            
+            // Tags 显示
+            if !tags.isEmpty {
+                FlowLayoutTags(tags: tags)
+            }
+        }
+        .padding(12)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+                navigateToChart = true
+            } else {
+                showSubscriptionSheet = true
+            }
+        }
+        .navigationDestination(isPresented: $navigateToChart) {
+            ChartView(symbol: symbol, groupName: category)
+        }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+    }
+    
+    // 颜色辅助方法
+    private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
+        switch trend {
+        case .positiveAndUp: return .red
+        case .negativeAndUp: return .purple
+        case .positiveAndDown: return .cyan
+        case .negativeAndDown: return .green
+        case .insufficientData: return .primary
+        }
+    }
+    
+    private func colorForValueString(_ valueStr: String) -> Color {
+        let cleanStr = valueStr.replacingOccurrences(of: "%", with: "").trimmingCharacters(in: .whitespaces)
+        if let val = Double(cleanStr) {
+            if val > 0 { return .red }
+            if val < 0 { return .green }
+        }
+        return .gray
     }
 }
