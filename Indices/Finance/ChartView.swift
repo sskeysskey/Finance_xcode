@@ -123,6 +123,7 @@ struct ChartView: View {
     let symbol: String
     let groupName: String
     private let verticalPadding: CGFloat = 20
+    private let horizontalPadding: CGFloat = 15 // 【新增】左右留白宽度
     
     @State private var chartData: [DatabaseManager.PriceData] = []
     @State private var sampledChartData: [DatabaseManager.PriceData] = []
@@ -367,11 +368,13 @@ struct ChartView: View {
                         // X轴标签
                         ForEach(getXAxisTicks(), id: \.self) { date in
                             if let index = getIndexForDate(date) {
-                                let x = CGFloat(index) * (geometry.size.width / CGFloat(max(1, sampledChartData.count - 1)))
+                                let effectiveWidth = geometry.size.width - (horizontalPadding * 2)
+                                // ✅ 修复：加上 horizontalPadding，并使用 effectiveWidth 来计算步长
+                                let x = horizontalPadding + CGFloat(index) * (effectiveWidth / CGFloat(max(1, sampledChartData.count - 1)))
+                                
                                 Text(formatXAxisLabel(date))
                                     .font(.system(size: 10))
                                     .foregroundColor(.gray)
-                                    // 👇 将这里的 + 10 改为 - 10
                                     .position(x: x, y: geometry.size.height - 10)
                             }
                         }
@@ -587,9 +590,9 @@ struct ChartView: View {
             return size.height - verticalPadding - (normalizedY * effectiveHeight)
         }
 
-        let width = size.width
-        // 2. 统一使用画布宽度计算水平步长
-        let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
+        // 【修改】计算有效宽度和带有边距的步长
+        let effectiveWidth = size.width - (horizontalPadding * 2)
+        let horizontalStep = effectiveWidth / CGFloat(max(1, sampledChartData.count - 1))
         let halfStep = horizontalStep / 2
 
         guard let displayStart = sampledChartData.first?.date,
@@ -604,10 +607,11 @@ struct ChartView: View {
                 let endIndex = sampledChartData.lastIndex(where: { $0.date <= end }),
                 startIndex <= endIndex else { return nil }
 
-            var x1 = CGFloat(startIndex) * horizontalStep - halfStep
-            var x2 = CGFloat(endIndex) * horizontalStep + halfStep
-            if startIndex == 0 { x1 = 0 } else { x1 = max(0, x1) }
-            if endIndex == sampledChartData.count - 1 { x2 = width } else { x2 = min(width, x2) }
+            // 【修改】加上 horizontalPadding
+            var x1 = horizontalPadding + CGFloat(startIndex) * horizontalStep - halfStep
+            var x2 = horizontalPadding + CGFloat(endIndex) * horizontalStep + halfStep
+            if startIndex == 0 { x1 = horizontalPadding } else { x1 = max(horizontalPadding, x1) }
+            if endIndex == sampledChartData.count - 1 { x2 = size.width - horizontalPadding } else { x2 = min(size.width - horizontalPadding, x2) }
             if x2 <= x1 { x2 = x1 + max(horizontalStep, 2) }
             return (x1, x2)
         }
@@ -633,7 +637,8 @@ struct ChartView: View {
                 
                 for (index, point) in sampledChartData.enumerated() {
                     if let vol = point.volume, vol > 0 {
-                        let x = CGFloat(index) * horizontalStep
+                        // 【修改】加上 horizontalPadding
+                        let x = horizontalPadding + CGFloat(index) * horizontalStep
                         let barHeight = CGFloat(Double(vol) / maxVol) * volumeAreaHeight
                         let y = volumeBottomY - barHeight
                         let barWidth = max(1, horizontalStep * 0.6)
@@ -649,14 +654,15 @@ struct ChartView: View {
         if !sampledChartData.isEmpty {
             var pricePath = Path()
             
-            // 移动到第一个点
-            let startX = 0.0
+            // 【修改】起点加上 horizontalPadding
+            let startX = horizontalPadding
             let startY = priceToY(sampledChartData[0].price)
             pricePath.move(to: CGPoint(x: startX, y: startY))
             
             // 连接后续点
             for index in 1..<sampledChartData.count {
-                let x = CGFloat(index) * horizontalStep
+                // 【修改】加上 horizontalPadding
+                let x = horizontalPadding + CGFloat(index) * horizontalStep
                 let y = priceToY(sampledChartData[index].price)
                 pricePath.addLine(to: CGPoint(x: x, y: y))
             }
@@ -666,7 +672,8 @@ struct ChartView: View {
             // 绘制线上的小黑点 (1M/3M/6M 模式)
             if [.oneMonth, .threeMonths, .sixMonths].contains(selectedTimeRange) {
                 for (index, point) in sampledChartData.enumerated() {
-                    let x = CGFloat(index) * horizontalStep
+                    // 【修改】加上 horizontalPadding
+                    let x = horizontalPadding + CGFloat(index) * horizontalStep
                     let y = priceToY(point.price)
                     let dotRect = CGRect(x: x - 2, y: y - 2, width: 3, height: 3)
                     context.fill(Path(ellipseIn: dotRect), with: .color(.black))
@@ -680,19 +687,21 @@ struct ChartView: View {
             let effectiveRange = effectiveMaxPrice - minPrice
             let zeroY = size.height - verticalPadding - CGFloat((0 - minPrice) / effectiveRange) * effectiveHeight
             var zeroPath = Path()
-            zeroPath.move(to: CGPoint(x: 0, y: zeroY))
-            zeroPath.addLine(to: CGPoint(x: width, y: zeroY))
+            // 【修改】零线也适应边距
+            zeroPath.move(to: CGPoint(x: horizontalPadding, y: zeroY))
+            zeroPath.addLine(to: CGPoint(x: size.width - horizontalPadding, y: zeroY))
             context.stroke(zeroPath, with: .color(Color.gray.opacity(0.5)), style: StrokeStyle(lineWidth: 1, dash: [4]))
         }
         
-        // 绘制标记点 (逻辑不变，现在与线完全对齐)
+        // 绘制标记点
         for marker in getTimeMarkers() {
             if let index = sampledChartData.firstIndex(where: { isSameDay($0.date, marker.date) }) {
                 let shouldShow = (marker.type == .global && showRedMarkers) ||
                             (marker.type == .symbol && showOrangeMarkers) ||
                             (marker.type == .earning && showGreenMarkers)
                 if shouldShow {
-                    let x = CGFloat(index) * horizontalStep
+                    // 【修改】加上 horizontalPadding
+                    let x = horizontalPadding + CGFloat(index) * horizontalStep
                     let y = priceToY(sampledChartData[index].price)
                     let markerPath = Path(ellipseIn: CGRect(x: x - 4, y: y - 4, width: 8, height: 8))
                     context.fill(markerPath, with: .color(marker.color))
@@ -700,11 +709,12 @@ struct ChartView: View {
             }
         }
         
-        // 绘制触摸指示器 (同样使用实时计算的坐标)
+        // 绘制触摸指示器
         if isMultiTouch {
             // 双指逻辑
             if let firstIndex = firstTouchPointIndex, let firstPoint = firstTouchPoint {
-                let x = CGFloat(firstIndex) * horizontalStep
+                // 【修改】加上 horizontalPadding
+                let x = horizontalPadding + CGFloat(firstIndex) * horizontalStep
                 let y = priceToY(firstPoint.price)
                 var linePath = Path()
                 linePath.move(to: CGPoint(x: x, y: verticalPadding))
@@ -715,7 +725,8 @@ struct ChartView: View {
                 context.stroke(circlePath, with: .color(chartColor), lineWidth: 2)
             }
             if let secondIndex = secondTouchPointIndex, let secondPoint = secondTouchPoint {
-                let x = CGFloat(secondIndex) * horizontalStep
+                // 【修改】加上 horizontalPadding
+                let x = horizontalPadding + CGFloat(secondIndex) * horizontalStep
                 let y = priceToY(secondPoint.price)
                 var linePath = Path()
                 linePath.move(to: CGPoint(x: x, y: 0))
@@ -728,9 +739,10 @@ struct ChartView: View {
             }
             if let firstIndex = firstTouchPointIndex, let secondIndex = secondTouchPointIndex,
             let firstPoint = firstTouchPoint, let secondPoint = secondTouchPoint {
-                let x1 = CGFloat(firstIndex) * horizontalStep
+                // 【修改】加上 horizontalPadding
+                let x1 = horizontalPadding + CGFloat(firstIndex) * horizontalStep
                 let y1 = priceToY(firstPoint.price)
-                let x2 = CGFloat(secondIndex) * horizontalStep
+                let x2 = horizontalPadding + CGFloat(secondIndex) * horizontalStep
                 let y2 = priceToY(secondPoint.price)
                 var connectPath = Path()
                 connectPath.move(to: CGPoint(x: x1, y: y1))
@@ -739,8 +751,8 @@ struct ChartView: View {
                 context.stroke(connectPath, with: .color(lineColor), style: StrokeStyle(lineWidth: 1, dash: [2]))
             }
         } else if let pointIndex = draggedPointIndex {
-            // 单指逻辑
-            let x = CGFloat(pointIndex) * horizontalStep
+            // 【修改】加上 horizontalPadding
+            let x = horizontalPadding + CGFloat(pointIndex) * horizontalStep
             var linePath = Path()
             linePath.move(to: CGPoint(x: x, y: verticalPadding))
             linePath.addLine(to: CGPoint(x: x, y: size.height - verticalPadding))
@@ -759,10 +771,13 @@ struct ChartView: View {
         let width = UIScreen.main.bounds.width
         let height: CGFloat = 320
         let effectiveHeight = height - (verticalPadding * 2)
-        let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
+        // 【修改】
+        let effectiveWidth = width - (horizontalPadding * 2)
+        let horizontalStep = effectiveWidth / CGFloat(max(1, sampledChartData.count - 1))
         
         renderedPoints = sampledChartData.enumerated().map { index, point in
-            let x = CGFloat(index) * horizontalStep
+            // 【修改】
+            let x = horizontalPadding + CGFloat(index) * horizontalStep
             let normalizedY = CGFloat((point.price - minPrice) / priceRange)
             let y = height - verticalPadding - (normalizedY * effectiveHeight)
             return RenderedPoint(x: x, y: y, date: point.date, price: point.price, dataIndex: index)
@@ -925,19 +940,23 @@ struct ChartView: View {
     
     private func updateBubbleMarkers() {
         let width = UIScreen.main.bounds.width
-        let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
+        // 【修改】计算带有边距的步长
+        let effectiveWidth = width - (horizontalPadding * 2)
+        let horizontalStep = effectiveWidth / CGFloat(max(1, sampledChartData.count - 1))
         let maxLabelWidth: CGFloat = 120
         var markers: [BubbleMarker] = []
         
         // Helper to add marker
         func addMarker(date: Date, text: String, color: Color) {
             if let exactIndex = sampledChartData.firstIndex(where: { isSameDay($0.date, date) }) {
-                let x = CGFloat(exactIndex) * horizontalStep
+                // 【修改】加上 horizontalPadding
+                let x = horizontalPadding + CGFloat(exactIndex) * horizontalStep
                 let y = getYForPrice(sampledChartData[exactIndex].price)
                 markers.append(BubbleMarker(text: text, color: color, pointIndex: exactIndex, date: date, position: CGPoint(x: x, y: y), size: CGSize(width: min(max(text.count * 7, 40), Int(maxLabelWidth)), height: 0)))
             } else if let closestPoint = findClosestDataPoint(to: date, in: sampledChartData),
                       let closestIndex = sampledChartData.firstIndex(where: { $0.date == closestPoint.date }) {
-                let x = CGFloat(closestIndex) * horizontalStep
+                // 【修改】加上 horizontalPadding
+                let x = horizontalPadding + CGFloat(closestIndex) * horizontalStep
                 let y = getYForPrice(closestPoint.price)
                 markers.append(BubbleMarker(text: text, color: color, pointIndex: closestIndex, date: closestPoint.date, position: CGPoint(x: x, y: y), size: CGSize(width: min(max(text.count * 7, 40), Int(maxLabelWidth)), height: 0)))
             }
@@ -1109,9 +1128,16 @@ struct ChartView: View {
     private func getIndexFromLocation(_ location: CGPoint) -> Int {
         guard !sampledChartData.isEmpty else { return 0 }
         let width = UIScreen.main.bounds.width
-        let horizontalStep = width / CGFloat(max(1, sampledChartData.count - 1))
-        let relativeX = location.x
-        if relativeX >= width - horizontalStep { return sampledChartData.count - 1 }
+        // 【修改】使用 effectiveWidth 和 relativeX
+        let effectiveWidth = width - (horizontalPadding * 2)
+        let horizontalStep = effectiveWidth / CGFloat(max(1, sampledChartData.count - 1))
+        
+        // 减去左侧边距得到相对 X 坐标
+        let relativeX = location.x - horizontalPadding
+        
+        if relativeX <= 0 { return 0 }
+        if relativeX >= effectiveWidth { return sampledChartData.count - 1 }
+        
         let index = Int(round(relativeX / horizontalStep))
         return min(sampledChartData.count - 1, max(0, index))
     }
