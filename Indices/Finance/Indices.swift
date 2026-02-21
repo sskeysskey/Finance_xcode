@@ -1427,12 +1427,10 @@ struct StrategyHistoryDetailView: View {
                             isFirstSection: index == 0,
                             onToggle: {
                                 // 【修改】移除 index != 0 的判断，所有分组都可以折叠
-                                withAnimation {
-                                    if expandedDates.contains(dateStr) {
-                                        expandedDates.remove(dateStr)
-                                    } else {
-                                        expandedDates.insert(dateStr)
-                                    }
+                                if expandedDates.contains(dateStr) {
+                                    expandedDates.remove(dateStr)
+                                } else {
+                                    expandedDates.insert(dateStr)
                                 }
                             }
                         )
@@ -1525,7 +1523,8 @@ struct StrategyDateSectionView: View {
             // 展开的内容
             if isExpanded {
                 Divider()
-                VStack(spacing: 0) {
+                // ✅ 关键改动 1：LazyVStack 只渲染进入视口的行，展开时不再一次性构建全部
+                LazyVStack(spacing: 0, pinnedViews: []) {
                     ForEach(symbols, id: \.self) { symbol in
                         StrategySymbolRow(symbol: symbol, dateStr: dateStr, groupName: groupName)
                         
@@ -1535,6 +1534,8 @@ struct StrategyDateSectionView: View {
                     }
                 }
                 .background(Color(UIColor.secondarySystemGroupedBackground))
+                // ✅ 关键改动 2：只用 opacity，不用 move，避免布局重计算
+                .transition(.opacity)
             }
         }
         .cornerRadius(12)
@@ -1556,29 +1557,15 @@ struct StrategySymbolRow: View {
     @State private var navigateToChart = false
     @State private var showSubscriptionSheet = false
     
-    // 获取 Tags 及权重
-    private var tags: [(String, Double)] {
-        let upperSymbol = symbol.uppercased()
-        var rawTags: [String] = []
-        
-        if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == upperSymbol }) {
-            rawTags = stock.tag
-        } else if let etf = dataService.descriptionData?.etfs.first(where: { $0.symbol.uppercased() == upperSymbol }) {
-            rawTags = etf.tag
-        }
-        
-        return rawTags.map { tag in
-            let weight = dataService.tagsWeightConfig.first(where: { $0.value.contains(tag) })?.key ?? 1.0
-            return (tag, weight)
-        }
-    }
+    // ✅ 改动 1：将三个昂贵计算结果缓存到 @State，只在 onAppear 时算一次
+    @State private var cachedTags: [(String, Double)] = []
+    @State private var cachedValuePrefix: String? = nil
+    @State private var cachedCategory: String = "Stocks"
     
-    // 判断是否在黑名单
-    private var isBlacklisted: Bool {
-        dataService.isBlacklisted(symbol: symbol, date: dateStr)
-    }
+    // ✅ 改动 2：静态 Regex，整个 App 生命周期只编译一次
+    private static let prefixRegex = try? NSRegularExpression(pattern: #"^(\d+[前后未])"#)
     
-    // 财报趋势
+    // 以下三个是字典直接查找，O(1)，不需要缓存
     private var earningTrend: EarningTrend {
         dataService.earningTrends[symbol.uppercased()] ?? .insufficientData
     }
@@ -1587,22 +1574,8 @@ struct StrategySymbolRow: View {
     private var optionsMetrics: (iv: String, sum: String)? {
         dataService.optionsMetricsCache[symbol.uppercased()]
     }
-    
-    // 获取分类
-    private var category: String {
-        dataService.getCategory(for: symbol) ?? "Stocks"
-    }
-    
-    // 获取涨跌幅前缀
-    private var valuePrefix: String? {
-        guard let value = dataService.compareData[symbol.uppercased()] else { return nil }
-        let pattern = #"^(\d+[前后未])"#
-        if let regex = try? NSRegularExpression(pattern: pattern),
-           let match = regex.firstMatch(in: value, options: [], range: NSRange(value.startIndex..<value.endIndex, in: value)),
-           let r = Range(match.range(at: 1), in: value) {
-            return String(value[r])
-        }
-        return nil
+    private var isBlacklisted: Bool {
+        dataService.isBlacklisted(symbol: symbol, date: dateStr)
     }
     
     var body: some View {
@@ -1635,7 +1608,8 @@ struct StrategySymbolRow: View {
                 
                 // 右侧信息：前缀 + 期权指标
                 HStack(spacing: 8) {
-                    if let prefix = valuePrefix {
+                    // ✅ 使用缓存值，不再每次渲染都运行 Regex
+                    if let prefix = cachedValuePrefix {
                         Text(prefix)
                             .foregroundColor(.orange)
                             .fontWeight(.semibold)
@@ -1651,8 +1625,8 @@ struct StrategySymbolRow: View {
                             .fontWeight(.semibold)
                     }
                     
-                    // PE 信息
-                    if let capItem = dataService.marketCapData[symbol.uppercased()], let pe = capItem.peRatio {
+                    if let capItem = dataService.marketCapData[symbol.uppercased()],
+                       let pe = capItem.peRatio {
                         Text("PE:\(String(format: "%.1f", pe))")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -1661,9 +1635,9 @@ struct StrategySymbolRow: View {
                 .font(.system(size: 14))
             }
             
-            // Tags 显示
-            if !tags.isEmpty {
-                FlowLayoutTags(tags: tags)
+            // ✅ 使用缓存的 tags
+            if !cachedTags.isEmpty {
+                FlowLayoutTags(tags: cachedTags)
             }
         }
         .padding(12)
@@ -1676,12 +1650,49 @@ struct StrategySymbolRow: View {
             }
         }
         .navigationDestination(isPresented: $navigateToChart) {
-            ChartView(symbol: symbol, groupName: category)
+            // ✅ 使用缓存的 category
+            ChartView(symbol: symbol, groupName: cachedCategory)
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        // ✅ 改动 3：所有昂贵操作统一在 onAppear 中执行，渲染期间零计算
+        .onAppear {
+            computeExpensiveValues()
+        }
     }
     
-    // 颜色辅助方法
+    // ✅ 昂贵计算统一放这里，只跑一次
+    private func computeExpensiveValues() {
+        let upperSymbol = symbol.uppercased()
+        
+        // 1. Tags：线性搜索只在 onAppear 时执行一次
+        var rawTags: [String] = []
+        if let stock = dataService.descriptionData?.stocks.first(where: {
+            $0.symbol.uppercased() == upperSymbol
+        }) {
+            rawTags = stock.tag
+        } else if let etf = dataService.descriptionData?.etfs.first(where: {
+            $0.symbol.uppercased() == upperSymbol
+        }) {
+            rawTags = etf.tag
+        }
+        cachedTags = rawTags.map { tag in
+            let weight = dataService.tagsWeightConfig.first(where: { $0.value.contains(tag) })?.key ?? 1.0
+            return (tag, weight)
+        }
+        
+        // 2. ValuePrefix：使用静态 Regex，只匹配一次
+        if let value = dataService.compareData[upperSymbol] {
+            let range = NSRange(value.startIndex..<value.endIndex, in: value)
+            if let match = Self.prefixRegex?.firstMatch(in: value, options: [], range: range),
+               let r = Range(match.range(at: 1), in: value) {
+                cachedValuePrefix = String(value[r])
+            }
+        }
+        
+        // 3. Category：只查询一次
+        cachedCategory = dataService.getCategory(for: symbol) ?? "Stocks"
+    }
+    
     private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
         switch trend {
         case .positiveAndUp: return .red

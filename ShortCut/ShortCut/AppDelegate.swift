@@ -672,7 +672,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.notify("正在执行 GitHub 全量同步...")
             let scripts = [
                 "github_sync_pythoncode.sh", "github_sync_finance.sh", "github_sync_xcode.sh",
-                "github_sync_HammerSpoon.sh", "github_sync_scripteditor.sh", "github_sync_shell.sh",
+                "github_sync_scripteditor.sh", "github_sync_shell.sh",
                 "github_sync_xcode.sh", "github_sync_website.sh", "github_sync_android.sh",
                 "github_sync_LocalServer.sh"
             ]
