@@ -10,13 +10,6 @@ extension Collection {
     }
 }
 
-// MARK: - View 扩展 (解决 navigationPopGestureDisabled 报错)
-extension View {
-    func navigationPopGestureDisabled(_ disabled: Bool) -> some View {
-        background(NavigationPopGestureDisabler(disabled: disabled))
-    }
-}
-
 // MARK: - 时间间隔切换
 enum TimeRange {
     case oneMonth, threeMonths, sixMonths, oneYear, all, twoYears, fiveYears, tenYears
@@ -410,8 +403,6 @@ struct ChartView: View {
                 // 【关键修复1】强制图表区域宽度等于屏幕宽度，防止被撑大
                 .frame(width: UIScreen.main.bounds.width)
                 .clipped() // 确保内容不溢出
-                // 关键：当正在拖动时，禁用导航返回手势
-                .navigationPopGestureDisabled(isDragging || isMultiTouch)
                 .padding(.bottom, 30)
             }
             
@@ -534,7 +525,6 @@ struct ChartView: View {
             Spacer()
         }
         .background(backgroundColor.edgesIgnoringSafeArea(.all))
-        .interactiveDismissDisabled(isDragging || isMultiTouch)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 8) {
@@ -583,16 +573,6 @@ struct ChartView: View {
         // 在其他的 .navigationDestination 下面添加这个
         .navigationDestination(isPresented: $navigateToBacktest) {
             BacktestView(symbol: symbol)
-        }
-        .onDisappear {
-            // 确保离开页面时恢复手势
-            DispatchQueue.main.async {
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let window = windowScene.windows.first,
-                   let nav = window.rootViewController as? UINavigationController {
-                    nav.interactivePopGestureRecognizer?.isEnabled = true
-                }
-            }
         }
         // 【切记】在 ChartView 的 body 末尾添加 Sheet
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() } 
@@ -1249,26 +1229,6 @@ struct ChartView: View {
     }
 }
 
-// MARK: - 辅助组件 (放在文件最外层)
-
-struct NavigationPopGestureDisabler: UIViewRepresentable {
-    let disabled: Bool
-    
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .clear
-        return view
-    }
-    
-    func updateUIView(_ uiView: UIView, context: Context) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
-            if let navigationController = uiView.findNavigationController() {
-                navigationController.interactivePopGestureRecognizer?.isEnabled = !disabled
-            }
-        }
-    }
-}
-
 extension UIView {
     func findNavigationController() -> UINavigationController? {
         var responder: UIResponder? = self
@@ -1282,7 +1242,7 @@ extension UIView {
     }
 }
 
-// MARK: - 优化的多触控处理 (支持方向性判断、状态无缝切换、底部防误触)
+// MARK: - 优化的多触控处理 (支持方向性判断、状态无缝切换、底部防误触、完美拦截右滑返回)
 struct OptimizedTouchHandler: UIViewRepresentable {
     var onSingleTouchChanged: (CGPoint) -> Void
     var onMultiTouchChanged: (CGPoint, CGPoint) -> Void
@@ -1303,105 +1263,92 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         uiView.onTouchesEnded = onTouchesEnded
     }
     
-    class OptimizedMultitouchView: UIView {
+    class OptimizedMultitouchView: UIView, UIGestureRecognizerDelegate {
         var onSingleTouchChanged: ((CGPoint) -> Void)?
         var onMultiTouchChanged: ((CGPoint, CGPoint) -> Void)?
         var onTouchesEnded: (() -> Void)?
         
-        // 状态管理
         private var activeTouches: [UITouch: CGPoint] = [:]
-        
-        // 标记当前是否已经“夺取”了控制权（即正在查阅图表）
-        private var isChartInteracting: Bool = false
-        
-        // 记录单指起始点，用于判断左划还是右划
-        private var startLocation: CGPoint?
-        
-        // 长按计时任务
-        private var longPressTask: DispatchWorkItem?
-        
-        // 原始导航手势状态记录
-        private var originalPopGestureEnabled: Bool = true
-        
-        // 底部边缘保护阈值 (Home Indicator 区域)
         private let bottomEdgeThreshold: CGFloat = 30.0
+        
+        // 专门用于拦截系统返回手势的 PanGesture
+        private var interceptPanGesture: UIPanGestureRecognizer!
         
         override init(frame: CGRect) {
             super.init(frame: frame)
             isMultipleTouchEnabled = true
+            setupInterceptGesture()
         }
         
         required init?(coder: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
+            super.init(coder: coder)
+            isMultipleTouchEnabled = true
+            setupInterceptGesture()
         }
         
-        // MARK: - 导航手势控制
-        private func disableNavGesture() {
-            guard !isChartInteracting else { return } // 防止重复调用
-            if let nav = findNavigationController(), let gesture = nav.interactivePopGestureRecognizer {
-                if gesture.isEnabled {
-                    originalPopGestureEnabled = true
-                    gesture.isEnabled = false
+        // MARK: - 核心修复：手势拦截逻辑
+        private func setupInterceptGesture() {
+            // 1. 创建一个拖拽手势
+            interceptPanGesture = UIPanGestureRecognizer(target: self, action: #selector(handleInterceptPan(_:)))
+            interceptPanGesture.delegate = self
+            
+            // 2. 关键：不取消底层触摸事件！保证我们的 touchesBegan/Moved 依然能完美运行
+            interceptPanGesture.cancelsTouchesInView = false
+            interceptPanGesture.delaysTouchesBegan = false
+            
+            self.addGestureRecognizer(interceptPanGesture)
+        }
+        
+        @objc private func handleInterceptPan(_ gesture: UIPanGestureRecognizer) {
+            // 我们不需要在这里处理具体的业务逻辑，
+            // 这个手势存在的唯一目的，就是为了“占位”并击败系统的返回手势。
+        }
+        
+        // 当 View 被添加到窗口时，动态获取导航控制器，并强制它等待我们的手势
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                if let nav = self.findNavigationController(),
+                   let popGesture = nav.interactivePopGestureRecognizer {
+                    // 核心魔法：告诉系统“只有当我的图表滑动没识别出来时，你才能执行返回上一页”
+                    popGesture.require(toFail: self.interceptPanGesture)
                 }
             }
-            isChartInteracting = true
         }
         
-        private func restoreNavGesture() {
-            if let nav = findNavigationController(), let gesture = nav.interactivePopGestureRecognizer {
-                if originalPopGestureEnabled {
-                    gesture.isEnabled = true
-                }
+        // 允许我们的手势和其他手势同时识别（除了系统的返回手势）
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            if let nav = findNavigationController(), otherGestureRecognizer == nav.interactivePopGestureRecognizer {
+                // 遇到系统返回手势时，绝对不同时识别，我们要独占！
+                return false
             }
-            isChartInteracting = false
+            return true
         }
         
-        // MARK: - 触摸事件处理
+        // MARK: - 触摸事件处理 (保留你原有的优秀逻辑)
         
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-            // 1. 记录所有触摸点
             for touch in touches {
                 let location = touch.location(in: self)
-                
-                // 【修复3】底部边缘防误触
-                // 如果触摸点在视图最底部（Home条区域），直接忽略，不存入 activeTouches
-                // 这样系统就会处理App切换，而不是被我们拦截
-                if location.y > self.bounds.height - bottomEdgeThreshold {
-                    continue
-                }
-                
+                // 底部边缘防误触 (Home Indicator 区域)
+                if location.y > self.bounds.height - bottomEdgeThreshold { continue }
                 activeTouches[touch] = location
             }
             
-            // 如果没有有效触摸（比如点到底部去了），直接返回
             if activeTouches.isEmpty { return }
             
-            // 2. 根据手指数量处理
             if activeTouches.count >= 2 {
-                // 双指模式：立即夺取控制权
-                cancelLongPressTask() // 取消单指的长按检测
-                disableNavGesture()
                 updateMultiTouch()
             } else if activeTouches.count == 1 {
-                // 单指模式：启动长按检测，暂不夺取控制权
-                if let touch = activeTouches.keys.first {
-                    startLocation = activeTouches[touch]
-                    
-                    // 创建长按计时器 (0.5秒)
-                    let task = DispatchWorkItem { [weak self] in
-                        guard let self = self else { return }
-                        // 时间到，手指未抬起且未发生大幅度位移 -> 激活查阅模式
-                        // 此时即使是右划，也已经进入了查阅模式
-                        self.activateSingleTouchMode()
-                    }
-                    self.longPressTask = task
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: task)
+                // 单指模式：因为有了 interceptPanGesture 拦截系统返回，现在可以直接响应
+                if let touch = activeTouches.keys.first, let loc = activeTouches[touch] {
+                    onSingleTouchChanged?(loc)
                 }
             }
         }
         
         override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-            // 更新触摸点位置
             for touch in touches {
                 if activeTouches[touch] != nil {
                    activeTouches[touch] = touch.location(in: self)
@@ -1409,45 +1356,11 @@ struct OptimizedTouchHandler: UIViewRepresentable {
             }
             
             if activeTouches.count >= 2 {
-                // 双指模式：持续更新
                 updateMultiTouch()
             } else if activeTouches.count == 1 {
-                // 单指模式
-                handleSingleTouchMove()
-            }
-        }
-        
-        private func handleSingleTouchMove() {
-            guard let touch = activeTouches.keys.first,
-                  let currentLocation = activeTouches[touch] else { return }
-            
-            // 如果已经激活了查阅模式，直接回调位置
-            if isChartInteracting {
-                onSingleTouchChanged?(currentLocation)
-                return
-            }
-            
-            // 如果还没激活，判断移动意图
-            guard let start = startLocation else { return }
-            let deltaX = currentLocation.x - start.x
-            let deltaY = currentLocation.y - start.y
-            
-            // 简单的防抖动阈值
-            if abs(deltaX) < 10 && abs(deltaY) < 10 { return }
-            
-            // 【修复1】判断方向
-            if deltaX < 0 {
-                // 向左滑动：立即取消长按等待，激活查阅模式
-                cancelLongPressTask()
-                activateSingleTouchMode()
-                // 立即更新一次位置，避免顿挫
-                onSingleTouchChanged?(currentLocation)
-            } else if deltaX > 0 {
-                // 向右滑动：
-                // 此时还未激活(isChartInteracting == false)
-                // 我们什么都不做，让系统手势去响应“返回上一页”
-                // 同时取消长按任务，因为用户明显是在进行滑动手势而不是长按
-                cancelLongPressTask()
+                if let touch = activeTouches.keys.first, let loc = activeTouches[touch] {
+                    onSingleTouchChanged?(loc)
+                }
             }
         }
         
@@ -1460,63 +1373,24 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         }
         
         private func handleTouchesEnd(_ touches: Set<UITouch>) {
-            // 移除已结束的触摸
             for touch in touches {
                 activeTouches.removeValue(forKey: touch)
             }
             
-            cancelLongPressTask() // 安全清理
-            
             if activeTouches.isEmpty {
-                // 所有手指离开：结束交互，恢复系统手势
                 onTouchesEnded?()
-                restoreNavGesture()
-                startLocation = nil
-                
             } else if activeTouches.count == 1 {
-                // 【修复2】双指变单指：保持交互状态
-                // 此时 isChartInteracting 应该已经是 true 了（因为之前是双指）
-                // 我们直接查找剩下的那一根手指，并作为单指模式继续
-                if let remainingTouch = activeTouches.keys.first {
-                    let location = activeTouches[remainingTouch]!
-                    // 确保进入单指回调
-                    onSingleTouchChanged?(location)
-                    // 重置 startLocation，防止逻辑混乱，虽然此时已经在 interacting 模式下不太会用到它
-                    startLocation = location
+                if let remainingTouch = activeTouches.keys.first, let loc = activeTouches[remainingTouch] {
+                    onSingleTouchChanged?(loc)
                 }
             } else if activeTouches.count >= 2 {
-                // 假如之前是3指，变成2指，继续双指逻辑
                 updateMultiTouch()
             }
-        }
-        
-        // MARK: - 辅助逻辑
-        
-        private func activateSingleTouchMode() {
-            disableNavGesture() // 禁用系统返回，独占触摸
-            
-            // 触发一次震动反馈告诉用户“已激活”
-            if activeTouches.count == 1 {
-                 let impact = UIImpactFeedbackGenerator(style: .light)
-                 impact.impactOccurred()
-            }
-            
-            // 立即触发一次当前位置的回调
-            if let touch = activeTouches.keys.first, let loc = activeTouches[touch] {
-                onSingleTouchChanged?(loc)
-            }
-        }
-        
-        private func cancelLongPressTask() {
-            longPressTask?.cancel()
-            longPressTask = nil
         }
         
         private func updateMultiTouch() {
             let touchPoints = Array(activeTouches.values)
             if touchPoints.count >= 2 {
-                // 排序或固定取前两个，保证平滑
-                // 这里简单取前两个
                 onMultiTouchChanged?(touchPoints[0], touchPoints[1])
             }
         }
