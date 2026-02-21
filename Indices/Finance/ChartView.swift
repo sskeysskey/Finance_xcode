@@ -381,7 +381,8 @@ struct ChartView: View {
                                 Text(formatXAxisLabel(date))
                                     .font(.system(size: 10))
                                     .foregroundColor(.gray)
-                                    .position(x: x, y: geometry.size.height + 10)
+                                    // 👇 将这里的 + 10 改为 - 10
+                                    .position(x: x, y: geometry.size.height - 10)
                             }
                         }
                     }
