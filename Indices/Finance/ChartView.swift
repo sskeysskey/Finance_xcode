@@ -402,7 +402,6 @@ struct ChartView: View {
                 .frame(height: 320)
                 // 【关键修复1】强制图表区域宽度等于屏幕宽度，防止被撑大
                 .frame(width: UIScreen.main.bounds.width)
-                .clipped() // 确保内容不溢出
                 .padding(.bottom, 30)
             }
             
