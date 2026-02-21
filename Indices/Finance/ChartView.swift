@@ -160,7 +160,7 @@ struct ChartView: View {
     @State private var showOrangeMarkers: Bool = true
     @State private var showGreenMarkers: Bool = true
     
-    // 【新增】成交量显示控制
+    // 成交量显示控制
     @State private var showVolume: Bool = true
     
     @State private var bubbleMarkers: [BubbleMarker] = []
@@ -174,17 +174,14 @@ struct ChartView: View {
     @State private var fifthWeekRange: (start: Date, end: Date)? = nil
     @State private var thirdWeekRange: (start: Date, end: Date)? = nil
 
-    // 【新增】控制跳转到期权详情页
+    // 控制跳转到期权详情页
     @State private var navigateToOptionsDetail = false
 
-    // 【新增】控制跳转到比对和相似页面
+    // 控制跳转到比对和相似页面
     @State private var navigateToCompare = false
     @State private var navigateToSimilar = false
 
-    // ⬇️⬇️⬇️ 【请补上这一行】 ⬇️⬇️⬇️
     @State private var showSubscriptionSheet = false 
-
-    // ⬇️⬇️⬇️ 【新增这一行】 ⬇️⬇️⬇️
     @State private var navigateToBacktest = false 
     
     @Environment(\.colorScheme) var colorScheme
