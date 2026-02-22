@@ -1414,39 +1414,50 @@ struct StrategyHistoryDetailView: View {
     
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 12) {
-                // 这里遍历的 sortedDates 已经是限制过数量的了
-                ForEach(Array(sortedDates.enumerated()), id: \.element) { index, dateStr in
-                    if let symbols = dataService.earningHistoryData[groupName]?[dateStr] {
-                        StrategyDateSectionView(
-                            dateStr: dateStr,
-                            symbols: symbols,
-                            groupName: groupName,
-                            // 【修改】统一使用 expandedDates 判断
-                            isExpanded: expandedDates.contains(dateStr),
-                            isFirstSection: index == 0,
-                            onToggle: {
-                                // 【修改】移除 index != 0 的判断，所有分组都可以折叠
-                                if expandedDates.contains(dateStr) {
-                                    expandedDates.remove(dateStr)
-                                } else {
-                                    expandedDates.insert(dateStr)
+            // 1. 新增 ScrollViewReader
+            ScrollViewReader { proxy in
+                LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) { // 👈 开启吸顶功能
+                    // 这里遍历的 sortedDates 已经是限制过数量的了
+                    ForEach(Array(sortedDates.enumerated()), id: \.element) { index, dateStr in
+                        if let symbols = dataService.earningHistoryData[groupName]?[dateStr] {
+                            StrategyDateSectionView(
+                                dateStr: dateStr,
+                                symbols: symbols,
+                                groupName: groupName,
+                                // 【修改】统一使用 expandedDates 判断
+                                isExpanded: expandedDates.contains(dateStr),
+                                isFirstSection: index == 0,
+                                onToggle: {
+                                    withAnimation {
+                                        if expandedDates.contains(dateStr) {
+                                            expandedDates.remove(dateStr)
+                                            // 2. 核心修复：折叠时自动定位回这个标题的顶部
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                                withAnimation {
+                                                    proxy.scrollTo(dateStr, anchor: .top)
+                                                }
+                                            }
+                                        } else {
+                                            expandedDates.insert(dateStr)
+                                        }
+                                    }
                                 }
-                            }
-                        )
+                            )
+                            .id(dateStr) // 3. 绑定唯一 ID 锚点
+                        }
+                    }
+                    
+                    // 【可选】提示用户仅显示最近数据
+                    if let datesMap = dataService.earningHistoryData[groupName], datesMap.keys.count > 5 {
+                        Text("仅显示最近 5 个交易日数据")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 8)
                     }
                 }
-                
-                // 【可选】提示用户仅显示最近数据
-                if let datesMap = dataService.earningHistoryData[groupName], datesMap.keys.count > 5 {
-                    Text("仅显示最近 5 个交易日数据")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.top, 8)
-                }
+                .padding(.top, 10)
+                .padding(.bottom, 20)
             }
-            .padding(.top, 10)
-            .padding(.bottom, 20)
         }
         .navigationTitle(displayName)
         .navigationBarTitleDisplayMode(.inline)
@@ -1483,8 +1494,27 @@ struct StrategyDateSectionView: View {
     let onToggle: () -> Void
     
     var body: some View {
-        VStack(spacing: 0) {
-            // 头部点击区域
+        Section {
+            // 展开的内容（列表区域）
+            if isExpanded {
+                LazyVStack(spacing: 0, pinnedViews: []) {
+                    ForEach(symbols, id: \.self) { symbol in
+                        StrategySymbolRow(symbol: symbol, dateStr: dateStr, groupName: groupName)
+                        
+                        if symbol != symbols.last {
+                            Divider().padding(.leading, 16)
+                        }
+                    }
+                }
+                .background(Color(UIColor.secondarySystemGroupedBackground))
+                .cornerRadius(12) // 内容部分独立圆角
+                .padding(.horizontal)
+                .padding(.top, 4) // 和上面的 Header 拉开视觉层次
+                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+                .transition(.opacity)
+            }
+        } header: {
+            // 头部点击区域（吸顶部分）
             Button(action: onToggle) {
                 HStack {
                     Image(systemName: isExpanded ? "chevron.down.circle.fill" : "chevron.right.circle.fill")
@@ -1519,28 +1549,11 @@ struct StrategyDateSectionView: View {
                 .padding()
                 .background(Color(UIColor.secondarySystemGroupedBackground))
             }
-            
-            // 展开的内容
-            if isExpanded {
-                Divider()
-                // ✅ 关键改动 1：LazyVStack 只渲染进入视口的行，展开时不再一次性构建全部
-                LazyVStack(spacing: 0, pinnedViews: []) {
-                    ForEach(symbols, id: \.self) { symbol in
-                        StrategySymbolRow(symbol: symbol, dateStr: dateStr, groupName: groupName)
-                        
-                        if symbol != symbols.last {
-                            Divider().padding(.leading, 16)
-                        }
-                    }
-                }
-                .background(Color(UIColor.secondarySystemGroupedBackground))
-                // ✅ 关键改动 2：只用 opacity，不用 move，避免布局重计算
-                .transition(.opacity)
-            }
+            .cornerRadius(12) // 头部独立圆角
+            .padding(.horizontal)
+            .padding(.bottom, 2)
+            .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
         }
-        .cornerRadius(12)
-        .padding(.horizontal)
-        .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
     }
 }
 

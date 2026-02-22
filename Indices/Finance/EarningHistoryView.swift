@@ -86,28 +86,39 @@ struct EarningHistoryView: View {
                 }
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(currentGroupDates, id: \.self) { dateStr in
-                            if let symbols = dataService.earningHistoryData[selectedGroup]?[dateStr] {
-                                DateSectionView(
-                                    dateStr: dateStr,
-                                    symbols: symbols,
-                                    isExpanded: expandedDates.contains(dateStr),
-                                    onToggle: {
-                                        withAnimation {
-                                            if expandedDates.contains(dateStr) {
-                                                expandedDates.remove(dateStr)
-                                            } else {
-                                                expandedDates.insert(dateStr)
+                    // 1. 新增 ScrollViewReader
+                    ScrollViewReader { proxy in 
+                        LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) { // 👈 开启吸顶功能
+                            ForEach(currentGroupDates, id: \.self) { dateStr in
+                                if let symbols = dataService.earningHistoryData[selectedGroup]?[dateStr] {
+                                    DateSectionView(
+                                        dateStr: dateStr,
+                                        symbols: symbols,
+                                        isExpanded: expandedDates.contains(dateStr),
+                                        onToggle: {
+                                            withAnimation {
+                                                if expandedDates.contains(dateStr) {
+                                                    expandedDates.remove(dateStr)
+                                                    // 2. 核心修复：折叠时自动定位回这个标题的顶部
+                                                    // 稍微延迟一点点等动画开始，防止布局闪烁
+                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                                        withAnimation {
+                                                            proxy.scrollTo(dateStr, anchor: .top)
+                                                        }
+                                                    }
+                                                } else {
+                                                    expandedDates.insert(dateStr)
+                                                }
                                             }
                                         }
-                                    }
-                                )
+                                    )
+                                    .id(dateStr) // 3. 给这个视图绑定唯一 ID，供 proxy 寻找锚点
+                                }
                             }
                         }
+                        .padding(.top, 10)
+                        .padding(.bottom, 20)
                     }
-                    .padding(.top, 10)
-                    .padding(.bottom, 20)
                 }
             }
         }
@@ -139,8 +150,28 @@ struct DateSectionView: View {
     let onToggle: () -> Void
     
     var body: some View {
-        VStack(spacing: 0) {
-            // 头部点击区域
+        // 使用 Section 来配合 LazyVStack 的 pinnedViews 达到吸顶效果
+        Section {
+            // 展开的内容（列表区域）
+            if isExpanded {
+                VStack(spacing: 0) {
+                    // 去掉了 Divider()，因为现在头和内容是分离开的两个卡片，更美观
+                    ForEach(symbols, id: \.self) { symbol in
+                        HistorySymbolRow(symbol: symbol, dateStr: dateStr)
+                        
+                        if symbol != symbols.last {
+                            Divider().padding(.leading, 16)
+                        }
+                    }
+                }
+                .background(Color(UIColor.secondarySystemGroupedBackground))
+                .cornerRadius(12) // 给列表独立加圆角
+                .padding(.horizontal)
+                .padding(.top, 4) // 和吸顶的标题拉开一点距离，显得有层次
+                .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+            }
+        } header: {
+            // 头部点击区域（吸顶部分）
             Button(action: onToggle) {
                 HStack {
                     Image(systemName: isExpanded ? "chevron.down.circle.fill" : "chevron.right.circle.fill")
@@ -164,26 +195,11 @@ struct DateSectionView: View {
                 .padding()
                 .background(Color(UIColor.secondarySystemGroupedBackground))
             }
-            
-            // 展开的内容
-            if isExpanded {
-                Divider()
-                VStack(spacing: 0) {
-                    ForEach(symbols, id: \.self) { symbol in
-                        // 【修改这里】：传入 dateStr
-                        HistorySymbolRow(symbol: symbol, dateStr: dateStr)
-                        
-                        if symbol != symbols.last {
-                            Divider().padding(.leading, 16)
-                        }
-                    }
-                }
-                .background(Color(UIColor.secondarySystemGroupedBackground))
-            }
+            .cornerRadius(12) // 给标题独立加圆角，这样吸顶悬浮时就像一个独立的浮岛药丸
+            .padding(.horizontal)
+            .padding(.bottom, 2) // 吸顶时底部稍微留一点间隙
+            .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
         }
-        .cornerRadius(12)
-        .padding(.horizontal)
-        .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
     }
 }
 
