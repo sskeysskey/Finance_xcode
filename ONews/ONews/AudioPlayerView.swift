@@ -81,6 +81,17 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return knownDuration + avgDurationPerChar * Double(remainingCharCount)
     }
 
+    // ▶ 新增：安全重置语音合成器，防止中断 write 导致的底层死锁
+    private func resetSpeechSynthesizer() {
+        // 先关闭当前正在进行的操作并解除代理
+        speechSynthesizer.stopSpeaking(at: .immediate)
+        speechSynthesizer.delegate = nil
+        
+        // 重新初始化一个干净的实例
+        speechSynthesizer = AVSpeechSynthesizer()
+        speechSynthesizer.delegate = self
+    }
+
     // ▶ 新增：当前播放块之前所有块的累计时长
     private var elapsedTimeBeforeCurrentChunk: TimeInterval {
         guard currentPlayingChunkIndex > 0 else { return 0 }
@@ -115,15 +126,18 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
     func prepareForNextTransition() {
         synthesisGeneration += 1
-        speechSynthesizer.stopSpeaking(at: .immediate)
+        resetSpeechSynthesizer() // <--- 替换原有的 stopSpeaking
+        
         audioPlayer?.stop()
         isPlaying = false
         isSynthesizing = false
         waitingForChunk = false
         isAllSynthesized = false
+        
         stopDisplayLink()
         cleanupAllChunkFiles()
         invalidateSynthesisWatchdog()
+        
         textChunks = []
         chunkDurations = []
         currentPlayingChunkIndex = 0
@@ -327,7 +341,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         // 清理上一次播放状态
         synthesisGeneration += 1
-        speechSynthesizer.stopSpeaking(at: .immediate)
+        resetSpeechSynthesizer() // <--- 替换原有的 stopSpeaking
+        
         audioPlayer?.stop()
         audioPlayer?.delegate = nil
         audioPlayer = nil
@@ -336,7 +351,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         invalidateSynthesisWatchdog()
 
         self.nowPlayingTitle = title?.isEmpty == false ? title! : Localized.playingArticle
-        self.speechSynthesizer.delegate = self
+        // self.speechSynthesizer.delegate = self <--- 这一行删掉，reset方法里已经赋过值了
 
         // 确定语音
         if language.starts(with: "en") {
@@ -549,7 +564,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
     func stop() {
         synthesisGeneration += 1
-        speechSynthesizer.stopSpeaking(at: .immediate)
+        resetSpeechSynthesizer() // <--- 替换原有的 stopSpeaking
+        
         audioPlayer?.stop()
 
         isPlaying = false
@@ -577,8 +593,9 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         audioPlayer?.delegate = nil
         audioPlayer = nil
-        speechSynthesizer.delegate = nil
-
+        
+        // speechSynthesizer.delegate = nil <--- 这一行删掉，reset方法里处理过了
+        
         textChunks = []
         chunkFileURLs = []
         chunkDurations = []

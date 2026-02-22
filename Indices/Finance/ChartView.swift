@@ -217,10 +217,14 @@ struct ChartView: View {
     private var maxPrice: Double { sampledChartData.map { $0.price }.max() ?? 0 }
     private var priceRange: Double { max(maxPrice - minPrice, 0.01) }
     
-    // 【新增】成交量最大值计算
+    // 【新增】成交额最大值计算
     private var maxVolume: Double {
-        let maxVol = sampledChartData.compactMap { $0.volume }.max() ?? 0
-        return Double(maxVol)
+        // 找出最大的 (volume * price)
+        let maxTurnover = sampledChartData.compactMap { point -> Double? in
+            guard let vol = point.volume, vol > 0 else { return nil }
+            return Double(vol) * point.price
+        }.max() ?? 0
+        return maxTurnover
     }
     
     private var priceDifferencePercentage: Double? {
@@ -293,9 +297,10 @@ struct ChartView: View {
                                             .font(.system(size: 14, weight: .medium))
                                             .foregroundColor(.green)
                                     }
-                                    // 【新增】显示成交量信息
+                                    // 【修改】显示成交额信息 (Volume * Price)
                                     if let vol = point.volume, vol > 0 {
-                                        Text("\(formatVolume(vol))")
+                                        let turnover = Double(vol) * point.price // 计算成交额
+                                        Text("\(formatVolume(turnover))")
                                             .font(.system(size: 14, weight: .regular))
                                             .foregroundColor(.purple)
                                     }
@@ -639,7 +644,8 @@ struct ChartView: View {
                     if let vol = point.volume, vol > 0 {
                         // 【修改】加上 horizontalPadding
                         let x = horizontalPadding + CGFloat(index) * horizontalStep
-                        let barHeight = CGFloat(Double(vol) / maxVol) * volumeAreaHeight
+                        let turnover = Double(vol) * point.price
+                        let barHeight = CGFloat(turnover / maxVol) * volumeAreaHeight
                         let y = volumeBottomY - barHeight
                         let barWidth = max(1, horizontalStep * 0.6)
                         let barRect = CGRect(x: x - barWidth/2, y: y, width: barWidth, height: barHeight)
@@ -877,19 +883,19 @@ struct ChartView: View {
         return ((latestPrice - point.price) / point.price) * 100.0
     }
     
-    // 【新增】格式化成交量
-    private func formatVolume(_ volume: Int64) -> String {
-        let doubleVol = Double(volume)
-        if doubleVol >= 1_000_000_000 {
-            return String(format: "%.2fB", doubleVol / 1_000_000_000)
-        } else if doubleVol >= 1_000_000 {
-            return String(format: "%.2fM", doubleVol / 1_000_000)
-        } else if doubleVol >= 1_000 {
-            return String(format: "%.0fK", doubleVol / 1_000)
+    // 【修改】格式化成交额 (支持传入 Double)
+    private func formatVolume(_ amount: Double) -> String {
+        if amount >= 1_000_000_000 {
+            return String(format: "%.2fB", amount / 1_000_000_000)
+        } else if amount >= 1_000_000 {
+            return String(format: "%.2fM", amount / 1_000_000)
+        } else if amount >= 1_000 {
+            return String(format: "%.2fK", amount / 1_000) // 改为保留两位小数
         } else {
-            return "\(volume)"
+            return String(format: "%.2f", amount) // 小额也保留两位小数
         }
     }
+
     
     private func getDescriptions(for symbol: String) -> (String, String)? {
         if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == symbol.uppercased() }) {
