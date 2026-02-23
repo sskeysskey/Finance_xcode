@@ -228,9 +228,34 @@ struct ChartView: View {
     }
     
     private var priceDifferencePercentage: Double? {
-        guard let first = firstTouchPoint?.price,
-              let second = secondTouchPoint?.price else { return nil }
-        return ((second - first) / first) * 100.0
+        guard let first = firstTouchPoint, let second = secondTouchPoint else { return nil }
+        
+        // 找到时间靠前和靠后的点，作为基准
+        let earlierPrice = first.date < second.date ? first.price : second.price
+        let laterPrice = first.date < second.date ? second.price : first.price
+        
+        return ((laterPrice - earlierPrice) / earlierPrice) * 100.0
+    }
+    
+    // 【新增】计算成交额 (volume * price) 的百分比差值
+    private var turnoverDifferencePercentage: Double? {
+        guard let first = firstTouchPoint, let second = secondTouchPoint else { return nil }
+        
+        // 找到时间靠前和靠后的点
+        let earlierPoint = first.date < second.date ? first : second
+        let laterPoint = first.date < second.date ? second : first
+        
+        // 确保两个点都有成交量且大于0
+        guard let earlierVol = earlierPoint.volume, earlierVol > 0,
+              let laterVol = laterPoint.volume, laterVol > 0 else {
+            return nil
+        }
+        
+        // 计算成交额
+        let earlierTurnover = Double(earlierVol) * earlierPoint.price
+        let laterTurnover = Double(laterVol) * laterPoint.price
+        
+        return ((laterTurnover - earlierTurnover) / earlierTurnover) * 100.0
     }
     
     // MARK: - Body
@@ -270,10 +295,20 @@ struct ChartView: View {
                             
                             HStack {
                                 Text("\(earlierDate)").font(.system(size: 16, weight: .medium))
+                                Text("-").font(.system(size: 16, weight: .medium)).foregroundColor(.gray) // 增加个小分隔符让日期更清晰
                                 Text("\(laterDate)").font(.system(size: 16, weight: .medium))
+                                
+                                // 原有的价格百分比差值
                                 Text("\(formatPercentage(percentChange))")
                                     .font(.system(size: 16, weight: .bold))
-                                    .foregroundColor(percentChange >= 0 ? .green : .red)
+                                    .foregroundColor(percentChange >= 0 ? .red : .green)
+                                
+                                // 【新增】成交额百分比差值
+                                if let turnoverChange = turnoverDifferencePercentage {
+                                    Text("\(formatPercentage(turnoverChange))")
+                                        .font(.system(size: 14, weight: .bold)) // 字体稍小一点以区分
+                                        .foregroundColor(turnoverChange >= 0 ? .red : .green) // 使用紫/橙色与价格绿/红区分
+                                }
                             }
                             .padding(.horizontal).padding(.vertical, 8)
                             .background(Color(UIColor.systemGray6)).cornerRadius(8)
@@ -290,7 +325,7 @@ struct ChartView: View {
                                     if let percentChange = percentChange {
                                         Text(formatPercentage(percentChange))
                                             .font(.system(size: 16, weight: .bold))
-                                            .foregroundColor(percentChange >= 0 ? .green : .red)
+                                            .foregroundColor(percentChange >= 0 ? .red : .green)
                                     }
                                     if let greenText = markerInfo.green {
                                         Text(greenText)
@@ -1367,9 +1402,46 @@ struct OptimizedTouchHandler: UIViewRepresentable {
             return false
         }
         
-        // MARK: - 触摸事件处理
+        // MARK: - ✨ 修复核心：幽灵触控清理机制 ✨
+        private func purgeStaleTouches(event: UIEvent?) {
+            // 检查字典中存留的每一个 touch，如果它的物理状态已经是结束或取消，强行清理！
+            let validPhases: [UITouch.Phase] = [.began, .moved, .stationary]
+            
+            for key in activeTouches.keys {
+                if !validPhases.contains(key.phase) {
+                    activeTouches.removeValue(forKey: key)
+                }
+            }
+            
+            // 极限防御：如果系统事件明确表示这根手指已经不在当前视图的活跃触摸列表里了，也强行清理
+            if let allTouches = event?.touches(for: self) {
+                for key in activeTouches.keys {
+                    if !allTouches.contains(key) {
+                        activeTouches.removeValue(forKey: key)
+                    }
+                }
+            }
+        }
         
+        // 统一的状态分发机制
+        private func dispatchTouchState() {
+            if activeTouches.isEmpty {
+                onTouchesEnded?()
+            } else if activeTouches.count == 1 {
+                if let loc = activeTouches.values.first {
+                    onSingleTouchChanged?(loc)
+                }
+            } else {
+                // 安全提取前两个触控点
+                let points = Array(activeTouches.values.prefix(2))
+                onMultiTouchChanged?(points[0], points[1])
+            }
+        }
+        
+        // MARK: - 触摸事件处理
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+            purgeStaleTouches(event: event) // 先清理僵尸点
+            
             for touch in touches {
                 let location = touch.location(in: self)
                 if location.y > self.bounds.height - bottomEdgeThreshold { continue }
@@ -1377,63 +1449,34 @@ struct OptimizedTouchHandler: UIViewRepresentable {
                 
                 activeTouches[touch] = location
             }
-            
-            if activeTouches.isEmpty { return }
-            
-            if activeTouches.count >= 2 {
-                updateMultiTouch()
-            } else if activeTouches.count == 1 {
-                if let touch = activeTouches.keys.first, let loc = activeTouches[touch] {
-                    onSingleTouchChanged?(loc)
-                }
-            }
+            dispatchTouchState()
         }
         
         override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+            purgeStaleTouches(event: event) // 每次移动先清理僵尸点
+            
             for touch in touches {
                 if activeTouches[touch] != nil {
                    activeTouches[touch] = touch.location(in: self)
                 }
             }
-            
-            if activeTouches.count >= 2 {
-                updateMultiTouch()
-            } else if activeTouches.count == 1 {
-                if let touch = activeTouches.keys.first, let loc = activeTouches[touch] {
-                    onSingleTouchChanged?(loc)
-                }
-            }
+            dispatchTouchState()
         }
         
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-            handleTouchesEnd(touches)
-        }
-        
-        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-            handleTouchesEnd(touches)
-        }
-        
-        private func handleTouchesEnd(_ touches: Set<UITouch>) {
             for touch in touches {
                 activeTouches.removeValue(forKey: touch)
             }
-            
-            if activeTouches.isEmpty {
-                onTouchesEnded?()
-            } else if activeTouches.count == 1 {
-                if let remainingTouch = activeTouches.keys.first, let loc = activeTouches[remainingTouch] {
-                    onSingleTouchChanged?(loc)
-                }
-            } else if activeTouches.count >= 2 {
-                updateMultiTouch()
-            }
+            purgeStaleTouches(event: event) // 二次校验清理
+            dispatchTouchState()
         }
         
-        private func updateMultiTouch() {
-            let touchPoints = Array(activeTouches.values)
-            if touchPoints.count >= 2 {
-                onMultiTouchChanged?(touchPoints[0], touchPoints[1])
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+            for touch in touches {
+                activeTouches.removeValue(forKey: touch)
             }
+            purgeStaleTouches(event: event) // 二次校验清理
+            dispatchTouchState()
         }
     }
 }
