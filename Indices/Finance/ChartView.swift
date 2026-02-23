@@ -1294,17 +1294,16 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         uiView.onTouchesEnded = onTouchesEnded
     }
     
-        class OptimizedMultitouchView: UIView, UIGestureRecognizerDelegate {
+    class OptimizedMultitouchView: UIView, UIGestureRecognizerDelegate {
         var onSingleTouchChanged: ((CGPoint) -> Void)?
         var onMultiTouchChanged: ((CGPoint, CGPoint) -> Void)?
         var onTouchesEnded: (() -> Void)?
         
         private var activeTouches: [UITouch: CGPoint] = [:]
         private let bottomEdgeThreshold: CGFloat = 30.0
-        // 【新增】左侧边缘防误触阈值 (苹果标准的右滑返回区域大约是 20~30 像素)
-        private let leftEdgeThreshold: CGFloat = 30.0 
+        private let leftEdgeThreshold: CGFloat = 30.0
         
-        // 专门用于拦截系统返回手势的 PanGesture
+        // 专门用来“霸占”控制权的拦截手势
         private var interceptPanGesture: UIPanGestureRecognizer!
         
         override init(frame: CGRect) {
@@ -1319,11 +1318,12 @@ struct OptimizedTouchHandler: UIViewRepresentable {
             setupInterceptGesture()
         }
         
-        // MARK: - 核心修复：手势拦截逻辑
+        // MARK: - 核心修复：终极拦截手势
         private func setupInterceptGesture() {
             interceptPanGesture = UIPanGestureRecognizer(target: self, action: #selector(handleInterceptPan(_:)))
             interceptPanGesture.delegate = self
             
+            // 关键：绝对不能取消底层的 touchesBegan，否则虚线出不来
             interceptPanGesture.cancelsTouchesInView = false
             interceptPanGesture.delaysTouchesBegan = false
             
@@ -1331,35 +1331,40 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         }
         
         @objc private func handleInterceptPan(_ gesture: UIPanGestureRecognizer) {
-            // 占位
+            // 这个手势专门用来“霸占”滑动的控制权，所以方法里面什么都不需要写
+            // 只要它被触发，外层的返回手势就会被扼杀
         }
         
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                if let nav = self.findNavigationController(),
-                   let popGesture = nav.interactivePopGestureRecognizer {
-                    popGesture.require(toFail: self.interceptPanGesture)
+        // MARK: - UIGestureRecognizerDelegate 魔法
+        
+        // 1. 过滤边缘触摸：如果是贴着左边滑动，主动失效，让给系统返回
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            if gestureRecognizer == interceptPanGesture {
+                let location = touch.location(in: self)
+                // 只要在屏幕最左侧 30pt 内，图表放弃挣扎，让系统接管
+                if location.x < leftEdgeThreshold {
+                    return false
                 }
             }
-        }
-        
-        // 【新增】决定拦截手势是否要接收这个触摸
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            let location = touch.location(in: self)
-            // 如果触摸在左边缘，拦截手势主动放弃接收，这样系统的 popGesture 就不需要等待它失败了，直接无缝触发返回
-            if location.x < leftEdgeThreshold {
-                return false
-            }
             return true
         }
         
+        // 2. 强制镇压外层手势：要求其他所有 Pan 手势（包括全屏返回、边缘返回）必须等我们失败！
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            if gestureRecognizer == interceptPanGesture {
+                // 如果其他手势也是滑动类型（UIPanGestureRecognizer），统统强行让步。
+                // 因为我们在屏幕中央滑动时（上面的代理返回了 true），拦截手势处于活跃且成功的状态，
+                // 这会导致被迫等待的外层手势（如系统返回）直接失败被取消！
+                if otherGestureRecognizer is UIPanGestureRecognizer {
+                    return true
+                }
+            }
+            return false
+        }
+        
+        // 3. 拒绝同时识别：图表滑动和系统返回，绝对不允许同时发生
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            if let nav = findNavigationController(), otherGestureRecognizer == nav.interactivePopGestureRecognizer {
-                return false
-            }
-            return true
+            return false
         }
         
         // MARK: - 触摸事件处理
@@ -1367,10 +1372,8 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
             for touch in touches {
                 let location = touch.location(in: self)
-                // 底部边缘防误触
                 if location.y > self.bounds.height - bottomEdgeThreshold { continue }
-                // 【新增】左侧边缘防误触，如果是贴边滑动，不记录为图表触摸点
-                if location.x < leftEdgeThreshold { continue }
+                if location.x < leftEdgeThreshold { continue } // 边缘触摸不触发虚线
                 
                 activeTouches[touch] = location
             }
@@ -1388,7 +1391,6 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         
         override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
             for touch in touches {
-                // 如果在 touchesBegan 中被过滤掉了（比如从左边缘开始摸），这里就不会进入
                 if activeTouches[touch] != nil {
                    activeTouches[touch] = touch.location(in: self)
                 }
@@ -1434,5 +1436,4 @@ struct OptimizedTouchHandler: UIViewRepresentable {
             }
         }
     }
-
 }
