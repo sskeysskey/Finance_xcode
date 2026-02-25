@@ -135,6 +135,13 @@ struct NewsReaderAppApp: App {
             } else if newPhase == .background {
                 print("App entered background. Committing pending reads silently.")
                 newsViewModel.commitPendingReadsSilently()
+                
+                // 👇【核心修改：新增这段代码】主动释放图片内存缓存
+                Task { @MainActor in
+                    ImageLoader.clearCache()
+                    print("App entered background. Image cache cleared to save memory.")
+                }
+                
             } else if newPhase == .inactive {
                 print("App is inactive. Committing pending reads silently as a precaution.")
                 newsViewModel.commitPendingReadsSilently()

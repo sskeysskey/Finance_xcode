@@ -765,17 +765,7 @@ struct FiftyOneLowView: View {
     
     var enrichedSectors: [IndicesSector] {
         let compareMap = dataService.compareData
-        var tagMap: [String: [String]] = [:]
-        if let stocks = dataService.descriptionData?.stocks {
-            for stock in stocks {
-                tagMap[stock.symbol.uppercased()] = stock.tag
-            }
-        }
-        if let etfs = dataService.descriptionData?.etfs {
-            for etf in etfs {
-                tagMap[etf.symbol.uppercased()] = etf.tag
-            }
-        }
+        let tagMap = dataService.symbolTagsMap // 直接获取 O(1) 字典，不要每次滑动再重复建立！
         
         return sectors.map { sector in
             var newSector = sector
@@ -783,10 +773,7 @@ struct FiftyOneLowView: View {
                 var updatedSymbol = symbol
                 let upperSymbol = symbol.symbol.uppercased()
                 
-                let value = compareMap[upperSymbol] ??
-                            compareMap[symbol.symbol] ??
-                            "N/A"
-                updatedSymbol.value = value
+                updatedSymbol.value = compareMap[upperSymbol] ?? compareMap[symbol.symbol] ?? "N/A"
                 updatedSymbol.tags = tagMap[upperSymbol]
                 
                 return updatedSymbol
@@ -1051,40 +1038,24 @@ struct SectorDetailView: View {
     
     func loadSymbolsForSubSector(_ symbols: [IndicesSymbol]) -> [IndicesSymbol] {
         let compareMap = dataService.compareData
+        let tagMap = dataService.symbolTagsMap // 使用哈希表
         return symbols.map { symbol in
             var updatedSymbol = symbol
-            let value = compareMap[symbol.symbol.uppercased()] ??
-                        compareMap[symbol.symbol] ??
-                        "N/A"
-            updatedSymbol.value = value
-            
-            if let description = dataService.descriptionData?.stocks.first(where: {
-                $0.symbol.uppercased() == symbol.symbol.uppercased()
-            })?.tag ?? dataService.descriptionData?.etfs.first(where: {
-                $0.symbol.uppercased() == symbol.symbol.uppercased()
-            })?.tag {
-                updatedSymbol.tags = description
-            }
+            let upperSymbol = symbol.symbol.uppercased()
+            updatedSymbol.value = compareMap[upperSymbol] ?? compareMap[symbol.symbol] ?? "N/A"
+            updatedSymbol.tags = tagMap[upperSymbol]
             return updatedSymbol
         }
     }
     
     func loadSymbols() {
         let compareMap = dataService.compareData
+        let tagMap = dataService.symbolTagsMap // 使用哈希表
         self.symbols = sector.symbols.map { symbol in
             var updatedSymbol = symbol
-            let value = compareMap[symbol.symbol.uppercased()] ??
-                        compareMap[symbol.symbol] ??
-                        "N/A"
-            updatedSymbol.value = value
-            
-            if let description = dataService.descriptionData?.stocks.first(where: {
-                $0.symbol.uppercased() == symbol.symbol.uppercased()
-            })?.tag ?? dataService.descriptionData?.etfs.first(where: {
-                $0.symbol.uppercased() == symbol.symbol.uppercased()
-            })?.tag {
-                updatedSymbol.tags = description
-            }
+            let upperSymbol = symbol.symbol.uppercased()
+            updatedSymbol.value = compareMap[upperSymbol] ?? compareMap[symbol.symbol] ?? "N/A"
+            updatedSymbol.tags = tagMap[upperSymbol]
             return updatedSymbol
         }
     }
@@ -1223,6 +1194,7 @@ struct SymbolItemView: View {
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .onAppear {
+            // 将网络请求包装在少量延迟或轻量级检查中
             if earningTrend == .insufficientData {
                 dataService.fetchEarningTrends(for: [symbol.symbol])
             }
@@ -1474,10 +1446,14 @@ struct StrategyHistoryDetailView: View {
             let allSymbols = sortedDates.flatMap { date in
                 dataService.earningHistoryData[groupName]?[date] ?? []
             }
-            dataService.fetchEarningTrends(for: allSymbols)
             
-            // 预加载期权指标
+            // 【核心修复 3】使用 Task 延迟 0.3 秒，避开刚进入页面时的动画和列表初始排版高峰期
             Task {
+                try? await Task.sleep(nanoseconds: 300_000_000) // 等待 0.3 秒
+                
+                dataService.fetchEarningTrends(for: allSymbols)
+                
+                // 预加载期权指标
                 await dataService.fetchOptionsMetrics(for: allSymbols)
             }
         }
@@ -1607,7 +1583,6 @@ struct StrategySymbolRow: View {
                 if isBlacklisted {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.shield.fill")
-                        Text("Tag黑名单")
                     }
                     .font(.caption.bold())
                     .foregroundColor(.white)
@@ -1677,17 +1652,8 @@ struct StrategySymbolRow: View {
     private func computeExpensiveValues() {
         let upperSymbol = symbol.uppercased()
         
-        // 1. Tags：线性搜索只在 onAppear 时执行一次
-        var rawTags: [String] = []
-        if let stock = dataService.descriptionData?.stocks.first(where: {
-            $0.symbol.uppercased() == upperSymbol
-        }) {
-            rawTags = stock.tag
-        } else if let etf = dataService.descriptionData?.etfs.first(where: {
-            $0.symbol.uppercased() == upperSymbol
-        }) {
-            rawTags = etf.tag
-        }
+        // 1. Tags：✅ 使用 O(1) 字典查询，解决 CPU 爆满
+        let rawTags = dataService.symbolTagsMap[upperSymbol] ?? []
         cachedTags = rawTags.map { tag in
             let weight = dataService.tagsWeightConfig.first(where: { $0.value.contains(tag) })?.key ?? 1.0
             return (tag, weight)

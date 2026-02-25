@@ -1,7 +1,8 @@
 import Foundation
 import SQLite3
 
-class DatabaseManager {
+// 添加 final 和 @unchecked Sendable
+final class DatabaseManager: @unchecked Sendable {
     static let shared = DatabaseManager()
     
     // 服务器地址，请确保与 UpdateManager 中一致
@@ -29,14 +30,9 @@ class DatabaseManager {
     /// 修复说明：使用了 MainActor.assumeIsolated 配合 DispatchQueue.main.sync
     /// 解决了 "Call to main actor-isolated instance method in a synchronous nonisolated context" 报错
     func reconnectToLatestDatabase() {
-        dbLock.lock()
-        defer { dbLock.unlock() }
-        
-        // 1. 先关闭旧连接
-        if db != nil {
-            sqlite3_close(db)
-            db = nil
-        }
+        // 1. 【修复死锁】在无锁状态下安全地从主线程获取路径
+        // 绝对不能在 dbLock.lock() 之后调用 DispatchQueue.main.sync
+        var dbPath: String?
         
         // 2. 安全地从 UpdateManager 获取路径
         // 我们定义一个闭包，专门用于在主线程上下文中执行
@@ -50,8 +46,6 @@ class DatabaseManager {
             }
         }
         
-        var dbPath: String?
-        
         if Thread.isMainThread {
             // 如果已经在主线程，直接调用 assumeIsolated
             dbPath = getMainActorPath()
@@ -60,6 +54,16 @@ class DatabaseManager {
             dbPath = DispatchQueue.main.sync {
                 return getMainActorPath()
             }
+        }
+        
+        // 2. 获取到路径后，再加锁进行数据库底层切换
+        dbLock.lock()
+        defer { dbLock.unlock() }
+        
+        // 关闭旧连接
+        if db != nil {
+            sqlite3_close(db)
+            db = nil
         }
         
         // 3. 根据获取到的路径执行连接
@@ -248,25 +252,27 @@ class DatabaseManager {
     // 【本地实现】
     private func fetchAllMarketCapDataLocal() async -> [MarketCapInfo] {
         return await withCheckedContinuation { continuation in
-            dbLock.lock()
-            defer { dbLock.unlock() }
-            
-            var result: [MarketCapInfo] = []
-            let query = "SELECT symbol, marketcap, pe_ratio, pb FROM \"MNSPP\""
-            var stmt: OpaquePointer?
-            
-            if sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK {
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    let symbol = String(cString: sqlite3_column_text(stmt, 0))
-                    let marketCap = sqlite3_column_double(stmt, 1)
-                    let peRatio = sqlite3_column_type(stmt, 2) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 2)
-                    let pb = sqlite3_column_type(stmt, 3) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 3)
-                    
-                    result.append(MarketCapInfo(symbol: symbol, marketCap: marketCap, peRatio: peRatio, pb: pb))
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.dbLock.lock()
+                defer { self.dbLock.unlock() }
+                
+                var result: [MarketCapInfo] = []
+                let query = "SELECT symbol, marketcap, pe_ratio, pb FROM \"MNSPP\""
+                var stmt: OpaquePointer?
+                
+                if sqlite3_prepare_v2(self.db, query, -1, &stmt, nil) == SQLITE_OK {
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        let symbol = String(cString: sqlite3_column_text(stmt, 0))
+                        let marketCap = sqlite3_column_double(stmt, 1)
+                        let peRatio = sqlite3_column_type(stmt, 2) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 2)
+                        let pb = sqlite3_column_type(stmt, 3) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 3)
+                        
+                        result.append(MarketCapInfo(symbol: symbol, marketCap: marketCap, peRatio: peRatio, pb: pb))
+                    }
                 }
+                sqlite3_finalize(stmt)
+                continuation.resume(returning: result)
             }
-            sqlite3_finalize(stmt)
-            continuation.resume(returning: result)
         }
     }
     
@@ -292,24 +298,25 @@ class DatabaseManager {
     // 【本地实现】
     private func fetchLatestVolumeLocal(forSymbol symbol: String, tableName: String) async -> Int64? {
         return await withCheckedContinuation { continuation in
-            dbLock.lock()
-            defer { dbLock.unlock() }
-            
-            // 假设表结构有 volume 字段。如果部分表没有，SQLite 会报错，这里简单处理返回 nil
-            let query = "SELECT volume FROM \"\(tableName)\" WHERE name = ? ORDER BY date DESC LIMIT 1"
-            var stmt: OpaquePointer?
-            var volume: Int64? = nil
-            
-            if sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK {
-                sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
-                if sqlite3_step(stmt) == SQLITE_ROW {
-                    if sqlite3_column_type(stmt, 0) != SQLITE_NULL {
-                        volume = sqlite3_column_int64(stmt, 0)
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.dbLock.lock()
+                defer { self.dbLock.unlock() }
+                
+                let query = "SELECT volume FROM \"\(tableName)\" WHERE name = ? ORDER BY date DESC LIMIT 1"
+                var stmt: OpaquePointer?
+                var volume: Int64? = nil
+                
+                if sqlite3_prepare_v2(self.db, query, -1, &stmt, nil) == SQLITE_OK {
+                    sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
+                    if sqlite3_step(stmt) == SQLITE_ROW {
+                        if sqlite3_column_type(stmt, 0) != SQLITE_NULL {
+                            volume = sqlite3_column_int64(stmt, 0)
+                        }
                     }
                 }
+                sqlite3_finalize(stmt)
+                continuation.resume(returning: volume)
             }
-            sqlite3_finalize(stmt)
-            continuation.resume(returning: volume)
         }
     }
     
@@ -351,61 +358,55 @@ class DatabaseManager {
     // 【本地实现】
     private func fetchHistoricalDataLocal(symbol: String, tableName: String, dateRange: DateRangeInput) async -> [PriceData] {
         return await withCheckedContinuation { continuation in
-            dbLock.lock()
-            defer { dbLock.unlock() }
-            
-            var result: [PriceData] = []
-            let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
-            let (startDate, endDate): (Date, Date) = {
-                switch dateRange {
-                case .timeRange(let timeRange): return (timeRange.startDate, Date())
-                case .customRange(let start, let end): return (start, end)
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.dbLock.lock()
+                defer { self.dbLock.unlock() }
+                
+                var result: [PriceData] = []
+                let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
+                let (startDate, endDate): (Date, Date) = {
+                    switch dateRange {
+                    case .timeRange(let timeRange): return (timeRange.startDate, Date())
+                    case .customRange(let start, let end): return (start, end)
+                    }
+                }()
+                let startStr = formatter.string(from: startDate)
+                let endStr = formatter.string(from: endDate)
+                
+                var query = "SELECT id, date, price, volume FROM \"\(tableName)\" WHERE name = ? AND date BETWEEN ? AND ? ORDER BY date ASC"
+                var stmt: OpaquePointer?
+                
+                if sqlite3_prepare_v2(self.db, query, -1, &stmt, nil) != SQLITE_OK {
+                    sqlite3_finalize(stmt)
+                    query = "SELECT id, date, price FROM \"\(tableName)\" WHERE name = ? AND date BETWEEN ? AND ? ORDER BY date ASC"
+                    sqlite3_prepare_v2(self.db, query, -1, &stmt, nil)
                 }
-            }()
-            let startStr = formatter.string(from: startDate)
-            let endStr = formatter.string(from: endDate)
-            
-            // 尝试查询 volume，如果表没有 volume 列，这个查询会失败
-            // 为了稳健性，可以先查 PRAGMA table_info，但为了性能和代码简洁，
-            // 我们假设大部分表都有 volume，或者接受查询失败返回空数组（虽然不太好）
-            // 更好的方式是：如果查询失败，尝试不带 volume 的查询。
-            
-            var query = "SELECT id, date, price, volume FROM \"\(tableName)\" WHERE name = ? AND date BETWEEN ? AND ? ORDER BY date ASC"
-            var stmt: OpaquePointer?
-            
-            // 第一次尝试：带 Volume
-            if sqlite3_prepare_v2(db, query, -1, &stmt, nil) != SQLITE_OK {
-                // 如果失败（可能是没有 volume 列），尝试不带 Volume
+                
+                if stmt != nil {
+                    sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(stmt, 2, (startStr as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(stmt, 3, (endStr as NSString).utf8String, -1, nil)
+                    
+                    let colCount = sqlite3_column_count(stmt)
+                    
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        let id = Int(sqlite3_column_int(stmt, 0))
+                        let dateStr = String(cString: sqlite3_column_text(stmt, 1))
+                        let price = sqlite3_column_double(stmt, 2)
+                        var volume: Int64? = nil
+                        
+                        if colCount > 3 && sqlite3_column_type(stmt, 3) != SQLITE_NULL {
+                            volume = sqlite3_column_int64(stmt, 3)
+                        }
+                        
+                        if let date = formatter.date(from: dateStr) {
+                            result.append(PriceData(id: id, date: date, price: price, volume: volume))
+                        }
+                    }
+                }
                 sqlite3_finalize(stmt)
-                query = "SELECT id, date, price FROM \"\(tableName)\" WHERE name = ? AND date BETWEEN ? AND ? ORDER BY date ASC"
-                sqlite3_prepare_v2(db, query, -1, &stmt, nil)
+                continuation.resume(returning: result)
             }
-            
-            if stmt != nil {
-                sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(stmt, 2, (startStr as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(stmt, 3, (endStr as NSString).utf8String, -1, nil)
-                
-                let colCount = sqlite3_column_count(stmt)
-                
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    let id = Int(sqlite3_column_int(stmt, 0))
-                    let dateStr = String(cString: sqlite3_column_text(stmt, 1))
-                    let price = sqlite3_column_double(stmt, 2)
-                    var volume: Int64? = nil
-                    
-                    // 如果有第4列 (index 3)，则是 volume
-                    if colCount > 3 && sqlite3_column_type(stmt, 3) != SQLITE_NULL {
-                        volume = sqlite3_column_int64(stmt, 3)
-                    }
-                    
-                    if let date = formatter.date(from: dateStr) {
-                        result.append(PriceData(id: id, date: date, price: price, volume: volume))
-                    }
-                }
-            }
-            sqlite3_finalize(stmt)
-            continuation.resume(returning: result)
         }
     }
     
@@ -423,30 +424,65 @@ class DatabaseManager {
             return try JSONDecoder().decode([EarningData].self, from: data)
         } catch { return [] }
     }
-    
+
     // 【本地实现】
     private func fetchEarningDataLocal(forSymbol symbol: String) async -> [EarningData] {
         return await withCheckedContinuation { continuation in
-            dbLock.lock()
-            defer { dbLock.unlock() }
-            
-            var result: [EarningData] = []
-            let query = "SELECT date, price FROM Earning WHERE name = ?"
-            var stmt: OpaquePointer?
-            let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
-            
-            if sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK {
-                sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    let dateStr = String(cString: sqlite3_column_text(stmt, 0))
-                    let price = sqlite3_column_double(stmt, 1)
-                    if let date = formatter.date(from: dateStr) {
-                        result.append(EarningData(date: date, price: price))
+            // 【核心修复】将查询扔进 GCD 的后台并发队列
+            // 既彻底离开了主线程（解决滑动卡顿），又避开了 Swift async 锁限制（解决编译报错）
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.dbLock.lock()
+                defer { self.dbLock.unlock() }
+                
+                var result: [EarningData] = []
+                let query = "SELECT date, price FROM Earning WHERE name = ?"
+                var stmt: OpaquePointer?
+                let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
+                
+                if sqlite3_prepare_v2(self.db, query, -1, &stmt, nil) == SQLITE_OK {
+                    sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        let dateStr = String(cString: sqlite3_column_text(stmt, 0))
+                        let price = sqlite3_column_double(stmt, 1)
+                        if let date = formatter.date(from: dateStr) {
+                            result.append(EarningData(date: date, price: price))
+                        }
                     }
                 }
+                sqlite3_finalize(stmt)
+                
+                // 返回结果
+                continuation.resume(returning: result)
             }
-            sqlite3_finalize(stmt)
-            continuation.resume(returning: result)
+        }
+    }
+
+    // 【本地实现】
+    private func fetchClosingPriceLocal(forSymbol symbol: String, onDate date: Date, tableName: String) async -> Double? {
+        return await withCheckedContinuation { continuation in
+            // 【核心修复】将查询扔进 GCD 的后台并发队列
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.dbLock.lock()
+                defer { self.dbLock.unlock() }
+                
+                let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
+                let dateStr = formatter.string(from: date)
+                let query = "SELECT price FROM \"\(tableName)\" WHERE name = ? AND date = ? LIMIT 1"
+                var stmt: OpaquePointer?
+                var price: Double? = nil
+                
+                if sqlite3_prepare_v2(self.db, query, -1, &stmt, nil) == SQLITE_OK {
+                    sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(stmt, 2, (dateStr as NSString).utf8String, -1, nil)
+                    if sqlite3_step(stmt) == SQLITE_ROW {
+                        price = sqlite3_column_double(stmt, 0)
+                    }
+                }
+                sqlite3_finalize(stmt)
+                
+                // 返回结果
+                continuation.resume(returning: price)
+            }
         }
     }
     
@@ -474,30 +510,6 @@ class DatabaseManager {
         } catch { return nil }
     }
     
-    // 【本地实现】
-    private func fetchClosingPriceLocal(forSymbol symbol: String, onDate date: Date, tableName: String) async -> Double? {
-        return await withCheckedContinuation { continuation in
-            dbLock.lock()
-            defer { dbLock.unlock() }
-            
-            let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
-            let dateStr = formatter.string(from: date)
-            let query = "SELECT price FROM \"\(tableName)\" WHERE name = ? AND date = ? LIMIT 1"
-            var stmt: OpaquePointer?
-            var price: Double? = nil
-            
-            if sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK {
-                sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(stmt, 2, (dateStr as NSString).utf8String, -1, nil)
-                if sqlite3_step(stmt) == SQLITE_ROW {
-                    price = sqlite3_column_double(stmt, 0)
-                }
-            }
-            sqlite3_finalize(stmt)
-            continuation.resume(returning: price)
-        }
-    }
-    
     // 6. 获取期权汇总数据 (Single)
     func fetchOptionsSummary(forSymbol symbol: String) async -> OptionsSummary? {
         if isOfflineMode {
@@ -516,40 +528,40 @@ class DatabaseManager {
     // 【本地实现】
     private func fetchOptionsSummaryLocal(forSymbol symbol: String) async -> OptionsSummary? {
         return await withCheckedContinuation { continuation in
-            dbLock.lock()
-            defer { dbLock.unlock() }
-            
-            // 获取最近的两条记录
-            let query = "SELECT call, put, price, change, iv, date FROM \"Options\" WHERE name = ? ORDER BY date DESC LIMIT 2"
-            var stmt: OpaquePointer?
-            var rows: [OptionsSummary] = []
-            
-            if sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK {
-                sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    let call = String(cString: sqlite3_column_text(stmt, 0))
-                    let put = String(cString: sqlite3_column_text(stmt, 1))
-                    let price = sqlite3_column_double(stmt, 2)
-                    let change = sqlite3_column_double(stmt, 3)
-                    let iv = String(cString: sqlite3_column_text(stmt, 4))
-                    let date = String(cString: sqlite3_column_text(stmt, 5))
-                    
-                    // 临时存入，prev 字段暂时为 nil
-                    rows.append(OptionsSummary(call: call, put: put, price: price, change: change, iv: iv, date: date, prev_iv: nil, prev_price: nil, prev_change: nil))
+            // 【核心修复补充】：离开 Swift async 线程池，避免死锁
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.dbLock.lock()
+                defer { self.dbLock.unlock() }
+                
+                let query = "SELECT call, put, price, change, iv, date FROM \"Options\" WHERE name = ? ORDER BY date DESC LIMIT 2"
+                var stmt: OpaquePointer?
+                var rows: [OptionsSummary] = []
+                
+                if sqlite3_prepare_v2(self.db, query, -1, &stmt, nil) == SQLITE_OK {
+                    sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        let call = String(cString: sqlite3_column_text(stmt, 0))
+                        let put = String(cString: sqlite3_column_text(stmt, 1))
+                        let price = sqlite3_column_double(stmt, 2)
+                        let change = sqlite3_column_double(stmt, 3)
+                        let iv = String(cString: sqlite3_column_text(stmt, 4))
+                        let date = String(cString: sqlite3_column_text(stmt, 5))
+                        
+                        rows.append(OptionsSummary(call: call, put: put, price: price, change: change, iv: iv, date: date, prev_iv: nil, prev_price: nil, prev_change: nil))
+                    }
                 }
-            }
-            sqlite3_finalize(stmt)
-            
-            if let latest = rows.first {
-                let prev = rows.count > 1 ? rows[1] : nil
-                // 合并数据
-                let finalSummary = OptionsSummary(
-                    call: latest.call, put: latest.put, price: latest.price, change: latest.change, iv: latest.iv, date: latest.date,
-                    prev_iv: prev?.iv, prev_price: prev?.price, prev_change: prev?.change
-                )
-                continuation.resume(returning: finalSummary)
-            } else {
-                continuation.resume(returning: nil)
+                sqlite3_finalize(stmt)
+                
+                if let latest = rows.first {
+                    let prev = rows.count > 1 ? rows[1] : nil
+                    let finalSummary = OptionsSummary(
+                        call: latest.call, put: latest.put, price: latest.price, change: latest.change, iv: latest.iv, date: latest.date,
+                        prev_iv: prev?.iv, prev_price: prev?.price, prev_change: prev?.change
+                    )
+                    continuation.resume(returning: finalSummary)
+                } else {
+                    continuation.resume(returning: nil)
+                }
             }
         }
     }
@@ -601,29 +613,30 @@ class DatabaseManager {
     // 【本地实现】
     private func fetchOptionsHistoryLocal(forSymbol symbol: String) async -> [OptionHistoryItem] {
         return await withCheckedContinuation { continuation in
-            dbLock.lock()
-            defer { dbLock.unlock() }
-            
-            var result: [OptionHistoryItem] = []
-            let query = "SELECT date, price, iv FROM \"Options\" WHERE name = ? ORDER BY date DESC"
-            var stmt: OpaquePointer?
-            let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
-            
-            if sqlite3_prepare_v2(db, query, -1, &stmt, nil) == SQLITE_OK {
-                sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    let dateStr = String(cString: sqlite3_column_text(stmt, 0))
-                    let price = sqlite3_column_double(stmt, 1)
-                    let ivStr = String(cString: sqlite3_column_text(stmt, 2))
-                    
-                    if let date = formatter.date(from: dateStr) {
-                        // 使用自定义初始化器处理 IV 字符串解析
-                        result.append(OptionHistoryItem(date: date, price: price, ivString: ivStr))
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.dbLock.lock()
+                defer { self.dbLock.unlock() }
+                
+                var result: [OptionHistoryItem] = []
+                let query = "SELECT date, price, iv FROM \"Options\" WHERE name = ? ORDER BY date DESC"
+                var stmt: OpaquePointer?
+                let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
+                
+                if sqlite3_prepare_v2(self.db, query, -1, &stmt, nil) == SQLITE_OK {
+                    sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        let dateStr = String(cString: sqlite3_column_text(stmt, 0))
+                        let price = sqlite3_column_double(stmt, 1)
+                        let ivStr = String(cString: sqlite3_column_text(stmt, 2))
+                        
+                        if let date = formatter.date(from: dateStr) {
+                            result.append(OptionHistoryItem(date: date, price: price, ivString: ivStr))
+                        }
                     }
                 }
+                sqlite3_finalize(stmt)
+                continuation.resume(returning: result)
             }
-            sqlite3_finalize(stmt)
-            continuation.resume(returning: result)
         }
     }
     
@@ -660,103 +673,99 @@ class DatabaseManager {
     // 【本地实现】期权榜单
     private func fetchOptionsRankDataLocal(limit: Double) async -> (rankUp: [OptionRankItem], rankDown: [OptionRankItem])? {
         return await withCheckedContinuation { continuation in
-            dbLock.lock()
-            defer { dbLock.unlock() }
-            
-            // 1. 获取最新的两个日期
-            var dates: [String] = []
-            let dateQuery = "SELECT DISTINCT date FROM \"Options\" ORDER BY date DESC LIMIT 2"
-            var dateStmt: OpaquePointer?
-            if sqlite3_prepare_v2(db, dateQuery, -1, &dateStmt, nil) == SQLITE_OK {
-                while sqlite3_step(dateStmt) == SQLITE_ROW {
-                    dates.append(String(cString: sqlite3_column_text(dateStmt, 0)))
-                }
-            }
-            sqlite3_finalize(dateStmt)
-            
-            if dates.isEmpty {
-                continuation.resume(returning: ([], []))
-                return
-            }
-            
-            let latestDate = dates[0]
-            let prevDate = dates.count > 1 ? dates[1] : "" // 如果只有一个日期，prevDate 为空，Join 会失败但不会崩
-            
-            // 2. 执行主查询
-            let sql = """
-                SELECT
-                    t1.name,
-                    t1.iv as iv_latest,
-                    t1.price as price_latest,
-                    t1.change as change_latest,
-                    t2.iv as iv_prev,
-                    t2.price as price_prev,
-                    t2.change as change_prev
-                FROM "Options" t1
-                LEFT JOIN "Options" t2 ON t1.name = t2.name AND t2.date = ?
-                JOIN "MNSPP" m ON t1.name = m.symbol
-                WHERE t1.date = ?
-                  AND m.marketcap > ?
-                  AND t1.iv IS NOT NULL
-            """
-            
-            var stmt: OpaquePointer?
-            
-            // 辅助结构体用于排序
-            struct SortableItem {
-                let item: OptionRankItem
-                let sortVal: Double
-            }
-            var sortableItems: [SortableItem] = []
-            
-            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
-                sqlite3_bind_text(stmt, 1, (prevDate as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(stmt, 2, (latestDate as NSString).utf8String, -1, nil)
-                sqlite3_bind_double(stmt, 3, limit)
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.dbLock.lock()
+                defer { self.dbLock.unlock() }
                 
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    let symbol = String(cString: sqlite3_column_text(stmt, 0))
-                    let ivLatest = String(cString: sqlite3_column_text(stmt, 1))
-                    let priceLatest = sqlite3_column_double(stmt, 2)
-                    let changeLatest = sqlite3_column_double(stmt, 3)
-                    
-                    let ivPrev = sqlite3_column_type(stmt, 4) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(stmt, 4))
-                    let pricePrev = sqlite3_column_type(stmt, 5) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 5)
-                    let changePrev = sqlite3_column_type(stmt, 6) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 6)
-                    
-                    let item = OptionRankItem(
-                        symbol: symbol,
-                        iv: ivLatest,
-                        prev_iv: ivPrev,
-                        price: priceLatest,
-                        change: changeLatest,
-                        prev_price: pricePrev,
-                        prev_change: changePrev
-                    )
-                    
-                    // 计算排序值 (IV 去掉 %)
-                    let cleanIv = ivLatest.replacingOccurrences(of: "%", with: "").trimmingCharacters(in: .whitespaces)
-                    let sortVal = Double(cleanIv) ?? 0.0
-                    
-                    sortableItems.append(SortableItem(item: item, sortVal: sortVal))
+                var dates: [String] = []
+                let dateQuery = "SELECT DISTINCT date FROM \"Options\" ORDER BY date DESC LIMIT 2"
+                var dateStmt: OpaquePointer?
+                if sqlite3_prepare_v2(self.db, dateQuery, -1, &dateStmt, nil) == SQLITE_OK {
+                    while sqlite3_step(dateStmt) == SQLITE_ROW {
+                        dates.append(String(cString: sqlite3_column_text(dateStmt, 0)))
+                    }
                 }
+                sqlite3_finalize(dateStmt)
+                
+                if dates.isEmpty {
+                    continuation.resume(returning: ([], []))
+                    return
+                }
+                
+                let latestDate = dates[0]
+                let prevDate = dates.count > 1 ? dates[1] : ""
+                
+                let sql = """
+                    SELECT
+                        t1.name,
+                        t1.iv as iv_latest,
+                        t1.price as price_latest,
+                        t1.change as change_latest,
+                        t2.iv as iv_prev,
+                        t2.price as price_prev,
+                        t2.change as change_prev
+                    FROM "Options" t1
+                    LEFT JOIN "Options" t2 ON t1.name = t2.name AND t2.date = ?
+                    JOIN "MNSPP" m ON t1.name = m.symbol
+                    WHERE t1.date = ?
+                      AND m.marketcap > ?
+                      AND t1.iv IS NOT NULL
+                """
+                
+                var stmt: OpaquePointer?
+                
+                struct SortableItem {
+                    let item: OptionRankItem
+                    let sortVal: Double
+                }
+                var sortableItems: [SortableItem] = []
+                
+                if sqlite3_prepare_v2(self.db, sql, -1, &stmt, nil) == SQLITE_OK {
+                    sqlite3_bind_text(stmt, 1, (prevDate as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(stmt, 2, (latestDate as NSString).utf8String, -1, nil)
+                    sqlite3_bind_double(stmt, 3, limit)
+                    
+                    while sqlite3_step(stmt) == SQLITE_ROW {
+                        let symbol = String(cString: sqlite3_column_text(stmt, 0))
+                        let ivLatest = String(cString: sqlite3_column_text(stmt, 1))
+                        let priceLatest = sqlite3_column_double(stmt, 2)
+                        let changeLatest = sqlite3_column_double(stmt, 3)
+                        
+                        let ivPrev = sqlite3_column_type(stmt, 4) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(stmt, 4))
+                        let pricePrev = sqlite3_column_type(stmt, 5) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 5)
+                        let changePrev = sqlite3_column_type(stmt, 6) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 6)
+                        
+                        let item = OptionRankItem(
+                            symbol: symbol,
+                            iv: ivLatest,
+                            prev_iv: ivPrev,
+                            price: priceLatest,
+                            change: changeLatest,
+                            prev_price: pricePrev,
+                            prev_change: changePrev
+                        )
+                        
+                        let cleanIv = ivLatest.replacingOccurrences(of: "%", with: "").trimmingCharacters(in: .whitespaces)
+                        let sortVal = Double(cleanIv) ?? 0.0
+                        
+                        sortableItems.append(SortableItem(item: item, sortVal: sortVal))
+                    }
+                }
+                sqlite3_finalize(stmt)
+                
+                sortableItems.sort { $0.sortVal > $1.sortVal }
+                let sortedResult = sortableItems.map { $0.item }
+                
+                if sortedResult.isEmpty {
+                    continuation.resume(returning: ([], []))
+                    return
+                }
+                
+                let rankUp = Array(sortedResult.prefix(20))
+                let rankDown = Array(sortedResult.suffix(20).reversed())
+                
+                continuation.resume(returning: (rankUp, rankDown))
             }
-            sqlite3_finalize(stmt)
-            
-            // 3. 排序 (降序)
-            sortableItems.sort { $0.sortVal > $1.sortVal }
-            let sortedResult = sortableItems.map { $0.item }
-            
-            if sortedResult.isEmpty {
-                continuation.resume(returning: ([], []))
-                return
-            }
-            
-            // 4. 截取 Top 20 和 Bottom 20
-            let rankUp = Array(sortedResult.prefix(20))
-            let rankDown = Array(sortedResult.suffix(20).reversed()) // 最小的20个，倒序排列
-            
-            continuation.resume(returning: (rankUp, rankDown))
         }
     }
 }

@@ -209,6 +209,9 @@ class DataService: ObservableObject {
 
     // 【新增】存储市值阀值，默认 500亿 (50B)
     @Published var optionCapLimit: Double = 500_000_000_000
+
+    // 【新增】O(1) 的 Tag 查询映射表，解决滑动卡顿
+    @Published var symbolTagsMap: [String: [String]] = [:]
     
     // 【修改点】存储映射表
     @Published var strategyGroupNames: Set<String> = []
@@ -276,6 +279,9 @@ class DataService: ObservableObject {
     
     // 公开缓存：已获取的财报趋势
     @Published var earningTrends: [String: EarningTrend] = [:]
+
+    // 【新增】记录正在请求中的 Symbol，防止滑动时产生海量重复请求
+    private var fetchingTrendsSymbols: Set<String> = []
     
     // 【新增】存储 ETFs 的 Top 10 和 Bottom 10
     // 注意：这里假设 IndicesSymbol 在同一个 Target 下可见。
@@ -318,8 +324,10 @@ class DataService: ObservableObject {
     // 【新增】获取期权榜单数据 (Async)
     // 返回元组: (上涨列表, 下跌列表)
     func fetchOptionsRankData() async -> ([OptionRankItem], [OptionRankItem])? {
-        // 使用配置的阀值
-        let urlString = "\(DatabaseManager.shared.serverBaseURL)/query/options_rank?limit=\(String(format: "%.0f", optionCapLimit))"
+        // 【安全修复】先在主线程安全获取阀值
+        let limit = await MainActor.run { self.optionCapLimit }
+        
+        let urlString = "\(DatabaseManager.shared.serverBaseURL)/query/options_rank?limit=\(String(format: "%.0f", limit))"
         guard let url = URL(string: urlString) else { return nil }
         
         do {
@@ -693,52 +701,90 @@ class DataService: ObservableObject {
         }
     }
     
-    // 修改：异步获取财报趋势
-    // 修复了 Swift 6 并发变量捕获错误
+    // 优化：彻底解决滑动卡死、重复请求和主线程频繁切换的问题
     public func fetchEarningTrends(for symbols: [String]) {
-        Task {
-            for symbol in symbols {
-                let upperSymbol = symbol.uppercased()
+        // 先在主线程中过滤出真正需要请求的 symbol，避免产生不必要的 Task
+        let neededSymbols = symbols.filter { symbol in
+            let upper = symbol.uppercased()
+            // 如果已经有了数据，或者正在请求中，则跳过
+            return earningTrends[upper] == nil && !fetchingTrendsSymbols.contains(upper)
+        }
+        
+        guard !neededSymbols.isEmpty else { return }
+        
+        // 标记这些 symbol 正在请求中
+        neededSymbols.forEach { fetchingTrendsSymbols.insert($0.uppercased()) }
+        
+        // 【关键优化】提前在主线程获取一份 sectorsData 的拷贝
+        // 这样就不需要在后续的 for 循环中成百上千次地 await MainActor.run 了
+        let localSectorsData = self.sectorsData
+        
+        Task.detached(priority: .userInitiated) {
+            // 【核心修复 1】将任务分批 (例如每 15 个一批)，防止连续几百次敲击主线程
+            let chunks = neededSymbols.chunked(into: 15)
+            
+            for chunk in chunks {
+                // 用于暂存这一批的计算结果
+                var tempBatch: [String: EarningTrend] = [:]
                 
-                // 检查缓存 (在 MainActor 上安全读取)
-                let alreadyExists = await MainActor.run { self.earningTrends[upperSymbol] != nil }
-                if alreadyExists { continue }
-                
-                // 异步获取数据
-                let sortedEarnings = await DatabaseManager.shared.fetchEarningData(forSymbol: symbol).sorted { $0.date > $1.date }
-                
-                var calculatedTrend: EarningTrend = .insufficientData
-                
-                if sortedEarnings.count >= 2 {
-                    let latestEarning = sortedEarnings[0]
-                    let previousEarning = sortedEarnings[1]
+                for symbol in chunk {
+                    let upperSymbol = symbol.uppercased()
                     
-                    // 安全获取 tableName (涉及读取 sectorsData，建议在 MainActor)
-                    let tableName = await MainActor.run { self.getCategory(for: symbol) }
+                    // 1. 异步获取数据
+                    let sortedEarnings = await DatabaseManager.shared.fetchEarningData(forSymbol: symbol).sorted { $0.date > $1.date }
+                    var calculatedTrend: EarningTrend = .insufficientData
                     
-                    if let tableName = tableName {
-                        // 顺序获取价格，避免 async let 导致的变量捕获问题
-                        let latestClose = await DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: latestEarning.date, tableName: tableName)
-                        let previousClose = await DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: previousEarning.date, tableName: tableName)
+                    if sortedEarnings.count >= 2 {
+                        let latestEarning = sortedEarnings[0]
+                        let previousEarning = sortedEarnings[1]
+                        let tableName = self.getLocalCategory(for: symbol, in: localSectorsData)
                         
-                        if let latest = latestClose, let previous = previousClose {
-                            if latestEarning.price > 0 {
-                                calculatedTrend = (latest > previous) ? .positiveAndUp : .positiveAndDown
-                            } else {
-                                calculatedTrend = (latest > previous) ? .negativeAndUp : .negativeAndDown
+                        if let tableName = tableName {
+                            let latestClose = await DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: latestEarning.date, tableName: tableName)
+                            let previousClose = await DatabaseManager.shared.fetchClosingPrice(forSymbol: symbol, onDate: previousEarning.date, tableName: tableName)
+                            
+                            if let latest = latestClose, let previous = previousClose {
+                                if latestEarning.price > 0 {
+                                    calculatedTrend = (latest > previous) ? .positiveAndUp : .positiveAndDown
+                                } else {
+                                    calculatedTrend = (latest > previous) ? .negativeAndUp : .negativeAndDown
+                                }
                             }
                         }
                     }
+                    // 存入暂存字典
+                    tempBatch[upperSymbol] = calculatedTrend
                 }
                 
-                // 最终更新 UI
-                let finalTrend = calculatedTrend
+                // 【关键修复】创建一个不可变副本，供 MainActor 安全捕获，消除 Swift 6 并发报错
+                let finalBatch = tempBatch
+                
+                // 一整批处理完后，一次性交给主线程更新
                 await MainActor.run {
-                    self.earningTrends[upperSymbol] = finalTrend
+                    // 这里使用 finalBatch 而不是 tempBatch
+                    for (k, v) in finalBatch {
+                        self.earningTrends[k] = v
+                        self.fetchingTrendsSymbols.remove(k) // 移除请求中状态
+                    }
                 }
+                
+                // 给主线程和其它协程喘息的机会，防止滑动卡顿
+                await Task.yield() 
             }
         }
     }
+    
+    // 【新增】本地查找 Category 的辅助方法，无需切回 MainActor
+    private func getLocalCategory(for symbol: String, in data: [String: [String]]) -> String? {
+        let upperSymbol = symbol.uppercased()
+        for (category, symbols) in data {
+            if symbols.contains(where: { $0.uppercased() == upperSymbol }) {
+                return category
+            }
+        }
+        return nil
+    }
+
     
     // 修改：异步加载市值数据
     // 标记为 @MainActor，解决 newData 捕获问题和主线程更新问题
@@ -1173,15 +1219,25 @@ class DataService: ObservableObject {
             processItemsWithDescription3(loadedDescriptionData.stocks)
             processItemsWithDescription3(loadedDescriptionData.etfs)
             
-            // 【修复 Swift 6 警告】：创建不可变副本以供捕获
+            // 提取全局字典，避免 O(N) 线性查询
+            var newSymbolTagsMap: [String: [String]] = [:]
+            for stock in loadedDescriptionData.stocks {
+                newSymbolTagsMap[stock.symbol.uppercased()] = stock.tag
+            }
+            for etf in loadedDescriptionData.etfs {
+                newSymbolTagsMap[etf.symbol.uppercased()] = etf.tag
+            }
+            
             let finalGlobalTimeMarkers = newGlobalTimeMarkers
             let finalSymbolTimeMarkers = newSymbolTimeMarkers
+            let finalSymbolTagsMap = newSymbolTagsMap // 冻结变量
             
             await MainActor.run {
                 self.descriptionData = loadedDescriptionData
                 self.descriptionData1 = loadedDescriptionData1
                 self.globalTimeMarkers = finalGlobalTimeMarkers
                 self.symbolTimeMarkers = finalSymbolTimeMarkers
+                self.symbolTagsMap = finalSymbolTagsMap // 赋值给主线程
             }
         } catch {
             await MainActor.run {
