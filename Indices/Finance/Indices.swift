@@ -1377,11 +1377,17 @@ struct StrategyHistoryDetailView: View {
     }
     
     // 显示名称
+    // private var displayName: String {
+    //     if let remoteName = dataService.groupDisplayMap[groupName] {
+    //         return remoteName
+    //     }
+    //     return groupName.replacingOccurrences(of: "_", with: " ")
+    // }
+
+    // 【修改点】将显示名称逻辑改为直接返回原始英文名
     private var displayName: String {
-        if let remoteName = dataService.groupDisplayMap[groupName] {
-            return remoteName
-        }
-        return groupName.replacingOccurrences(of: "_", with: " ")
+        // 如果你希望完全保留原始字符（如 Short_W）：
+        return groupName
     }
     
     var body: some View {
