@@ -220,6 +220,9 @@ class DataService: ObservableObject {
     // 【新增】存储符合条件的最新财报数值：Key=Symbol, Value=Price
     @Published var recentEarningPrices: [String: Double] = [:]
 
+    // 【新增】存储历史分组的涨跌幅：Key 为 "SYMBOL_DATE" (如 "AAPL_2023-10-12"), Value 为涨跌幅比例
+    @Published var historyPriceChanges: [String: Double] = [:]
+
     // 【新增】存储更新时间文案
     @Published var ecoDataTimestamp: String? = nil
     @Published var introSymbolTimestamp: String? = nil
@@ -770,6 +773,67 @@ class DataService: ObservableObject {
                 
                 // 给主线程和其它协程喘息的机会，防止滑动卡顿
                 await Task.yield() 
+            }
+        }
+    }
+
+        // MARK: - 【新增】批量计算历史策略股票的区间涨幅
+    public func fetchHistoryPriceChanges(for items: [(symbol: String, dateStr: String)]) {
+        // 过滤掉已经计算过的，避免重复请求
+        let needed = items.filter { historyPriceChanges["\($0.symbol.uppercased())_\($0.dateStr)"] == nil }
+        guard !needed.isEmpty else { return }
+        
+        let localSectorsData = self.sectorsData
+        
+        Task.detached(priority: .userInitiated) {
+            // 每批15个，防止一次性发太多请求
+            let chunks = needed.chunked(into: 15)
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            
+            // 获取最新交易日 (基于 TradingDateHelper)
+            let latestDateStr = TradingDateHelper.getLastExpectedTradingDateString()
+            let latestDate = formatter.date(from: latestDateStr)
+            
+            for chunk in chunks {
+                var tempBatch: [String: Double] = [:]
+                
+                for item in chunk {
+                    let upperSymbol = item.symbol.uppercased()
+                    let category = self.getLocalCategory(for: upperSymbol, in: localSectorsData) ?? "Stocks"
+                    
+                    guard let groupDate = formatter.date(from: item.dateStr) else { continue }
+                    
+                    // 1. 获取分组那天的收盘价
+                    let groupClose = await DatabaseManager.shared.fetchClosingPrice(forSymbol: upperSymbol, onDate: groupDate, tableName: category)
+                    
+                    // 2. 获取最新收盘价
+                    // （如果 DatabaseManager 中有直接获取最新收盘价如 fetchLatestClosingPrice 的方法，请替换掉下方逻辑）
+                    // 这里我们尝试用预估的最近交易日去取，如果取不到则往前推一天容错
+                    var latestClose = await DatabaseManager.shared.fetchClosingPrice(forSymbol: upperSymbol, onDate: latestDate ?? Date(), tableName: category)
+                    
+                    if latestClose == nil, let fallbackDate = latestDate?.addingTimeInterval(-86400) {
+                        latestClose = await DatabaseManager.shared.fetchClosingPrice(forSymbol: upperSymbol, onDate: fallbackDate, tableName: category)
+                    }
+                    
+                    // 3. 计算公式：(最新收盘价 - 分组时间收盘价) / 分组时间收盘价
+                    if let gClose = groupClose, let lClose = latestClose, gClose > 0 {
+                        let change = (lClose - gClose) / gClose
+                        tempBatch["\(upperSymbol)_\(item.dateStr)"] = change
+                    }
+                }
+                
+                let finalBatch = tempBatch
+                
+                // 切回主线程更新 UI 状态
+                await MainActor.run {
+                    for (k, v) in finalBatch {
+                        self.historyPriceChanges[k] = v
+                    }
+                }
+                
+                // 协程让步，防止主线程卡顿
+                await Task.yield()
             }
         }
     }

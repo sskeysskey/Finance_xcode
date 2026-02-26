@@ -1455,6 +1455,19 @@ struct StrategyHistoryDetailView: View {
                 
                 // 预加载期权指标
                 await dataService.fetchOptionsMetrics(for: allSymbols)
+                
+                // 【修改】整理出需要计算涨跌幅的所有 (Symbol, Date) 组合
+                var fetchItems: [(symbol: String, dateStr: String)] = []
+                // 使用 enumerated() 获取索引，从而跳过最新的一天
+                for (index, dateStr) in sortedDates.enumerated() {
+                    if index == 0 { continue } // 👈 新增：跳过最新一天的涨幅计算
+                    if let symbols = dataService.earningHistoryData[groupName]?[dateStr] {
+                        for symbol in symbols {
+                            fetchItems.append((symbol: symbol, dateStr: dateStr))
+                        }
+                    }
+                }
+                dataService.fetchHistoryPriceChanges(for: fetchItems)
             }
         }
     }
@@ -1475,7 +1488,12 @@ struct StrategyDateSectionView: View {
             if isExpanded {
                 LazyVStack(spacing: 0, pinnedViews: []) {
                     ForEach(symbols, id: \.self) { symbol in
-                        StrategySymbolRow(symbol: symbol, dateStr: dateStr, groupName: groupName)
+                        StrategySymbolRow(
+                            symbol: symbol, 
+                            dateStr: dateStr, 
+                            groupName: groupName,
+                            isLatestDate: isFirstSection // 👈 新增：把是否是最新一天的状态传给子视图
+                        )
                         
                         if symbol != symbols.last {
                             Divider().padding(.leading, 16)
@@ -1538,6 +1556,7 @@ struct StrategySymbolRow: View {
     let symbol: String
     let dateStr: String
     let groupName: String
+    let isLatestDate: Bool 
     
     @EnvironmentObject var dataService: DataService
     @EnvironmentObject var authManager: AuthManager
@@ -1549,6 +1568,8 @@ struct StrategySymbolRow: View {
     // ✅ 改动 1：将三个昂贵计算结果缓存到 @State，只在 onAppear 时算一次
     @State private var cachedTags: [(String, Double)] = []
     @State private var cachedValuePrefix: String? = nil
+    // 【新增】用于控制前缀颜色的状态
+    @State private var prefixColor: Color = .white
     @State private var cachedCategory: String = "Stocks"
     
     // ✅ 改动 2：静态 Regex，整个 App 生命周期只编译一次
@@ -1596,10 +1617,10 @@ struct StrategySymbolRow: View {
                 
                 // 右侧信息：前缀 + 期权指标
                 HStack(spacing: 8) {
-                    // ✅ 使用缓存值，不再每次渲染都运行 Regex
+                    // 【修改点】使用动态计算的 prefixColor
                     if let prefix = cachedValuePrefix {
                         Text(prefix)
-                            .foregroundColor(.orange)
+                            .foregroundColor(prefixColor)
                             .fontWeight(.semibold)
                     }
                     
@@ -1613,11 +1634,37 @@ struct StrategySymbolRow: View {
                             .fontWeight(.semibold)
                     }
                     
-                    if let capItem = dataService.marketCapData[symbol.uppercased()],
-                       let pe = capItem.peRatio {
-                        Text("PE:\(String(format: "%.1f", pe))")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                    // 【修改点】根据是否是最新一天，切换展示 PE 还是区间涨幅
+                    if isLatestDate {
+                        // 1. 如果是最新一天（第一组），展示原有的 PE
+                        if let capItem = dataService.marketCapData[symbol.uppercased()],
+                           let pe = capItem.peRatio {
+                            Text("PE \(String(format: "%.1f", pe))")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    } else {
+                        // 2. 如果是历史天数，展示计算好的涨跌幅
+                        let cacheKey = "\(symbol.uppercased())_\(dateStr)"
+                        if let change = dataService.historyPriceChanges[cacheKey] {
+                            let isPositive = change > 0
+                            let isNegative = change < 0
+                            let color: Color = isPositive ? .red : (isNegative ? .green : .gray)
+                            let sign = isPositive ? "+" : ""
+                            
+                            Text("\(sign)\(String(format: "%.2f", change * 100))%")
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .foregroundColor(color)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(color.opacity(0.1))
+                                .cornerRadius(4)
+                        } else {
+                            Text("计算中")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
                     }
                 }
                 .font(.system(size: 14))
@@ -1661,10 +1708,25 @@ struct StrategySymbolRow: View {
         
         // 2. ValuePrefix：使用静态 Regex，只匹配一次
         if let value = dataService.compareData[upperSymbol] {
-            let range = NSRange(value.startIndex..<value.endIndex, in: value)
-            if let match = Self.prefixRegex?.firstMatch(in: value, options: [], range: range),
-               let r = Range(match.range(at: 1), in: value) {
-                cachedValuePrefix = String(value[r])
+            // 匹配前缀数字部分，例如 "0319"
+            let pattern = #"^(\d{4})[前后未]"#
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                let range = NSRange(value.startIndex..<value.endIndex, in: value)
+                if let match = regex.firstMatch(in: value, options: [], range: range) {
+                    // 提取完整前缀用于显示 (如 "0319前")
+                    let fullPrefixPattern = #"^(\d{4}[前后未])"#
+                    if let fullRegex = try? NSRegularExpression(pattern: fullPrefixPattern),
+                       let fullMatch = fullRegex.firstMatch(in: value, options: [], range: range),
+                       let r = Range(fullMatch.range(at: 1), in: value) {
+                        cachedValuePrefix = String(value[r])
+                    }
+                    
+                    // 【核心逻辑】日期对比
+                    if let dateRange = Range(match.range(at: 1), in: value) {
+                        let datePart = String(value[dateRange]) // 得到 "0319"
+                        self.prefixColor = determinePrefixColor(mdString: datePart)
+                    }
+                }
             }
         }
         
@@ -1672,6 +1734,35 @@ struct StrategySymbolRow: View {
         cachedCategory = dataService.getCategory(for: symbol) ?? "Stocks"
     }
     
+    /// 根据月日字符串 (MMdd) 判断颜色
+    private func determinePrefixColor(mdString: String) -> Color {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        // 获取当前的月和日
+        let currentMonth = calendar.component(.month, from: now)
+        let currentDay = calendar.component(.day, from: now)
+        
+        // 解析传入的 mdString (例如 "0319")
+        let monthIndex = mdString.index(mdString.startIndex, offsetBy: 2)
+        guard let m = Int(mdString[..<monthIndex]),
+              let d = Int(mdString[monthIndex...]) else {
+            return .orange // 解析失败默认橙色
+        }
+        
+        // 比较逻辑：
+        // 如果 月份 > 当前月，或者是 同一月且日期 >= 当前日，显示橙色
+        if m > currentMonth {
+            return .orange
+        } else if m == currentMonth && d >= currentDay {
+            return .orange
+        } else {
+            // 否则（日期已过），显示白色
+            return .white
+        }
+    }
+
+    // ... 保持其他辅助函数不变 ...
     private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
         switch trend {
         case .positiveAndUp: return .red
