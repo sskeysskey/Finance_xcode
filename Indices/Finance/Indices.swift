@@ -1408,13 +1408,13 @@ struct StrategyHistoryDetailView: View {
                                 onToggle: {
                                     withAnimation {
                                         if expandedDates.contains(dateStr) {
-                                            expandedDates.remove(dateStr)
                                             // 2. 核心修复：折叠时自动定位回这个标题的顶部
                                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                                                 withAnimation {
                                                     proxy.scrollTo(dateStr, anchor: .top)
                                                 }
                                             }
+                                            expandedDates.remove(dateStr)
                                         } else {
                                             expandedDates.insert(dateStr)
                                         }

@@ -97,15 +97,10 @@ struct SimilarView: View {
                                         // 这会将左边的内容顶在左侧，右边的内容顶在最右侧
                                         Spacer()
                                         
-                                        // 3) Compare Value 文本
-                                        // 【修改点 2】: 放在 Spacer 之后，实现靠右对齐
-                                        Text("\(item.compareValue)")
-                                            .font(.subheadline)
-                                            // 使用新的逻辑判断颜色
-                                            .foregroundColor(colorForCompareValue(item.compareValue))
+                                        // 调用渲染函数
+                                        renderCompareValue(item.compareValue)
                                     }
                                     
-                                    // 下面一行：tags
                                     Text(item.allTags.joined(separator: ", "))
                                         .font(.caption)
                                         .foregroundColor(.secondary) // 【修改】从 gray 改为 secondary
@@ -150,38 +145,71 @@ struct SimilarView: View {
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
     }
     
-    // 【核心修改】: 增强了解析逻辑，支持 "09前-1.51%" 这种格式
-    private func colorForCompareValue(_ value: String) -> Color {
-        // 1. 先去掉 % 及后面的内容
-        // 例子 A: "09前-1.51%" -> 得到 "09前-1.51"
-        // 例子 B: "-0.26%*"   -> 得到 "-0.26"
-        guard let valueBeforePercent = value.components(separatedBy: "%").first else {
+    // ==================== 新增：渲染拆分后的文本 ====================
+    @ViewBuilder
+    private func renderCompareValue(_ value: String) -> some View {
+        let splitKeyword: String? = value.contains("前") ? "前" : (value.contains("后") ? "后" : nil)
+        
+        if let keyword = splitKeyword {
+            let components = value.components(separatedBy: keyword)
+            if components.count >= 2 {
+                let datePart = components[0] + keyword
+                let valuePart = value.replacingOccurrences(of: datePart, with: "")
+                
+                HStack(spacing: 0) {
+                    Text(datePart)
+                        .foregroundColor(colorForDatePart(datePart))
+                    Text(valuePart)
+                        .foregroundColor(colorForValuePart(valuePart))
+                }
+                .font(.subheadline)
+            } else {
+                Text(value)
+                    .font(.subheadline)
+                    .foregroundColor(colorForValuePart(value))
+            }
+        } else {
+            // 不包含“前”或“后”的情况
+            Text(value)
+                .font(.subheadline)
+                .foregroundColor(colorForValuePart(value))
+        }
+    }
+
+    private func colorForDatePart(_ datePart: String) -> Color {
+        // 提取前4位数字 MMDD
+        let dateDigits = datePart.prefix(4)
+        guard dateDigits.count == 4, CharacterSet.decimalDigits.isSuperset(of: CharacterSet(charactersIn: String(dateDigits))) else {
             return .primary
         }
         
-        var numberString = valueBeforePercent
+        // 获取当前系统日期 MMDD 格式
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMdd"
+        let todayString = formatter.string(from: Date())
         
-        // 2. 检查是否包含中文分隔符 "前" 或 "后"
-        // 如果包含，我们只需要分隔符后面的部分
-        if valueBeforePercent.contains("前") {
-            // "09前-1.51" -> 分割成 ["09", "-1.51"] -> 取最后一个 "-1.51"
-            numberString = valueBeforePercent.components(separatedBy: "前").last ?? numberString
-        } else if valueBeforePercent.contains("后") {
-            // "09后-0.48" -> 分割成 ["09", "-0.48"] -> 取最后一个 "-0.48"
-            numberString = valueBeforePercent.components(separatedBy: "后").last ?? numberString
+        // 比较字符串（MMDD 格式直接比较字符串即可，如 "0303" >= "0302"）
+        if String(dateDigits) >= todayString {
+            return .orange
+        } else {
+            // 如果是白色，在浅色模式下看不见。建议：深色模式用白色，浅色模式用灰色或黑色
+            // 这里使用 primary，如果你确定只要白色，可以改回 .white
+            return .primary 
         }
+    }
+
+    // ==================== 修改：仅处理数值部分的颜色 ====================
+    private func colorForValuePart(_ value: String) -> Color {
+        // 提取百分比前的数字进行正负判断
+        let cleanedValue = value.components(separatedBy: "%").first ?? ""
         
-        // 3. 转为 Double 并判断颜色
-        // trimmingCharacters 用于防止解析出来的字符串前后可能有空格
-        if let doubleValue = Double(numberString.trimmingCharacters(in: .whitespaces)) {
+        if let doubleValue = Double(cleanedValue.trimmingCharacters(in: .whitespaces)) {
             if doubleValue > 0 {
-                return .red      // 正数
+                return .red
             } else if doubleValue < 0 {
-                return .green    // 负数
+                return .green
             }
         }
-        
-        // 0 或者解析失败（比如纯文本）显示 Primary 颜色
         return .primary
     }
     

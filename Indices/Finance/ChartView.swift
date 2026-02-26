@@ -52,7 +52,9 @@ enum TimeRange {
     
     func xAxisTickValue() -> Int {
         switch self {
-        case .oneMonth: return 2
+        case .oneMonth: 
+            // 【修改点】将 2 改为 1，确保一个月视图下每天都尝试显示刻度
+            return 1 
         case .all: return 2
         default: return 1
         }
@@ -989,6 +991,12 @@ struct ChartView: View {
         
         // Helper to add marker
         func addMarker(date: Date, text: String, color: Color) {
+            // 【修复】确保标记点的日期在当前图表数据范围内
+            guard let firstDate = sampledChartData.first?.date,
+                let lastDate = sampledChartData.last?.date else { return }
+            
+            // 如果日期早于图表第一天或晚于图表最后一天，则不显示
+            if date < firstDate || date > lastDate { return }
             if let exactIndex = sampledChartData.firstIndex(where: { isSameDay($0.date, date) }) {
                 // 【修改】加上 horizontalPadding
                 let x = horizontalPadding + CGFloat(exactIndex) * horizontalStep
@@ -1221,15 +1229,25 @@ struct ChartView: View {
     
     private func getTimeMarkers() -> [TimeMarker] {
         var markers: [TimeMarker] = []
+        
+        // 【修复】获取当前图表的时间范围
+        guard let firstDate = sampledChartData.first?.date,
+            let lastDate = sampledChartData.last?.date else { return [] }
+        
         for (date, text) in dataService.globalTimeMarkers {
+            if date < firstDate || date > lastDate { continue } // 超出范围则跳过
+            
             if let exactMatch = sampledChartData.first(where: { isSameDay($0.date, date) }) {
                 markers.append(TimeMarker(date: exactMatch.date, text: text, type: .global))
             } else if let closestPoint = findClosestDataPoint(to: date, in: sampledChartData) {
                 markers.append(TimeMarker(date: closestPoint.date, text: text, type: .global))
             }
         }
+        
         if let symbolMarkers = dataService.symbolTimeMarkers[symbol.uppercased()] {
             for (date, text) in symbolMarkers {
+                if date < firstDate || date > lastDate { continue } // 超出范围则跳过
+                
                 if let exactMatch = sampledChartData.first(where: { isSameDay($0.date, date) }) {
                     markers.append(TimeMarker(date: exactMatch.date, text: text, type: .symbol))
                 } else if let closestPoint = findClosestDataPoint(to: date, in: sampledChartData) {
@@ -1237,7 +1255,10 @@ struct ChartView: View {
                 }
             }
         }
+        
         for earning in earningData {
+            if earning.date < firstDate || earning.date > lastDate { continue } // 超出范围则跳过
+            
             let earningText = String(format: "%.2f", earning.price)
             if let exactMatch = sampledChartData.first(where: { isSameDay($0.date, earning.date) }) {
                 markers.append(TimeMarker(date: exactMatch.date, text: earningText, type: .earning))
@@ -1245,6 +1266,7 @@ struct ChartView: View {
                 markers.append(TimeMarker(date: closestPoint.date, text: earningText, type: .earning))
             }
         }
+        
         return markers
     }
     
