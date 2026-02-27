@@ -376,52 +376,58 @@ struct ChartView: View {
             } else if sampledChartData.isEmpty {
                 Text("No data available").font(.title2).foregroundColor(.gray).frame(height: 250)
             } else {
+                // 【修改点 1】将 ZStack 重新包裹，把底部的 30 间距放进触摸层可覆盖的范围内
                 ZStack {
-                    GeometryReader { geometry in
-                        Canvas { context, size in
-                            drawChart(context: context, size: size)
-                        }
-                        
-                        // 气泡 Overlay
-                        .overlay(
-                            ZStack {
-                                if !isDragging && !isMultiTouch && showBubbles {
-                                    ForEach(bubbleMarkers) { marker in
-                                        if (marker.color == .red && showRedMarkers) ||
-                                           (marker.color == .orange && showOrangeMarkers) ||
-                                           (marker.color == .green && showGreenMarkers) {
-                                            BubbleView(
-                                                text: marker.text,
-                                                color: marker.color,
-                                                pointX: marker.position.x,
-                                                pointY: marker.position.y
-                                            )
-                                            .frame(width: marker.size.width)
-                                            .position(x: marker.position.x, y: marker.position.y - 40)
-                                            .opacity(0.9)
-                                            .transition(.opacity)
-                                            .animation(.easeInOut(duration: 0.3), value: marker.id)
+                    VStack(spacing: 0) {
+                        GeometryReader { geometry in
+                            Canvas { context, size in
+                                drawChart(context: context, size: size)
+                            }
+                            // 气泡 Overlay
+                            .overlay(
+                                ZStack {
+                                    if !isDragging && !isMultiTouch && showBubbles {
+                                        ForEach(bubbleMarkers) { marker in
+                                            if (marker.color == .red && showRedMarkers) ||
+                                                (marker.color == .orange && showOrangeMarkers) ||
+                                                (marker.color == .green && showGreenMarkers) {
+                                                BubbleView(
+                                                    text: marker.text,
+                                                    color: marker.color,
+                                                    pointX: marker.position.x,
+                                                    pointY: marker.position.y
+                                                )
+                                                .frame(width: marker.size.width)
+                                                .position(x: marker.position.x, y: marker.position.y - 40)
+                                                .opacity(0.9)
+                                                .transition(.opacity)
+                                                .animation(.easeInOut(duration: 0.3), value: marker.id)
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        )
-                        
-                        // X轴标签
-                        ForEach(getXAxisTicks(), id: \.self) { date in
-                            if let index = getIndexForDate(date) {
-                                let effectiveWidth = geometry.size.width - (horizontalPadding * 2)
-                                // ✅ 修复：加上 horizontalPadding，并使用 effectiveWidth 来计算步长
-                                let x = horizontalPadding + CGFloat(index) * (effectiveWidth / CGFloat(max(1, sampledChartData.count - 1)))
-                                
-                                Text(formatXAxisLabel(date))
-                                    .font(.system(size: 10))
-                                    .foregroundColor(.gray)
-                                    .position(x: x, y: geometry.size.height - 10)
+                            )
+                            
+                            // X轴标签
+                            ForEach(getXAxisTicks(), id: \.self) { date in
+                                if let index = getIndexForDate(date) {
+                                    let effectiveWidth = geometry.size.width - (horizontalPadding * 2)
+                                    // ✅ 修复：加上 horizontalPadding，并使用 effectiveWidth 来计算步长
+                                    let x = horizontalPadding + CGFloat(index) * (effectiveWidth / CGFloat(max(1, sampledChartData.count - 1)))
+                                    
+                                    Text(formatXAxisLabel(date))
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.gray)
+                                        .position(x: x, y: geometry.size.height - 10)
+                                }
                             }
                         }
+                        .frame(height: 310) // 保持图表本身的高度不变
+                        
+                        // 【新增】将原本的 padding 变成一个透明的占位视图，高度为 30
+                        Color.clear.frame(height: 30)
                     }
-                    .overlay(
+                    // 将触摸层提取到外面，覆盖整个 VStack（包含图表和底部 30 的空白）
                         OptimizedTouchHandler(
                             onSingleTouchChanged: { location in
                                 withAnimation(.easeOut(duration: 0.1)) {
@@ -440,14 +446,10 @@ struct ChartView: View {
                                     resetTouchStates()
                                 }
                             }
-                        )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     )
                 }
-                .frame(height: 320)
                 // 【关键修复1】强制图表区域宽度等于屏幕宽度，防止被撑大
                 .frame(width: UIScreen.main.bounds.width)
-                .padding(.bottom, 30)
             }
             
             // Time Range Buttons
@@ -1357,7 +1359,7 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         var onTouchesEnded: (() -> Void)?
         
         private var activeTouches: [UITouch: CGPoint] = [:]
-        private let bottomEdgeThreshold: CGFloat = 30.0
+        private let bottomEdgeThreshold: CGFloat = 0.0
         private let leftEdgeThreshold: CGFloat = 30.0
         
         // 专门用来“霸占”控制权的拦截手势
