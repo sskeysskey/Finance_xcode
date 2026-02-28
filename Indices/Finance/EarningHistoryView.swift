@@ -239,12 +239,6 @@ struct HistorySymbolRow: View {
             return (tag, weight)
         }
     }
-    
-    // 判断是否黑名单
-    private var isBlacklisted: Bool {
-        // 🚨 修改：传入 cleanSymbol 判断黑名单
-        dataService.isBlacklisted(symbol: cleanSymbol, date: dateStr)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -258,20 +252,6 @@ struct HistorySymbolRow: View {
                     .padding(.vertical, 6)
                     .background(Color.blue.opacity(0.1))
                     .cornerRadius(8)
-                
-                // 黑名单 UI 指示器
-                if isBlacklisted {
-                    HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.shield.fill") // 盾牌感叹号图标
-                        Text("Tag黑名单")
-                    }
-                    .font(.caption.bold())
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.red.opacity(0.8)) // 醒目的红色背景
-                    .cornerRadius(6)
-                }
                 Spacer()
                 
                 // 🚨 修改：使用 cleanSymbol 去查询 PE（市盈率）数据

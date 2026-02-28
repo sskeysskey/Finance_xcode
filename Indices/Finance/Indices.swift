@@ -1493,7 +1493,7 @@ struct StrategyDateSectionView: View {
         Section {
             // 展开的内容（列表区域）
             if isExpanded {
-                LazyVStack(spacing: 0, pinnedViews: []) {
+                VStack(spacing: 0) { 
                     ForEach(symbols, id: \.self) { symbol in
                         StrategySymbolRow(
                             symbol: symbol, 
@@ -1565,6 +1565,9 @@ struct StrategySymbolRow: View {
     let groupName: String
     let isLatestDate: Bool
 
+    // ✅ 1. 新增一个常量，在初始化时计算好 cleanTicker，避免在 body 里无限次算正则
+    let cleanSymbol: String 
+
     @EnvironmentObject var dataService: DataService
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
@@ -1584,16 +1587,21 @@ struct StrategySymbolRow: View {
     private static let _prefixFullRegex = try? NSRegularExpression(pattern: #"^(\d{4}[前后未])"#)
     private static let _prefixDateRegex = try? NSRegularExpression(pattern: #"^(\d{4})"#)
 
-    private var cleanSymbol: String { symbol.cleanTicker }
-
+    // ✅ 3. 新增 init 方法
+    init(symbol: String, dateStr: String, groupName: String, isLatestDate: Bool) {
+        self.symbol = symbol
+        self.dateStr = dateStr
+        self.groupName = groupName
+        self.isLatestDate = isLatestDate
+        // 在这里执行一次正则，保存在常量中，彻底解放 body
+        self.cleanSymbol = symbol.cleanTicker 
+    }
+    
     private var earningTrend: EarningTrend {
         dataService.earningTrends[cleanSymbol.uppercased()] ?? .insufficientData
     }
     private var optionsMetrics: (iv: String, sum: String)? {
         dataService.optionsMetricsCache[cleanSymbol.uppercased()]
-    }
-    private var isBlacklisted: Bool {
-        dataService.isBlacklisted(symbol: cleanSymbol, date: dateStr)
     }
 
     var body: some View {
@@ -1606,19 +1614,6 @@ struct StrategySymbolRow: View {
                     .padding(.vertical, 6)
                     .background(Color.blue.opacity(0.1))
                     .cornerRadius(8)
-
-                if isBlacklisted {
-                    HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.shield.fill")
-                    }
-                    .font(.caption.bold())
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.red.opacity(0.8))
-                    .cornerRadius(6)
-                }
-
                 Spacer()
 
                 HStack(spacing: 8) {
@@ -1688,15 +1683,13 @@ struct StrategySymbolRow: View {
             // 【关键修复】防止重复计算，并且绝对不在主线程做任何耗时操作
             guard !hasComputedValues else { return }
             hasComputedValues = true
-
-            // Step 1：在主线程快速抓取值类型快照（字典赋值即拷贝，极快）
-            let sym = symbol.cleanTicker.uppercased()
+            
+            let sym = self.cleanSymbol.uppercased() // 使用 init 里算好的 cleanSymbol
             let tagsMap       = dataService.symbolTagsMap
-            let weightLookup  = dataService.tagWeightLookup    // 【使用新 O(1) 表】
+            let weightLookup  = dataService.tagWeightLookup    
             let compareData   = dataService.compareData
-            let catMap        = dataService.symbolCategoryMap   // 【使用新 O(1) 表】
+            let catMap        = dataService.symbolCategoryMap   
 
-            // Step 2：Task 外壳保留 @MainActor 上下文，内部用 detached 跑后台
             Task {
                 let result = await Task.detached(priority: .userInitiated) {
                     () -> (tags: [(String, Double)], prefix: String?, color: Color, category: String) in
@@ -1742,8 +1735,8 @@ struct StrategySymbolRow: View {
 
                     return (tags, prefix, color, category)
                 }.value
-
-                // Step 3：回到 @MainActor 更新 UI（Task 外壳自动保证）
+                
+                // 回到 MainActor 更新 UI
                 self.cachedTags       = result.tags
                 self.cachedValuePrefix = result.prefix
                 self.prefixColor      = result.color
