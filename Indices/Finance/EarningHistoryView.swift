@@ -205,8 +205,8 @@ struct DateSectionView: View {
 
 // MARK: - Symbol 行组件
 struct HistorySymbolRow: View {
-    let symbol: String
-    let dateStr: String // 【新增】：接收日期，用于去查黑名单
+    let symbol: String // 原生带有中文的完整字符串 (例如 "EWY黑热")
+    let dateStr: String // 接收日期，用于去查黑名单
     
     @EnvironmentObject var dataService: DataService
     @EnvironmentObject var authManager: AuthManager
@@ -215,9 +215,15 @@ struct HistorySymbolRow: View {
     @State private var navigateToChart = false
     @State private var showSubscriptionSheet = false
     
+    // 🚨 新增：计算出剔除中文后的纯净代码
+    private var cleanSymbol: String {
+        return symbol.cleanTicker
+    }
+    
     // 获取 Tags
     private var tags: [(String, Double)] {
-        let upperSymbol = symbol.uppercased()
+        // 🚨 修改：使用 cleanSymbol 去查字典
+        let upperSymbol = cleanSymbol.uppercased()
         var rawTags: [String] = []
         
         if let stock = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == upperSymbol }) {
@@ -233,17 +239,18 @@ struct HistorySymbolRow: View {
             return (tag, weight)
         }
     }
-
-    // 【新增】：计算属性判断是否黑名单
+    
+    // 判断是否黑名单
     private var isBlacklisted: Bool {
-        dataService.isBlacklisted(symbol: symbol, date: dateStr)
+        // 🚨 修改：传入 cleanSymbol 判断黑名单
+        dataService.isBlacklisted(symbol: cleanSymbol, date: dateStr)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // 上半部分：Symbol 展示
             HStack {
-                // 【修改点1】：将原来的 Button 改为 Text，仅保留样式
+                // 🚨 界面显示：依然使用带有中文的完整 symbol
                 Text(symbol)
                     .font(.system(size: 17, weight: .bold, design: .monospaced))
                     .foregroundColor(.blue)
@@ -251,8 +258,8 @@ struct HistorySymbolRow: View {
                     .padding(.vertical, 6)
                     .background(Color.blue.opacity(0.1))
                     .cornerRadius(8)
-
-                // MARK: - 【新增】黑名单 UI 指示器
+                
+                // 黑名单 UI 指示器
                 if isBlacklisted {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.shield.fill") // 盾牌感叹号图标
@@ -265,12 +272,10 @@ struct HistorySymbolRow: View {
                     .background(Color.red.opacity(0.8)) // 醒目的红色背景
                     .cornerRadius(6)
                 }
-
                 Spacer()
                 
-                // 这里可以加一些额外信息，比如 PE 或 价格，如果需要的话
-                // 复用 DataService 中的数据
-                if let capItem = dataService.marketCapData[symbol.uppercased()], let pe = capItem.peRatio {
+                // 🚨 修改：使用 cleanSymbol 去查询 PE（市盈率）数据
+                if let capItem = dataService.marketCapData[cleanSymbol.uppercased()], let pe = capItem.peRatio {
                     Text("PE: \(String(format: "%.1f", pe))")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -299,8 +304,8 @@ struct HistorySymbolRow: View {
             }
         }
         .navigationDestination(isPresented: $navigateToChart) {
-            // 跳转到 ChartView
-            ChartView(symbol: symbol, groupName: dataService.getCategory(for: symbol) ?? "Stocks")
+            // 🚨 修改：跳转到 ChartView 时，传参一律使用 cleanSymbol
+            ChartView(symbol: cleanSymbol, groupName: dataService.getCategory(for: cleanSymbol) ?? "Stocks")
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
     }

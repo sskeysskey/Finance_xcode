@@ -9,17 +9,15 @@ struct BacktestView: View {
     private var foundSectors: [String] {
         guard let allSectors = dataService.sectorsPanel?.sectors else { return [] }
         var results: [String] = []
-        let target = symbol.uppercased()
+        
+        // 🚨 修改点 1：将传入的查询目标也清洗为纯净代码
+        let target = symbol.cleanTicker.uppercased()
         
         // 递归查找函数
         func search(in sectors: [IndicesSector]) {
             for sector in sectors {
-                // 1. 检查当前层级的 symbols
-                if sector.symbols.contains(where: { $0.symbol.uppercased() == target }) {
-                    // 如果找到了，添加板块名
-                    // Python 脚本里处理了 "MOS": "美盛化肥" 这种备注，
-                    // 但 Swift 模型里 IndicesSymbol 只有 symbol, name, value, tags。
-                    // 这里我们直接显示板块名称
+                // 🚨 修改点 2：将板块中存的 symbol 也清洗后对比，确保 "EWY黑热" == "EWY"
+                if sector.symbols.contains(where: { $0.symbol.cleanTicker.uppercased() == target }) {
                     results.append(sector.name)
                 }
                 
@@ -37,15 +35,17 @@ struct BacktestView: View {
     // MARK: - 修改点 1: 重构数据聚合逻辑
     // 改为：[(日期, [策略组名])]，按日期降序排列
     private var foundHistory: [(date: String, categories: [String])] {
-        let target = symbol.uppercased()
+        // 🚨 修改点 3：清洗目标代码
+        let target = symbol.cleanTicker.uppercased()
+        
         // 临时字典：Key = 日期, Value = [策略组名]
         var tempDateMap: [String: [String]] = [:]
         
         // 遍历原始数据: [Category : [Date : [SymbolList]]]
         for (category, dateMap) in dataService.earningHistoryData {
             for (date, symbolList) in dateMap {
-                // 检查 symbol 是否在当天的列表中
-                if symbolList.contains(where: { $0.uppercased() == target }) {
+                // 🚨 修改点 4：清洗 JSON 里读出来的 symbol 列表进行比对
+                if symbolList.contains(where: { $0.cleanTicker.uppercased() == target }) {
                     // 如果存在，将该 category 加入到该日期的列表中
                     if tempDateMap[date] == nil {
                         tempDateMap[date] = []
@@ -166,7 +166,8 @@ struct BacktestView: View {
             }
         }
         .listStyle(InsetGroupedListStyle())
-        .navigationTitle("\(symbol) 回溯")
+        // 🚨 修改点 5：让页面标题只显示纯净代码（如 "EWY 回溯" 而不是 "EWY黑热 回溯"）
+        .navigationTitle("\(symbol.cleanTicker) 回溯")
         .navigationBarTitleDisplayMode(.inline)
     }
     

@@ -223,6 +223,11 @@ class DataService: ObservableObject {
     // 【新增】存储历史分组的涨跌幅：Key 为 "SYMBOL_DATE" (如 "AAPL_2023-10-12"), Value 为涨跌幅比例
     @Published var historyPriceChanges: [String: Double] = [:]
 
+    // 【新增】O(1) 分类反查表（替代 O(N²) 的 getCategory）
+    @Published var symbolCategoryMap: [String: String] = [:]
+    // 【新增】O(1) 标签权重反查表（替代线性搜索）
+    @Published var tagWeightLookup: [String: Double] = [:]
+
     // 【新增】存储更新时间文案
     @Published var ecoDataTimestamp: String? = nil
     @Published var introSymbolTimestamp: String? = nil
@@ -1320,8 +1325,18 @@ class DataService: ObservableObject {
         do {
             let data = try Data(contentsOf: url)
             let decodedData = try JSONDecoder().decode([String: [String]].self, from: data)
+
+            // 【关键新增】在后台线程一次性构建反查表，此后每次查询 O(1)
+            var catMap: [String: String] = [:]
+            for (category, symbols) in decodedData {
+                for symbol in symbols {
+                    catMap[symbol.uppercased()] = category
+                }
+            }
+            let finalCatMap = catMap
             await MainActor.run {
                 self.sectorsData = decodedData
+                self.symbolCategoryMap = finalCatMap
             }
         } catch {
             await MainActor.run {
@@ -1391,19 +1406,23 @@ class DataService: ObservableObject {
             let data = try Data(contentsOf: url)
             let rawData = try JSONSerialization.jsonObject(with: data, options: []) as? [String: [String]]
             var weightGroups: [Double: [String]] = [:]
+            var weightLookup: [String: Double] = [:]   // 【新增】
             if let rawData = rawData {
                 for (k, v) in rawData {
                     if let key = Double(k) {
                         weightGroups[key] = v
+                        for tag in v { weightLookup[tag] = key }  // 【新增】展平为 O(1) 字典
                     }
                 }
             }
             
             // 【修复 Swift 6 警告】：创建不可变副本以供捕获
             let finalWeightGroups = weightGroups
+            let finalWeightLookup = weightLookup
             
             await MainActor.run {
                 self.tagsWeightConfig = finalWeightGroups
+                self.tagWeightLookup = finalWeightLookup  // 【新增】
             }
         } catch {
             print("DataService: 解析 tags_weight 文件时出错: \(error)")

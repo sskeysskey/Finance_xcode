@@ -323,12 +323,12 @@ struct ArticleContainerView: View {
                 } catch {
                     await MainActor.run {
                         isDownloadingImages = false
-                        errorMessage = "\(Localized.imageLoadFailed): \(error.localizedDescription)"
-                        showErrorAlert = true
-                        audioPlayerManager.stop()
+                        // 移除这里的报错弹窗和音频停止逻辑
                     }
-                    return // 下载失败，中断切换
+                    print("下一篇图片预下载失败，跳过等待继续切换: \(error.localizedDescription)")
+                    // 移除原来的 return，让程序继续往下执行切换文章的逻辑！
                 }
+
                 
                 // 3. 下载成功后，隐藏遮罩
                 await MainActor.run {

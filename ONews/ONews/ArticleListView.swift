@@ -749,28 +749,16 @@ struct ArticleListView: View {
             await proceedToArticle()
             
         } catch {
-            // 【关键修复】不要把整个 catch 包在 MainActor.run 里
-            // 1. 先在主线程停止转圈
+            // 1. 在主线程停止转圈
             await MainActor.run { isDownloadingImages = false }
             
-            // 2. 判断错误类型
-            let isNetworkError = (error as? URLError)?.code == .notConnectedToInternet ||
-                                 (error as? URLError)?.code == .timedOut ||
-                                 (error as? URLError)?.code == .networkConnectionLost ||
-                                 (error as? URLError)?.code == .cannotConnectToHost
-
-            if isNetworkError {
-                print("网络不可用，进入离线阅读模式")
-                // 3. 网络错误，直接调用 async 闭包（不需要 Task 包装）
-                await proceedToArticle()
-            } else {
-                // 4. 其他错误，在主线程弹窗
-                await MainActor.run {
-                    errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)"
-                    showErrorAlert = true
-                }
-            }
+            // 2. 不管是什么网络错误还是其他错误，只打印日志，不再弹窗拦截
+            print("图片预下载失败或损坏，强制进入详情页: \(error.localizedDescription)")
+            
+            // 3. 强制跳转
+            await proceedToArticle()
         }
+
     }
     
     // 【修改】新的自动展开逻辑：根据当前过滤后的文章数量动态决定
@@ -1179,29 +1167,16 @@ struct AllArticlesListView: View {
             await proceedToArticle()
             
         } catch {
-            // 【关键修复】解耦 MainActor 和 Async 逻辑
-            
-            // 1. 停止转圈
+            // 1. 在主线程停止转圈
             await MainActor.run { isDownloadingImages = false }
             
-            // 2. 判断错误
-            let isNetworkError = (error as? URLError)?.code == .notConnectedToInternet ||
-                                 (error as? URLError)?.code == .timedOut ||
-                                 (error as? URLError)?.code == .networkConnectionLost ||
-                                 (error as? URLError)?.code == .cannotConnectToHost
-
-            if isNetworkError {
-                print("网络不可用，进入离线阅读模式")
-                // 3. 强制跳转
-                await proceedToArticle()
-            } else {
-                // 4. 弹窗报错
-                await MainActor.run {
-                    errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)"
-                    showErrorAlert = true
-                }
-            }
+            // 2. 不管是什么网络错误还是其他错误，只打印日志，不再弹窗拦截
+            print("图片预下载失败或损坏，强制进入详情页: \(error.localizedDescription)")
+            
+            // 3. 强制跳转
+            await proceedToArticle()
         }
+
     }
     
     // 【修改】新的自动展开逻辑

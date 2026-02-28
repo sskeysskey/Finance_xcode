@@ -688,6 +688,10 @@ class ResourceManager: ObservableObject {
             self.isDownloading = false
             self.syncMessage = Localized.updateComplete
             self.progressText = ""
+            
+            // 👇 【新增】文件全部下载并覆盖完毕后，发送通知让 UI 刷新
+            NotificationCenter.default.post(name: .newsDataDidUpdate, object: nil)
+            
             resetStateAfterDelay()
             
         } catch {

@@ -19,29 +19,38 @@ struct ActivityView: UIViewControllerRepresentable {
 final class ImageLoader: ObservableObject {
     @Published var image: UIImage?
     @Published var isLoading = false
+    @Published var isFailed = false // 新增失败状态标记
     
     private static var cache = NSCache<NSString, UIImage>()
     
-    func load(from path: String) {
+    // 改为异步方法，并返回一个 Bool 表示本地加载是否成功
+    func load(from path: String) async -> Bool {
         let cacheKey = path as NSString
         
         // 1. 先检查内存缓存
         if let cached = Self.cache.object(forKey: cacheKey) {
             self.image = cached
-            return
+            self.isFailed = false
+            return true
         }
         
-        // 2. 异步加载
+        // 2. 异步加载本地文件
         isLoading = true
-        Task.detached(priority: .userInitiated) {
-            let loadedImage = UIImage(contentsOfFile: path)
-            await MainActor.run {
-                self.isLoading = false
-                if let img = loadedImage {
-                    Self.cache.setObject(img, forKey: cacheKey)
-                    self.image = img
-                }
-            }
+        self.isFailed = false
+        
+        let loadedImage = await Task.detached(priority: .userInitiated) {
+            UIImage(contentsOfFile: path)
+        }.value
+        
+        self.isLoading = false
+        
+        if let img = loadedImage {
+            Self.cache.setObject(img, forKey: cacheKey)
+            self.image = img
+            return true
+        } else {
+            self.isFailed = true
+            return false // 图片不存在或已损坏
         }
     }
     
@@ -520,9 +529,10 @@ struct ArticleImageView: View {
     
     @StateObject private var imageLoader = ImageLoader()
     @State private var isShowingZoomView = false
-
+    // 【新增】引入全局的 ResourceManager，用于下载缺失或损坏的图片
+    @EnvironmentObject var resourceManager: ResourceManager
+    
     private let horizontalPadding: CGFloat = 20
-
     private var imagePath: String {
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
@@ -548,14 +558,20 @@ struct ArticleImageView: View {
                         .cornerRadius(12)
                         .padding(.horizontal, horizontalPadding)
                 } else {
-                    VStack(spacing: 8) {
-                        Image(systemName: "photo.fill").font(.largeTitle).foregroundColor(.gray)
-                        Text(Localized.imageLoadFailed).font(.caption).foregroundColor(.secondary)
+                    // 【优化】提供手动点击重试按钮
+                    Button(action: {
+                        Task { await fetchAndLoadImage() }
+                    }) {
+                        VStack(spacing: 8) {
+                            Image(systemName: "arrow.clockwise.circle.fill").font(.largeTitle).foregroundColor(.gray)
+                            Text("图片加载失败，点击重试").font(.caption).foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 200)
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .cornerRadius(12)
+                        .padding(.horizontal, horizontalPadding)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 200)
-                    .background(Color(UIColor.secondarySystemBackground))
-                    .cornerRadius(12)
-                    .padding(.horizontal, horizontalPadding)
+                    .buttonStyle(PlainButtonStyle())
                 }
             }
             
@@ -573,8 +589,40 @@ struct ArticleImageView: View {
         }
         .padding(.vertical, 10)
         .onAppear {
-            // LazyVStack 会确保只有出现在屏幕上时才调用这里
-            imageLoader.load(from: imagePath)
+            Task {
+                // 1. 尝试从本地加载
+                let success = await imageLoader.load(from: imagePath)
+                // 2. 如果本地不存在或者文件损坏（返回false），自动触发一次修复下载
+                if !success {
+                    await fetchAndLoadImage()
+                }
+            }
+        }
+    }
+    
+    // 执行修复并重新加载
+    private func fetchAndLoadImage() async {
+        imageLoader.isLoading = true
+        do {
+            // 【关键】如果本地存在文件但无法识别为图片（损坏的空文件），必须先删除它
+            // 否则 ResourceManager 的下载逻辑会误以为文件已存在而跳过下载
+            if FileManager.default.fileExists(atPath: imagePath) {
+                try? FileManager.default.removeItem(atPath: imagePath)
+            }
+            
+            // 触发下载单张图片
+            try await resourceManager.downloadImagesForArticle(
+                timestamp: timestamp,
+                imageNames: [imageName],
+                progressHandler: { _, _ in } // 单张图不需要更新UI进度条
+            )
+            
+            // 下载完成后，再次尝试加载到内存
+            _ = await imageLoader.load(from: imagePath)
+        } catch {
+            print("单张图片自愈修复失败: \(error)")
+            imageLoader.isLoading = false
+            imageLoader.isFailed = true
         }
     }
 }

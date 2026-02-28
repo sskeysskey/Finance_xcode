@@ -413,6 +413,7 @@ class NewsViewModel: ObservableObject {
 
     init() {
         loadReadRecords()
+        
         $sources
             .map { sources in
                 sources.flatMap { $0.articles }.filter { !$0.isRead }.count
@@ -421,6 +422,14 @@ class NewsViewModel: ObservableObject {
             .sink { [weak self] unreadCount in
                 print("检测到未读数变化，准备更新角标: \(unreadCount)")
                 self?.badgeUpdater?(unreadCount)
+            }
+            .store(in: &cancellables)
+            
+        // 👇 【新增】监听数据下载完成的通知，并在收到时重新加载磁盘数据
+        NotificationCenter.default.publisher(for: .newsDataDidUpdate)
+            .sink { [weak self] _ in
+                print("收到数据更新通知，重新加载本地新闻数据...")
+                self?.loadNews()
             }
             .store(in: &cancellables)
     }
@@ -987,4 +996,9 @@ class AppBadgeManager: ObservableObject {
             }
         }
     }
+}
+
+extension Notification.Name {
+    // 定义一个数据更新完成的通知
+    static let newsDataDidUpdate = Notification.Name("newsDataDidUpdate")
 }
