@@ -23,6 +23,16 @@ final class ImageLoader: ObservableObject {
     
     private static var cache = NSCache<NSString, UIImage>()
     
+    // 【新增】初始化时同步检查缓存，避免首帧闪烁和高度跳变！
+    init(imagePath: String? = nil) {
+        if let path = imagePath {
+            let cacheKey = path as NSString
+            if let cached = Self.cache.object(forKey: cacheKey) {
+                self.image = cached
+            }
+        }
+    }
+    
     // 改为异步方法，并返回一个 Bool 表示本地加载是否成功
     func load(from path: String) async -> Bool {
         let cacheKey = path as NSString
@@ -194,24 +204,22 @@ struct ArticleDetailView: View {
                         ForEach(cachedParagraphs.indices, id: \.self) { pIndex in
                             Text(cachedParagraphs[pIndex])
                                 .font(.custom("NewYork-Regular", size: 21))
-                                .lineSpacing(15) // 段内行间距
+                                .lineSpacing(15) 
                                 .padding(.horizontal, 18)
-                                .padding(.bottom, 25) // 【新增】这里增加底部间距，25 约等于一个空行的高度（可根据视觉微调）
+                                .padding(.bottom, 25) 
                                 .id("p-\(article.id)-\(pIndex)")
-                                .gesture(
-                                    LongPressGesture()
-                                        .onEnded { _ in
-                                            // 此时复制出来的文本是干净的，没有多余的换行符和空格
-                                            UIPasteboard.general.string = cachedParagraphs[pIndex]
-                                            self.toastMessage = Localized.paragraphCopied
-                                            withAnimation(.spring()) { self.showCopyToast = true }
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                                withAnimation(.spring()) {
-                                                    self.showCopyToast = false
-                                                }
-                                            }
+                                // 【修改】替换为更轻量、更高性能的快捷修饰符
+                                .onLongPressGesture {
+                                    UIPasteboard.general.string = cachedParagraphs[pIndex]
+                                    self.toastMessage = Localized.paragraphCopied
+                                    withAnimation(.spring()) { self.showCopyToast = true }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                        withAnimation(.spring()) {
+                                            self.showCopyToast = false
                                         }
-                                )
+                                    }
+                                }
+
                             
                             // 图片插入逻辑
                             if (pIndex + 1) % cachedInsertionInterval == 0 {
@@ -527,7 +535,8 @@ struct ArticleImageView: View {
     let imageName: String
     let timestamp: String
     
-    @StateObject private var imageLoader = ImageLoader()
+    // 【修改】声明时不立刻初始化，留给 init 处理
+    @StateObject private var imageLoader: ImageLoader
     @State private var isShowingZoomView = false
     // 【新增】引入全局的 ResourceManager，用于下载缺失或损坏的图片
     @EnvironmentObject var resourceManager: ResourceManager
@@ -538,6 +547,18 @@ struct ArticleImageView: View {
         return documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
     }
     
+    // 【新增】自定义初始化，提前注入图片路径查缓存
+    init(imageName: String, timestamp: String) {
+        self.imageName = imageName
+        self.timestamp = timestamp
+        
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let path = documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
+        
+        // 关键点：在 StateObject 创建之初，就去查内存缓存
+        self._imageLoader = StateObject(wrappedValue: ImageLoader(imagePath: path))
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             Group {
@@ -589,6 +610,9 @@ struct ArticleImageView: View {
         }
         .padding(.vertical, 10)
         .onAppear {
+            // 【修改】如果在 init 阶段就已经命中内存缓存，直接 return，啥也不用做！
+            if imageLoader.image != nil { return }
+            
             Task {
                 // 1. 尝试从本地加载
                 let success = await imageLoader.load(from: imagePath)
