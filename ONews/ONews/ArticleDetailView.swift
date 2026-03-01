@@ -38,8 +38,11 @@ final class ImageLoader: ObservableObject {
         isLoading = true
         self.isFailed = false
         
+        // 【优化】将读取和解码彻底放入后台线程
         let loadedImage = await Task.detached(priority: .userInitiated) {
-            UIImage(contentsOfFile: path)
+            guard let rawImage = UIImage(contentsOfFile: path) else { return nil as UIImage? }
+            // 提前在后台线程进行解码，防止主线程渲染时掉帧
+            return await rawImage.byPreparingForDisplay() ?? rawImage
         }.value
         
         self.isLoading = false
@@ -125,25 +128,18 @@ struct ArticleDetailView: View {
     }
     
     // 【修改】去掉星期几，只保留日期
-    private var monthDayFormatter: DateFormatter {
+    // 【优化：改为静态全局复用】
+    private static let monthDayFormatter: DateFormatter = {
         let f = DateFormatter()
-        // 原代码：f.dateFormat = Localized.dateFormatShort
-        
-        // 修改为：使用模板指定只显示 月(M) 和 日(d)
-        // 这样系统会自动根据 Locale 去掉星期几。
-        // 中文环境下显示 "1月17日"，英文环境下显示 "Jan 17"
         f.setLocalizedDateFormatFromTemplate("MMMd")
-        
-        f.locale = Localized.currentLocale
         return f
-    }
+    }()
     
-    private var longDateFormatter: DateFormatter {
+    private static let longDateFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = Localized.dateFormatFull
-        f.locale = Localized.currentLocale
+        // 注意：因为 Localized 可能会随语言切换，Locale 的赋值我们移到具体使用的方法中
         return f
-    }
+    }()
     
     private static let parsingFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -512,14 +508,17 @@ struct ArticleDetailView: View {
         guard let date = Self.parsingFormatter.date(from: timestamp) else {
             return timestamp
         }
-        return monthDayFormatter.string(from: date) // 去掉了 Self.
+        Self.monthDayFormatter.locale = Localized.currentLocale
+        return Self.monthDayFormatter.string(from: date)
     }
     
     private func formatDate(from timestamp: String) -> String {
         guard let date = Self.parsingFormatter.date(from: timestamp) else {
             return timestamp.uppercased()
         }
-        return longDateFormatter.string(from: date).uppercased() // 去掉了 Self.
+        Self.longDateFormatter.dateFormat = Localized.dateFormatFull
+        Self.longDateFormatter.locale = Localized.currentLocale
+        return Self.longDateFormatter.string(from: date).uppercased()
     }
 }
 
