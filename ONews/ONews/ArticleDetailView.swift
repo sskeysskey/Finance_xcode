@@ -82,8 +82,8 @@ struct ArticleDetailView: View {
     @Binding var isEnglishMode: Bool 
     @ObservedObject var viewModel: NewsViewModel
 
-    // 【修改】保持对 manager 的观察以获取状态
-    @ObservedObject var audioPlayerManager: AudioPlayerManager
+    // 【修改为】：让它变成普通属性，不再触发 ArticleDetailView 的整体刷新
+    let audioPlayerManager: AudioPlayerManager
     var requestNextArticle: () async -> Void
     // 【新增】用于处理右上角音频按钮点击的闭包
     var onAudioToggle: () -> Void
@@ -371,19 +371,17 @@ struct ArticleDetailView: View {
                         // 稍微给个过渡动画
                         .transition(.scale.combined(with: .opacity))
                     }
-                    Button(action: onAudioToggle) {
-                        Image(systemName: audioPlayerManager.isPlaybackActive ? "headphones.slash" : "headphones")
-                    }
-                    .disabled(audioPlayerManager.isSynthesizing)
+                    // 【修改】使用独立的按钮组件，传入 manager
+                    AudioToolbarButton(
+                        audioPlayerManager: audioPlayerManager,
+                        onAudioToggle: onAudioToggle
+                    )
                     
-                    // 原代码：Button { isSharePresented = true } ...
-                    // 修改后：
                     Button { 
                         showCustomShareSheet = true 
                     } label: { 
                         Image(systemName: "square.and.arrow.up") 
                     }
-
                 }
                 // 【修改点1】这里添加 .primary 颜色，使图标变为黑白（跟随系统主题）
                 .foregroundColor(.primary)
@@ -938,5 +936,18 @@ struct BrandTag: View {
             .background(Color.blue.opacity(0.1))
             .foregroundColor(.blue)
             .cornerRadius(8)
+    }
+}
+
+// 【新增】将音频按钮隔离出来，让它自己去观察状态更新，不连累大视图
+struct AudioToolbarButton: View {
+    @ObservedObject var audioPlayerManager: AudioPlayerManager
+    var onAudioToggle: () -> Void
+    
+    var body: some View {
+        Button(action: onAudioToggle) {
+            Image(systemName: audioPlayerManager.isPlaybackActive ? "headphones.slash" : "headphones")
+        }
+        .disabled(audioPlayerManager.isSynthesizing)
     }
 }
