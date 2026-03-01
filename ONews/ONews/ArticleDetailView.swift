@@ -198,13 +198,14 @@ struct ArticleDetailView: View {
                         ForEach(cachedParagraphs.indices, id: \.self) { pIndex in
                             Text(cachedParagraphs[pIndex])
                                 .font(.custom("NewYork-Regular", size: 21))
-                                .lineSpacing(15)
+                                .lineSpacing(15) // 段内行间距
                                 .padding(.horizontal, 18)
-                                // 【优化】给每个段落添加 id，帮助 LazyVStack 识别
+                                .padding(.bottom, 25) // 【新增】这里增加底部间距，25 约等于一个空行的高度（可根据视觉微调）
                                 .id("p-\(article.id)-\(pIndex)")
                                 .gesture(
                                     LongPressGesture()
                                         .onEnded { _ in
+                                            // 此时复制出来的文本是干净的，没有多余的换行符和空格
                                             UIPasteboard.general.string = cachedParagraphs[pIndex]
                                             self.toastMessage = Localized.paragraphCopied
                                             withAnimation(.spring()) { self.showCopyToast = true }

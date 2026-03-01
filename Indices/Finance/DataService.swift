@@ -752,12 +752,11 @@ class DataService: ObservableObject {
                 // 【关键修复】创建一个不可变副本，供 MainActor 安全捕获，消除 Swift 6 并发报错
                 let finalBatch = tempBatch
                 
-                // 一整批处理完后，一次性交给主线程更新
+                // 【修改后】批量合并字典，避免引发成百上千次的视图重绘
                 await MainActor.run {
-                    // 这里使用 finalBatch 而不是 tempBatch
-                    for (k, v) in finalBatch {
-                        self.earningTrends[k] = v
-                        self.fetchingTrendsSymbols.remove(k) // 移除请求中状态
+                    self.earningTrends.merge(finalBatch) { (_, new) in new }
+                    for key in finalBatch.keys {
+                        self.fetchingTrendsSymbols.remove(key)
                     }
                 }
                 
@@ -816,10 +815,9 @@ class DataService: ObservableObject {
                 let finalBatch = tempBatch
                 
                 // 切回主线程更新 UI 状态
+                // 【修改后】批量合并
                 await MainActor.run {
-                    for (k, v) in finalBatch {
-                        self.historyPriceChanges[k] = v
-                    }
+                    self.historyPriceChanges.merge(finalBatch) { (_, new) in new }
                 }
                 
                 // 协程让步，防止主线程卡顿

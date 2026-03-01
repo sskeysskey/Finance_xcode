@@ -150,6 +150,9 @@ struct ChartView: View {
     @State private var secondTouchPointIndex: Int?
     @State private var firstTouchPoint: DatabaseManager.PriceData?
     @State private var secondTouchPoint: DatabaseManager.PriceData?
+
+    // 累积缩放量，用于控制切换时间间隔的灵敏度
+    @State private var accumulatedScale: CGFloat = 1.0
     
     // 标记点显示控制
     @State private var showRedMarkers: Bool = false
@@ -191,6 +194,8 @@ struct ChartView: View {
     private var earningTrend: EarningTrend {
         dataService.earningTrends[symbol.uppercased()] ?? .insufficientData
     }
+
+    private let timeRangeOrder: [TimeRange] = [.oneMonth, .threeMonths, .sixMonths, .oneYear, .twoYears, .fiveYears, .tenYears, .all]
     
     private var currentTags: [String] {
         let upperSymbol = symbol.uppercased()
@@ -258,6 +263,44 @@ struct ChartView: View {
         let laterTurnover = Double(laterVol) * laterPoint.price
         
         return ((laterTurnover - earlierTurnover) / earlierTurnover) * 100.0
+    }
+
+    // MARK: - 捏合缩放处理
+    private func handlePinchScale(_ scale: CGFloat) {
+        // 累积缩放变化
+        accumulatedScale *= scale
+        
+        // 设置灵敏度阈值，例如累积放大超过 1.3 倍切换到更短时间，缩小低于 0.7 倍切换到更长时间
+        let zoomInThreshold: CGFloat = 1.3
+        let zoomOutThreshold: CGFloat = 0.7
+        
+        if accumulatedScale > zoomInThreshold {
+            // 放大 (Zoom In) -> 切换到更短的时间间隔
+            shiftTimeRange(direction: -1)
+            accumulatedScale = 1.0 // 重置累积量
+        } else if accumulatedScale < zoomOutThreshold {
+            // 缩小 (Zoom Out) -> 切换到更长的时间间隔
+            shiftTimeRange(direction: 1)
+            accumulatedScale = 1.0 // 重置累积量
+        }
+    }
+    
+    private func shiftTimeRange(direction: Int) {
+        guard let currentIndex = timeRangeOrder.firstIndex(of: selectedTimeRange) else { return }
+        let newIndex = currentIndex + direction
+        
+        // 确保不越界
+        if newIndex >= 0 && newIndex < timeRangeOrder.count {
+            let newRange = timeRangeOrder[newIndex]
+            if newRange != selectedTimeRange {
+                // 触发震动反馈，提升手感
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.impactOccurred()
+                
+                selectedTimeRange = newRange
+                loadChartData()
+            }
+        }
     }
     
     // MARK: - Body
@@ -445,6 +488,10 @@ struct ChartView: View {
                                 withAnimation(.easeOut(duration: 0.2)) {
                                     resetTouchStates()
                                 }
+                            },
+                            onPinch: { scale in
+                                // 【新增】处理捏合缩放
+                                handlePinchScale(scale)
                             }
                     )
                 }
@@ -1337,12 +1384,14 @@ struct OptimizedTouchHandler: UIViewRepresentable {
     var onSingleTouchChanged: (CGPoint) -> Void
     var onMultiTouchChanged: (CGPoint, CGPoint) -> Void
     var onTouchesEnded: () -> Void
+    var onPinch: (CGFloat) -> Void // 【新增】捏合缩放回调
     
     func makeUIView(context: Context) -> OptimizedMultitouchView {
         let view = OptimizedMultitouchView()
         view.onSingleTouchChanged = onSingleTouchChanged
         view.onMultiTouchChanged = onMultiTouchChanged
         view.onTouchesEnded = onTouchesEnded
+        view.onPinch = onPinch // 【新增】
         view.backgroundColor = .clear
         return view
     }
@@ -1351,12 +1400,14 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         uiView.onSingleTouchChanged = onSingleTouchChanged
         uiView.onMultiTouchChanged = onMultiTouchChanged
         uiView.onTouchesEnded = onTouchesEnded
+        uiView.onPinch = onPinch // 【新增】
     }
     
     class OptimizedMultitouchView: UIView, UIGestureRecognizerDelegate {
         var onSingleTouchChanged: ((CGPoint) -> Void)?
         var onMultiTouchChanged: ((CGPoint, CGPoint) -> Void)?
         var onTouchesEnded: (() -> Void)?
+        var onPinch: ((CGFloat) -> Void)?
         
         private var activeTouches: [UITouch: CGPoint] = [:]
         private let bottomEdgeThreshold: CGFloat = 0.0
@@ -1364,41 +1415,72 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         
         // 专门用来“霸占”控制权的拦截手势
         private var interceptPanGesture: UIPanGestureRecognizer!
+        private var pinchGesture: UIPinchGestureRecognizer!
+        
+        // MARK: - 新增状态锁
+        private var firstTouchTime: Date?
+        private var isComparisonLocked: Bool = false // 锁定比对模式
+        private var isZoomLocked: Bool = false       // 锁定缩放模式
         
         override init(frame: CGRect) {
             super.init(frame: frame)
             isMultipleTouchEnabled = true
-            setupInterceptGesture()
+            setupGestures()
         }
         
         required init?(coder: NSCoder) {
             super.init(coder: coder)
             isMultipleTouchEnabled = true
-            setupInterceptGesture()
+            setupGestures()
         }
         
-        // MARK: - 核心修复：终极拦截手势
-        private func setupInterceptGesture() {
+        private func setupGestures() {
             interceptPanGesture = UIPanGestureRecognizer(target: self, action: #selector(handleInterceptPan(_:)))
             interceptPanGesture.delegate = self
             
             // 关键：绝对不能取消底层的 touchesBegan，否则虚线出不来
             interceptPanGesture.cancelsTouchesInView = false
             interceptPanGesture.delaysTouchesBegan = false
-            
             self.addGestureRecognizer(interceptPanGesture)
+            
+            // 【新增】设置捏合手势
+            pinchGesture = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
+            pinchGesture.delegate = self
+            pinchGesture.cancelsTouchesInView = false
+            self.addGestureRecognizer(pinchGesture)
         }
         
         @objc private func handleInterceptPan(_ gesture: UIPanGestureRecognizer) {
-            // 这个手势专门用来“霸占”滑动的控制权，所以方法里面什么都不需要写
-            // 只要它被触发，外层的返回手势就会被扼杀
+            // 霸占滑动控制权
         }
         
-        // MARK: - UIGestureRecognizerDelegate 魔法
+        // 【新增】处理捏合手势
+        @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+            // 【核心修复】如果已经锁定了比对模式，直接打断并取消捏合手势
+            if isComparisonLocked {
+                gesture.isEnabled = false
+                gesture.isEnabled = true
+                return
+            }
+            
+            switch gesture.state {
+            case .began:
+                isZoomLocked = true
+                onTouchesEnded?() // 清理可能残留的单指 UI
+            case .changed:
+                if isZoomLocked {
+                    onPinch?(gesture.scale)
+                    gesture.scale = 1.0
+                }
+            case .ended, .cancelled, .failed:
+                isZoomLocked = false
+            default:
+                break
+            }
+        }
         
-        // 1. 过滤边缘触摸：如果是贴着左边滑动，主动失效，让给系统返回
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            if gestureRecognizer == interceptPanGesture {
+            if gestureRecognizer == interceptPanGesture || gestureRecognizer == pinchGesture {
                 let location = touch.location(in: self)
                 // 只要在屏幕最左侧 30pt 内，图表放弃挣扎，让系统接管
                 if location.x < leftEdgeThreshold {
@@ -1421,8 +1503,11 @@ struct OptimizedTouchHandler: UIViewRepresentable {
             return false
         }
         
-        // 3. 拒绝同时识别：图表滑动和系统返回，绝对不允许同时发生
+        // 【修改】允许捏合手势和我们的底层触摸同时识别，但在 dispatch 时根据 isPinching 屏蔽
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            if gestureRecognizer == pinchGesture || otherGestureRecognizer == pinchGesture {
+                return true
+            }
             return false
         }
         
@@ -1430,7 +1515,6 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         private func purgeStaleTouches(event: UIEvent?) {
             // 检查字典中存留的每一个 touch，如果它的物理状态已经是结束或取消，强行清理！
             let validPhases: [UITouch.Phase] = [.began, .moved, .stationary]
-            
             for key in activeTouches.keys {
                 if !validPhases.contains(key.phase) {
                     activeTouches.removeValue(forKey: key)
@@ -1449,6 +1533,9 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         
         // 统一的状态分发机制
         private func dispatchTouchState() {
+            // 如果正在缩放，屏蔽比对逻辑
+            if isZoomLocked { return }
+            
             if activeTouches.isEmpty {
                 onTouchesEnded?()
             } else if activeTouches.count == 1 {
@@ -1464,7 +1551,9 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         
         // MARK: - 触摸事件处理
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-            purgeStaleTouches(event: event) // 先清理僵尸点
+            purgeStaleTouches(event: event)
+            
+            let wasEmpty = activeTouches.isEmpty
             
             for touch in touches {
                 let location = touch.location(in: self)
@@ -1473,6 +1562,23 @@ struct OptimizedTouchHandler: UIViewRepresentable {
                 
                 activeTouches[touch] = location
             }
+            
+            // 【核心修复】时间差判定逻辑
+            if wasEmpty && !activeTouches.isEmpty {
+                // 记录第一根手指落下的时间
+                firstTouchTime = Date()
+                isComparisonLocked = false
+                isZoomLocked = false
+            } else if activeTouches.count >= 2 {
+                // 第二根手指落下时，检查与第一根手指的时间差
+                if let firstTime = firstTouchTime, Date().timeIntervalSince(firstTime) > 0.15 {
+                    // 时间差大于 0.15 秒，说明是先后点击，锁定为比对模式
+                    if !isZoomLocked {
+                        isComparisonLocked = true
+                    }
+                }
+            }
+            
             dispatchTouchState()
         }
         
@@ -1488,18 +1594,26 @@ struct OptimizedTouchHandler: UIViewRepresentable {
         }
         
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-            for touch in touches {
-                activeTouches.removeValue(forKey: touch)
+            for touch in touches { activeTouches.removeValue(forKey: touch) }
+            purgeStaleTouches(event: event)
+            
+            if activeTouches.isEmpty {
+                isComparisonLocked = false
+                isZoomLocked = false
+                firstTouchTime = nil
             }
-            purgeStaleTouches(event: event) // 二次校验清理
             dispatchTouchState()
         }
         
         override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-            for touch in touches {
-                activeTouches.removeValue(forKey: touch)
+            for touch in touches { activeTouches.removeValue(forKey: touch) }
+            purgeStaleTouches(event: event)
+            
+            if activeTouches.isEmpty {
+                isComparisonLocked = false
+                isZoomLocked = false
+                firstTouchTime = nil
             }
-            purgeStaleTouches(event: event) // 二次校验清理
             dispatchTouchState()
         }
     }

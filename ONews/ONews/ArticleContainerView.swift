@@ -278,12 +278,9 @@ struct ArticleContainerView: View {
         }
         
         // 【优化】寻找下一篇文章的操作虽然很快，但在极大数据量下可能微卡
-        // 这样自动连播时，如果用户没订阅，会自动跳过最近 2 天的付费文章，直接跳到下一篇免费的
-        guard let next = viewModel.findNextUnread(
-            after: currentArticle.id, 
-            inSource: sourceNameToSearch,
-            isSubscribed: authManager.isSubscribed
-        ) else {
+        // 由于 viewModel 是 MainActor，我们直接调用即可。
+        // 关键在于：获取到 next 之后，不要立即做太重的同步操作
+        guard let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch) else {
             await MainActor.run {
                 showToast { shouldShow in self.showNoNextToast = shouldShow }
                 audioPlayerManager.stop()
@@ -399,12 +396,7 @@ struct ArticleContainerView: View {
         case .fromAllArticles: sourceNameToSearch = nil
         }
         
-        // 【修复点】在这里补上 isSubscribed 参数
-        guard let next = viewModel.findNextUnread(
-            after: currentArticle.id, 
-            inSource: sourceNameToSearch,
-            isSubscribed: authManager.isSubscribed // 补上这一行
-        ) else {
+        guard let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch) else {
             print("没有找到下一篇未读文章，无需预下载。")
             return
         }

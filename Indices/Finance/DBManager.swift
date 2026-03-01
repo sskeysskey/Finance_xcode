@@ -12,6 +12,9 @@ final class DatabaseManager: @unchecked Sendable {
     private var db: OpaquePointer?
     // 线程锁，确保多线程访问数据库安全
     private let dbLock = NSLock()
+
+    // 【新增】SQLite 专属串行队列，防止 GCD 全局队列线程爆炸
+    private let sqliteQueue = DispatchQueue(label: "com.finance.sqliteQueue", qos: .userInitiated)
     
     private init() {
         // 初始化时尝试连接一次
@@ -252,7 +255,7 @@ final class DatabaseManager: @unchecked Sendable {
     // 【本地实现】
     private func fetchAllMarketCapDataLocal() async -> [MarketCapInfo] {
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            self.sqliteQueue.async {
                 self.dbLock.lock()
                 defer { self.dbLock.unlock() }
                 
@@ -298,7 +301,7 @@ final class DatabaseManager: @unchecked Sendable {
     // 【本地实现】
     private func fetchLatestVolumeLocal(forSymbol symbol: String, tableName: String) async -> Int64? {
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            self.sqliteQueue.async {
                 self.dbLock.lock()
                 defer { self.dbLock.unlock() }
                 
@@ -358,7 +361,7 @@ final class DatabaseManager: @unchecked Sendable {
     // 【本地实现】
     private func fetchHistoricalDataLocal(symbol: String, tableName: String, dateRange: DateRangeInput) async -> [PriceData] {
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            self.sqliteQueue.async {
                 self.dbLock.lock()
                 defer { self.dbLock.unlock() }
                 
@@ -430,7 +433,7 @@ final class DatabaseManager: @unchecked Sendable {
         return await withCheckedContinuation { continuation in
             // 【核心修复】将查询扔进 GCD 的后台并发队列
             // 既彻底离开了主线程（解决滑动卡顿），又避开了 Swift async 锁限制（解决编译报错）
-            DispatchQueue.global(qos: .userInitiated).async {
+            self.sqliteQueue.async {
                 self.dbLock.lock()
                 defer { self.dbLock.unlock() }
                 
@@ -461,7 +464,7 @@ final class DatabaseManager: @unchecked Sendable {
     private func fetchClosingPriceLocal(forSymbol symbol: String, onDate date: Date, tableName: String) async -> Double? {
         return await withCheckedContinuation { continuation in
             // 【核心修复】将查询扔进 GCD 的后台并发队列
-            DispatchQueue.global(qos: .userInitiated).async {
+            self.sqliteQueue.async {
                 self.dbLock.lock()
                 defer { self.dbLock.unlock() }
                 
@@ -529,7 +532,7 @@ final class DatabaseManager: @unchecked Sendable {
     private func fetchOptionsSummaryLocal(forSymbol symbol: String) async -> OptionsSummary? {
         return await withCheckedContinuation { continuation in
             // 【核心修复补充】：离开 Swift async 线程池，避免死锁
-            DispatchQueue.global(qos: .userInitiated).async {
+            self.sqliteQueue.async {
                 self.dbLock.lock()
                 defer { self.dbLock.unlock() }
                 
@@ -613,7 +616,7 @@ final class DatabaseManager: @unchecked Sendable {
     // 【本地实现】
     private func fetchOptionsHistoryLocal(forSymbol symbol: String) async -> [OptionHistoryItem] {
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            self.sqliteQueue.async {
                 self.dbLock.lock()
                 defer { self.dbLock.unlock() }
                 
@@ -673,7 +676,7 @@ final class DatabaseManager: @unchecked Sendable {
     // 【本地实现】期权榜单
     private func fetchOptionsRankDataLocal(limit: Double) async -> (rankUp: [OptionRankItem], rankDown: [OptionRankItem])? {
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            self.sqliteQueue.async {
                 self.dbLock.lock()
                 defer { self.dbLock.unlock() }
                 
