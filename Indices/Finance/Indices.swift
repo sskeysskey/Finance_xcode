@@ -1455,7 +1455,8 @@ struct StrategyHistoryDetailView: View {
                 hasInitialized = true
             }
             
-            // 🚨修改点：预加载时，将带中文的符号转换为纯净的符号🚨
+            // ✅ 【关键改动】onAppear 只预加载 EarningTrends 和 OptionsMetrics，
+            //    不再批量预加载 fetchHistoryPriceChanges，改为点开哪个日期才加载哪个
             let allSymbols = sortedDates.flatMap { date in
                 (dataService.earningHistoryData[groupName]?[date] ?? []).map { $0.cleanTicker }
             }
@@ -1468,20 +1469,7 @@ struct StrategyHistoryDetailView: View {
                 
                 // 预加载期权指标
                 await dataService.fetchOptionsMetrics(for: allSymbols)
-                
-                // 【修改】整理出需要计算涨跌幅的所有 (Symbol, Date) 组合
-                var fetchItems: [(symbol: String, dateStr: String)] = []
-                // 使用 enumerated() 获取索引，从而跳过最新的一天
-                for (index, dateStr) in sortedDates.enumerated() {
-                    if index == 0 { continue } // 👈 新增：跳过最新一天的涨幅计算
-                    if let symbols = dataService.earningHistoryData[groupName]?[dateStr] {
-                        for symbol in symbols {
-                            // 🚨修改点：存入历史价格计算数组时，使用 cleanTicker🚨
-                            fetchItems.append((symbol: symbol.cleanTicker, dateStr: dateStr))
-                        }
-                    }
-                }
-                dataService.fetchHistoryPriceChanges(for: fetchItems)
+                // ❌ 已移除：fetchHistoryPriceChanges 的批量预加载
             }
         }
     }
@@ -1496,6 +1484,11 @@ struct StrategyDateSectionView: View {
     let isFirstSection: Bool
     let onToggle: () -> Void
     
+    // ✅ 【新增】懒加载状态，仅在首次展开时触发一次请求
+    @State private var isFetchInitiated = false
+    
+    @EnvironmentObject var dataService: DataService
+    
     var body: some View {
         Section {
             // 展开的内容（列表区域）
@@ -1506,7 +1499,8 @@ struct StrategyDateSectionView: View {
                             symbol: symbol, 
                             dateStr: dateStr, 
                             groupName: groupName,
-                            isLatestDate: isFirstSection // 👈 新增：把是否是最新一天的状态传给子视图
+                            isLatestDate: isFirstSection,
+                            isFetchInitiated: isFetchInitiated  // ✅ 【新增】向下传递状态
                         )
                         
                         if symbol != symbols.last {
@@ -1562,6 +1556,15 @@ struct StrategyDateSectionView: View {
             .padding(.bottom, 2)
             .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
         }
+        // ✅ 【核心新增】展开时触发懒加载，只对旧日期（非最新）处理，且只触发一次
+        .onChange(of: isExpanded) { newValue in
+            guard newValue, !isFirstSection, !isFetchInitiated else { return }
+            isFetchInitiated = true
+            
+            let cleanSymbols = symbols.map { $0.cleanTicker }
+            let items = cleanSymbols.map { (symbol: $0, dateStr: dateStr) }
+            dataService.fetchHistoryPriceChanges(for: items)
+        }
     }
 }
 
@@ -1571,9 +1574,8 @@ struct StrategySymbolRow: View {
     let dateStr: String
     let groupName: String
     let isLatestDate: Bool
-
-    // ✅ 1. 新增一个常量，在初始化时计算好 cleanTicker，避免在 body 里无限次算正则
-    let cleanSymbol: String 
+    let isFetchInitiated: Bool  // ✅ 【新增】由父组件传入，区分"未请求"和"请求中"
+    let cleanSymbol: String
     
     @EnvironmentObject var dataService: DataService
     @EnvironmentObject var authManager: AuthManager
@@ -1581,20 +1583,19 @@ struct StrategySymbolRow: View {
     
     @State private var navigateToChart = false
     @State private var showSubscriptionSheet = false
-
-    // 【修改点 1】：删除了所有关于 cachedTags, cachedValuePrefix, prefixColor, hasComputedValues 的 @State
+    // ✅ 【新增】超时兜底：请求发出后 10 秒仍无数据，显示 "—"
+    @State private var showDash = false
 
     private static let _prefixFullRegex = try? NSRegularExpression(pattern: #"^(\d{4}[前后未])"#)
     private static let _prefixDateRegex = try? NSRegularExpression(pattern: #"^(\d{4})"#)
 
-    // ✅ 3. 新增 init 方法
-    init(symbol: String, dateStr: String, groupName: String, isLatestDate: Bool) {
+    init(symbol: String, dateStr: String, groupName: String, isLatestDate: Bool, isFetchInitiated: Bool) {
         self.symbol = symbol
         self.dateStr = dateStr
         self.groupName = groupName
         self.isLatestDate = isLatestDate
-        // 在这里执行一次正则，保存在常量中，彻底解放 body
-        self.cleanSymbol = symbol.cleanTicker 
+        self.isFetchInitiated = isFetchInitiated
+        self.cleanSymbol = symbol.cleanTicker
     }
     
     private var earningTrend: EarningTrend {
@@ -1603,6 +1604,12 @@ struct StrategySymbolRow: View {
     
     private var optionsMetrics: (iv: String, sum: String)? {
         dataService.optionsMetricsCache[cleanSymbol.uppercased()]
+    }
+    
+    // ✅ 【新增】从缓存读取涨跌幅，与 EarningHistoryView 保持一致
+    private var priceChange: Double? {
+        let key = "\(cleanSymbol.uppercased())_\(dateStr)"
+        return dataService.historyPriceChanges[key]
     }
     
     var body: some View {
@@ -1646,6 +1653,7 @@ struct StrategySymbolRow: View {
                             .fontWeight(.semibold)
                     }
                     if isLatestDate {
+                        // 最新日期：显示 PE
                         if let capItem = dataService.marketCapData[sym],
                            let pe = capItem.peRatio {
                             Text("PE \(String(format: "%.1f", pe))")
@@ -1653,25 +1661,8 @@ struct StrategySymbolRow: View {
                                 .foregroundColor(.secondary)
                         }
                     } else {
-                        let cacheKey = "\(sym)_\(dateStr)"
-                        if let change = dataService.historyPriceChanges[cacheKey] {
-                            let isPositive = change > 0
-                            let isNegative = change < 0
-                            let color: Color = isPositive ? .red : (isNegative ? .green : .gray)
-                            let sign = isPositive ? "+" : ""
-                            Text("\(sign)\(String(format: "%.2f", change * 100))%")
-                                .font(.caption)
-                                .fontWeight(.bold)
-                                .foregroundColor(color)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(color.opacity(0.1))
-                                .cornerRadius(4)
-                        } else {
-                            Text("计算中")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
+                        // ✅ 【核心改动】旧日期：使用懒加载指示器，与 EarningHistoryView 完全一致
+                        priceChangeIndicator
                     }
                 }
                 .font(.system(size: 14))
@@ -1693,12 +1684,44 @@ struct StrategySymbolRow: View {
             ChartView(symbol: cleanSymbol, groupName: computedCategory)
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
-        // 【修改点 3】：彻底删除了导致无限循环卡死的 .onAppear { ... } 代码块
+        // ✅ 【新增】isFetchInitiated 变为 true 后，启动 10 秒超时计时器
+        .task(id: isFetchInitiated) {
+            guard isFetchInitiated, !isLatestDate else { return }
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            if priceChange == nil {
+                showDash = true
+            }
+        }
     }
 
-    // MARK: - 辅助方法
-    
-    // 【新增】：将原本在 onAppear 中的正则计算提取为纯函数
+    // ✅ 【新增】涨跌幅指示器，完全对齐 EarningHistoryView 的 priceChangeIndicator
+    @ViewBuilder
+    private var priceChangeIndicator: some View {
+        if let change = priceChange {
+            // 已有数据：显示带颜色的百分比
+            let isPositive = change >= 0
+            Text(String(format: "%+.1f%%", change * 100))
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundColor(isPositive ? .red : .green)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background((isPositive ? Color.red : Color.green).opacity(0.1))
+                .cornerRadius(4)
+        } else if showDash {
+            // 超时或无数据：显示破折号
+            Text("—")
+                .font(.system(size: 14))
+                .foregroundColor(Color(UIColor.tertiaryLabel))
+        } else if isFetchInitiated {
+            // 请求已发出，等待结果：显示小转圈
+            ProgressView()
+                .scaleEffect(0.65)
+                .frame(width: 22, height: 22)
+        }
+        // isFetchInitiated == false 时什么都不显示（尚未展开，不占位）
+    }
+
+    // MARK: - 辅助方法（保持不变）
     private func getPrefixAndColor(for sym: String) -> (prefix: String?, color: Color) {
         guard let value = dataService.compareData[sym] else {
             return (nil, .white)
