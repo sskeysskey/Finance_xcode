@@ -368,7 +368,7 @@ struct IndicesContentView: View {
     // 【新增】需要使用历史分组展示的策略组名单
     private let historyBasedGroups: Set<String> = [
         "PE_Volume", "PE_Volume_up", "Short", "Short_W", "PE_Volume_high",
-        "OverSell_W", "PE_W", "PE_Deeper", "PE_Deep", "PE_valid", "PE_invalid",
+        "PE_W", "PE_Deeper", "OverSell_W", "PE_Deep", "PE_valid", "PE_invalid",
         "ETF_Volume_high", "ETF_Volume_low"
     ]
     
@@ -497,25 +497,29 @@ struct IndicesContentView: View {
     private func view(for groupName: String, sectors: [IndicesSector], weekLowSectors: [IndicesSector]) -> some View {
         // 【修改】处理需要历史分组展示的策略组
         if historyBasedGroups.contains(groupName) {
-            Button {
-                if usageManager.canProceed(authManager: authManager, action: .openSector) {
-                    self.selectedHistoryGroup = groupName
-                    self.navigateToHistoryDetail = true
-                } else {
-                    self.showSubscriptionSheet = true
+            // ✅ 【新增】先检查该分组是否有实际数据，为空则不渲染任何内容
+            if let groupData = dataService.earningHistoryData[groupName], !groupData.isEmpty {
+                Button {
+                    if usageManager.canProceed(authManager: authManager, action: .openSector) {
+                        self.selectedHistoryGroup = groupName
+                        self.navigateToHistoryDetail = true
+                    } else {
+                        self.showSubscriptionSheet = true
+                    }
+                } label: {
+                    CompactSectorCard(
+                        sectorName: groupName,
+                        icon: getIcon(for: groupName),
+                        baseColor: .indigo,
+                        isSpecial: groupName == "PE_Volume" || groupName == "PE_Volume_up" || 
+                                groupName == "Short" || groupName == "Short_W" || groupName == "PE_Volume_high",
+                        customGradient: (groupName == "PE_Volume" || groupName == "PE_Volume_up" || 
+                                        groupName == "Short" || groupName == "Short_W" || groupName == "PE_Volume_high") 
+                                        ? [.blue, .purple] : nil
+                    )
                 }
-            } label: {
-                CompactSectorCard(
-                    sectorName: groupName,
-                    icon: getIcon(for: groupName),
-                    baseColor: .indigo,
-                    isSpecial: groupName == "PE_Volume" || groupName == "PE_Volume_up" || 
-                            groupName == "Short" || groupName == "Short_W" || groupName == "PE_Volume_high",
-                    customGradient: (groupName == "PE_Volume" || groupName == "PE_Volume_up" || 
-                                    groupName == "Short" || groupName == "Short_W" || groupName == "PE_Volume_high") 
-                                    ? [.blue, .purple] : nil
-                )
             }
+        // 如果 groupData 为 nil 或空，@ViewBuilder 自动返回 EmptyView，什么都不显示
         } else if groupName == "52NewLow" {
             Button {
                 if usageManager.canProceed(authManager: authManager, action: .openSpecialList) {
