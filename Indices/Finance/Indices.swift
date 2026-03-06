@@ -368,7 +368,7 @@ struct IndicesContentView: View {
     // 【新增】需要使用历史分组展示的策略组名单
     private let historyBasedGroups: Set<String> = [
         "PE_Volume", "PE_Volume_up", "Short", "Short_W", "PE_Volume_high",
-        "OverSell_W", "PE_W", "PE_Deep", "PE_Deeper", "PE_valid", "PE_invalid",
+        "OverSell_W", "PE_W", "PE_Deeper", "PE_Deep", "PE_valid", "PE_invalid",
         "ETF_Volume_high", "ETF_Volume_low"
     ]
     
