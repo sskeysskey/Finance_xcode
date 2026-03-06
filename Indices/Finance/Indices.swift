@@ -1806,7 +1806,13 @@ extension String {
         let range = NSRange(location: 0, length: self.utf16.count)
         if let match = regex.firstMatch(in: self, options: [], range: range),
            let r = Range(match.range(at: 1), in: self) {
-            return String(self[r])
+            // 【新增】去掉尾部的注释数字，例如 "AAPL9热听" 第一步得到 "AAPL9"，
+            // 再用 \d+$ 去掉结尾的纯数字，最终得到 "AAPL"
+            return String(self[r]).replacingOccurrences(
+                of: #"\d+$"#,
+                with: "",
+                options: .regularExpression
+            )
         }
         return self
     }
