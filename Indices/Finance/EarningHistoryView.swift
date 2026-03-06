@@ -193,8 +193,10 @@ struct DateSectionView: View {
             .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
         }
         // 核心：展开时触发懒加载
-        .onChange(of: isExpanded) { newValue in
+        // 修改点：使用新的 onChange API，参数为 (oldValue, newValue)
+        .onChange(of: isExpanded) { oldValue, newValue in
             // 只对旧日期分组处理，且只触发一次
+            // 使用 newValue 判断当前是否处于展开状态
             guard newValue, !isLatestDate, !isFetchInitiated else { return }
             isFetchInitiated = true
             

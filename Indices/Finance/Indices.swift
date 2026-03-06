@@ -1351,8 +1351,6 @@ struct SymbolItemView: View {
         return .gray
     }
     
-    // ... (保留 colorForEarningTrend 等其他辅助函数)
-    
     private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
         switch trend {
         case .positiveAndUp: return .red
@@ -1455,21 +1453,18 @@ struct StrategyHistoryDetailView: View {
                 hasInitialized = true
             }
             
-            // ✅ 【关键改动】onAppear 只预加载 EarningTrends 和 OptionsMetrics，
-            //    不再批量预加载 fetchHistoryPriceChanges，改为点开哪个日期才加载哪个
+            // ✅ 【关键改动】onAppear 只预加载 OptionsMetrics（轻量级全局缓存）。
+            //    fetchEarningTrends（上色）和 fetchHistoryPriceChanges（涨跌幅）
+            //    均已改为"点开哪个日期才加载哪个"，在 StrategyDateSectionView 中懒加载触发。
             let allSymbols = sortedDates.flatMap { date in
                 (dataService.earningHistoryData[groupName]?[date] ?? []).map { $0.cleanTicker }
             }
             
             // 【核心修复 3】使用 Task 延迟 0.3 秒，避开刚进入页面时的动画和列表初始排版高峰期
             Task {
-                try? await Task.sleep(nanoseconds: 300_000_000) // 等待 0.3 秒
-                
-                dataService.fetchEarningTrends(for: allSymbols)
-                
-                // 预加载期权指标
+                try? await Task.sleep(nanoseconds: 300_000_000)
                 await dataService.fetchOptionsMetrics(for: allSymbols)
-                // ❌ 已移除：fetchHistoryPriceChanges 的批量预加载
+                // ❌ 已移除：fetchEarningTrends 和 fetchHistoryPriceChanges 的批量预加载
             }
         }
     }
@@ -1556,12 +1551,33 @@ struct StrategyDateSectionView: View {
             .padding(.bottom, 2)
             .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
         }
-        // ✅ 【核心新增】展开时触发懒加载，只对旧日期（非最新）处理，且只触发一次
-        .onChange(of: isExpanded) { newValue in
-            guard newValue, !isFirstSection, !isFetchInitiated else { return }
-            isFetchInitiated = true
-            
-            let cleanSymbols = symbols.map { $0.cleanTicker }
+        // ✅ 【关键新增 1】处理边界情况：
+        //    StrategyHistoryDetailView 在 onAppear 里将第一个日期加入 expandedDates，
+        //    但 .onChange 只响应"变化"，对初始值为 true 的 isExpanded 不会触发。
+        //    因此在 onAppear 里补充检查：若视图出现时已处于展开状态，立即触发加载。
+        .onAppear {
+            guard isExpanded, !isFetchInitiated else { return }
+            triggerFetch()
+        }
+        // 【修改点】：使用新的 onChange API，参数为 (oldValue, newValue)
+        .onChange(of: isExpanded) { oldValue, newValue in
+            // 逻辑保持不变：只有当 newValue 为 true (展开) 时才触发
+            guard newValue, !isFetchInitiated else { return }
+            triggerFetch()
+        }
+    }
+    
+    // ✅ 【新增】统一的加载触发函数，避免 onAppear 和 onChange 重复写逻辑
+    private func triggerFetch() {
+        isFetchInitiated = true
+        
+        let cleanSymbols = symbols.map { $0.cleanTicker }
+        
+        // 1. 所有日期（包括最新日期）展开时都触发 earning trends 加载，用于 symbol 上色
+        dataService.fetchEarningTrends(for: cleanSymbols)
+        
+        // 2. 仅对旧日期加载区间涨跌幅（最新日期显示 PE，不需要涨跌幅）
+        if !isFirstSection {
             let items = cleanSymbols.map { (symbol: $0, dateStr: dateStr) }
             dataService.fetchHistoryPriceChanges(for: items)
         }
