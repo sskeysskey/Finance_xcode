@@ -99,7 +99,10 @@ struct EarningHistoryView: View {
                                             }
                                         }
                                     )
-                                    .id(dateStr)
+                                    // ✅ 核心修复：将 selectedGroup 纳入 id，
+                                    // 切换分组时强制销毁旧视图、重建新实例，
+                                    // 确保 isFetchInitiated 从 false 重新开始。
+                                    .id("\(selectedGroup)_\(dateStr)")
                                 }
                             }
                         }

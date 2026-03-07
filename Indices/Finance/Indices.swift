@@ -114,6 +114,34 @@ struct TradingDateHelper {
     }
 }
 
+extension TradingDateHelper {
+    // 获取当前日期的“昨天” (Date对象)
+    static func getYesterday() -> Date {
+        return Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+    }
+
+    // 获取“下一个交易日” (Date对象)
+    static func getNextTradingDay() -> Date {
+        let calendar = Calendar.current
+        var nextDay = calendar.date(byAdding: .day, value: 1, to: Date())!
+        
+        // 循环跳过周末和节假日
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        
+        while true {
+            let dateStr = formatter.string(from: nextDay)
+            let weekday = calendar.component(.weekday, from: nextDay)
+            let isWeekend = (weekday == 1 || weekday == 7)
+            let isHoliday = holidays.contains(dateStr)
+            
+            if !isWeekend && !isHoliday {
+                return nextDay
+            }
+            nextDay = calendar.date(byAdding: .day, value: 1, to: nextDay)!
+        }
+    }
+}
 
 struct IndicesSymbol: Identifiable, Codable {
     var id: String { symbol }  // 使用symbol作为唯一标识符
@@ -1602,6 +1630,7 @@ struct StrategySymbolRow: View {
     // ✅ 【新增】超时兜底：请求发出后 10 秒仍无数据，显示 "—"
     @State private var showDash = false
 
+    private static let _datePatternRegex = try? NSRegularExpression(pattern: #"^(\d+)([前后未])"#)
     private static let _prefixFullRegex = try? NSRegularExpression(pattern: #"^(\d{4}[前后未])"#)
     private static let _prefixDateRegex = try? NSRegularExpression(pattern: #"^(\d{4})"#)
 
@@ -1743,36 +1772,81 @@ struct StrategySymbolRow: View {
             return (nil, .white)
         }
         
-        var foundPrefix: String? = nil
-        var foundColor: Color = .white
         let nsRange = NSRange(value.startIndex..<value.endIndex, in: value)
         
-        // 提取前缀
-        if let re = StrategySymbolRow._prefixFullRegex,
-           let m = re.firstMatch(in: value, options: [], range: nsRange),
-           let r = Range(m.range(at: 1), in: value) {
-            foundPrefix = String(value[r])
-        }
+        var foundPrefix: String? = nil
+        var suffixPart: String = ""
+        var targetDate: Date? = nil
         
-        // 提取日期并计算颜色
-        if let re = StrategySymbolRow._prefixDateRegex,
-           let m = re.firstMatch(in: value, options: [], range: nsRange),
-           let r = Range(m.range(at: 1), in: value) {
-            
-            let mdStr = String(value[r])
-            let cal = Calendar.current
-            let now = Date()
-            let curM = cal.component(.month, from: now)
-            let curD = cal.component(.day, from: now)
-            
-            let splitIdx = mdStr.index(mdStr.startIndex, offsetBy: 2)
-            if let mo = Int(mdStr[..<splitIdx]),
-               let dy = Int(mdStr[splitIdx...]) {
-                foundColor = (mo > curM || (mo == curM && dy >= curD)) ? .orange : .white
+        // 直接使用静态属性 _datePatternRegex
+        if let match = StrategySymbolRow._datePatternRegex?.firstMatch(in: value, options: [], range: nsRange) {
+            if let rFull = Range(match.range(at: 1), in: value),
+                let rSuffix = Range(match.range(at: 2), in: value) {
+                // 使用 Range(match.range(at: 0), in: value) 来安全转换
+                if let rFullMatch = Range(match.range(at: 0), in: value) {
+                    foundPrefix = String(value[rFullMatch]) 
+                }
+                let dateStr = String(value[rFull]) // "0305"
+                suffixPart = String(value[rSuffix]) // "前"
+                
+                // 解析日期
+                let formatter = DateFormatter()
+                formatter.dateFormat = "MMdd"
+                targetDate = formatter.date(from: dateStr)
+                // 修正年份逻辑（替换原有的修正代码）
+                if let date = targetDate {
+                    let components = Calendar.current.dateComponents([.month, .day], from: date)
+                    let currentYear = Calendar.current.component(.year, from: Date())
+                    
+                    // 尝试构建今年的日期
+                    var candidateDate = Calendar.current.date(from: DateComponents(year: currentYear, month: components.month, day: components.day))!
+                    
+                    // 如果这个日期距离今天超过 6 个月（比如现在是1月，数据是12月），说明它是去年的
+                    // 如果现在是12月，数据是1月，说明它是明年的（虽然通常荐股不会跨年，但逻辑要严谨）
+                    let diff = Calendar.current.dateComponents([.month], from: candidateDate, to: Date()).month ?? 0
+                    if diff > 6 {
+                        candidateDate = Calendar.current.date(byAdding: .year, value: -1, to: candidateDate)!
+                    } else if diff < -6 {
+                        candidateDate = Calendar.current.date(byAdding: .year, value: 1, to: candidateDate)!
+                    }
+                    targetDate = candidateDate
+                }
             }
         }
         
-        return (foundPrefix, foundColor)
+        // 如果无法解析日期，默认返回白色
+        guard let target = targetDate else {
+            #if DEBUG
+            print("Warning: 无法解析日期字符串: \(value)")
+            #endif
+            return (foundPrefix, .white)
+        }
+        
+        // 2. 核心逻辑判断
+        let today = Calendar.current.startOfDay(for: Date())
+        let yesterday = Calendar.current.startOfDay(for: TradingDateHelper.getYesterday())
+        let nextTradingDay = Calendar.current.startOfDay(for: TradingDateHelper.getNextTradingDay())
+        
+        var finalColor: Color = .white
+        
+        if target < yesterday {
+            // 规则 A: 小于昨天 -> 白色
+            finalColor = .white
+        } else if target == yesterday {
+            // 规则 B: 正好是昨天
+            finalColor = (suffixPart == "后") ? .red : .white
+        } else if target == today {
+            // 规则 C: 今天 -> 橙色
+            finalColor = .orange
+        } else if target == nextTradingDay {
+            // 规则 D: 明天/下一个交易日
+            finalColor = (suffixPart == "前") ? .red : .orange
+        } else {
+            // 规则 E: 更远的未来 -> 橙色
+            finalColor = .orange
+        }
+        
+        return (foundPrefix, finalColor)
     }
 
     // MARK: - 辅助方法（保持不变）
