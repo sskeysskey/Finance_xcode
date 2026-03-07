@@ -384,6 +384,15 @@ class NewsViewModel: ObservableObject {
     // ✅ 兜底集合：最近一次静默提交到持久化但未刷新 UI 的文章 IDs
     private var lastSilentCommittedIDs: Set<UUID> = []
     
+    // 放在 NewsViewModel 类内，lockCheckFormatter 附近即可
+    private static func djb2Hash(_ string: String) -> UInt64 {
+        var hash: UInt64 = 5381
+        for byte in string.utf8 {
+            hash = (hash &<< 5) &+ hash &+ UInt64(byte)
+        }
+        return hash
+    }
+
     // 【优化】静态 DateFormatter 缓存，避免重复创建
     private static let lockCheckFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -403,10 +412,14 @@ class NewsViewModel: ObservableObject {
         }
         
         return flatList.sorted { item1, item2 in
+            // 时间戳不同：新的排前面，规则不变
             if item1.article.timestamp != item2.article.timestamp {
                 return item1.article.timestamp > item2.article.timestamp
             }
-            return item1.article.topic < item2.article.topic
+            // 【核心修改】同一时间戳内：用标题+来源名的稳定哈希排序，产生跨来源混淆效果
+            let key1 = NewsViewModel.djb2Hash(item1.article.topic + item1.sourceName)
+            let key2 = NewsViewModel.djb2Hash(item2.article.topic + item2.sourceName)
+            return key1 < key2
         }
     }
 

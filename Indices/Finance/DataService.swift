@@ -48,6 +48,16 @@ struct OptionBigOrder: Identifiable, Codable {
     let price: Double      // Price (成交总额/名义价值)
 }
 
+// MARK: - 新增：成交额数据模型
+struct VolumeHighItem: Identifiable, Codable {
+    var id = UUID()
+    let category: String
+    let symbol: String
+    let value: String // 涨跌幅等信息
+    let turnover: String // 成交额
+    let description: String // 描述/Tags
+}
+
 // MARK: - 新增：High/Low 数据模型
 struct HighLowItem: Identifiable, Codable {
     var id = UUID()
@@ -209,6 +219,10 @@ class DataService: ObservableObject {
 
     // 【新增】存储市值阀值，默认 500亿 (50B)
     @Published var optionCapLimit: Double = 500_000_000_000
+
+    // 【新增】存储成交额数据
+    @Published var volumeUpItems: [VolumeHighItem] = []
+    @Published var volumeDownItems: [VolumeHighItem] = []
 
     // 【新增】O(1) 的 Tag 查询映射表，解决滑动卡顿
     @Published var symbolTagsMap: [String: [String]] = [:]
@@ -492,6 +506,8 @@ class DataService: ObservableObject {
             // 【新增】加载期权大单 CSV
             await self.loadOptionBigOrders() 
             await self.loadEarningHistory()
+            // 【新增】加载成交额数据
+            await self.loadVolumeHighData()
 
             await MainActor.run {
                 self.isDataLoaded = true
@@ -501,6 +517,74 @@ class DataService: ObservableObject {
             
             // 3. 启动网络请求 (本身就是 async 的)
             await self.loadMarketCapData()
+        }
+    }
+
+    // MARK: - 【新增】加载并解析成交额数据
+    private func loadVolumeHighData() async {
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "0.5Y_volume_high") else {
+            if !isInitialLoad {
+                print("DataService: 0.5Y_volume_high 文件未在 Documents 中找到")
+            }
+            return
+        }
+        
+        do {
+            let content = try String(contentsOf: url, encoding: .utf8)
+            let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
+            
+            var tempUpItems: [VolumeHighItem] = []
+            var tempDownItems: [VolumeHighItem] = []
+            var isParsingUp = true // 默认先解析 UP
+            
+            for line in lines {
+                let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+                if trimmedLine.isEmpty { continue }
+                
+                // 判断段落
+                if trimmedLine.contains("PRICE UP") || trimmedLine.contains("FLAT") {
+                    isParsingUp = true
+                    continue
+                } else if trimmedLine.contains("PRICE DOWN") {
+                    isParsingUp = false
+                    continue
+                }
+                
+                // 解析数据行: "Basic_Materials CF 4.51%*+ $887.34M 化肥,氨,尿素,赋能生物燃料"
+                let parts = trimmedLine.split(separator: " ", maxSplits: 4, omittingEmptySubsequences: true)
+                if parts.count >= 4 {
+                    let category = String(parts[0])
+                    let symbol = String(parts[1])
+                    let value = String(parts[2])
+                    let turnover = String(parts[3])
+                    let description = parts.count > 4 ? String(parts[4]) : ""
+                    
+                    let item = VolumeHighItem(
+                        category: category,
+                        symbol: symbol,
+                        value: value,
+                        turnover: turnover,
+                        description: description
+                    )
+                    
+                    if isParsingUp {
+                        tempUpItems.append(item)
+                    } else {
+                        tempDownItems.append(item)
+                    }
+                }
+            }
+            
+            let finalUp = tempUpItems
+            let finalDown = tempDownItems
+            
+            await MainActor.run {
+                self.volumeUpItems = finalUp
+                self.volumeDownItems = finalDown
+            }
+            
+        } catch {
+            print("DataService: 解析 0.5Y_volume_high 文件时出错: \(error)")
         }
     }
 

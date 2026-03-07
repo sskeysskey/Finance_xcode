@@ -4,67 +4,33 @@ struct EarningHistoryView: View {
     @EnvironmentObject var dataService: DataService
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
-    
+
     private let excludedGroups = ["season", "no_season", "_Tag_Blacklist"]
-    private let lowPriorityGroups = ["OverSell_W", "PE_W", "PE_Deep",
-    "PE_Deeper", "PE_valid", "PE_invalid"]
-    
-    @State private var selectedGroup: String = ""
-    @State private var expandedDates: Set<String> = []
-    @State private var showSubscriptionSheet = false
-    
+    private let lowPriorityGroups = ["PE_W", "OverSell_W", "PE_Deeper", "PE_Deep", "PE_valid", "PE_invalid"]
+
     private var groupNames: [String] {
         let allKeys = dataService.earningHistoryData.keys
         let filtered = allKeys.filter { !excludedGroups.contains($0) }
+        
+        // 1. 普通分组：保持字母排序
         let normalGroups = filtered
             .filter { !lowPriorityGroups.contains($0) }
             .sorted()
+        
+        // 2. 低优先级分组：按照 lowPriorityGroups 定义的顺序排序
         let lowPrioGroups = filtered
             .filter { lowPriorityGroups.contains($0) }
-            .sorted()
+            .sorted { a, b in
+                let indexA = lowPriorityGroups.firstIndex(of: a) ?? Int.max
+                let indexB = lowPriorityGroups.firstIndex(of: b) ?? Int.max
+                return indexA < indexB
+            }
+
         return normalGroups + lowPrioGroups
     }
-    
-    private var currentGroupDates: [String] {
-        guard !selectedGroup.isEmpty,
-              let datesMap = dataService.earningHistoryData[selectedGroup] else { return [] }
-        return datesMap.keys.sorted(by: >)
-    }
-    
-    // 当前分组里最新的那个日期（排序后第一个）
-    private var latestDate: String? {
-        currentGroupDates.first
-    }
-    
+
     var body: some View {
-        VStack(spacing: 0) {
-            if !groupNames.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 15) {
-                        ForEach(groupNames, id: \.self) { group in
-                            Button(action: {
-                                withAnimation {
-                                    selectedGroup = group
-                                    expandedDates.removeAll()
-                                }
-                            }) {
-                                Text(formatGroupName(group))
-                                    .font(.system(size: 15, weight: .medium))
-                                    .padding(.vertical, 8)
-                                    .padding(.horizontal, 16)
-                                    .background(selectedGroup == group ? Color.blue : Color(.systemGray5))
-                                    .foregroundColor(selectedGroup == group ? .white : .primary)
-                                    .cornerRadius(20)
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.vertical, 10)
-                }
-                .background(Color(UIColor.systemBackground))
-                .overlay(Divider(), alignment: .bottom)
-            }
-            
+        Group {
             if groupNames.isEmpty {
                 VStack {
                     Spacer()
@@ -73,60 +39,98 @@ struct EarningHistoryView: View {
                     Spacer()
                 }
             } else {
-                ScrollView {
-                    ScrollViewReader { proxy in
-                        LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
-                            ForEach(currentGroupDates, id: \.self) { dateStr in
-                                if let symbols = dataService.earningHistoryData[selectedGroup]?[dateStr] {
-                                    DateSectionView(
-                                        dateStr: dateStr,
-                                        symbols: symbols,
-                                        isExpanded: expandedDates.contains(dateStr),
-                                        // 只有最新日期才显示 PE，旧日期显示涨跌幅
-                                        isLatestDate: dateStr == latestDate,
-                                        onToggle: {
-                                            withAnimation {
-                                                if expandedDates.contains(dateStr) {
-                                                    expandedDates.remove(dateStr)
-                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                                        withAnimation {
-                                                            proxy.scrollTo(dateStr, anchor: .top)
-                                                        }
-                                                    }
-                                                } else {
-                                                    expandedDates.insert(dateStr)
-                                                }
-                                            }
-                                        }
-                                    )
-                                    // ✅ 核心修复：将 selectedGroup 纳入 id，
-                                    // 切换分组时强制销毁旧视图、重建新实例，
-                                    // 确保 isFetchInitiated 从 false 重新开始。
-                                    .id("\(selectedGroup)_\(dateStr)")
+                List {
+                    ForEach(groupNames, id: \.self) { group in
+                        NavigationLink(
+                            destination: EarningHistoryDetailView(groupName: group)
+                        ) {
+                            HStack {
+                                Text(formatGroupName(group))
+                                    .font(.system(size: 16, weight: .medium))
+                                Spacer()
+                                // 可选：显示该分类下共有多少个日期
+                                if let datesMap = dataService.earningHistoryData[group] {
+                                    Text("\(datesMap.keys.count) 个日期")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
                                 }
                             }
+                            .padding(.vertical, 4)
                         }
-                        .padding(.top, 10)
-                        .padding(.bottom, 20)
                     }
                 }
+                .listStyle(.insetGrouped)
             }
         }
         .navigationTitle("复盘历史")
         .navigationBarTitleDisplayMode(.inline)
-        .background(Color(UIColor.systemGroupedBackground))
-        .onAppear {
-            if !groupNames.isEmpty {
-                if selectedGroup.isEmpty || !groupNames.contains(selectedGroup) {
-                    selectedGroup = groupNames.first ?? ""
+    }
+
+    private func formatGroupName(_ name: String) -> String {
+        name.replacingOccurrences(of: "_", with: " ")
+    }
+}
+
+// MARK: - 分类详情页（时间分组）
+struct EarningHistoryDetailView: View {
+    let groupName: String
+
+    @EnvironmentObject var dataService: DataService
+
+    @State private var expandedDates: Set<String> = []
+
+    private var currentGroupDates: [String] {
+        guard let datesMap = dataService.earningHistoryData[groupName] else { return [] }
+        return datesMap.keys.sorted(by: >)
+    }
+
+    private var latestDate: String? {
+        currentGroupDates.first
+    }
+
+    var body: some View {
+        ScrollView {
+            ScrollViewReader { proxy in
+                LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+                    ForEach(currentGroupDates, id: \.self) { dateStr in
+                        if let symbols = dataService.earningHistoryData[groupName]?[dateStr] {
+                            DateSectionView(
+                                dateStr: dateStr,
+                                symbols: symbols,
+                                isExpanded: expandedDates.contains(dateStr),
+                                isLatestDate: dateStr == latestDate,
+                                onToggle: {
+                                    withAnimation {
+                                        if expandedDates.contains(dateStr) {
+                                            expandedDates.remove(dateStr)
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                                withAnimation {
+                                                    proxy.scrollTo("\(groupName)_\(dateStr)", anchor: .top) // ← 与 .id() 保持一致
+                                                }
+                                            }
+                                        } else {
+                                            expandedDates.insert(dateStr)
+                                        }
+                                    }
+                                }
+                            )
+                            // groupName 已由页面级别保证唯一，id 只需包含 dateStr 即可，
+                            // 但保留拼接格式与原逻辑保持一致
+                            .id("\(groupName)_\(dateStr)")
+                        }
+                    }
                 }
+                .padding(.top, 10)
+                .padding(.bottom, 20)
             }
         }
-        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        .navigationTitle(formatGroupName(groupName))
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(UIColor.systemGroupedBackground))
     }
-    
+
     private func formatGroupName(_ name: String) -> String {
-        return name.replacingOccurrences(of: "_", with: " ")
+        name.replacingOccurrences(of: "_", with: " ")
     }
 }
 

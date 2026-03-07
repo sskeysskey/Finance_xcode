@@ -114,9 +114,7 @@ struct MarketItemRow<T: MarketItem>: View {
         }
     }
 }
-// ==================== 修改结束 ====================
 
-// ==================== 修改开始：重构 MarketListView ====================
 // MARK: - 通用 MarketItem 列表视图
 struct MarketListView<T: MarketItem>: View {
     let title: String
@@ -154,7 +152,6 @@ struct MarketListView<T: MarketItem>: View {
         }
     }
 }
-// ==================== 修改结束 ====================
 
 typealias StockListView = MarketListView<Stock>
 typealias ETFListView = MarketListView<ETF>
@@ -172,7 +169,7 @@ struct TopContentView: View {
     }
 }
 
-// MARK: - 自定义底部标签栏 (核心修改：移除圆角卡片背景，与搜索栏融合)
+// MARK: - 自定义底部标签栏 (重构：合并为 3 个按钮)
 struct CustomTabBar: View {
     @StateObject private var dataService = DataService.shared
     
@@ -182,61 +179,46 @@ struct CustomTabBar: View {
     
     @State private var showSubscriptionSheet = false
     
-    // 1. 定义导航目标枚举，使代码更易读
+    // 导航目标枚举
     enum TabDestination: Identifiable {
-        case gainers
-        case losers
-        case lows
-        case highs
+        case stocks   // 股票 (Top / Loser)
+        case others   // 其他 (High / Low)
+        case volume   // 成交额 (Up / Down)
         
         var id: Self { self }
     }
     
-    // 2. 控制导航跳转的状态
+    // 控制导航跳转的状态
     @State private var activeTab: TabDestination? = nil
     
     var body: some View {
         HStack(spacing: 0) {
-            // 均匀分布的四个按钮
-            tabButton(title: "涨幅榜", icon: "arrow.up.right.circle.fill", color: .red, destination: .gainers)
-            tabButton(title: "跌幅榜", icon: "arrow.down.right.circle.fill", color: .green, destination: .losers)
-            tabButton(title: "非股票新低", icon: "thermometer.snowflake", color: .blue, destination: .lows)
-            tabButton(title: "非股票新高", icon: "flame.fill", color: .orange, destination: .highs)
+            tabButton(title: "股票", icon: "chart.line.uptrend.xyaxis", color: .red, destination: .stocks)
+            tabButton(title: "其他", icon: "square.stack.3d.up.fill", color: .blue, destination: .others)
+            tabButton(title: "成交额", icon: "dollarsign.circle.fill", color: .orange, destination: .volume)
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 16)
-        
-        // 【修改点】：
-        // 1. 移除了 .background(Color(UIColor.secondarySystemGroupedBackground))
-        // 2. 改为 .background(Color(UIColor.systemGroupedBackground)) 或者直接留空（因为父视图已经是这个颜色）
-        // 3. 移除了 .cornerRadius(...)
-        // 4. 移除了 .shadow(...)
         .background(Color(UIColor.systemGroupedBackground)) 
         
-        // 导航逻辑 (保持不变)
+        // 导航逻辑
         .navigationDestination(isPresented: Binding(
-            get: { activeTab == .gainers },
+            get: { activeTab == .stocks },
             set: { if !$0 { activeTab = nil } }
         )) {
-            LazyView(StockListView(title: "Top Gainers", items: dataService.topGainers))
+            LazyView(CombinedStocksView())
         }
         .navigationDestination(isPresented: Binding(
-            get: { activeTab == .losers },
+            get: { activeTab == .others },
             set: { if !$0 { activeTab = nil } }
         )) {
-            LazyView(StockListView(title: "Top Losers", items: dataService.topLosers))
+            LazyView(CombinedOthersView())
         }
         .navigationDestination(isPresented: Binding(
-            get: { activeTab == .lows },
+            get: { activeTab == .volume },
             set: { if !$0 { activeTab = nil } }
         )) {
-            LazyView(HighLowListView(title: "Lows", groups: dataService.lowGroups))
-        }
-        .navigationDestination(isPresented: Binding(
-            get: { activeTab == .highs },
-            set: { if !$0 { activeTab = nil } }
-        )) {
-            LazyView(HighLowListView(title: "Highs", groups: dataService.highGroups))
+            LazyView(VolumeHighView())
         }
         // 订阅弹窗
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
@@ -265,6 +247,189 @@ struct CustomTabBar: View {
     }
 }
 
+// MARK: - 合并视图：股票 (Top / Loser)
+struct CombinedStocksView: View {
+    @State private var selectedTab = 0
+    @StateObject private var dataService = DataService.shared
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("股票", selection: $selectedTab) {
+                Text("涨幅榜").tag(0)
+                Text("跌幅榜").tag(1)
+            }
+            .pickerStyle(SegmentedPickerStyle())
+            .padding()
+            .background(Color(UIColor.systemGroupedBackground))
+            
+            TabView(selection: $selectedTab) {
+                StockListView(title: "", items: dataService.topGainers)
+                    .tag(0)
+                StockListView(title: "", items: dataService.topLosers)
+                    .tag(1)
+            }
+            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+        }
+        .navigationTitle("股票榜单")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - 合并视图：其他 (High / Low)
+struct CombinedOthersView: View {
+    @State private var selectedTab = 0
+    @StateObject private var dataService = DataService.shared
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("其他", selection: $selectedTab) {
+                Text("非股票新高").tag(0)
+                Text("非股票新低").tag(1)
+            }
+            .pickerStyle(SegmentedPickerStyle())
+            .padding()
+            .background(Color(UIColor.systemGroupedBackground))
+            
+            TabView(selection: $selectedTab) {
+                HighLowListView(title: "", groups: dataService.highGroups)
+                    .tag(0)
+                HighLowListView(title: "", groups: dataService.lowGroups)
+                    .tag(1)
+            }
+            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+        }
+        .navigationTitle("其他榜单")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - 新增：成交额视图
+struct VolumeHighView: View {
+    @State private var selectedTab = 0
+    @StateObject private var dataService = DataService.shared
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("成交额", selection: $selectedTab) {
+                Text("Price Up").tag(0)
+                Text("Price Down").tag(1)
+            }
+            .pickerStyle(SegmentedPickerStyle())
+            .padding()
+            .background(Color(UIColor.systemGroupedBackground))
+            
+            TabView(selection: $selectedTab) {
+                VolumeListView(items: dataService.volumeUpItems)
+                    .tag(0)
+                VolumeListView(items: dataService.volumeDownItems)
+                    .tag(1)
+            }
+            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+        }
+        .navigationTitle("成交额榜单")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - 成交额列表视图
+struct VolumeListView: View {
+    let items: [VolumeHighItem]
+    @EnvironmentObject var dataService: DataService
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    
+    @State private var showSearchView = false
+    
+    var body: some View {
+        List(items) { item in
+            VolumeItemRow(item: item)
+        }
+        .listStyle(InsetGroupedListStyle())
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showSearchView = true }) {
+                    Image(systemName: "magnifyingglass")
+                }
+            }
+        }
+        .navigationDestination(isPresented: $showSearchView) {
+            SearchView(isSearchActive: true, dataService: dataService)
+        }
+    }
+}
+
+// MARK: - 成交额单行视图
+struct VolumeItemRow: View {
+    let item: VolumeHighItem
+    @EnvironmentObject var dataService: DataService
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    
+    @State private var isNavigationActive = false
+    @State private var showSubscriptionSheet = false
+    
+    var body: some View {
+        Button(action: {
+            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+                isNavigationActive = true
+            } else {
+                showSubscriptionSheet = true
+            }
+        }) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .bottom) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.symbol)
+                            .font(.headline)
+                            .foregroundColor(.primary)
+
+                        // 分类标签
+                        Text(item.category)
+                            .font(.system(size: 10, weight: .bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.blue.opacity(0.1))
+                            .foregroundColor(.blue)
+                            .cornerRadius(4)
+                    }
+
+                    Spacer()
+                        
+                    Text(item.value)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .background(Color.blue.opacity(0.1))
+                }
+                
+                // 从 Description/Compare 获取 Tags 或直接使用解析到的 description
+                let tags = getTags(for: item.symbol) ?? item.description.components(separatedBy: ",")
+                if !tags.isEmpty && tags[0] != "" {
+                    Text(tags.joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .navigationDestination(isPresented: $isNavigationActive) {
+            ChartView(symbol: item.symbol, groupName: item.category)
+        }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+    }
+    
+    private func getTags(for symbol: String) -> [String]? {
+        let upperSymbol = symbol.uppercased()
+        if let stockTags = dataService.descriptionData?.stocks.first(where: { $0.symbol.uppercased() == upperSymbol })?.tag {
+            return stockTags
+        }
+        if let etfTags = dataService.descriptionData?.etfs.first(where: { $0.symbol.uppercased() == upperSymbol })?.tag {
+            return etfTags
+        }
+        return nil
+    }
+}
+
 // 辅助扩展：部分圆角
 extension View {
     func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
@@ -280,7 +445,6 @@ struct RoundedCorner: Shape {
         return Path(path.cgPath)
     }
 }
-
 
 // MARK: - 懒加载视图包装器
 struct LazyView<Content: View>: View {
