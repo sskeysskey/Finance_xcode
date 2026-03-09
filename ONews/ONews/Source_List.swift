@@ -1216,7 +1216,8 @@ struct SourceIconView: View {
         "前沿技术": "经",
         "语音播报": "Reu",
         "可以听的新闻": "MIT",
-        "麻省理工技术评论": "MIT"
+        "麻省理工技术评论": "MIT",
+        "大喇叭开始广播了": "BBC"
     ]
     
     var body: some View {

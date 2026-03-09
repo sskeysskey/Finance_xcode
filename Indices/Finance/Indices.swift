@@ -246,7 +246,8 @@ struct IndicesContentView: View {
     @State private var navigateToBigOrders = false
     @State private var navigateToOptionsList = false
     
-    private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "ETFs", "Economic_All", "Economics", "Indices"])
+    // 【修改点】：从经济数据面板中彻底移除 "ETFs"
+    private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "Economic_All", "Economics", "Indices"])
     private let weekLowGroupNames = Set(["Basic_Materials", "Communication_Services", "Consumer_Cyclical", "Consumer_Defensive", "Energy", "Financial_Services", "Healthcare", "Industrials", "Real_Estate", "Technology", "Utilities"])
     private let historyBasedGroups: Set<String> = [
         "PE_Volume", "PE_Volume_up", "Short", "Short_W", "PE_Volume_high",
@@ -286,8 +287,19 @@ struct IndicesContentView: View {
                                         CompactSectorCard(sectorName: sector.name, icon: getIcon(for: sector.name), baseColor: .purple)
                                     }
                                 }
+                                // 期权异动
                                 Button { self.navigateToOptionsList = true } label: {
                                     CompactSectorCard(sectorName: "期权异动", icon: "doc.text.magnifyingglass", baseColor: .purple, isSpecial: false, customGradient: [.purple, .blue])
+                                }
+                                // 期权大单 (移动到这里)
+                                Button {
+                                    if usageManager.canProceed(authManager: authManager, action: .viewBigOrders) {
+                                        self.navigateToBigOrders = true
+                                    } else {
+                                        self.showSubscriptionSheet = true
+                                    }
+                                } label: {
+                                    CompactSectorCard(sectorName: "OptionBigOrder", icon: getIcon(for: "OptionBigOrder"), baseColor: .indigo, isSpecial: true, customGradient: [.blue, .purple])
                                 }
                             }
                         }
@@ -303,7 +315,8 @@ struct IndicesContentView: View {
                                 trailingText: dataService.introSymbolTimestamp.map { "Updated：\($0)" }
                             )
                             LazyVGrid(columns: gridLayout, spacing: 10) {
-                                ForEach(dataService.orderedStrategyGroups, id: \.self) { groupName in
+                                // 过滤掉 OptionBigOrder 避免重复显示
+                                ForEach(dataService.orderedStrategyGroups.filter { $0 != "OptionBigOrder" }, id: \.self) { groupName in
                                     view(for: groupName, sectors: sectors, weekLowSectors: weekLowSectors)
                                 }
                             }
@@ -390,16 +403,6 @@ struct IndicesContentView: View {
                 }
             } label: {
                 CompactSectorCard(sectorName: groupName, icon: getIcon(for: groupName), baseColor: .blue, isSpecial: false)
-            }
-        } else if groupName == "OptionBigOrder" {
-            Button {
-                if usageManager.canProceed(authManager: authManager, action: .viewBigOrders) {
-                    self.navigateToBigOrders = true
-                } else {
-                    self.showSubscriptionSheet = true
-                }
-            } label: {
-                CompactSectorCard(sectorName: groupName, icon: getIcon(for: groupName), baseColor: .indigo, isSpecial: true, customGradient: [.blue, .purple])
             }
         } else if (groupName == "PE_Volume" || groupName == "PE_Volume_up" || groupName == "ETF_Volume_high" || groupName == "ETF_Volume_low" || groupName == "PE_Volume_high"),
               let sector = sectors.first(where: { $0.name == groupName }) {
@@ -708,40 +711,22 @@ struct SectorDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                if sector.name == "ETFs" {
-                    EtfSectionHeader(title: "Pinned", icon: "pin.fill", color: .blue)
-                    LazyVStack(spacing: 0) {
-                        ForEach(symbols) { symbol in SymbolItemView(symbol: symbol, sectorName: sector.name) }
-                    }
-                    if !dataService.etfTopGainers.isEmpty {
-                        EtfSectionHeader(title: "Top 10 Gainers", icon: "chart.line.uptrend.xyaxis", color: .red)
-                        LazyVStack(spacing: 0) {
-                            ForEach(dataService.etfTopGainers) { symbol in SymbolItemView(symbol: symbol, sectorName: sector.name) }
-                        }
-                    }
-                    if !dataService.etfTopLosers.isEmpty {
-                        EtfSectionHeader(title: "Bottom 10 Losers", icon: "chart.line.downtrend.xyaxis", color: .green)
-                        LazyVStack(spacing: 0) {
-                            ForEach(dataService.etfTopLosers) { symbol in SymbolItemView(symbol: symbol, sectorName: sector.name) }
-                        }
-                    }
-                } else {
-                    if let subSectors = sector.subSectors, !subSectors.isEmpty {
-                        ForEach(subSectors, id: \.name) { subSector in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(subSector.name)
-                                    .font(.headline).padding(.horizontal).padding(.top, 16).foregroundColor(.secondary)
-                                LazyVStack(spacing: 0) {
-                                    ForEach(loadSymbolsForSubSector(subSector.symbols)) { symbol in
-                                        SymbolItemView(symbol: symbol, sectorName: sector.name)
-                                    }
+                // 【修改点】：移除了 sector.name == "ETFs" 的特殊处理
+                if let subSectors = sector.subSectors, !subSectors.isEmpty {
+                    ForEach(subSectors, id: \.name) { subSector in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(subSector.name)
+                                .font(.headline).padding(.horizontal).padding(.top, 16).foregroundColor(.secondary)
+                            LazyVStack(spacing: 0) {
+                                ForEach(loadSymbolsForSubSector(subSector.symbols)) { symbol in
+                                    SymbolItemView(symbol: symbol, sectorName: sector.name)
                                 }
                             }
                         }
-                    } else {
-                        LazyVStack(spacing: 0) {
-                            ForEach(symbols) { symbol in SymbolItemView(symbol: symbol, sectorName: sector.name) }
-                        }
+                    }
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(symbols) { symbol in SymbolItemView(symbol: symbol, sectorName: sector.name) }
                     }
                 }
             }
@@ -762,10 +747,6 @@ struct SectorDetailView: View {
                 let symbolList = symbols.map { $0.symbol }
                 dataService.fetchEarningTrends(for: symbolList)
                 Task { await dataService.fetchOptionsMetrics(for: symbolList) }
-            }
-            if sector.name == "ETFs" {
-                let extraSymbols = dataService.etfTopGainers.map { $0.symbol } + dataService.etfTopLosers.map { $0.symbol }
-                if !extraSymbols.isEmpty { dataService.fetchEarningTrends(for: extraSymbols) }
             }
         }
         .toolbar {
@@ -805,29 +786,6 @@ struct SectorDetailView: View {
     }
 }
 
-struct EtfSectionHeader: View {
-    let title: String
-    let icon: String
-    let color: Color
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(color.opacity(0.15)).frame(width: 38, height: 38)
-                Image(systemName: icon).font(.system(size: 18, weight: .bold)).foregroundColor(color)
-            }
-            Text(title).font(.title3).fontWeight(.bold).foregroundColor(.primary)
-            Spacer()
-            Capsule()
-                .fill(LinearGradient(colors: [color, color.opacity(0.2)], startPoint: .leading, endPoint: .trailing))
-                .frame(width: 50, height: 4)
-        }
-        .padding(.top, 24)
-        .padding(.bottom, 12)
-        .padding(.horizontal, 4)
-    }
-}
-
 struct SymbolItemView: View {
     let symbol: IndicesSymbol
     let sectorName: String
@@ -846,7 +804,7 @@ struct SymbolItemView: View {
     private static let _datePatternRegex = try? NSRegularExpression(pattern: #"^(\d+)([前后未])"#)
     
     private let economySectors: Set<String> = [
-        "ETFs", "Bonds", "Crypto", "Indices", "Currencies",
+        "Bonds", "Crypto", "Indices", "Currencies",
         "Economics", "Economic_All", "Commodities"
     ]
     

@@ -115,7 +115,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Ctrl + Cmd + 9 : Insert_History_Data
         bind(key: .nine, modifiers: [.control, .command]) {
             self.notify("正在执行 Insert_History_Data.py...")
-            self.runPythonBackground("\(USER_HOME)/Coding/Financial_System/JavaScript/HistoryData/Insert_History_Data.py")
+            self.runPythonBackground("\(USER_HOME)/Coding/Financial_System/Selenium/YF_StockETFCrypto.py empty")
         }
 
         // Ctrl + Alt + 7 : Check_Earning_dup
@@ -541,15 +541,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         bind(key: .nine, modifiers: [.control, .option]) {
             self.notify("正在执行 YF_MarketCapPEShare (Empty/Clear)…")
             let script = "\(USER_HOME)/Coding/Financial_System/Selenium/YF_MarketCapPEShare.py"
-            let cmd = "\(PYTHON_PATH) '\(script)' --mode empty --clear"
+            let cmd = "\(PYTHON_PATH) '\(script)' --mode empty"
             self.runInTerminal(cmd)
         }
         
         // Ctrl + Alt + 8
         bind(key: .eight, modifiers: [.control, .option]) {
-            self.notify("正在执行 YF_PriceVolume.py ...")
-            let script = "\(USER_HOME)/Coding/Financial_System/Selenium/YF_PriceVolume.py"
-            let cmd = "\(PYTHON_PATH) '\(script)' --mode empty"
+            self.notify("正在执行 Check_yesterday.py 并启动 YF_Today.py ...")
+            
+            // 定义两个脚本的路径
+            let checkScript = "/Users/yanzhang/Coding/Financial_System/Query/Check_yesterday.py"
+            let todayScript = "\(USER_HOME)/Coding/Financial_System/Selenium/YF_Today.py"
+            
+            // 修改点：在 checkScript 后面加上 --nopop 参数
+            // 如果你希望在快捷键触发时总是弹出提示，就加上 --nopop
+            let cmd = "\(PYTHON_PATH) '\(checkScript)' --nopop && \(PYTHON_PATH) '\(todayScript)'"
+            
             self.runInTerminal(cmd)
         }
         
@@ -645,7 +652,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Cmd + Alt + 8 : Holiday_Insert (Sequence)
         bind(key: .eight, modifiers: [.command, .option]) {
             self.notify("正在启动 Holiday_Insert 序列...")
-            let cmd = "\(PYTHON_PATH) '\(USER_HOME)/Coding/Financial_System/Selenium/TE_Merged.py' skip && \(PYTHON_PATH) '\(USER_HOME)/Coding/Financial_System/Operations/Insert_Holiday.py'"
+            let cmd = "\(PYTHON_PATH) '\(USER_HOME)/Coding/Financial_System/Selenium/TE_Merged.py' --skipetf && \(PYTHON_PATH) '\(USER_HOME)/Coding/Financial_System/Operations/Insert_Holiday.py'"
             self.runInTerminal(cmd)
         }
         
@@ -653,8 +660,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         bind(key: .eight, modifiers: [.shift, .command]) {
             self.notify("正在启动周末数据处理序列...")
             let s1 = "\(USER_HOME)/Coding/Financial_System/Operations/Insert_Weekend.py"
-            let s2 = "\(USER_HOME)/Coding/Financial_System/Selenium/YF_PriceVolume.py"
-            let cmd = "\(PYTHON_PATH) '\(s1)' && \(PYTHON_PATH) '\(s2)' --mode empty --weekend"
+            let s2 = "\(USER_HOME)/Coding/Financial_System/Selenium/YF_Today.py"
+            let cmd = "\(PYTHON_PATH) '\(s1)' && \(PYTHON_PATH) '\(s2)'"
             self.runInTerminal(cmd)
         }
         

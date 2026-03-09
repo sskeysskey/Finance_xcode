@@ -89,8 +89,7 @@ struct ArticleDetailView: View {
     var onAudioToggle: () -> Void
     
     @State private var isSharePresented = false
-    @State private var showCopyToast = false
-    @State private var toastMessage = ""
+    @State private var cachedAttrParagraphs: [NSAttributedString] = []
     
     // 【新增】控制推广弹窗显示
     @State private var showNewsPromoSheet = false
@@ -202,26 +201,17 @@ struct ArticleDetailView: View {
                     // 【优化】仅当内容准备好后才显示段落，避免布局跳变
                     if isContentReady {
                         ForEach(cachedParagraphs.indices, id: \.self) { pIndex in
-                            Text(cachedParagraphs[pIndex])
-                                .font(.custom("NewYork-Regular", size: 21))
-                                .lineSpacing(15) 
-                                .padding(.horizontal, 18)
-                                .padding(.bottom, 25) 
-                                .id("p-\(article.id)-\(pIndex)")
-                                // 【修改】替换为更轻量、更高性能的快捷修饰符
-                                .onLongPressGesture {
-                                    UIPasteboard.general.string = cachedParagraphs[pIndex]
-                                    self.toastMessage = Localized.paragraphCopied
-                                    withAnimation(.spring()) { self.showCopyToast = true }
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                        withAnimation(.spring()) {
-                                            self.showCopyToast = false
-                                        }
-                                    }
-                                }
+                            // ⭐ 核心替换：用 NativeParagraphView 替代 SwiftUI Text
+                            // - 移除了 .font / .lineSpacing（已在 NSAttributedString 中预设）
+                            // - 移除了 .onLongPressGesture（UITextView 原生支持选择+复制）
+                            if pIndex < cachedAttrParagraphs.count {
+                                NativeParagraphView(attributedText: cachedAttrParagraphs[pIndex])
+                                    .padding(.horizontal, 18)
+                                    .padding(.bottom, 25)
+                                    .id("p-\(article.id)-\(pIndex)")
+                            }
 
-                            
-                            // 图片插入逻辑
+                            // 图片插入逻辑（保持不变）
                             if (pIndex + 1) % cachedInsertionInterval == 0 {
                                 let imageIndexToInsert = (pIndex + 1) / cachedInsertionInterval - 1
                                 if imageIndexToInsert < cachedRemainingImages.count {
@@ -233,7 +223,8 @@ struct ArticleDetailView: View {
                                 }
                             }
                         }
-                        
+
+                        // 尾部多余图片（保持不变）
                         if !cachedDistributeEvenly && cachedRemainingImages.count > cachedParagraphs.count {
                             let extraImages = cachedRemainingImages.dropFirst(cachedParagraphs.count)
                             ForEach(Array(extraImages), id: \.self) { imageName in
@@ -286,27 +277,27 @@ struct ArticleDetailView: View {
                 .padding(.vertical)
             }
             
-            if showCopyToast {
-                VStack {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.white)
-                        Text(toastMessage)
-                            .foregroundColor(.white)
-                            .fontWeight(.semibold)
-                    }
-                    .padding(.vertical, 12)
-                    .padding(.horizontal, 20)
-                    .background(Color.black.opacity(0.75))
-                    .clipShape(Capsule())
-                    .shadow(radius: 10)
+            // if showCopyToast {
+            //     VStack {
+            //         HStack {
+            //             Image(systemName: "checkmark.circle.fill")
+            //                 .foregroundColor(.white)
+            //             Text(toastMessage)
+            //                 .foregroundColor(.white)
+            //                 .fontWeight(.semibold)
+            //         }
+            //         .padding(.vertical, 12)
+            //         .padding(.horizontal, 20)
+            //         .background(Color.black.opacity(0.75))
+            //         .clipShape(Capsule())
+            //         .shadow(radius: 10)
                     
-                    Spacer()
-                }
-                .padding(.top, 5)
-                .transition(.move(edge: .top).combined(with: .opacity))
-                .zIndex(1)
-            }
+            //         Spacer()
+            //     }
+            //     .padding(.top, 5)
+            //     .transition(.move(edge: .top).combined(with: .opacity))
+            //     .zIndex(1)
+            // }
         }
         .onAppear {
             // 每次出现时，重置为中文模式（或者你可以根据需求保留状态）
@@ -450,40 +441,54 @@ struct ArticleDetailView: View {
     private func prepareContent() {
         let currentArticle = self.article
         let currentMode = self.isEnglishMode
-        
-        // 使用 Task.detached 避免阻塞主线程
+
+        // 使用 Task.detached 将所有文本处理彻底移出主线程
         Task.detached(priority: .userInitiated) {
-            // 1. 根据当前模式选择文本源
+            // 1. 选择文本源
             let contentToParse: String
             if currentMode, let contentEng = currentArticle.article_eng, !contentEng.isEmpty {
                 contentToParse = contentEng
             } else {
                 contentToParse = currentArticle.article
             }
-            
-            // 2. 解析段落 (耗时操作)
+
+            // 2. 分段
             let paras = contentToParse
                 .components(separatedBy: .newlines)
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            
-            // 3. 图片逻辑
+
+            // 3. ⭐ 在后台线程预建所有 NSAttributedString（这是核心优化）
+            let font = NativeParagraphView.paragraphFont
+            let style = NativeParagraphView.paragraphStyle
+            let textColor = UIColor.label  // 动态颜色，渲染时会根据 light/dark 自动解析
+
+            let attrParas = paras.map { text in
+                NSAttributedString(
+                    string: text,
+                    attributes: [
+                        .font: font,
+                        .paragraphStyle: style,
+                        .foregroundColor: textColor
+                    ]
+                )
+            }
+
+            // 4. 图片分布逻辑（与原来一样）
             let imgs = Array(currentArticle.images.dropFirst())
             let distribute = !imgs.isEmpty && imgs.count < paras.count
             let interval = distribute ? max(1, paras.count / (imgs.count + 1)) : 1
-            
-            // 4. 回到主线程更新 UI
+
+            // 5. 回到主线程更新 UI
             await MainActor.run {
-                // 再次检查 article ID，防止快速切换时数据错乱
-                if self.article.id == currentArticle.id {
-                    self.cachedParagraphs = paras
-                    self.cachedRemainingImages = imgs
-                    self.cachedDistributeEvenly = distribute
-                    self.cachedInsertionInterval = interval
-                    
-                    // 添加一个小动画让内容出现更自然
-                    withAnimation(.easeIn(duration: 0.2)) {
-                        self.isContentReady = true
-                    }
+                guard self.article.id == currentArticle.id else { return }
+                self.cachedParagraphs = paras
+                self.cachedAttrParagraphs = attrParas   // ⭐ 新增
+                self.cachedRemainingImages = imgs
+                self.cachedDistributeEvenly = distribute
+                self.cachedInsertionInterval = interval
+
+                withAnimation(.easeIn(duration: 0.2)) {
+                    self.isContentReady = true
                 }
             }
         }
@@ -525,6 +530,64 @@ struct ArticleDetailView: View {
         Self.longDateFormatter.dateFormat = Localized.dateFormatFull
         Self.longDateFormatter.locale = Localized.currentLocale
         return Self.longDateFormatter.string(from: date).uppercased()
+    }
+}
+
+// MARK: - 高性能原生段落渲染视图
+struct NativeParagraphView: UIViewRepresentable {
+    let attributedText: NSAttributedString
+
+    // 公开静态资源，供 prepareContent() 在后台线程复用
+    static let paragraphFont: UIFont = {
+        if let font = UIFont(name: "NewYork-Regular", size: 25) {
+            return font
+        }
+        let descriptor = UIFontDescriptor.preferredFontDescriptor(withTextStyle: .body)
+        if let serifDesc = descriptor.withDesign(.serif) {
+            return UIFont(descriptor: serifDesc, size: 25)
+        }
+        return UIFont.systemFont(ofSize: 25)
+    }()
+
+    static let paragraphStyle: NSParagraphStyle = {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = 15
+        return style
+    }()
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.isEditable = false
+        tv.isScrollEnabled = false          // 关键：禁止内部滚动，让高度自适应内容
+        tv.isSelectable = true              // 原生长按选词 → 复制/翻译/朗读，替代旧的 onLongPressGesture
+        tv.textContainerInset = .zero
+        tv.textContainer.lineFragmentPadding = 0
+        tv.backgroundColor = .clear
+        tv.dataDetectorTypes = []
+        // 确保垂直方向高度不被压缩
+        tv.setContentCompressionResistancePriority(.required, for: .vertical)
+        tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return tv
+    }
+
+    func updateUIView(_ tv: UITextView, context: Context) {
+        // 直接赋值预建好的 NSAttributedString，主线程零开销
+        // 仅当内容确实变化时才重新赋值
+        if tv.attributedText != attributedText {
+            tv.attributedText = attributedText
+        }
+    }
+
+    // iOS 16+ 精准高度计算，消除 LazyVStack 布局跳动
+    @available(iOS 16.0, *)
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: UITextView,
+        context: Context
+    ) -> CGSize? {
+        guard let width = proposal.width, width > 0, width < .infinity else { return nil }
+        let size = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: width, height: ceil(size.height))
     }
 }
 

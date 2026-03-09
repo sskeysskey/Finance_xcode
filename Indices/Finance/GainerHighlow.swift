@@ -129,7 +129,6 @@ struct MarketListView<T: MarketItem>: View {
             MarketItemRow(item: item)
                 .environmentObject(dataService)
         }
-        .navigationTitle(title)
         .onAppear {
             // 当列表出现时，为所有项目获取财报趋势数据
             let symbols = items.map { $0.symbol }
@@ -169,7 +168,7 @@ struct TopContentView: View {
     }
 }
 
-// MARK: - 自定义底部标签栏 (重构：合并为 3 个按钮)
+// MARK: - 自定义底部标签栏 (重构：合并为 4 个按钮)
 struct CustomTabBar: View {
     @StateObject private var dataService = DataService.shared
     
@@ -182,8 +181,9 @@ struct CustomTabBar: View {
     // 导航目标枚举
     enum TabDestination: Identifiable {
         case stocks   // 股票 (Top / Loser)
-        case others   // 其他 (High / Low)
+        case etfs     // ETFs (Top / Loser)
         case volume   // 成交额 (Up / Down)
+        case others   // 其他 (High / Low)
         
         var id: Self { self }
     }
@@ -194,8 +194,9 @@ struct CustomTabBar: View {
     var body: some View {
         HStack(spacing: 0) {
             tabButton(title: "股票", icon: "chart.line.uptrend.xyaxis", color: .red, destination: .stocks)
-            tabButton(title: "其他", icon: "square.stack.3d.up.fill", color: .blue, destination: .others)
+            tabButton(title: "ETFs", icon: "square.stack.3d.up.fill", color: .purple, destination: .etfs)
             tabButton(title: "成交额", icon: "dollarsign.circle.fill", color: .orange, destination: .volume)
+            tabButton(title: "其他", icon: "square.stack.3d.up.fill", color: .blue, destination: .others)
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 16)
@@ -207,6 +208,12 @@ struct CustomTabBar: View {
             set: { if !$0 { activeTab = nil } }
         )) {
             LazyView(CombinedStocksView())
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { activeTab == .etfs },
+            set: { if !$0 { activeTab = nil } }
+        )) {
+            LazyView(CombinedETFsView())
         }
         .navigationDestination(isPresented: Binding(
             get: { activeTab == .others },
@@ -275,6 +282,126 @@ struct CombinedStocksView: View {
     }
 }
 
+// MARK: - 新增合并视图：ETFs (Top / Loser)
+struct CombinedETFsView: View {
+    @State private var selectedTab = 0
+    @StateObject private var dataService = DataService.shared
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("ETFs", selection: $selectedTab) {
+                Text("涨幅榜").tag(0)
+                Text("跌幅榜").tag(1)
+            }
+            .pickerStyle(SegmentedPickerStyle())
+            .padding()
+            .background(Color(UIColor.systemGroupedBackground))
+            
+            TabView(selection: $selectedTab) {
+                ETFIndicesListView(title: "", items: dataService.etfTopGainers)
+                    .tag(0)
+                ETFIndicesListView(title: "", items: dataService.etfTopLosers)
+                    .tag(1)
+            }
+            .tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
+        }
+        .navigationTitle("ETFs榜单")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - ETFs 列表视图
+struct ETFIndicesListView: View {
+    let title: String
+    let items: [IndicesSymbol]
+    @StateObject private var dataService = DataService.shared
+    @State private var showSearchView = false
+    
+    var body: some View {
+        List(items) { item in
+            ETFIndicesRow(item: item)
+                .environmentObject(dataService)
+        }
+        .onAppear {
+            let symbols = items.map { $0.symbol }
+            dataService.fetchEarningTrends(for: symbols)
+        }
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showSearchView = true }) {
+                    Image(systemName: "magnifyingglass")
+                }
+            }
+        }
+        .navigationDestination(isPresented: $showSearchView) {
+            SearchView(isSearchActive: true, dataService: dataService)
+        }
+    }
+}
+
+// MARK: - ETFs 单行视图
+struct ETFIndicesRow: View {
+    let item: IndicesSymbol
+    @EnvironmentObject var dataService: DataService
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager
+    
+    @State private var isNavigationActive = false
+    @State private var showSubscriptionSheet = false
+
+    private var earningTrend: EarningTrend {
+        dataService.earningTrends[item.symbol.uppercased()] ?? .insufficientData
+    }
+    
+    var body: some View {
+        Button(action: {
+            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+                isNavigationActive = true
+            } else {
+                showSubscriptionSheet = true
+            }
+        }) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(item.symbol)
+                        .font(.headline)
+                        .foregroundColor(colorForEarningTrend(earningTrend))
+                    
+                    Spacer()
+                    
+                    Text(item.value)
+                        .font(.subheadline)
+                }
+                if let tags = item.tags, !tags.isEmpty {
+                    Text(tags.joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+            }
+            .padding(5)
+        }
+        .navigationDestination(isPresented: $isNavigationActive) {
+            ChartView(symbol: item.symbol, groupName: "ETFs")
+        }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        .onAppear {
+            if earningTrend == .insufficientData {
+                dataService.fetchEarningTrends(for: [item.symbol])
+            }
+        }
+    }
+    
+    private func colorForEarningTrend(_ trend: EarningTrend) -> Color {
+        switch trend {
+        case .positiveAndUp: return .red
+        case .negativeAndUp: return .purple
+        case .positiveAndDown: return .cyan
+        case .negativeAndDown: return .green
+        case .insufficientData: return .primary
+        }
+    }
+}
+
 // MARK: - 合并视图：其他 (High / Low)
 struct CombinedOthersView: View {
     @State private var selectedTab = 0
@@ -283,8 +410,8 @@ struct CombinedOthersView: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker("其他", selection: $selectedTab) {
-                Text("非股票新高").tag(0)
-                Text("非股票新低").tag(1)
+                Text("新高").tag(0)
+                Text("新低").tag(1)
             }
             .pickerStyle(SegmentedPickerStyle())
             .padding()
@@ -497,7 +624,6 @@ struct HighLowListView: View {
             }
         }
         .listStyle(InsetGroupedListStyle())
-        .navigationTitle(title)
         .onAppear(perform: initializeExpandedStates)
         // 新增：在导航栏添加工具栏
         .toolbar {

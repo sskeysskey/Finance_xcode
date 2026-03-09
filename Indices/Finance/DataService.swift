@@ -1216,9 +1216,9 @@ class DataService: ObservableObject {
             guard !validLines.isEmpty else { return }
             
             // 获取 Top 10 (前10行)
-            let top10Lines = validLines.prefix(10)
+            let top10Lines = validLines.prefix(20)
             // 获取 Bottom 10 (后10行，并倒序)
-            let bottom10Lines = validLines.suffix(10).reversed()
+            let bottom10Lines = validLines.suffix(20).reversed()
             
             let topSymbols = top10Lines.compactMap { parseETFLineToSymbol($0) }
             let bottomSymbols = bottom10Lines.compactMap { parseETFLineToSymbol($0) }

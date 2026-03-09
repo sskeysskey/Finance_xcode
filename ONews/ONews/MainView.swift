@@ -356,7 +356,8 @@ class NewsViewModel: ObservableObject {
         "economist", // 经济学人
         "reuters",   // 路透社
         "washpost",  // 华盛顿邮报
-        "mittr",     // 麻省理工
+        "mittr",     // 麻省理工,
+        "bbc",      // 英国广播公司
     ]
 
     @Published var sources: [NewsSource] = []
