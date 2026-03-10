@@ -437,12 +437,12 @@ struct ArticleDetailView: View {
         return displayTopic + "\n\n" + bodyText
     }
     
-    // 【优化 2】将耗时的文本处理移至后台线程
+    // 【优化 2】将耗时的文本处理移至后台线程，富文本构建保留在主线程（适配 Swift 6 并发安全）
     private func prepareContent() {
         let currentArticle = self.article
         let currentMode = self.isEnglishMode
 
-        // 使用 Task.detached 将所有文本处理彻底移出主线程
+        // 使用 Task.detached 将纯文本处理移出主线程
         Task.detached(priority: .userInitiated) {
             // 1. 选择文本源
             let contentToParse: String
@@ -452,37 +452,38 @@ struct ArticleDetailView: View {
                 contentToParse = currentArticle.article
             }
 
-            // 2. 分段
+            // 2. 分段 (后台执行)
             let paras = contentToParse
                 .components(separatedBy: .newlines)
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
-            // 3. ⭐ 在后台线程预建所有 NSAttributedString（这是核心优化）
-            let font = NativeParagraphView.paragraphFont
-            let style = NativeParagraphView.paragraphStyle
-            let textColor = UIColor.label  // 动态颜色，渲染时会根据 light/dark 自动解析
-
-            let attrParas = paras.map { text in
-                NSAttributedString(
-                    string: text,
-                    attributes: [
-                        .font: font,
-                        .paragraphStyle: style,
-                        .foregroundColor: textColor
-                    ]
-                )
-            }
-
-            // 4. 图片分布逻辑（与原来一样）
+            // 3. 图片分布逻辑 (后台执行)
             let imgs = Array(currentArticle.images.dropFirst())
             let distribute = !imgs.isEmpty && imgs.count < paras.count
             let interval = distribute ? max(1, paras.count / (imgs.count + 1)) : 1
 
-            // 5. 回到主线程更新 UI
+            // 4. 回到主线程构建 NSAttributedString 并更新 UI
             await MainActor.run {
                 guard self.article.id == currentArticle.id else { return }
+                
+                // ⭐ 在主线程访问 UIKit 属性并生成 NSAttributedString，解决 Swift 6 报错
+                let font = NativeParagraphView.paragraphFont
+                let style = NativeParagraphView.paragraphStyle
+                let textColor = UIColor.label
+
+                let attrParas = paras.map { text in
+                    NSAttributedString(
+                        string: text,
+                        attributes: [
+                            .font: font,
+                            .paragraphStyle: style,
+                            .foregroundColor: textColor
+                        ]
+                    )
+                }
+
                 self.cachedParagraphs = paras
-                self.cachedAttrParagraphs = attrParas   // ⭐ 新增
+                self.cachedAttrParagraphs = attrParas
                 self.cachedRemainingImages = imgs
                 self.cachedDistributeEvenly = distribute
                 self.cachedInsertionInterval = interval

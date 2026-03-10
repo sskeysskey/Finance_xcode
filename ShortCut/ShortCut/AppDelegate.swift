@@ -115,7 +115,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Ctrl + Cmd + 9 : Insert_History_Data
         bind(key: .nine, modifiers: [.control, .command]) {
             self.notify("正在执行 Insert_History_Data.py...")
-            self.runPythonBackground("\(USER_HOME)/Coding/Financial_System/Selenium/YF_StockETFCrypto.py empty")
+            
+            // 定义脚本路径
+            let script = "\(USER_HOME)/Coding/Financial_System/Selenium/YF_StockETFCrypto.py"
+            
+            // 构建在终端执行的命令 (使用 PYTHON_PATH 确保环境正确)
+            let cmd = "\(PYTHON_PATH) '\(script)'"
+            
+            // 调用在终端运行的方法
+            self.runInTerminal(cmd)
         }
 
         // Ctrl + Alt + 7 : Check_Earning_dup
