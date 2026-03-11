@@ -17,12 +17,11 @@ struct VersionResponse: Codable {
     let strategy_groups: [String]?
     let group_display_names: [String: String]?
     
-    // 【新增】解析新字段
     let Eco_Data: String?
     let Intro_Symbol: String?
-
-    // 【新增】
     let option_cap_limit: Double?
+    
+    let notification: String? // 【新增】通知字段
     
     let files: [FileInfo]
 }
@@ -111,6 +110,10 @@ class UpdateManager: ObservableObject {
     // 【新增】数据库下载进度 (0.0 - 1.0)
     @Published var dbDownloadProgress: Double = 0.0
     @Published var isDownloadingDB: Bool = false
+    // 【新增】当前需要显示的通知
+    @Published var activeNotification: String? = nil
+    // 【新增】记录已关闭通知的 Key
+    private let dismissedNotificationKey = "FinanceDismissedNotificationContent"
     
     // 服务器配置
     private let serverBaseURL = "http://106.15.183.158:5001/api/Finance"
@@ -160,6 +163,31 @@ class UpdateManager: ObservableObject {
         return false
     }
     
+    // 【新增】处理通知的逻辑
+    func updateNotificationStatus(serverMessage: String?) {
+        guard let message = serverMessage, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            self.activeNotification = nil
+            return
+        }
+        
+        let dismissedMessage = UserDefaults.standard.string(forKey: dismissedNotificationKey)
+        
+        if message != dismissedMessage {
+            self.activeNotification = message
+        } else {
+            self.activeNotification = nil
+        }
+    }
+
+    // 【新增】用户点击关闭按钮时调用
+    func dismissNotification() {
+        guard let message = activeNotification else { return }
+        UserDefaults.standard.set(message, forKey: dismissedNotificationKey)
+        withAnimation {
+            self.activeNotification = nil
+        }
+    }
+
     func checkForUpdates(isManual: Bool = false) async -> Bool {
         // 【核心修改】如果是自动检查（启动时）且没有网络，直接返回 false
         // 这样就不会卡在 fetchServerVersion 的超时上
@@ -323,6 +351,9 @@ class UpdateManager: ObservableObject {
             
             // 【新增】在这里插入强制更新检查逻辑
             await MainActor.run {
+                // 【新增】更新通知状态
+                self.updateNotificationStatus(serverMessage: decodedResponse.notification)
+                
                 if let minVersion = decodedResponse.min_app_version,
                    let storeUrl = decodedResponse.store_url {
                     

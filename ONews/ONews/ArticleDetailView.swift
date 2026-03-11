@@ -207,7 +207,7 @@ struct ArticleDetailView: View {
                             if pIndex < cachedAttrParagraphs.count {
                                 NativeParagraphView(attributedText: cachedAttrParagraphs[pIndex])
                                     .padding(.horizontal, 18)
-                                    .padding(.bottom, 25)
+                                    .padding(.bottom, 18)
                                     .id("p-\(article.id)-\(pIndex)")
                             }
 
@@ -552,7 +552,7 @@ struct NativeParagraphView: UIViewRepresentable {
 
     static let paragraphStyle: NSParagraphStyle = {
         let style = NSMutableParagraphStyle()
-        style.lineSpacing = 15
+        style.lineSpacing = 12
         return style
     }()
 

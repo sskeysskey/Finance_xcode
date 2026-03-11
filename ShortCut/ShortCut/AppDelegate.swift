@@ -228,8 +228,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.runPythonBackground("\(USER_HOME)/Coding/Financial_System/Query/Check_Options.py")
         }
 
-        // Ctrl + Alt + E : Editor_Blacklist
-        bind(key: .e, modifiers: [.control, .option]) {
+        // Ctrl + Alt + Q : Editor_Blacklist
+        bind(key: .q, modifiers: [.control, .option]) {
             self.notify("正在执行 Editor_Blacklist...")
             self.runPythonBackground("\(USER_HOME)/Coding/Financial_System/Operations/Editor_Blacklist.py")
         }
@@ -287,8 +287,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
-        // Ctrl + Alt + Q : Insert_PythonFile.scpt -> Editor_Events.py
-        bind(key: .q, modifiers: [.control, .option]) {
+        // Ctrl + Alt + E : Insert_PythonFile.scpt -> Editor_Events.py
+        bind(key: .e, modifiers: [.control, .option]) {
             self.notify("正在执行 Editor_Events 脚本...")
             self.runOsascript(
                 scriptPath: "\(USER_HOME)/Coding/ScriptEditor/Insert_PythonFile.scpt",

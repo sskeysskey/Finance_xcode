@@ -259,6 +259,51 @@ struct StatusView: View {
     }
 }
 
+// MARK: - 【新增】通用的通知条组件
+struct NotificationBannerView: View {
+    let message: String
+    let onClose: () -> Void
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "bell.badge.fill")
+                .foregroundColor(.orange)
+                .font(.system(size: 16))
+                .padding(.top, 3)
+            
+            Text(message)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(3)
+            
+            Spacer()
+            
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .padding(6)
+                    .background(Color.secondary.opacity(0.15))
+                    .clipShape(Circle())
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
+                .shadow(color: Color.black.opacity(0.06), radius: 3, x: 0, y: 2)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.1), lineWidth: 0.5)
+        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+}
+
 // MARK: - 【新增】简单的 Toast 提示组件
 struct ToastView: View {
     let message: String
@@ -604,6 +649,14 @@ struct MainContentView: View {
                     
                     VStack(spacing: 0) {
                         if isDataReady, let _ = dataService.sectorsPanel {
+                            // 【新增】插入通知条
+                            if let message = updateManager.activeNotification {
+                                NotificationBannerView(message: message) {
+                                    updateManager.dismissNotification()
+                                }
+                                .padding(.top, 4) // 稍微加一点顶部间距
+                            }
+                            
                             GeometryReader { geometry in
                                 VStack(spacing: 0) {
                                     // 1. 主要的分组区域

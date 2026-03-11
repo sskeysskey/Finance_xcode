@@ -115,29 +115,43 @@ final class DatabaseManager: @unchecked Sendable {
         let pb: Double?
     }
     
+    // 【修改】PriceData - 移除 id 依赖，改用 date 作为 Identifiable
     struct PriceData: Identifiable, Codable {
-        let id: Int
+        // 【关键修改】使用 date 的 timeIntervalSince1970 作为 id
+        var id: Double { date.timeIntervalSince1970 }
+        
         let date: Date
         let price: Double
         let volume: Int64?
         
-        // 自定义解码以处理日期字符串
+        // 【新增】支持新数据库的 OHLC 字段
+        let open: Double?
+        let high: Double?
+        let low: Double?
+        
         enum CodingKeys: String, CodingKey {
-            case id, date, price, volume
+            case date, price, volume, open, high, low
         }
         
-        init(id: Int, date: Date, price: Double, volume: Int64?) {
-            self.id = id
+        // 【修改】手动初始化器 - 移除 id 参数
+        init(date: Date, price: Double, volume: Int64?, open: Double? = nil, high: Double? = nil, low: Double? = nil) {
             self.date = date
             self.price = price
             self.volume = volume
+            self.open = open
+            self.high = high
+            self.low = low
         }
         
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            id = try container.decode(Int.self, forKey: .id)
             price = try container.decode(Double.self, forKey: .price)
             volume = try container.decodeIfPresent(Int64.self, forKey: .volume)
+            
+            // 【新增】解码 OHLC 字段
+            open = try container.decodeIfPresent(Double.self, forKey: .open)
+            high = try container.decodeIfPresent(Double.self, forKey: .high)
+            low = try container.decodeIfPresent(Double.self, forKey: .low)
             
             let dateString = try container.decode(String.self, forKey: .date)
             let formatter = DateFormatter()
@@ -376,37 +390,95 @@ final class DatabaseManager: @unchecked Sendable {
                 let startStr = formatter.string(from: startDate)
                 let endStr = formatter.string(from: endDate)
                 
-                var query = "SELECT id, date, price, volume FROM \"\(tableName)\" WHERE name = ? AND date BETWEEN ? AND ? ORDER BY date ASC"
+                // 【关键修改】查询不再包含 id，且尝试获取 OHLC 字段
+                let query = """
+                    SELECT date, price, volume, open, high, low 
+                    FROM "\(tableName)" 
+                    WHERE name = ? AND date BETWEEN ? AND ? 
+                    ORDER BY date ASC
+                """
+                
                 var stmt: OpaquePointer?
                 
-                if sqlite3_prepare_v2(self.db, query, -1, &stmt, nil) != SQLITE_OK {
-                    sqlite3_finalize(stmt)
-                    query = "SELECT id, date, price FROM \"\(tableName)\" WHERE name = ? AND date BETWEEN ? AND ? ORDER BY date ASC"
-                    sqlite3_prepare_v2(self.db, query, -1, &stmt, nil)
-                }
-                
-                if stmt != nil {
+                if sqlite3_prepare_v2(self.db, query, -1, &stmt, nil) == SQLITE_OK {
                     sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
                     sqlite3_bind_text(stmt, 2, (startStr as NSString).utf8String, -1, nil)
                     sqlite3_bind_text(stmt, 3, (endStr as NSString).utf8String, -1, nil)
                     
-                    let colCount = sqlite3_column_count(stmt)
-                    
                     while sqlite3_step(stmt) == SQLITE_ROW {
-                        let id = Int(sqlite3_column_int(stmt, 0))
-                        let dateStr = String(cString: sqlite3_column_text(stmt, 1))
-                        let price = sqlite3_column_double(stmt, 2)
-                        var volume: Int64? = nil
+                        let dateStr = String(cString: sqlite3_column_text(stmt, 0))
+                        let price = sqlite3_column_double(stmt, 1)
                         
-                        if colCount > 3 && sqlite3_column_type(stmt, 3) != SQLITE_NULL {
-                            volume = sqlite3_column_int64(stmt, 3)
+                        // 安全读取 volume（可能为 NULL）
+                        var volume: Int64? = nil
+                        if sqlite3_column_type(stmt, 2) != SQLITE_NULL {
+                            volume = sqlite3_column_int64(stmt, 2)
+                        }
+                        
+                        // 【新增】读取 OHLC（可能不存在）
+                        var open: Double? = nil
+                        var high: Double? = nil
+                        var low: Double? = nil
+                        
+                        if sqlite3_column_count(stmt) > 3 {
+                            if sqlite3_column_type(stmt, 3) != SQLITE_NULL {
+                                open = sqlite3_column_double(stmt, 3)
+                            }
+                            if sqlite3_column_type(stmt, 4) != SQLITE_NULL {
+                                high = sqlite3_column_double(stmt, 4)
+                            }
+                            if sqlite3_column_type(stmt, 5) != SQLITE_NULL {
+                                low = sqlite3_column_double(stmt, 5)
+                            }
                         }
                         
                         if let date = formatter.date(from: dateStr) {
-                            result.append(PriceData(id: id, date: date, price: price, volume: volume))
+                            result.append(PriceData(
+                                date: date,
+                                price: price,
+                                volume: volume,
+                                open: open,
+                                high: high,
+                                low: low
+                            ))
+                        }
+                    }
+                } else {
+                    print("DBManager: ⚠️ 表 \(tableName) 可能不存在 OHLC 字段，尝试降级查询...")
+                    
+                    // 【降级方案】如果查询失败，可能是旧表结构，只查 date, price, volume
+                    sqlite3_finalize(stmt)
+                    let fallbackQuery = """
+                        SELECT date, price, volume 
+                        FROM "\(tableName)" 
+                        WHERE name = ? AND date BETWEEN ? AND ? 
+                        ORDER BY date ASC
+                    """
+                    
+                    if sqlite3_prepare_v2(self.db, fallbackQuery, -1, &stmt, nil) == SQLITE_OK {
+                        sqlite3_bind_text(stmt, 1, (symbol as NSString).utf8String, -1, nil)
+                        sqlite3_bind_text(stmt, 2, (startStr as NSString).utf8String, -1, nil)
+                        sqlite3_bind_text(stmt, 3, (endStr as NSString).utf8String, -1, nil)
+                        
+                        while sqlite3_step(stmt) == SQLITE_ROW {
+                            let dateStr = String(cString: sqlite3_column_text(stmt, 0))
+                            let price = sqlite3_column_double(stmt, 1)
+                            var volume: Int64? = nil
+                            if sqlite3_column_type(stmt, 2) != SQLITE_NULL {
+                                volume = sqlite3_column_int64(stmt, 2)
+                            }
+                            
+                            if let date = formatter.date(from: dateStr) {
+                                result.append(PriceData(
+                                    date: date,
+                                    price: price,
+                                    volume: volume
+                                ))
+                            }
                         }
                     }
                 }
+                
                 sqlite3_finalize(stmt)
                 continuation.resume(returning: result)
             }
