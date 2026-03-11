@@ -96,6 +96,12 @@ struct UserProfileView: View {
     // 【新增】控制退出登录确认框的状态
     @State private var showLogoutConfirmation = false
     
+    // 【新增】删除账号相关状态
+    @State private var showDeleteAccountConfirmation = false
+    @State private var isDeletingAccount = false
+    @State private var deleteErrorMessage = ""
+    @State private var showDeleteError = false
+    
     // 【新增】离线下载相关状态
     @State private var showCellularAlert = false
     @State private var isBulkDownloading = false
@@ -109,7 +115,7 @@ struct UserProfileView: View {
         ZStack { // 使用 ZStack 以便显示遮罩
             NavigationView {
                 List {
-                    // 1. 用户信息部分 (保持不变)
+                    // 1. 用户信息部分
                     Section {
                         HStack {
                             Image(systemName: "person.circle.fill")
@@ -147,7 +153,28 @@ struct UserProfileView: View {
                         .padding(.vertical, 10)
                     }
                     
-                    // 【新增】功能部分：离线下载
+                    // 【新增】解决审核员找不到购买入口的问题：常驻订阅入口
+                    if !authManager.isSubscribed {
+                        Section {
+                            Button {
+                                authManager.showSubscriptionSheet = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "crown.fill")
+                                        .foregroundColor(.orange)
+                                    Text(isGlobalEnglishMode ? "Upgrade to Premium" : "升级专业版")
+                                        .foregroundColor(.primary)
+                                        .fontWeight(.medium)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                }
+                            }
+                        }
+                    }
+                    
+                    // 功能部分：离线下载
                     Section(header: Text(isGlobalEnglishMode ? "Features" : "功能")) {
                         Button {
                             handleOfflineDownloadTap()
@@ -166,7 +193,7 @@ struct UserProfileView: View {
                         }
                     }
                     
-                    // 2. 支持与反馈部分 (保持不变)
+                    // 支持与反馈部分
                     Section(header: Text(Localized.feedback)) {
                         Button {
                             let email = "728308386@qq.com"
@@ -201,15 +228,26 @@ struct UserProfileView: View {
                         }
                     }
                     
-                    // 3. 退出登录部分 (保持不变)
-                    Section {
-                        if authManager.isLoggedIn {
+                    // 退出与删除账号部分
+                    if authManager.isLoggedIn {
+                        Section {
+                            // 退出登录
                             Button(role: .destructive) {
                                 showLogoutConfirmation = true
                             } label: {
                                 HStack {
                                     Image(systemName: "rectangle.portrait.and.arrow.right")
                                     Text(Localized.logout)
+                                }
+                            }
+                            
+                            // 【新增】解决 Guideline 5.1.1(v)：删除账号按钮
+                            Button(role: .destructive) {
+                                showDeleteAccountConfirmation = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "trash.fill")
+                                    Text(isGlobalEnglishMode ? "Delete Account" : "删除账号")
                                 }
                             }
                         }
@@ -222,6 +260,7 @@ struct UserProfileView: View {
                         Button(Localized.close) { dismiss() }
                     }
                 }
+                // 退出登录弹窗
                 .alert(isGlobalEnglishMode ? "Sign Out" : "确认退出登录", isPresented: $showLogoutConfirmation) {
                     Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
                     Button(isGlobalEnglishMode ? "Sign Out" : "退出登录", role: .destructive) {
@@ -230,10 +269,27 @@ struct UserProfileView: View {
                     }
                 } message: {
                     Text(isGlobalEnglishMode ? 
-                         "After signing out, you will no longer be able to access premium content. You can restore access by signing back in with the same Apple ID." : 
-                         "退出登录后，您将无法查看受限内容。重新登录同一 Apple 账号即可恢复权限。")
+                         "After signing out, you will no longer be able to access premium content." : 
+                         "退出登录后，您将无法查看受限内容。")
                 }
-                // 【新增】蜂窝网络警告弹窗
+                // 【新增】删除账号确认弹窗
+                .alert(isGlobalEnglishMode ? "Delete Account" : "确认删除账号", isPresented: $showDeleteAccountConfirmation) {
+                    Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
+                    Button(isGlobalEnglishMode ? "Delete" : "永久删除", role: .destructive) {
+                        performAccountDeletion()
+                    }
+                } message: {
+                    Text(isGlobalEnglishMode ? 
+                         "This action cannot be undone. All your data and subscription status will be permanently removed from our servers." : 
+                         "此操作不可逆。您的所有数据和订阅状态将从我们的服务器上永久删除。")
+                }
+                // 删除失败弹窗
+                .alert(isGlobalEnglishMode ? "Error" : "删除失败", isPresented: $showDeleteError) {
+                    Button("OK", role: .cancel) { }
+                } message: {
+                    Text(deleteErrorMessage)
+                }
+                // 蜂窝网络警告弹窗
                 .alert(isGlobalEnglishMode ? "Cellular Network Detected" : "正在使用蜂窝网络", isPresented: $showCellularAlert) {
                     Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
                     Button(isGlobalEnglishMode ? "Download Anyway" : "继续下载") {
@@ -252,7 +308,16 @@ struct UserProfileView: View {
                 }
             }
             
-            // 【新增】下载进度遮罩
+            // 删除账号的 Loading 遮罩
+            if isDeletingAccount {
+                Color.black.opacity(0.6).ignoresSafeArea()
+                VStack(spacing: 20) {
+                    ProgressView().scaleEffect(1.5).tint(.white)
+                    Text(isGlobalEnglishMode ? "Deleting Account..." : "正在删除账号...").foregroundColor(.white)
+                }
+            }
+            
+            // 下载进度遮罩... (保持原有逻辑)
             if isBulkDownloading {
                 Color.black.opacity(0.6).ignoresSafeArea()
                 VStack(spacing: 20) {
@@ -304,16 +369,28 @@ struct UserProfileView: View {
         }
     }
     
-    // 【新增】处理点击逻辑
-    private func handleOfflineDownloadTap() {
-        // 1. 检查是否连接了 Wi-Fi
-        if resourceManager.isWifiConnected {
-            // 是 Wi-Fi，直接开始
-            startBulkDownload()
-        } else {
-            // 不是 Wi-Fi，弹窗警告
-            showCellularAlert = true
+    // 【新增】执行删除账号
+    private func performAccountDeletion() {
+        isDeletingAccount = true
+        Task {
+            do {
+                try await authManager.deleteAccount()
+                await MainActor.run {
+                    isDeletingAccount = false
+                    dismiss() // 删除成功后关闭个人中心
+                }
+            } catch {
+                await MainActor.run {
+                    isDeletingAccount = false
+                    deleteErrorMessage = error.localizedDescription
+                    showDeleteError = true
+                }
+            }
         }
+    }
+    
+    private func handleOfflineDownloadTap() {
+        if resourceManager.isWifiConnected { startBulkDownload() } else { showCellularAlert = true }
     }
     
     // 【新增】执行下载
