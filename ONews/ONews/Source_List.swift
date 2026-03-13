@@ -529,8 +529,6 @@ struct SourceListView: View {
     @State private var showAddSourceSheet = false
     // 【新增】控制登录弹窗的显示
     @State private var showLoginSheet = false
-    // 【新增】
-    @State private var showSubscriptionSheet = false
     
     // 【新增】控制未登录用户的底部菜单
     @State private var showGuestMenu = false
@@ -721,8 +719,8 @@ struct SourceListView: View {
             .environmentObject(resourceManager)
         }
         .sheet(isPresented: $showLoginSheet) { LoginView() }
-        // 【新增】
-        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        // ⚠️ 修复 Bug：直接绑定 authManager.showSubscriptionSheet，确保状态双向同步
+        .sheet(isPresented: $authManager.showSubscriptionSheet) { SubscriptionView() }
         // 【新增】个人中心 Sheet
         .sheet(isPresented: $showProfileSheet) { UserProfileView() }
         // 【新增】未登录底部菜单 Sheet (仿 Finance)
@@ -798,9 +796,7 @@ struct SourceListView: View {
             .presentationDetents([.fraction(0.30)]) // 只占据底部 30%
             .presentationDragIndicator(.hidden)
         }
-        .onChange(of: authManager.showSubscriptionSheet) { _, newValue in
-            self.showSubscriptionSheet = newValue
-        }
+        // ⚠️ 修复 Bug：移除了冗余的 .onChange(of: authManager.showSubscriptionSheet)
         .onChange(of: authManager.isLoggedIn) { _, newValue in
             // 当登录状态变为 true (表示登录成功) 并且登录弹窗正显示时
             if newValue == true && self.showLoginSheet {
@@ -1132,9 +1128,9 @@ struct SourceListView: View {
         let article = item.article
         let sourceName = item.sourceName
         
-        // 【修改后】简化逻辑：只要被锁定，就显示 SubscriptionView
+        // ⚠️ 修复 Bug：将 showSubscriptionSheet 替换为 authManager.showSubscriptionSheet
         if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
-            showSubscriptionSheet = true
+            authManager.showSubscriptionSheet = true
             return
         }
         

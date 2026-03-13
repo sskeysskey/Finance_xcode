@@ -330,13 +330,20 @@ struct UserProfileView: View {
     @State private var showDownloadAlert = false
     @Environment(\.dismiss) var dismiss
     
-    // 【新增】Toast 状态
+    // Toast 状态
     @State private var toastMessage: String? = nil
+    
+    // 【新增】删除账号相关状态
+    @State private var showDeleteAccountConfirmation = false
+    @State private var isDeletingAccount = false
+    @State private var deleteErrorMessage = ""
+    @State private var showDeleteError = false
     
     var body: some View {
         NavigationView {
             ZStack {
                 List {
+                    // 1. 用户信息
                     Section {
                         HStack {
                             Image(systemName: "person.circle.fill")
@@ -374,6 +381,28 @@ struct UserProfileView: View {
                         .padding(.vertical, 10)
                     }
 
+                    // 【新增】常驻订阅入口：解决审核员找不到购买入口的问题
+                    if !authManager.isSubscribed {
+                        Section {
+                            Button {
+                                authManager.showSubscriptionSheet = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "crown.fill")
+                                        .foregroundColor(.orange)
+                                    Text("升级专业版")
+                                        .foregroundColor(.primary)
+                                        .fontWeight(.medium)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. 离线数据
                     Section(header: Text("离线数据")) {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
@@ -439,6 +468,7 @@ struct UserProfileView: View {
                         .padding(.vertical, 4)
                     }
                     
+                    // 3. 支持与反馈
                     Section(header: Text("支持与反馈")) {
                         Button {
                             let email = "728308386@qq.com"
@@ -473,6 +503,7 @@ struct UserProfileView: View {
                         }
                     }
                     
+                    // 4. 账户操作
                     Section {
                         if authManager.isLoggedIn {
                             Button(role: .destructive) {
@@ -482,6 +513,16 @@ struct UserProfileView: View {
                                 HStack {
                                     Image(systemName: "rectangle.portrait.and.arrow.right")
                                     Text("退出登录")
+                                }
+                            }
+                            
+                            // 【新增】删除账号按钮
+                            Button(role: .destructive) {
+                                showDeleteAccountConfirmation = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "trash.fill")
+                                    Text("删除账号")
                                 }
                             }
                         } else {
@@ -498,8 +539,23 @@ struct UserProfileView: View {
                         Button("关闭") { dismiss() }
                     }
                 }
+                // 【新增】删除账号确认弹窗
+                .alert("确认删除账号", isPresented: $showDeleteAccountConfirmation) {
+                    Button("取消", role: .cancel) { }
+                    Button("永久删除", role: .destructive) {
+                        performAccountDeletion()
+                    }
+                } message: {
+                    Text("此操作不可逆。您的所有数据和订阅状态将从我们的服务器上永久删除。")
+                }
+                // 【新增】删除失败弹窗
+                .alert("删除失败", isPresented: $showDeleteError) {
+                    Button("确定", role: .cancel) { }
+                } message: {
+                    Text(deleteErrorMessage)
+                }
                 
-                // 【新增】Toast 覆盖层
+                // Toast 覆盖层
                 if let message = toastMessage {
                     VStack {
                         Spacer()
@@ -507,6 +563,16 @@ struct UserProfileView: View {
                             .transition(.opacity)
                     }
                     .zIndex(100)
+                }
+                
+                // 【新增】删除账号的 Loading 遮罩
+                if isDeletingAccount {
+                    Color.black.opacity(0.6).ignoresSafeArea()
+                    VStack(spacing: 20) {
+                        ProgressView().scaleEffect(1.5).tint(.white)
+                        Text("正在删除账号...").foregroundColor(.white)
+                    }
+                    .zIndex(200)
                 }
             }
             .alert(isPresented: $showDownloadAlert) {
@@ -522,6 +588,26 @@ struct UserProfileView: View {
                     }),
                     secondaryButton: .cancel(Text("取消"))
                 )
+            }
+        }
+    }
+    
+    // 【新增】执行删除账号的逻辑
+    private func performAccountDeletion() {
+        isDeletingAccount = true
+        Task {
+            do {
+                try await authManager.deleteAccount()
+                await MainActor.run {
+                    isDeletingAccount = false
+                    dismiss() // 删除成功后关闭个人中心
+                }
+            } catch {
+                await MainActor.run {
+                    isDeletingAccount = false
+                    deleteErrorMessage = error.localizedDescription
+                    showDeleteError = true
+                }
             }
         }
     }
@@ -612,7 +698,9 @@ struct MainContentView: View {
     @EnvironmentObject var usageManager: UsageManager
     
     @State private var showLoginSheet = false
-    @State private var showSubscriptionSheet = false
+    // 【修改点】删除本地的 showSubscriptionSheet 变量，直接绑定 authManager 的状态
+    // @State private var showSubscriptionSheet = false
+    
     // 【新增】控制个人中心显示
     @State private var showProfileSheet = false
 
@@ -856,7 +944,10 @@ struct MainContentView: View {
         }
         // 【新增】全局弹窗处理
         .sheet(isPresented: $showLoginSheet) { LoginView() }
-        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        
+        // 【修改点】直接绑定到 authManager.showSubscriptionSheet
+        .sheet(isPresented: $authManager.showSubscriptionSheet) { SubscriptionView() }
+        
         .sheet(isPresented: $showProfileSheet) { UserProfileView() } // 个人中心
 
         // 【新增】未登录用户的底部菜单
@@ -948,7 +1039,8 @@ struct MainContentView: View {
             .presentationDetents([.large]) 
         }
 
-        .onChange(of: authManager.showSubscriptionSheet) { _, val in showSubscriptionSheet = val }
+        // 【修改点】删除原有的 .onChange 监听，因为我们已经直接绑定了状态
+        // .onChange(of: authManager.showSubscriptionSheet) { _, val in showSubscriptionSheet = val }
     }
 
     // 统一的数据加载逻辑

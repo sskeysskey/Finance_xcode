@@ -179,6 +179,31 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
 
+    // 【新增】删除账号功能 (从 ONews 移植)
+    func deleteAccount() async throws {
+        guard let userId = userIdentifier else { throw URLError(.userAuthenticationRequired) }
+        
+        let url = URL(string: "\(serverBaseURL)/user/delete")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body = ["user_id": userId]
+        request.httpBody = try JSONEncoder().encode(body)
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        
+        // 服务器删除成功后，在本地执行退出登录并清理数据
+        await MainActor.run {
+            self.signOut()
+            print("AuthManager: 账号已彻底删除并登出。")
+        }
+    }
+
     // MARK: - StoreKit 2 Payment Logic (核心修改)
 
     // 【新增】监听交易流
