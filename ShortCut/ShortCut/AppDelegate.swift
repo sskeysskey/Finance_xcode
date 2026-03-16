@@ -352,12 +352,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.runOsascript(scriptPath: "\(USER_HOME)/Coding/ScriptEditor/Googlemap_input.scpt")
         }
         
-        // Shift + Cmd + 0
-        bind(key: .zero, modifiers: [.shift, .command]) {
-            self.notify("正在执行 Trans_Title.scpt...")
-            self.runOsascript(scriptPath: "\(USER_HOME)/Coding/ScriptEditor/API_Trans_Title.scpt")
-        }
-        
         // Ctrl + Cmd + S
         bind(key: .s, modifiers: [.control, .command]) {
             self.notify("正在执行 Show_Description.scpt...")
@@ -657,7 +651,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.runInTerminal(cmd)
         }
         
-        // Cmd + Alt + 8 : Holiday_Insert (Sequence)
+        // Alt + Cmd + 8 : Holiday_Insert (Sequence)
         bind(key: .eight, modifiers: [.command, .option]) {
             self.notify("正在启动 Holiday_Insert 序列...")
             let cmd = "\(PYTHON_PATH) '\(USER_HOME)/Coding/Financial_System/Selenium/TE_Merged.py' --skipetf && \(PYTHON_PATH) '\(USER_HOME)/Coding/Financial_System/Operations/Insert_Holiday.py'"
