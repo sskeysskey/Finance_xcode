@@ -237,7 +237,7 @@ struct SubscriptionView: View {
         .sheet(isPresented: $showLoginSheet) {
             LoginView()
         }
-        .onChange(of: authManager.isLoggedIn) { _, newValue in
+        .onChange(of: authManager.isLoggedIn) { newValue in
             // 当监测到登录状态变为 true
             if newValue == true {
                 // 1. 关闭登录弹窗

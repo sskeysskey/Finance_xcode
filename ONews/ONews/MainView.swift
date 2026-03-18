@@ -117,11 +117,12 @@ struct NewsReaderAppApp: App {
                 // 【新增】注入 AuthManager
                 .environmentObject(appDelegate.authManager)
         }
-        .onChange(of: scenePhase) { oldPhase, newPhase in
+        .onChange(of: scenePhase) { newPhase in
             // 获取 ViewModel 和 AuthManager 的引用
             let newsViewModel = appDelegate.newsViewModel
             let authManager = appDelegate.authManager
             
+            // 注意：这里我们不再使用 oldPhase，直接根据 newPhase 判断逻辑
             if newPhase == .active {
                 print("App is active. Syncing status...")
                 
@@ -129,14 +130,13 @@ struct NewsReaderAppApp: App {
                 newsViewModel.syncReadStatusFromPersistence()
                 
                 // 【核心新增】调用 AuthManager 处理订阅状态同步
-                // 这会触发本地 StoreKit 检查并同步给 Python 服务器
                 authManager.handleAppDidBecomeActive()
                 
             } else if newPhase == .background {
                 print("App entered background. Committing pending reads silently.")
                 newsViewModel.commitPendingReadsSilently()
                 
-                // 👇【核心修改：新增这段代码】主动释放图片内存缓存
+                // 👇 主动释放图片内存缓存
                 Task { @MainActor in
                     ImageLoader.clearCache()
                     print("App entered background. Image cache cleared to save memory.")

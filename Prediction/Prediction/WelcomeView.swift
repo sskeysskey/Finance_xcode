@@ -194,7 +194,7 @@ struct WelcomeView: View {
                 }
             }
         }
-        .onChange(of: scenePhase) { _, new in
+        .onChange(of: scenePhase) { new in
             if new == .active && !hasAttemptedSync {
                 hasAttemptedSync = true
                 Task { try? await syncManager.checkAndSync() }

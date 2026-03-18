@@ -304,13 +304,13 @@ struct ArticleDetailView: View {
             // isEnglishMode = false 
             prepareContent()
         }
-        .onChange(of: article) { _, _ in
+        .onChange(of: article) { _ in
             // 文章切换时，先标记未就绪，避免显示旧内容
             isContentReady = false
             prepareContent()
         }
         // 【新增 4】监听语言模式切换，重新计算段落布局
-        .onChange(of: isEnglishMode) { _, _ in
+        .onChange(of: isEnglishMode) { _ in
             prepareContent()
         }
         // --- 核心修改区域：Toolbar ---

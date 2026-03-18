@@ -797,14 +797,11 @@ struct SourceListView: View {
             .presentationDragIndicator(.hidden)
         }
         // ⚠️ 修复 Bug：移除了冗余的 .onChange(of: authManager.showSubscriptionSheet)
-        .onChange(of: authManager.isLoggedIn) { _, newValue in
-            // 当登录状态变为 true (表示登录成功) 并且登录弹窗正显示时
+        .onChange(of: authManager.isLoggedIn, perform: { newValue in
             if newValue == true && self.showLoginSheet {
-                // 自动关闭登录弹窗
                 self.showLoginSheet = false
-                print("登录成功，自动关闭 LoginView。")
             }
-        }
+        })
         .overlay(
             // 【修改】将两个遮罩层组合在一起，避免互相覆盖
             ZStack {

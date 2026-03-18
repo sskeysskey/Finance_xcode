@@ -476,10 +476,15 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
     
+    // MARK: - ASAuthorization Delegate
+    // MARK: - ASAuthorization Delegate
     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        return UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.windows.first { $0.isKeyWindow } ?? ASPresentationAnchor()
+        guard let windowScene = UIApplication.shared.connectedScenes
+            .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+            let window = windowScene.windows.first(where: { $0.isKeyWindow }) ?? windowScene.windows.first else {
+            fatalError("Unable to find a valid window for presentation")
+        }
+        return window
     }
     
     private func sendTokenToServer(token: String, userId: String) async throws {
@@ -677,7 +682,7 @@ struct LoginView: View {
             }
         }
         // 移除 .preferredColorScheme(.dark) 以允许系统切换
-        .onChange(of: authManager.isLoggedIn) { _, newValue in
+        .onChange(of: authManager.isLoggedIn) { newValue in
             if newValue {
                 dismiss()
             }

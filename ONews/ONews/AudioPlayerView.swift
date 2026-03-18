@@ -1471,7 +1471,7 @@ struct AudioPlayerView: View {
         )
         .offset(y: -18)
         .padding(.horizontal, 12)
-        .onChange(of: playerManager.progress) { _, newValue in
+        .onChange(of: playerManager.progress) { newValue in
             if !isEditingSlider { self.sliderValue = newValue }
         }
         .safeAreaInset(edge: .bottom) {

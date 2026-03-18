@@ -256,7 +256,7 @@ struct SubscriptionView: View {
         }
         // ================== 【新增修复代码开始】 ==================
         // 监听登录状态，登录成功后自动关闭当前视图弹出的 LoginView
-        .onChange(of: authManager.isLoggedIn) { _, newValue in
+        .onChange(of: authManager.isLoggedIn) { newValue in
             // 只有当登录成功(true) 且 登录窗正在显示时才处理
             if newValue == true && showLoginSheet {
                 showLoginSheet = false
@@ -278,16 +278,14 @@ struct SubscriptionView: View {
                         performRestore()
                         
                     case .none:
-                        // 2. 如果没有挂起操作，再检查是否已经自动识别了订阅（之前的逻辑）
-                        // 比如用户在别的设备买了，刚登录同步下来了
+                        // 2. 如果没有挂起操作，再检查是否已经自动识别了订阅
                         if authManager.isSubscribed {
                             print("登录成功且识别到订阅，自动关闭订阅页面。")
                             dismiss()
                         }
                     }
                     
-                    // 执行完后，重置状态（注意：redeem 是弹窗，不要立即重置，等弹窗关闭或提交时重置，
-                    // 但这里重置为 none 也没事，因为 showRedeemAlert 已经设为 true 了）
+                    // 执行完后，重置状态
                     if pendingAction != .redeem {
                         pendingAction = .none
                     }

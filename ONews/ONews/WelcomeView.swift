@@ -280,13 +280,13 @@ struct WelcomeView: View {
         } message: { 
             Text(Localized.upToDateMessage) 
         }
-        .onChange(of: scenePhase) { oldPhase, newPhase in
+        .onChange(of: scenePhase) { newPhase in
             if newPhase == .active && !hasAttemptedInitialSync {
                 hasAttemptedInitialSync = true
                 Task { await syncInitialResources(isManual: false) }
             }
         }
-        .onChange(of: resourceManager.showAlreadyUpToDateAlert) { _, newValue in
+        .onChange(of: resourceManager.showAlreadyUpToDateAlert) { newValue in
             if newValue { self.showAlreadyUpToDateAlert = true; resourceManager.showAlreadyUpToDateAlert = false }
         }
     }

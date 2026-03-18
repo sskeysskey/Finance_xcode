@@ -533,7 +533,7 @@ struct ArticleListView: View {
                         .pickerStyle(.segmented)
                         .padding([.horizontal, .bottom])
                         // 【修改】当筛选模式改变时，强制重新执行自动展开逻辑（无视 hasPerformedAutoExpansion）
-                        .onChange(of: filterMode) { _, _ in
+                        .onChange(of: filterMode) { _ in
                             autoExpandGroups()
                         }
                     }
@@ -678,15 +678,12 @@ struct ArticleListView: View {
                 .presentationDetents([.fraction(0.30)])
                 .presentationDragIndicator(.hidden)
             }
-            .onChange(of: authManager.showSubscriptionSheet) { _, newValue in
+            .onChange(of: authManager.showSubscriptionSheet) { newValue in
                 self.showSubscriptionSheet = newValue
             }
-            .onChange(of: authManager.isLoggedIn) { _, newValue in
-                // 当登录状态变为 true (表示登录成功) 并且登录弹窗正显示时
+            .onChange(of: authManager.isLoggedIn) { newValue in
                 if newValue == true && self.showLoginSheet {
-                    // 自动关闭登录弹窗
                     self.showLoginSheet = false
-                    print("登录成功，自动关闭 LoginView。")
                 }
             }
         }
@@ -958,7 +955,7 @@ struct AllArticlesListView: View {
                     .pickerStyle(.segmented)
                     .padding([.horizontal, .bottom])
                     // 【修改】当筛选模式改变时，强制重新执行自动展开逻辑（无视 hasPerformedAutoExpansion）
-                    .onChange(of: filterMode) { _, _ in
+                    .onChange(of: filterMode) { _ in
                         autoExpandGroups()
                     }
                 }
@@ -1096,15 +1093,12 @@ struct AllArticlesListView: View {
             .presentationDetents([.fraction(0.30)])
             .presentationDragIndicator(.hidden)
         }
-        .onChange(of: authManager.showSubscriptionSheet) { _, newValue in
+        .onChange(of: authManager.showSubscriptionSheet) { newValue in
             self.showSubscriptionSheet = newValue
         }
-        .onChange(of: authManager.isLoggedIn) { _, newValue in
-            // 当登录状态变为 true (表示登录成功) 并且登录弹窗正显示时
+        .onChange(of: authManager.isLoggedIn) { newValue in
             if newValue == true && self.showLoginSheet {
-                // 自动关闭登录弹窗
                 self.showLoginSheet = false
-                print("登录成功，自动关闭 LoginView。")
             }
         }
     }

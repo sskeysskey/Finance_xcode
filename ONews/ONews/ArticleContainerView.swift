@@ -164,7 +164,8 @@ struct ArticleContainerView: View {
             _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
             viewModel.commitPendingReads()
         }
-        .onChange(of: currentArticle) { _, newArticle in
+        // --- 修改这里 ---
+        .onChange(of: currentArticle) { newArticle in
             updateUnreadCounts()
             Task {
                 await preDownloadNextArticleImages()

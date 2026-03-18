@@ -138,13 +138,13 @@ struct MainContainerView: View {
             .sheet(isPresented: $authManager.showSubscriptionSheet) {
                 SubscriptionView()
             }
-            .onChange(of: scenePhase) { _, new in
+            .onChange(of: scenePhase) { new in
                 if new == .active && !hasAttemptedSync {
                     hasAttemptedSync = true
                     Task { try? await syncManager.checkAndSync() }
                 }
             }
-            .onChange(of: authManager.isLoggedIn) { _, newVal in
+            .onChange(of: authManager.isLoggedIn) { newVal in
                 if newVal { showLoginSheet = false }
             }
             .alert("同步失败", isPresented: $showSyncError) {
