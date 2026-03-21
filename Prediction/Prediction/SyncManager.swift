@@ -16,9 +16,13 @@ class SyncManager: ObservableObject {
     @Published var activeNotification: String? = nil
     @Published var showAlreadyUpToDateAlert = false
     
-    // 本地加载的数据
+    // 本地加载的数据（主文件，按 volume 排序）
     @Published var polymarketItems: [PredictionItem] = []
     @Published var kalshiItems: [PredictionItem] = []
+    
+    // 【新增】Trend 文件数据（按趋势排序，含 new / volume_trend 字段）
+    @Published var polymarketTrendItems: [PredictionItem] = []
+    @Published var kalshiTrendItems: [PredictionItem] = []
     
     private let serverBaseURL = "http://106.15.183.158:5001/api/Prediction"
     private let dismissedNotificationKey = "Pred_dismissedNotification"
@@ -50,7 +54,8 @@ class SyncManager: ObservableObject {
                 
                 // 【新增】如果网络刚刚恢复（比如用户刚点了“允许连网”），且本地毫无数据，则自动触发下载
                 if isNowAvailable, let self = self {
-                    if self.polymarketItems.isEmpty && self.kalshiItems.isEmpty {
+                    if self.polymarketItems.isEmpty && self.kalshiItems.isEmpty
+                        && self.polymarketTrendItems.isEmpty && self.kalshiTrendItems.isEmpty {
                         Task {
                             try? await self.checkAndSync()
                         }
@@ -69,8 +74,10 @@ class SyncManager: ObservableObject {
         // 扫描 Documents 目录中的 polymarket 和 kalshi JSON
         let docDir = documentsDirectory
         
-        // Polymarket
-        if let polyFile = findLatestFile(prefix: "polymarket_", in: docDir),
+        // === 主文件 (排除 trend 文件) ===
+        
+        // Polymarket 主文件
+        if let polyFile = findLatestFile(prefix: "polymarket_", in: docDir, excluding: "_trend_"),
            let data = try? Data(contentsOf: polyFile) {
             self.polymarketItems = PredictionParser.parse(jsonData: data, source: .polymarket)
         } else {
@@ -78,21 +85,46 @@ class SyncManager: ObservableObject {
             self.polymarketItems = []
         }
         
-        // Kalshi
-        if let kalshiFile = findLatestFile(prefix: "kalshi_", in: docDir),
+        // Kalshi 主文件
+        if let kalshiFile = findLatestFile(prefix: "kalshi_", in: docDir, excluding: "_trend_"),
            let data = try? Data(contentsOf: kalshiFile) {
             self.kalshiItems = PredictionParser.parse(jsonData: data, source: .kalshi)
         } else {
             self.kalshiItems = []
         }
+        
+        // === 【新增】Trend 文件 ===
+        
+        // Polymarket Trend（可能不存在，兼容处理）
+        if let polyTrendFile = findLatestFile(prefix: "polymarket_trend_", in: docDir),
+           let data = try? Data(contentsOf: polyTrendFile) {
+            self.polymarketTrendItems = PredictionParser.parse(jsonData: data, source: .polymarket)
+        } else {
+            self.polymarketTrendItems = []
+        }
+        
+        // Kalshi Trend
+        if let kalshiTrendFile = findLatestFile(prefix: "kalshi_trend_", in: docDir),
+           let data = try? Data(contentsOf: kalshiTrendFile) {
+            self.kalshiTrendItems = PredictionParser.parse(jsonData: data, source: .kalshi)
+        } else {
+            self.kalshiTrendItems = []
+        }
     }
     
-    private func findLatestFile(prefix: String, in directory: URL) -> URL? {
+    // 【修改】支持排除特定子串的文件
+    private func findLatestFile(prefix: String, in directory: URL, excluding: String? = nil) -> URL? {
         guard let files = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
             return nil
         }
         return files
-            .filter { $0.lastPathComponent.hasPrefix(prefix) && $0.pathExtension == "json" }
+            .filter { url in
+                let name = url.lastPathComponent
+                guard name.hasPrefix(prefix) && url.pathExtension == "json" else { return false }
+                // 如果指定了排除关键词，过滤掉包含该关键词的文件
+                if let exclude = excluding, name.contains(exclude) { return false }
+                return true
+            }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
             .first
     }

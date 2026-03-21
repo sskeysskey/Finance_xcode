@@ -37,6 +37,8 @@ struct MainContainerView: View {
     
     // ✅ 改动1：默认选中 kalshi（当前稳定的数据源）
     @State private var selectedSource: PredictionSource = .kalshi
+    // 【新增】排序模式，默认 Trend
+    @State private var sortMode: ListSortMode = .trend
     @State private var showProfileSheet = false
     @State private var showPreferenceSheet = false
     @State private var showSearchSheet = false
@@ -48,26 +50,58 @@ struct MainContainerView: View {
     
     @Environment(\.scenePhase) private var scenePhase
     
-    // ✅ 改动2：动态计算当前有数据的来源列表
+    // 动态计算当前有数据的来源列表（同时考虑主文件和 trend 文件）
     private var availableSources: [PredictionSource] {
         var sources: [PredictionSource] = []
-        if !syncManager.polymarketItems.isEmpty { sources.append(.polymarket) }
-        if !syncManager.kalshiItems.isEmpty { sources.append(.kalshi) }
+        if !syncManager.polymarketItems.isEmpty || !syncManager.polymarketTrendItems.isEmpty {
+            sources.append(.polymarket)
+        }
+        if !syncManager.kalshiItems.isEmpty || !syncManager.kalshiTrendItems.isEmpty {
+            sources.append(.kalshi)
+        }
         return sources
     }
     
+    // 【修改】根据 sortMode 决定数据源
     private var filteredItems: [PredictionItem] {
-        let items = selectedSource == .polymarket
-            ? syncManager.polymarketItems
-            : syncManager.kalshiItems
+        let baseItems: [PredictionItem]
         
-        if prefManager.selectedSubtypes.isEmpty { return items }
-        return items.filter { prefManager.selectedSubtypes.contains($0.subtype) }
+        switch sortMode {
+        case .highestVolume:
+            // 直接使用主文件（已按 volume 排序）
+            baseItems = selectedSource == .polymarket
+                ? syncManager.polymarketItems
+                : syncManager.kalshiItems
+            
+        case .trend:
+            // 使用 trend 文件；如果 trend 文件不存在则回退到主文件
+            let trendItems = selectedSource == .polymarket
+                ? syncManager.polymarketTrendItems
+                : syncManager.kalshiTrendItems
+            if trendItems.isEmpty {
+                baseItems = selectedSource == .polymarket
+                    ? syncManager.polymarketItems
+                    : syncManager.kalshiItems
+            } else {
+                baseItems = trendItems
+            }
+            
+        case .new:
+            // 从 trend 文件中筛选 isNew == true 的项目
+            let trendItems = selectedSource == .polymarket
+                ? syncManager.polymarketTrendItems
+                : syncManager.kalshiTrendItems
+            baseItems = trendItems.filter { $0.isNew }
+        }
+        
+        if prefManager.selectedSubtypes.isEmpty { return baseItems }
+        return baseItems.filter { prefManager.selectedSubtypes.contains($0.subtype) }
     }
     
-    // ✅ 改动3：判断当前是否完全没有任何数据
+    // 判断是否完全没有任何数据
     private var hasNoDataAtAll: Bool {
         syncManager.polymarketItems.isEmpty && syncManager.kalshiItems.isEmpty
+        && syncManager.polymarketTrendItems.isEmpty && syncManager.kalshiTrendItems.isEmpty
     }
     
     var body: some View {
@@ -76,7 +110,7 @@ struct MainContainerView: View {
                 Color.appBg.ignoresSafeArea()
                 
                 VStack(spacing: 0) {
-                    // ✅ 改动4：仅当有多个来源时显示 Tab 栏
+                    // 仅当有多个来源时显示 Tab 栏
                     if availableSources.count > 1 {
                         sourceTabBar
                     }
@@ -84,17 +118,8 @@ struct MainContainerView: View {
                     // 卡片列表
                     ScrollView {
                         LazyVStack(spacing: 14) {
-                            // 更新时间
-                            if !syncManager.serverUpdateTime.isEmpty {
-                                HStack {
-                                    Text("更新: \(syncManager.serverUpdateTime)")
-                                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 16)
-                                .padding(.top, 4)
-                            }
+                            // 【修改】更新时间 + 排序下拉框 同一行
+                            infoBar
                             
                             // 通知条
                             if let note = syncManager.activeNotification {
@@ -175,6 +200,7 @@ struct MainContainerView: View {
                 }
             }
             .sheet(isPresented: $showSearchSheet) {
+                // 搜索依然使用主文件（数据最全）
                 PredictionSearchView(
                     items: syncManager.polymarketItems + syncManager.kalshiItems,
                     isSubscribed: authManager.isSubscribed,
@@ -193,15 +219,60 @@ struct MainContainerView: View {
             .onChange(of: authManager.isLoggedIn) { newVal in
                 if newVal { showLoginSheet = false }
             }
-            // ✅ 改动5：监听数据变化，自动调整选中的来源
+            // 监听数据变化，自动调整选中的来源
             .onAppear { adjustSelectedSource() }
             .onChange(of: syncManager.polymarketItems.count) { _ in adjustSelectedSource() }
             .onChange(of: syncManager.kalshiItems.count) { _ in adjustSelectedSource() }
+            .onChange(of: syncManager.polymarketTrendItems.count) { _ in adjustSelectedSource() }
+            .onChange(of: syncManager.kalshiTrendItems.count) { _ in adjustSelectedSource() }
             .alert("同步失败", isPresented: $showSyncError) {
                 Button("确定", role: .cancel) {}
             } message: {
                 Text(syncErrorMsg)
             }
+        }
+    }
+    
+    // MARK: - 【新增】Info Bar（更新时间 + 排序下拉框）
+    private var infoBar: some View {
+        HStack {
+            if !syncManager.serverUpdateTime.isEmpty {
+                Text("更新: \(syncManager.serverUpdateTime)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            sortModeMenu
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+    }
+    
+    // MARK: - 【新增】排序模式下拉菜单
+    private var sortModeMenu: some View {
+        Menu {
+            Picker("排序", selection: $sortMode) {
+                ForEach(ListSortMode.allCases) { mode in
+                    Label(mode.displayName, systemImage: mode.icon)
+                        .tag(mode)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: sortMode.icon)
+                    .font(.system(size: 10))
+                Text(sortMode.displayName)
+                    .font(.system(size: 11, weight: .semibold))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8))
+            }
+            .foregroundColor(.blue)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Color.blue.opacity(0.12))
+            .cornerRadius(8)
         }
     }
     
@@ -244,6 +315,16 @@ struct MainContainerView: View {
                 Text("暂无数据")
                     .foregroundColor(.secondary)
                 Text("请点击右上角刷新按钮同步最新数据")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary.opacity(0.7))
+                    .multilineTextAlignment(.center)
+            } else if sortMode == .new {
+                // New 模式下没有新项目
+                Image(systemName: "sparkles")
+                    .font(.system(size: 50)).foregroundColor(.secondary.opacity(0.3))
+                Text("暂无新增预测项")
+                    .foregroundColor(.secondary)
+                Text("当前没有标记为「New」的预测项目")
                     .font(.subheadline)
                     .foregroundColor(.secondary.opacity(0.7))
                     .multilineTextAlignment(.center)

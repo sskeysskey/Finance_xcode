@@ -30,6 +30,9 @@ struct PredictionItem: Identifiable {
     let simpleValue: String?   // 用于无option的简单项 (如 "4%")
     let options: [PredictionOption]
     let source: PredictionSource
+    // 【新增】trend 文件专用字段
+    let isNew: Bool            // 对应 JSON 中 "new": 1/0
+    let volumeTrend: String?   // 对应 JSON 中 "volume_trend"
     
     var isSimple: Bool { simpleValue != nil && options.isEmpty }
     var isHidden: Bool { hide == "1" }
@@ -85,6 +88,31 @@ enum PredictionSource: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+// 【新增】排序模式枚举
+enum ListSortMode: String, CaseIterable, Identifiable {
+    case trend
+    case new
+    case highestVolume
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .trend: return "Trend"
+        case .new: return "New"
+        case .highestVolume: return "Top Vol"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .trend: return "chart.line.uptrend.xyaxis"
+        case .new: return "sparkles"
+        case .highestVolume: return "chart.bar.fill"
+        }
+    }
+}
+
 // MARK: - JSON 解析（扁平结构 → 结构化）
 class PredictionParser {
     static func parse(jsonData: Data, source: PredictionSource) -> [PredictionItem] {
@@ -101,6 +129,26 @@ class PredictionParser {
             let endDate = dict["enddate"] as? String
             let hide = dict["hide"] as? String ?? "0"
             let simpleValue = dict["value"] as? String
+            
+            // 【新增】解析 new 字段 (0 或 1)
+            let isNew: Bool
+            if let newInt = dict["new"] as? Int {
+                isNew = newInt == 1
+            } else if let newBool = dict["new"] as? Bool {
+                isNew = newBool
+            } else {
+                isNew = false
+            }
+            
+            // 【新增】解析 volume_trend (可能是 Int、Double 或 String)
+            var volumeTrendStr: String? = nil
+            if let vt = dict["volume_trend"] as? Int {
+                volumeTrendStr = String(vt)
+            } else if let vt = dict["volume_trend"] as? Double {
+                volumeTrendStr = String(Int(vt))
+            } else if let vt = dict["volume_trend"] as? String {
+                volumeTrendStr = vt
+            }
             
             // 解析选项
             var options: [PredictionOption] = []
@@ -130,7 +178,9 @@ class PredictionParser {
                 hide: hide,
                 simpleValue: simpleValue,
                 options: options,
-                source: source
+                source: source,
+                isNew: isNew,
+                volumeTrend: volumeTrendStr
             )
         }
     }
