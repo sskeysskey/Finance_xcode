@@ -8,7 +8,7 @@ struct PredictionCardView: View {
     @State private var showDetail = false
     
     private var showBlur: Bool { item.isHidden && !isSubscribed }
-    private var canExpand: Bool { item.displayOptions.count > 2 }
+    private var canExpand: Bool { !item.displayOptions.isEmpty }
     
     var body: some View {
         Button {

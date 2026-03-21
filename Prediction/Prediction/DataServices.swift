@@ -1,5 +1,14 @@
 import Foundation
 
+// MARK: - String 扩展：空字符串保护
+extension String {
+    /// 如果 trim 后为空则返回 nil，否则返回 trim 后的值
+    var nonEmptyTrimmed: String? {
+        let trimmed = self.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 // MARK: - 单个选项
 struct PredictionOption: Identifiable, Hashable {
     let id = UUID()
@@ -30,7 +39,7 @@ struct PredictionItem: Identifiable {
     let simpleValue: String?   // 用于无option的简单项 (如 "4%")
     let options: [PredictionOption]
     let source: PredictionSource
-    // 【新增】trend 文件专用字段
+    // trend 文件专用字段
     let isNew: Bool            // 对应 JSON 中 "new": 1/0
     let volumeTrend: String?   // 对应 JSON 中 "volume_trend"
     
@@ -88,7 +97,7 @@ enum PredictionSource: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-// 【新增】排序模式枚举
+// 排序模式枚举
 enum ListSortMode: String, CaseIterable, Identifiable {
     case trend
     case new
@@ -117,20 +126,34 @@ enum ListSortMode: String, CaseIterable, Identifiable {
 class PredictionParser {
     static func parse(jsonData: Data, source: PredictionSource) -> [PredictionItem] {
         guard let rawArray = try? JSONSerialization.jsonObject(with: jsonData) as? [[String: Any]] else {
+            print("⚠️ [\(source.rawValue)] JSON 解析失败：无法转为 [[String: Any]]")
             return []
         }
         
         return rawArray.compactMap { dict -> PredictionItem? in
-            guard let name = dict["name"] as? String else { return nil }
+            guard let name = dict["name"] as? String, !name.isEmpty else { return nil }
             
-            let type = dict["type"] as? String ?? "General"
-            let subtype = dict["subtype"] as? String ?? "Other"
-            let volume = dict["volume"] as? String ?? "0"
-            let endDate = dict["enddate"] as? String
-            let hide = dict["hide"] as? String ?? "0"
-            let simpleValue = dict["value"] as? String
+            // ✅ 修复：使用 nonEmptyTrimmed 保护，空字符串也走默认值
+            let type = (dict["type"] as? String)?.nonEmptyTrimmed ?? "General"
+            let subtype = (dict["subtype"] as? String)?.nonEmptyTrimmed ?? "Other"
+            let volume = (dict["volume"] as? String)?.nonEmptyTrimmed ?? "0"
+            let endDate = (dict["enddate"] as? String)?.nonEmptyTrimmed
+            let hide = (dict["hide"] as? String)?.nonEmptyTrimmed ?? "0"
+            let simpleValue = (dict["value"] as? String)?.nonEmptyTrimmed
             
-            // 【新增】解析 new 字段 (0 或 1)
+            // 🔍 调试日志：如果原始值与解析后不一致，打印警告
+            #if DEBUG
+            let rawType = dict["type"]
+            let rawSubtype = dict["subtype"]
+            if rawType == nil || (rawType as? String)?.nonEmptyTrimmed == nil {
+                print("⚠️ [\(source.rawValue)] \"\(name)\" → type 缺失或为空，已回退为 \"\(type)\"  (原始值: \(String(describing: rawType)))")
+            }
+            if rawSubtype == nil || (rawSubtype as? String)?.nonEmptyTrimmed == nil {
+                print("⚠️ [\(source.rawValue)] \"\(name)\" → subtype 缺失或为空，已回退为 \"\(subtype)\"  (原始值: \(String(describing: rawSubtype)))")
+            }
+            #endif
+            
+            // 解析 new 字段 (0 或 1)
             let isNew: Bool
             if let newInt = dict["new"] as? Int {
                 isNew = newInt == 1
@@ -140,7 +163,7 @@ class PredictionParser {
                 isNew = false
             }
             
-            // 【新增】解析 volume_trend (可能是 Int、Double 或 String)
+            // 解析 volume_trend (可能是 Int、Double 或 String)
             var volumeTrendStr: String? = nil
             if let vt = dict["volume_trend"] as? Int {
                 volumeTrendStr = String(vt)
