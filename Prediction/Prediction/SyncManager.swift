@@ -73,12 +73,17 @@ class SyncManager: ObservableObject {
         if let polyFile = findLatestFile(prefix: "polymarket_", in: docDir),
            let data = try? Data(contentsOf: polyFile) {
             self.polymarketItems = PredictionParser.parse(jsonData: data, source: .polymarket)
+        } else {
+            // ✅ 改动：如果找不到文件，确保清空旧数据（防止残留）
+            self.polymarketItems = []
         }
         
         // Kalshi
         if let kalshiFile = findLatestFile(prefix: "kalshi_", in: docDir),
            let data = try? Data(contentsOf: kalshiFile) {
             self.kalshiItems = PredictionParser.parse(jsonData: data, source: .kalshi)
+        } else {
+            self.kalshiItems = []
         }
     }
     
@@ -133,6 +138,10 @@ class SyncManager: ObservableObject {
             }
             
             if tasksToDownload.isEmpty {
+                // ✅ 即使没有新文件要下载，也重新加载一次本地数据
+                // （cleanOldFiles 可能删除了不再有效的旧 polymarket 文件）
+                loadLocalData()
+                
                 if isManual {
                     showAlreadyUpToDateAlert = true
                     isSyncing = false
@@ -304,4 +313,22 @@ struct ForceUpdateView: View {
             }
         }
     }
+}
+
+// MARK: - 服务器版本信息
+struct PredictionServerVersion: Codable {
+    let version: String
+    let min_app_version: String?
+    let store_url: String?
+    let notification: String?
+    let update_time: String?
+    let server_date: String?
+    let welcome_topics: [String]?
+    let files: [PredictionFileInfo]
+}
+
+struct PredictionFileInfo: Codable {
+    let name: String
+    let type: String
+    let md5: String?
 }

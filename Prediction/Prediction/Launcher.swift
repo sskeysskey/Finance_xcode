@@ -1,11 +1,42 @@
 import SwiftUI
 
+@main
+struct PredictionApp: App {
+    @StateObject private var syncManager = SyncManager()
+    @StateObject private var authManager = AuthManager()
+    @StateObject private var prefManager = PreferenceManager()
+    
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    
+    var body: some Scene {
+        WindowGroup {
+            Group {
+                if syncManager.showForceUpdate {
+                    ForceUpdateView(storeURL: syncManager.appStoreURL)
+                } else if !hasCompletedOnboarding {
+                    WelcomeView(hasCompletedOnboarding: $hasCompletedOnboarding)
+                } else {
+                    MainContainerView()
+                }
+            }
+            .environmentObject(syncManager)
+            .environmentObject(authManager)
+            .environmentObject(prefManager)
+            .preferredColorScheme(.dark)
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                authManager.handleAppDidBecomeActive()
+            }
+        }
+    }
+}
+
 struct MainContainerView: View {
     @EnvironmentObject var syncManager: SyncManager
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var prefManager: PreferenceManager
     
-    @State private var selectedSource: PredictionSource = .polymarket
+    // ✅ 改动1：默认选中 kalshi（当前稳定的数据源）
+    @State private var selectedSource: PredictionSource = .kalshi
     @State private var showProfileSheet = false
     @State private var showPreferenceSheet = false
     @State private var showSearchSheet = false
@@ -17,6 +48,14 @@ struct MainContainerView: View {
     
     @Environment(\.scenePhase) private var scenePhase
     
+    // ✅ 改动2：动态计算当前有数据的来源列表
+    private var availableSources: [PredictionSource] {
+        var sources: [PredictionSource] = []
+        if !syncManager.polymarketItems.isEmpty { sources.append(.polymarket) }
+        if !syncManager.kalshiItems.isEmpty { sources.append(.kalshi) }
+        return sources
+    }
+    
     private var filteredItems: [PredictionItem] {
         let items = selectedSource == .polymarket
             ? syncManager.polymarketItems
@@ -26,14 +65,21 @@ struct MainContainerView: View {
         return items.filter { prefManager.selectedSubtypes.contains($0.subtype) }
     }
     
+    // ✅ 改动3：判断当前是否完全没有任何数据
+    private var hasNoDataAtAll: Bool {
+        syncManager.polymarketItems.isEmpty && syncManager.kalshiItems.isEmpty
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.appBg.ignoresSafeArea()
                 
                 VStack(spacing: 0) {
-                    // Tab 切换条
-                    sourceTabBar
+                    // ✅ 改动4：仅当有多个来源时显示 Tab 栏
+                    if availableSources.count > 1 {
+                        sourceTabBar
+                    }
                     
                     // 卡片列表
                     ScrollView {
@@ -147,6 +193,10 @@ struct MainContainerView: View {
             .onChange(of: authManager.isLoggedIn) { newVal in
                 if newVal { showLoginSheet = false }
             }
+            // ✅ 改动5：监听数据变化，自动调整选中的来源
+            .onAppear { adjustSelectedSource() }
+            .onChange(of: syncManager.polymarketItems.count) { _ in adjustSelectedSource() }
+            .onChange(of: syncManager.kalshiItems.count) { _ in adjustSelectedSource() }
             .alert("同步失败", isPresented: $showSyncError) {
                 Button("确定", role: .cancel) {}
             } message: {
@@ -156,9 +206,10 @@ struct MainContainerView: View {
     }
     
     // MARK: - Tab Bar
+    // ✅ 改动6：遍历 availableSources 而非 PredictionSource.allCases
     private var sourceTabBar: some View {
         HStack(spacing: 0) {
-            ForEach(PredictionSource.allCases) { source in
+            ForEach(availableSources) { source in
                 Button {
                     withAnimation(.spring(response: 0.3)) {
                         selectedSource = source
@@ -183,14 +234,28 @@ struct MainContainerView: View {
     }
     
     // MARK: - 空状态
+    // ✅ 改动7：区分"完全无数据"和"偏好过滤导致为空"两种情况
     private var emptyStateView: some View {
         VStack(spacing: 16) {
-            Image(systemName: "chart.bar.doc.horizontal")
-                .font(.system(size: 50)).foregroundColor(.secondary.opacity(0.3))
-            Text("暂无匹配的预测项")
-                .foregroundColor(.secondary)
-            Button("调整偏好") { showPreferenceSheet = true }
-                .font(.subheadline).foregroundColor(.blue)
+            if hasNoDataAtAll {
+                // 完全没有数据（可能是首次启动、网络问题等）
+                Image(systemName: "icloud.and.arrow.down")
+                    .font(.system(size: 50)).foregroundColor(.secondary.opacity(0.3))
+                Text("暂无数据")
+                    .foregroundColor(.secondary)
+                Text("请点击右上角刷新按钮同步最新数据")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary.opacity(0.7))
+                    .multilineTextAlignment(.center)
+            } else {
+                // 有数据但被偏好筛选过滤掉了
+                Image(systemName: "chart.bar.doc.horizontal")
+                    .font(.system(size: 50)).foregroundColor(.secondary.opacity(0.3))
+                Text("暂无匹配的预测项")
+                    .foregroundColor(.secondary)
+                Button("调整偏好") { showPreferenceSheet = true }
+                    .font(.subheadline).foregroundColor(.blue)
+            }
         }
         .padding(.top, 80)
     }
@@ -235,6 +300,14 @@ struct MainContainerView: View {
             authManager.showSubscriptionSheet = true
         } else {
             showLoginSheet = true
+        }
+    }
+    
+    // ✅ 改动8：自动调整选中来源——如果当前选中的来源没有数据，切换到有数据的来源
+    private func adjustSelectedSource() {
+        guard !availableSources.isEmpty else { return }
+        if !availableSources.contains(selectedSource) {
+            selectedSource = availableSources.first!
         }
     }
 }

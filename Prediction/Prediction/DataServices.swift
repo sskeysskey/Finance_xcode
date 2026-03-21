@@ -87,7 +87,6 @@ enum PredictionSource: String, CaseIterable, Identifiable {
 
 // MARK: - JSON 解析（扁平结构 → 结构化）
 class PredictionParser {
-    
     static func parse(jsonData: Data, source: PredictionSource) -> [PredictionItem] {
         guard let rawArray = try? JSONSerialization.jsonObject(with: jsonData) as? [[String: Any]] else {
             return []
@@ -135,22 +134,4 @@ class PredictionParser {
             )
         }
     }
-}
-
-// MARK: - 服务器版本信息
-struct PredictionServerVersion: Codable {
-    let version: String
-    let min_app_version: String?
-    let store_url: String?
-    let notification: String?
-    let update_time: String?
-    let server_date: String?
-    let welcome_topics: [String]?
-    let files: [PredictionFileInfo]
-}
-
-struct PredictionFileInfo: Codable {
-    let name: String
-    let type: String
-    let md5: String?
 }

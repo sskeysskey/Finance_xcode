@@ -1444,6 +1444,7 @@ struct AudioPlayerView: View {
         .padding(EdgeInsets(top: 28, leading: 16, bottom: 10, trailing: 16))
         .background(.black.opacity(0.8))
         .cornerRadius(18)
+        // 1. 将最小化按钮（minus）移到右上角：alignment 改为 .topTrailing
         .overlay(
             Button(action: { toggleCollapse?() }) {
                 Image(systemName: "minus")
@@ -1454,8 +1455,9 @@ struct AudioPlayerView: View {
                     .accessibilityLabel(Localized.minimizePlayer)
             }
             .padding(6),
-            alignment: .topLeading
+            alignment: .topTrailing
         )
+        // 2. 将关闭按钮（xmark）移到左上角：alignment 改为 .topLeading
         .overlay(
             Button(action: { playerManager.stop() }) {
                 Image(systemName: "xmark")
@@ -1467,7 +1469,7 @@ struct AudioPlayerView: View {
             }
             .padding(6)
             .accessibilityLabel(Localized.close),
-            alignment: .topTrailing
+            alignment: .topLeading
         )
         .offset(y: -18)
         .padding(.horizontal, 12)
