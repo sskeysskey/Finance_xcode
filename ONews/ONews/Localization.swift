@@ -75,7 +75,7 @@ struct Localized {
     static var appName: String { tr("「国外消息」", "ONews") }
     static var appSlogan: String { tr("可以听的双语海外资讯", "Bilingual global news you can listen to") }
     static var welcomeInstruction: String { tr("点击右下角按钮\n定制您的专属新闻源", "Tap the button below\nto customize your news feed") }
-    static var upToDateMessage: String { tr("网络连接正常，请点击右下角“+”按钮来选择你喜欢的新闻源。", "Connection normal. Tap the '+' button to select your news sources.") }
+    static var upToDateMessage: String { tr("请点击右下角“+”按钮来选择你喜欢的新闻源。", "Connection is OK. Tap the '+' button to select your news sources.") }
 
     // MARK: - 主页 / 列表页
     static var mySubscriptions: String { tr("我的订阅", "My Subscriptions") }
@@ -187,7 +187,7 @@ struct Localized {
     static var syncStarting: String { tr("启动中...", "Starting...") }
     static var fetchingManifest: String { tr("正在获取新闻列表...", "Fetching news list...") }
     static var cleaningOldResources: String { tr("正在清理旧资源...", "Cleaning old resources...") }
-    static var downloadingData: String { tr("正在加载数据...", "Loading data...") }
+    static var downloadingData: String { tr("正在加载数据...", "Loading Data and Files...") }
     static var downloadingFiles: String { tr("正在下载文件...", "Downloading files...") }
     static var checkingUpdates: String { tr("正在检查更新...", "Checking for updates...") }
     static var upToDate: String { tr("当前已是最新", "Already up to date") }

@@ -371,6 +371,9 @@ struct ArticleListView: View {
     // 【新增】引入全局语言状态
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
+    // 【新增】获取全局导航路径
+    @Environment(\.appNavPath) var appNavPath
+    
     @State private var filterMode: ArticleFilterMode = .unread
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
@@ -380,9 +383,9 @@ struct ArticleListView: View {
     @State private var isDownloadingImages = false
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
-    @State private var selectedArticle: Article?
-    @State private var isNavigationActive = false
-    // 【新增】控制登录弹窗
+    
+    // 【修改】移除 selectedArticle 和 isNavigationActive
+    
     @State private var showLoginSheet = false
     // 【新增】控制订阅弹窗
     @State private var showSubscriptionSheet = false
@@ -540,20 +543,7 @@ struct ArticleListView: View {
                 }
                 .background(Color.viewBackground.ignoresSafeArea())
             }
-            .navigationDestination(isPresented: $isNavigationActive) {
-                if let article = selectedArticle {
-                    ArticleContainerView(
-                        article: article,
-                        sourceName: sourceName,
-                        context: .fromSource(sourceName),
-                        viewModel: viewModel,
-                        resourceManager: resourceManager,
-                        autoPlayOnAppear: false // 【修改】适配新参数
-                    )
-                }
-            }
-            // 【修改点】原代码是 sourceName.replacingOccurrences...
-            // 改为使用 displayTitle 属性
+            // 【修改】移除这里的 navigationDestination
             .navigationTitle(displayTitle.replacingOccurrences(of: "_", with: " "))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -698,12 +688,10 @@ struct ArticleListView: View {
             return
         }
         
-        // 2. 【关键修复】定义跳转闭包（必须在所有逻辑之前定义）
-        // 使用 @MainActor 确保 UI 更新在主线程
+        // 【修改】使用全局 navPath 进行跳转
         let proceedToArticle = {
             await MainActor.run {
-                selectedArticle = article
-                isNavigationActive = true
+                appNavPath?.wrappedValue.append(NavigationTarget.articleDetail(article, self.sourceName, "source", false))
             }
         }
         
@@ -810,6 +798,9 @@ struct AllArticlesListView: View {
     // 1. 补上 AppStorage
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
+    // 【新增】获取全局导航路径
+    @Environment(\.appNavPath) var appNavPath
+    
     @State private var filterMode: ArticleFilterMode = .unread
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
@@ -819,9 +810,9 @@ struct AllArticlesListView: View {
     @State private var isDownloadingImages = false
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
-    @State private var selectedArticleItem: (article: Article, sourceName: String)?
-    @State private var isNavigationActive = false
-    // 【新增】控制登录弹窗
+    
+    // 【修改】移除 selectedArticleItem 和 isNavigationActive
+    
     @State private var showLoginSheet = false
     // 【新增】
     @State private var showSubscriptionSheet = false
@@ -962,18 +953,7 @@ struct AllArticlesListView: View {
             }
             .background(Color.viewBackground.ignoresSafeArea())
         }
-        .navigationDestination(isPresented: $isNavigationActive) {
-            if let item = selectedArticleItem {
-                ArticleContainerView(
-                    article: item.article,
-                    sourceName: item.sourceName,
-                    context: .fromAllArticles,
-                    viewModel: viewModel,
-                    resourceManager: resourceManager,
-                    autoPlayOnAppear: false // 【修改】适配新参数
-                )
-            }
-        }
+        // 【修改】移除这里的 navigationDestination
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             // 【修改】调用更新后的 UserStatusToolbarItem
@@ -1113,12 +1093,10 @@ struct AllArticlesListView: View {
             return
         }
         
-        // 2. 【关键修复】补上这里缺失的闭包定义
+        // 【修改】使用全局 navPath 进行跳转
         let proceedToArticle = {
             await MainActor.run {
-                // 注意：这里是 selectedArticleItem，和上面那个 View 不一样
-                selectedArticleItem = (article, sourceName)
-                isNavigationActive = true
+                appNavPath?.wrappedValue.append(NavigationTarget.articleDetail(article, sourceName, "all", false))
             }
         }
         

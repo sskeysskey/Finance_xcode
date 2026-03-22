@@ -109,9 +109,9 @@ struct AddSourceView: View {
                         .padding(.horizontal)
                         .foregroundColor(.secondary)
                     
-                    // 增加一个刷新按钮，方便出错后重试
-                    Button(Localized.refresh) { // 【双语化】
-                        loadAvailableSources()
+                    // 【核心修改】点击"刷新"时，先同步服务器资源，成功后再加载列表
+                    Button(Localized.refresh) {
+                        syncThenLoadSources()
                     }
                     .buttonStyle(.bordered)
                 }
@@ -242,7 +242,30 @@ struct AddSourceView: View {
         }
     }
 
-    /// 从 Documents 中所有 onews_*.json 文件合并所有分组名（去重、排序）
+    // 【新增】先同步服务器资源，成功后再加载本地新闻源列表
+    // 这个方法同时服务于错误页面的"刷新"按钮
+    private func syncThenLoadSources() {
+        isLoading = true
+        errorMessage = nil
+        
+        Task {
+            do {
+                try await resourceManager.checkAndDownloadAllNewsManifests(isManual: true)
+                // 同步成功后，抑制 ResourceManager 可能触发的 "已是最新" 弹窗
+                resourceManager.showAlreadyUpToDateAlert = false
+            } catch {
+                // 同步失败：显示网络错误提示
+                await MainActor.run {
+                    self.errorMessage = Localized.networkError
+                    self.isLoading = false
+                }
+                return
+            }
+            // 同步成功，从本地文件加载新闻源列表
+            loadAvailableSources()
+        }
+    }
+
     private func loadAvailableSources() {
         isLoading = true
         errorMessage = nil

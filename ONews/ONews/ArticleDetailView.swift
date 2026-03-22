@@ -586,7 +586,8 @@ struct NativeParagraphView: UIViewRepresentable {
         uiView: UITextView,
         context: Context
     ) -> CGSize? {
-        guard let width = proposal.width, width > 0, width < .infinity else { return nil }
+        // 【修改】增加 width > 10 的判断，防止由于非预期的极小宽度触发无限布局循环
+        guard let width = proposal.width, width > 10, width < .infinity else { return nil }
         let size = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
         return CGSize(width: width, height: ceil(size.height))
     }

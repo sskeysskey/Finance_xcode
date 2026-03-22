@@ -156,10 +156,19 @@ struct WelcomeView: View {
     // 【保留】: 引入 scenePhase 来监控 App 的生命周期状态
     @Environment(\.scenePhase) private var scenePhase
     
-    // 【保留】: 一个状态标志，确保初始同步只执行一次
+    // 【修改】追踪初始同步是否已尝试过（防止 scenePhase 重复触发）
     @State private var hasAttemptedInitialSync = false
+    // 【新增】追踪是否已成功同步过（用于判断是否需要重试 / "+"按钮是否需要先同步）
+    @State private var hasSyncedSuccessfully = false
     
     private let fabSize: CGFloat = 60
+    
+    // 【新增】检查本地是否已有新闻数据文件
+    private var hasLocalNewsData: Bool {
+        let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        guard let files = try? FileManager.default.contentsOfDirectory(at: docDir, includingPropertiesForKeys: nil) else { return false }
+        return files.contains { $0.lastPathComponent.starts(with: "onews_") && $0.pathExtension == "json" }
+    }
     
     var body: some View {
         NavigationStack {
@@ -179,23 +188,23 @@ struct WelcomeView: View {
                 // 文字层
                 VStack(spacing: 0) {
                     Spacer().frame(height: 100)
-                    Text(Localized.appName) // 使用字典
+                    Text(Localized.appName)
                         .font(.system(size: 60, weight: .black, design: .rounded))
                         .foregroundColor(.blue)
                         .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
                     
-                    Text(Localized.appSlogan) // 使用字典
+                    Text(Localized.appSlogan)
                         .font(.title2.bold())
                         .foregroundColor(.primary.opacity(0.8))
                         .padding(.top, 10)
                     
                     Spacer()
                     
-                    Text(Localized.welcomeInstruction) // 使用字典
+                    Text(Localized.welcomeInstruction)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
-                        .padding(.bottom, 140) // 避开底部按钮区域
+                        .padding(.bottom, 140)
                 }
                 
                 // 底部按钮层 (Action Area)
@@ -203,14 +212,14 @@ struct WelcomeView: View {
                     VStack {
                         Spacer()
                         HStack(alignment: .bottom) {
-                            // 刷新按钮 (左下角)
+                            // 刷新按钮 (左下角) — 仅在不同步时显示
                             if !resourceManager.isSyncing {
                                 Button(action: { Task { await syncInitialResources(isManual: true) } }) {
                                     Image(systemName: "arrow.clockwise")
                                         .font(.system(size: 20, weight: .bold))
                                         .foregroundColor(.secondary)
                                         .frame(width: 50, height: 50)
-                                        .background(Material.thinMaterial) // 毛玻璃
+                                        .background(Material.thinMaterial)
                                         .clipShape(Circle())
                                 }
                                 .padding(.leading, 30)
@@ -218,8 +227,30 @@ struct WelcomeView: View {
                             
                             Spacer()
                             
-                            // 添加按钮 (右下角主操作)
-                            Button(action: { showAddSourceView = true }) {
+                            // 【核心修改】"+" 添加按钮 (右下角主操作)
+                            // 点击时：如果没有本地数据，先同步；成功后再跳转
+                            Button(action: {
+                                guard !resourceManager.isSyncing else { return }
+                                Task {
+                                    // 如果本地没有新闻数据，需要先同步
+                                    if !hasSyncedSuccessfully && !hasLocalNewsData {
+                                        do {
+                                            try await resourceManager.checkAndDownloadAllNewsManifests(isManual: true)
+                                            hasSyncedSuccessfully = true
+                                            // 防止 "已是最新" 弹窗干扰跳转
+                                            resourceManager.showAlreadyUpToDateAlert = false
+                                            showAlreadyUpToDateAlert = false
+                                            showAddSourceView = true
+                                        } catch {
+                                            errorMessage = Localized.syncFailed
+                                            showErrorAlert = true
+                                        }
+                                    } else {
+                                        // 已有本地数据或已同步成功，直接跳转
+                                        showAddSourceView = true
+                                    }
+                                }
+                            }) {
                                 ZStack {
                                     // 涟漪效果
                                     Circle()
@@ -239,6 +270,7 @@ struct WelcomeView: View {
                                         .shadow(color: .blue.opacity(0.4), radius: 8, x: 0, y: 4)
                                 }
                             }
+                            .disabled(resourceManager.isSyncing) // 同步过程中禁用按钮
                             .padding(.trailing, 30)
                             .onAppear {
                                 withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: false)) { ripple.toggle() }
@@ -256,7 +288,7 @@ struct WelcomeView: View {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                 .scaleEffect(1.5)
-                            Text(resourceManager.syncMessage) // 这里假设 syncMessage 已经在 ResourceManager 内部处理了国际化
+                            Text(resourceManager.syncMessage)
                                 .font(.headline)
                                 .foregroundColor(.white)
                         }
@@ -270,34 +302,93 @@ struct WelcomeView: View {
         }
         .tint(.blue)
         // 使用字典替换 Alert 文本
-        .alert(Localized.fetchFailed, isPresented: $showErrorAlert, actions: { 
-            Button(Localized.ok, role: .cancel) { } 
-        }, message: { 
-            Text(errorMessage) 
+        .alert(Localized.fetchFailed, isPresented: $showErrorAlert, actions: {
+            Button(Localized.ok, role: .cancel) { }
+        }, message: {
+            Text(errorMessage)
         })
-        .alert("", isPresented: $showAlreadyUpToDateAlert) { 
-            Button(Localized.ok, role: .cancel) {} 
-        } message: { 
-            Text(Localized.upToDateMessage) 
+        .alert("", isPresented: $showAlreadyUpToDateAlert) {
+            Button(Localized.ok, role: .cancel) {}
+        } message: {
+            Text(Localized.upToDateMessage)
         }
+        // 【修改】scenePhase 监听：首次 active 时发起自动同步（含重试）
         .onChange(of: scenePhase) { newPhase in
-            if newPhase == .active && !hasAttemptedInitialSync {
-                hasAttemptedInitialSync = true
-                Task { await syncInitialResources(isManual: false) }
+            if newPhase == .active && !hasSyncedSuccessfully && !resourceManager.isSyncing {
+                if !hasAttemptedInitialSync {
+                    // 首次进入前台：启动带重试的自动同步
+                    hasAttemptedInitialSync = true
+                    Task { await autoSyncWithRetries() }
+                } else {
+                    // 非首次进入前台（例如用户从设置界面切回来）：再试一次
+                    Task {
+                        try? await Task.sleep(for: .seconds(1))
+                        guard !hasSyncedSuccessfully && !resourceManager.isSyncing else { return }
+                        await syncInitialResources(isManual: false)
+                    }
+                }
+            }
+        }
+        // 【新增】监听网络可用性变化：当网络从不可用变为可用时，自动重试同步
+        // 这完美覆盖了"用户在网络授权弹窗里点击允许后"的场景
+        .onChange(of: resourceManager.isNetworkAvailable) { isAvailable in
+            if isAvailable && !hasSyncedSuccessfully && !resourceManager.isSyncing {
+                Task {
+                    // 短暂延迟，给系统一点时间让网络完全就绪
+                    try? await Task.sleep(for: .seconds(1))
+                    guard !hasSyncedSuccessfully && !resourceManager.isSyncing else { return }
+                    print("WelcomeView: 检测到网络恢复，自动重试同步...")
+                    await syncInitialResources(isManual: false)
+                }
             }
         }
         .onChange(of: resourceManager.showAlreadyUpToDateAlert) { newValue in
-            if newValue { self.showAlreadyUpToDateAlert = true; resourceManager.showAlreadyUpToDateAlert = false }
+            if newValue {
+                // 仅在没有正在跳转到添加源页面时才显示弹窗
+                if !showAddSourceView {
+                    self.showAlreadyUpToDateAlert = true
+                }
+                resourceManager.showAlreadyUpToDateAlert = false
+            }
         }
     }
 
-    // 【修改】: 增加 isManual 参数以区分调用来源
+    // 【新增】带有限次数重试的自动同步
+    // 首次安装时，第一次请求可能因网络权限弹窗而失败，
+    // 通过延时重试（3秒后、再8秒后）覆盖用户点击"允许"后的窗口期
+    private func autoSyncWithRetries() async {
+        let retryDelays: [UInt64] = [0, 3, 8] // 第一次立即尝试，第二次3秒后，第三次8秒后
+        
+        for (index, delay) in retryDelays.enumerated() {
+            guard !hasSyncedSuccessfully else { return }
+            
+            if delay > 0 {
+                try? await Task.sleep(for: .seconds(delay))
+                // 睡醒后再次检查，避免重复发起
+                guard !hasSyncedSuccessfully && !resourceManager.isSyncing else { return }
+            }
+            
+            print("WelcomeView: 自动同步尝试 #\(index + 1)")
+            await syncInitialResources(isManual: false)
+        }
+        
+        if !hasSyncedSuccessfully {
+            print("WelcomeView: 自动同步多次尝试后仍未成功，等待用户手动操作或网络变化触发。")
+        }
+    }
+
+    // 【修改】同步方法：自动同步失败时不弹错误提示
     private func syncInitialResources(isManual: Bool = false) async {
-        do { 
-            try await resourceManager.checkAndDownloadAllNewsManifests(isManual: isManual) 
-        } catch { 
-            self.errorMessage = Localized.syncFailed // 使用字典
-            self.showErrorAlert = true 
+        do {
+            try await resourceManager.checkAndDownloadAllNewsManifests(isManual: isManual)
+            hasSyncedSuccessfully = true
+        } catch {
+            if isManual {
+                // 手动同步失败：向用户展示错误
+                self.errorMessage = Localized.syncFailed
+                self.showErrorAlert = true
+            }
+            // 自动同步失败：静默忽略，由重试机制和网络监听器处理
         }
     }
 }

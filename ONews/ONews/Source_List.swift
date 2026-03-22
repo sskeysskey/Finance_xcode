@@ -1,9 +1,23 @@
 import SwiftUI
 
-// 【修改】定义导航目标，source 只存储名称
+// 【修改】扩展导航目标，增加文章详情
 enum NavigationTarget: Hashable {
     case allArticles
-    case source(String)  // 只存储源的名称，而不是整个 NewsSource
+    case source(String)
+    // article, sourceName, contextStr ("all" or "source"), autoPlay
+    case articleDetail(Article, String, String, Bool) 
+}
+
+// 【新增】定义一个环境变量，用于跨视图传递 NavigationPath
+struct NavigationPathKey: EnvironmentKey {
+    static let defaultValue: Binding<NavigationPath>? = nil
+}
+
+extension EnvironmentValues {
+    var appNavPath: Binding<NavigationPath>? {
+        get { self[NavigationPathKey.self] }
+        set { self[NavigationPathKey.self] = newValue }
+    }
 }
 
 // 【新增】从 ArticleListView.swift 复制过来的下载遮罩视图，用于显示图片下载进度
@@ -523,8 +537,8 @@ struct SourceListView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
 
-    // 【新增】用于控制跳转时是否自动播放的状态
-    @State private var shouldAutoPlayNextNav: Bool = false
+    // 【新增】全局导航路径
+    @State private var navPath = NavigationPath()
     
     @State private var showAddSourceSheet = false
     // 【新增】控制登录弹窗的显示
@@ -539,12 +553,10 @@ struct SourceListView: View {
     @State private var searchText: String = ""
     @State private var isSearchActive: Bool = false
     
-    // 用于程序化导航和图片下载的状态变量
+    // 【修改】移除 selectedArticleItem 和 isNavigationActive，不再需要它们了
     @State private var isDownloadingImages = false
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
-    @State private var selectedArticleItem: (article: Article, sourceName: String)?
-    @State private var isNavigationActive = false
     
     private var searchResults: [(article: Article, sourceName: String, sourceNameEN: String, isContentMatch: Bool)] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -578,14 +590,14 @@ struct SourceListView: View {
     }
     
     var body: some View {
-        // 【修改】将 NavigationView 升级为 NavigationStack
-        NavigationStack {
+        // 【修改】绑定全局导航路径
+        NavigationStack(path: $navPath) {
             VStack(spacing: 0) {
                 // 1. 搜索栏
                 if isSearching {
                     SearchBarInline(
                         text: $searchText,
-                        placeholder: Localized.searchPlaceholder, // 【修改】
+                        placeholder: Localized.searchPlaceholder,
                         onCommit: {
                             isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         },
@@ -683,30 +695,27 @@ struct SourceListView: View {
                     .foregroundColor(.primary)
                 }
             }
+            // 【修改】统一在这里处理所有的导航目标
             .navigationDestination(for: NavigationTarget.self) { target in
                 switch target {
                 case .allArticles:
                     AllArticlesListView(viewModel: viewModel, resourceManager: resourceManager)
                 case .source(let sourceName):
                     ArticleListView(sourceName: sourceName, viewModel: viewModel, resourceManager: resourceManager)
-                }
-            }
-            // 【新增】为搜索结果的程序化导航添加 destination
-            .navigationDestination(isPresented: $isNavigationActive) {
-                if let item = selectedArticleItem {
+                case .articleDetail(let article, let sourceName, let contextStr, let autoPlay):
                     ArticleContainerView(
-                        article: item.article,
-                        sourceName: item.sourceName,
-                        context: .fromAllArticles, // 搜索结果或All列表点击都视为 All 上下文
+                        article: article,
+                        sourceName: sourceName,
+                        context: contextStr == "all" ? .fromAllArticles : .fromSource(sourceName),
                         viewModel: viewModel,
                         resourceManager: resourceManager,
-                        
-                        // 👇👇👇 【核心修复】这里必须把状态传进去，否则默认为 false 👇👇👇
-                        autoPlayOnAppear: shouldAutoPlayNextNav
+                        autoPlayOnAppear: autoPlay
                     )
                 }
             }
         }
+        // 【新增】将导航路径注入环境，供子视图使用
+        .environment(\.appNavPath, $navPath)
         .tint(.blue)
         .onAppear {
             viewModel.loadNews()
@@ -1131,12 +1140,10 @@ struct SourceListView: View {
             return
         }
         
-        // 准备导航的闭包
+        // 【修改】使用全局 navPath 进行跳转
         let prepareNavigation = {
             await MainActor.run {
-                self.shouldAutoPlayNextNav = autoPlay // 【新增】设置自动播放状态
-                self.selectedArticleItem = (article, sourceName)
-                self.isNavigationActive = true
+                self.navPath.append(NavigationTarget.articleDetail(article, sourceName, "all", autoPlay))
             }
         }
 

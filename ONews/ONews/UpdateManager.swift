@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 import SwiftUI
-import Network // 【新增】引入 Network 框架
+import Network // 引入 Network 框架
 
 struct FileInfo: Codable {
     let name: String
@@ -13,7 +13,7 @@ struct ForceUpdateView: View {
     // 接收从服务器传来的 URL
     let storeURL: String
     
-    // 【新增】把你代码里的真实 ID 作为默认备份
+    // 把你代码里的真实 ID 作为默认备份
     // 如果服务器传空字符串，就用这个
     private let fallbackURL = "https://apps.apple.com/cn/app/id6754591885"
     
@@ -63,15 +63,15 @@ struct ForceUpdateView: View {
     }
 }
 
-// 【修改】为 ServerVersion 添加 locked_days 字段
+// 为 ServerVersion 添加 locked_days 字段
 struct ServerVersion: Codable {
     let version: String
     let min_app_version: String?
     let store_url: String?
     let locked_days: Int?
-    let server_date: String? // 【新增】服务器返回的基准日期
-    let notification: String? // 【新增】通知内容
-    let update_time: String? // 【新增】服务器返回的更新时间
+    let server_date: String? // 服务器返回的基准日期
+    let notification: String? // 通知内容
+    let update_time: String? // 服务器返回的更新时间
     let source_mappings: [String: String]?
     let files: [FileInfo]
 }
@@ -80,31 +80,31 @@ struct ServerVersion: Codable {
 class ResourceManager: ObservableObject {
     
     @Published var isSyncing = false
-    // 【修改】初始值使用双语
+    // 初始值使用双语
     @Published var syncMessage = Localized.syncStarting 
     @Published var isDownloading = false
     @Published var downloadProgress: Double = 0.0
     @Published var progressText = ""
     @Published var showAlreadyUpToDateAlert = false
 
-    // 【新增】强制更新控制开关
+    // 强制更新控制开关
     @Published var showForceUpdate: Bool = false
     @Published var appStoreURL: String = ""
 
-    // 【新增】存储最后更新时间，默认为空
+    // 存储最后更新时间，默认为空
     @Published var serverUpdateTime: String = "" 
     
-    // 【新增】存储从服务器获取的配置
+    // 存储从服务器获取的配置
     @Published var serverLockedDays: Int = 0
     @Published var sourceMappings: [String: String] = [:]
     
-    // 【新增】当前需要显示的通知（如果为 nil 则不显示）
+    // 当前需要显示的通知（如果为 nil 则不显示）
     @Published var activeNotification: String? = nil
 
-    @Published var serverDate: String = "" // 【新增】存储服务器日期
+    @Published var serverDate: String = "" // 存储服务器日期
     
     private let serverBaseURL = "http://106.15.183.158:5001/api/ONews"
-    // 【新增】UserDefaults Key
+    // UserDefaults Key
     private let dismissedNotificationKey = "dismissedNotificationContent"
     
     private let fileManager = FileManager.default
@@ -112,19 +112,19 @@ class ResourceManager: ObservableObject {
         fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
     
-    // 【核心修改 1】配置 URLSession
+    // 【核心修改】配置 URLSession，完美适配国行网络授权弹窗
     private let urlSession: URLSession = {
         let configuration = URLSessionConfiguration.default
-        // 1. 请求超时时间 (连接服务器的时间)
-        configuration.timeoutIntervalForRequest = 5.0
-        // 2. 资源超时时间 (整个下载过程的时间)
-        configuration.timeoutIntervalForResource = 30.0
-        // 3. 【关键】设置为 false。如果没网，立即报错，不要傻等。
-        configuration.waitsForConnectivity = false
+        // 1. 请求超时时间：延长至 15 秒，给用户留出阅读并点击网络授权弹窗的时间
+        configuration.timeoutIntervalForRequest = 15.0
+        // 2. 资源超时时间：整个下载过程的时间
+        configuration.timeoutIntervalForResource = 60.0
+        // 3. 【关键】设置为 true。这样在首次弹网络授权框时，请求会挂起等待，用户点允许后自动继续，不会报错。
+        configuration.waitsForConnectivity = true
         return URLSession(configuration: configuration)
     }()
     
-    // 【新增】网络监视器
+    // 网络监视器 (保留用于 UI 状态展示，但不用于硬性拦截请求)
     private let networkMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "NetworkMonitor")
     @Published var isWifiConnected: Bool = false
@@ -148,14 +148,7 @@ class ResourceManager: ObservableObject {
         networkMonitor.cancel()
     }
     
-    // 【新增】网络检查辅助函数
-    private func ensureNetworkReachable() throws {
-        if !isNetworkAvailable {
-            throw URLError(.notConnectedToInternet)
-        }
-    }
-
-    // 【修改】特效数据获取失败时的默认词汇
+    // 特效数据获取失败时的默认词汇
     func fetchSourceNames() async -> [String] {
         do {
             // 复用已有的 getServerVersion 方法
@@ -225,7 +218,7 @@ class ResourceManager: ObservableObject {
         }
     }
     
-    // 【新增】用户点击关闭按钮时调用
+    // 用户点击关闭按钮时调用
     func dismissNotification() {
         guard let message = activeNotification else { return }
         
@@ -245,8 +238,7 @@ class ResourceManager: ObservableObject {
         imageNames: [String],
         progressHandler: @escaping @MainActor (Int, Int) -> Void
     ) async throws {
-        // 【核心修改 2】下载前先检查网络，如果是离线，直接抛出错误，触发 UI 层的降级逻辑
-        try ensureNetworkReachable()
+        // 移除自定义网络拦截，交由 URLSession 自动处理等待
         let sanitizedNames = imageNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -385,7 +377,7 @@ class ResourceManager: ObservableObject {
         }
     }
 
-    // MARK: - 【新增】批量离线下载所有图片
+    // MARK: - 批量离线下载所有图片
     func downloadAllOfflineImages(progressHandler: @escaping @MainActor (Int, Int) -> Void) async throws {
         // ✅ 修复 2: 在主线程获取 URL，因为 documentsDirectory 是 @MainActor 隔离的
         let docDir = self.documentsDirectory
@@ -484,9 +476,12 @@ class ResourceManager: ObservableObject {
     }
 
     func checkAndDownloadAllNewsManifests(isManual: Bool = false) async throws {
+        // 【核心修复】完全移除自定义的网络拦截，交由 URLSession 的 waitsForConnectivity 处理
+        // 这样在首次启动弹网络授权框时，请求会自动挂起等待，用户点击允许后自动恢复。
+        
         self.isSyncing = true
         self.isDownloading = false
-        self.syncMessage = Localized.fetchingManifest // 【修改】
+        self.syncMessage = Localized.fetchingManifest
         self.progressText = ""
         self.downloadProgress = 0.0
         
@@ -547,7 +542,7 @@ class ResourceManager: ObservableObject {
             for (index, info) in tasksToDownload.enumerated() {
                 self.progressText = "\(index + 1)/\(total)"
                 self.downloadProgress = Double(index + 1) / Double(total)
-                self.syncMessage = Localized.downloadingData // 【修改】
+                self.syncMessage = Localized.downloadingData
                 try await downloadSingleFile(named: info.name)
             }
             
@@ -564,17 +559,7 @@ class ResourceManager: ObservableObject {
     }
 
     func checkAndDownloadUpdates(isManual: Bool = false) async throws {
-        // 【核心修改 3】如果是自动同步且没网，直接静默返回，不要转圈
-        if !isManual && !isNetworkAvailable {
-            print("自动同步：检测到无网络，跳过同步，使用本地数据。")
-            return
-        }
-        
-        // 如果是手动同步且没网，ensureNetworkReachable 会抛错，UI层会弹窗提示
-        if isManual {
-            try ensureNetworkReachable()
-        }
-
+        // 同样移除网络拦截
         self.isSyncing = true
         self.isDownloading = false
         self.syncMessage = Localized.checkingUpdates
@@ -601,7 +586,7 @@ class ResourceManager: ObservableObject {
             self.serverLockedDays = serverVersion.locked_days ?? 0
             print("ResourceManager: 从服务器获取到 locked_days = \(self.serverLockedDays)")
             
-            self.syncMessage = Localized.cleaningOldResources // 【修改】
+            self.syncMessage = Localized.cleaningOldResources
             let validServerFiles = Set(serverVersion.files.map { $0.name })
             let filesToDelete = localFiles.subtracting(validServerFiles)
             let oldNewsItemsToDelete = filesToDelete.filter {
