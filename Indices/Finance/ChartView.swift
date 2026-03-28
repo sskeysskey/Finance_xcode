@@ -161,6 +161,9 @@ struct ChartView: View {
     
     // 成交量显示控制
     @State private var showVolume: Bool = true
+
+    // 红绿线显示控制（日内涨跌着色）
+    @State private var showColoredLines: Bool = true
     
     @State private var bubbleMarkers: [BubbleMarker] = []
     @State private var shouldUpdateBubbles: Bool = true
@@ -232,6 +235,11 @@ struct ChartView: View {
             return Double(vol) * point.price
         }.max() ?? 0
         return maxTurnover
+    }
+
+    // 【新增】判断当前数据是否包含 OHLC（open 字段）
+    private var hasOHLC: Bool {
+        sampledChartData.contains { $0.open != nil }
     }
     
     private var priceDifferencePercentage: Double? {
@@ -528,16 +536,26 @@ struct ChartView: View {
             .padding(.vertical, 10)
             
             // Toggles
-            HStack(spacing: 10) {
-                Toggle(isOn: $showGreenMarkers) {}.toggleStyle(SwitchToggleStyle(tint: .green))
-                Toggle(isOn: $showBubbles) {}.toggleStyle(SwitchToggleStyle(tint: .blue))
-                Toggle(isOn: $showRedMarkers) {}.toggleStyle(SwitchToggleStyle(tint: .red))
-                Toggle(isOn: $showOrangeMarkers) {}.toggleStyle(SwitchToggleStyle(tint: .orange))
-                // 【新增】成交量开关
-                Toggle(isOn: $showVolume) {}.toggleStyle(SwitchToggleStyle(tint: .purple))
+            // 将原来的 HStack 替换为以下代码块
+            VStack(spacing: 4) { // 减小行间距
+                HStack(spacing: 15) {
+                    // 修改：财报开关改为蓝色 (.blue)
+                    Toggle(isOn: $showGreenMarkers) { Text("财报").font(.system(size: 12)) }.toggleStyle(SwitchToggleStyle(tint: .blue))
+                    // 修改：气泡开关改为青色 (.cyan)
+                    Toggle(isOn: $showBubbles) { Text("气泡").font(.system(size: 12)) }.toggleStyle(SwitchToggleStyle(tint: .cyan))
+                    Toggle(isOn: $showRedMarkers) { Text("全局事件").font(.system(size: 12)) }.toggleStyle(SwitchToggleStyle(tint: .red))
+                }
+                .padding(.horizontal, 20)
+                
+                HStack(spacing: 15) {
+                    Toggle(isOn: $showOrangeMarkers) { Text("个股事件").font(.system(size: 12)) }.toggleStyle(SwitchToggleStyle(tint: .orange))
+                    Toggle(isOn: $showVolume) { Text("成交额").font(.system(size: 12)) }.toggleStyle(SwitchToggleStyle(tint: .purple))
+                    // 修改：涨跌开关改为绿色 (.green)
+                    Toggle(isOn: $showColoredLines) { Text("涨跌").font(.system(size: 12)) }.toggleStyle(SwitchToggleStyle(tint: .green))
+                }
+                .padding(.horizontal, 20)
             }
-            .padding(.horizontal)
-            .padding(.vertical, 30)
+            .padding(.vertical, 10) // 将原来的 30 缩小到 10，腾出空间给两行
             
             // Action Buttons
             HStack(spacing: 20) {
@@ -564,7 +582,7 @@ struct ChartView: View {
                 }) {
                     Text("比对")
                         .font(.system(size: 22, weight: .medium))
-                        .padding(.leading, 20)
+                        .padding(.leading, 10)
                         .foregroundColor(.blue)
                 }
                 
@@ -578,7 +596,7 @@ struct ChartView: View {
                 }) {
                     Text("相似")
                         .font(.system(size: 22, weight: .medium))
-                        .padding(.leading, 20)
+                        .padding(.leading, 10)
                         .foregroundColor(.blue)
                 }
                 
@@ -595,7 +613,7 @@ struct ChartView: View {
                     }) {
                         Text("期权")
                             .font(.system(size: 22, weight: .medium))
-                            .padding(.leading, 20)
+                            .padding(.leading, 10)
                             .foregroundColor(.purple)
                     }
                 }
@@ -609,7 +627,7 @@ struct ChartView: View {
                 }) {
                     Text("回溯")
                         .font(.system(size: 22, weight: .medium))
-                        .padding(.leading, 20)
+                        .padding(.leading, 10)
                         .foregroundColor(.green) // 使用绿色区分，对应 Python 里的风格
                 }
             }
@@ -743,28 +761,60 @@ struct ChartView: View {
         
         // 3. 【核心修复】直接基于 sampledChartData 和当前 size 绘制价格线
         // 不再使用 renderedPoints，确保线和点使用相同的计算逻辑
+        // 3. 绘制价格线（支持红绿线模式）
         if !sampledChartData.isEmpty {
-            var pricePath = Path()
-            
-            // 【修改】起点加上 horizontalPadding
-            let startX = horizontalPadding
-            let startY = priceToY(sampledChartData[0].price)
-            pricePath.move(to: CGPoint(x: startX, y: startY))
-            
-            // 连接后续点
-            for index in 1..<sampledChartData.count {
-                // 【修改】加上 horizontalPadding
-                let x = horizontalPadding + CGFloat(index) * horizontalStep
-                let y = priceToY(sampledChartData[index].price)
-                pricePath.addLine(to: CGPoint(x: x, y: y))
+            if showColoredLines && hasOHLC {
+                // ===== 彩色线段模式 =====
+                // 根据每天的日内涨跌 (close vs open) 给线段上色
+                // close > open → 红色（日内上涨）
+                // close < open → 绿色（日内下跌）
+                // close == open 或无 open 数据 → 默认颜色
+                for index in 1..<sampledChartData.count {
+                    let prevX = horizontalPadding + CGFloat(index - 1) * horizontalStep
+                    let prevY = priceToY(sampledChartData[index - 1].price)
+                    let currX = horizontalPadding + CGFloat(index) * horizontalStep
+                    let currY = priceToY(sampledChartData[index].price)
+                    
+                    var segmentPath = Path()
+                    segmentPath.move(to: CGPoint(x: prevX, y: prevY))
+                    segmentPath.addLine(to: CGPoint(x: currX, y: currY))
+                    
+                    // 判断终点（当天）的日内涨跌方向
+                    let segColor: Color
+                    if let openPrice = sampledChartData[index].open {
+                        let closePrice = sampledChartData[index].price
+                        if closePrice > openPrice {
+                            segColor = .red     // 日内上涨 → 红色
+                        } else if closePrice < openPrice {
+                            segColor = .green   // 日内下跌 → 绿色
+                        } else {
+                            segColor = chartColor // 平盘 → 默认颜色
+                        }
+                    } else {
+                        segColor = chartColor     // 无 open 数据 → 默认颜色
+                    }
+                    
+                    context.stroke(segmentPath, with: .color(segColor), lineWidth: 2)
+                }
+            } else {
+                // ===== 原始单色线模式 =====
+                var pricePath = Path()
+                let startX = horizontalPadding
+                let startY = priceToY(sampledChartData[0].price)
+                pricePath.move(to: CGPoint(x: startX, y: startY))
+                
+                for index in 1..<sampledChartData.count {
+                    let x = horizontalPadding + CGFloat(index) * horizontalStep
+                    let y = priceToY(sampledChartData[index].price)
+                    pricePath.addLine(to: CGPoint(x: x, y: y))
+                }
+                
+                context.stroke(pricePath, with: .color(chartColor), lineWidth: 2)
             }
-            
-            context.stroke(pricePath, with: .color(chartColor), lineWidth: 2)
             
             // 绘制线上的小黑点 (1M/3M/6M 模式)
             if [.oneMonth, .threeMonths, .sixMonths].contains(selectedTimeRange) {
                 for (index, point) in sampledChartData.enumerated() {
-                    // 【修改】加上 horizontalPadding
                     let x = horizontalPadding + CGFloat(index) * horizontalStep
                     let y = priceToY(point.price)
                     let dotRect = CGRect(x: x - 2, y: y - 2, width: 3, height: 3)
@@ -1082,7 +1132,8 @@ struct ChartView: View {
             }
             
             let text = "\(dateStr) \(String(format: "%.2f%%", earning.price))\n\(String(format: "%+.2f%%", priceChangePercent))"
-            addMarker(date: earning.date, text: text, color: .green)
+            // 【修改这里】：将 .green 改为 .blue
+            addMarker(date: earning.date, text: text, color: .blue)
         }
         
         let optimizedMarkers = optimizeBubbleLayout(markers, canvasWidth: width, canvasHeight: 320)
@@ -1271,7 +1322,8 @@ struct ChartView: View {
             switch type {
             case .global: return .red
             case .symbol: return .orange
-            case .earning: return .green
+            // 【修改这里】：将 .green 改为 .blue
+            case .earning: return .blue
             }
         }
     }

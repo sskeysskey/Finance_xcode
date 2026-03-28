@@ -51,7 +51,7 @@ struct Localized {
     static var search: String { tr("搜索", "Search") }
     static var unknownError: String { tr("未知错误", "Unknown Error") }
     static var networkError: String { tr("网络连接失败，请检查设置", "Network error, please check your settings") }
-    static var syncFailed: String { tr("同步失败，请重试。", "Sync failed, please try again.") }
+    static var syncFailed: String { tr("同步失败，请重试", "Sync failed, please try again.") }
     static var fetchFailed: String { tr("获取失败", "Fetch Failed") }
 
     // MARK: - 音频播放器 (Audio Player)

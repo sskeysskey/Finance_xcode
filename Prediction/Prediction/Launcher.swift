@@ -48,6 +48,10 @@ struct MainContainerView: View {
     @State private var syncErrorMsg = ""
     @State private var hasAttemptedSync = false
     
+    // ✅ 新增：新分类弹窗相关状态
+    @State private var showNewCategorySheet = false
+    @State private var pendingNewCategories: [(type: String, subtypes: [String])] = []
+    
     @Environment(\.scenePhase) private var scenePhase
     
     // 动态计算当前有数据的来源列表（同时考虑主文件和 trend 文件）
@@ -180,9 +184,15 @@ struct MainContainerView: View {
                         Button { showSearchSheet = true } label: {
                             Image(systemName: "magnifyingglass").font(.system(size: 15))
                         }
-                        Button { showPreferenceSheet = true } label: {
+                        
+                        // 【修改】偏好设置按钮增加兜底同步逻辑
+                        Button {
+                            handlePreferenceButtonTap()
+                        } label: {
                             Image(systemName: "slider.horizontal.3").font(.system(size: 15))
                         }
+                        .disabled(syncManager.isSyncing)
+                        
                         Button {
                             Task { await doManualSync() }
                         } label: {
@@ -210,6 +220,10 @@ struct MainContainerView: View {
             .sheet(isPresented: $authManager.showSubscriptionSheet) {
                 SubscriptionView()
             }
+            // ✅ 新增：新分类弹窗
+            .sheet(isPresented: $showNewCategorySheet) {
+                NewCategorySheet(newCategories: pendingNewCategories)
+            }
             .onChange(of: scenePhase) { new in
                 if new == .active && !hasAttemptedSync {
                     hasAttemptedSync = true
@@ -219,12 +233,26 @@ struct MainContainerView: View {
             .onChange(of: authManager.isLoggedIn) { newVal in
                 if newVal { showLoginSheet = false }
             }
-            // 监听数据变化，自动调整选中的来源
-            .onAppear { adjustSelectedSource() }
+            .onAppear {
+                adjustSelectedSource()
+                // 首次出现时延迟检查新分类（等数据加载完毕）
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    checkForNewCategories()
+                }
+            }
             .onChange(of: syncManager.polymarketItems.count) { _ in adjustSelectedSource() }
             .onChange(of: syncManager.kalshiItems.count) { _ in adjustSelectedSource() }
             .onChange(of: syncManager.polymarketTrendItems.count) { _ in adjustSelectedSource() }
             .onChange(of: syncManager.kalshiTrendItems.count) { _ in adjustSelectedSource() }
+            // ✅ 新增：同步完成后检查新分类
+            .onChange(of: syncManager.isSyncing) { isSyncing in
+                if !isSyncing {
+                    // 延迟一点，等 HUD 消失后再弹窗，体验更好
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        checkForNewCategories()
+                    }
+                }
+            }
             .alert("同步失败", isPresented: $showSyncError) {
                 Button("确定", role: .cancel) {}
             } message: {
@@ -233,7 +261,28 @@ struct MainContainerView: View {
         }
     }
     
-    // MARK: - 【新增】Info Bar（更新时间 + 排序下拉框）
+    // MARK: - ✅ 新增：检查是否有新分类需要弹窗
+    private func checkForNewCategories() {
+        // 正在同步或已经弹窗中，跳过
+        guard !syncManager.isSyncing,
+              !syncManager.showAlreadyUpToDateAlert,
+              !showNewCategorySheet else { return }
+        
+        let allItems = syncManager.polymarketItems + syncManager.kalshiItems
+        guard !allItems.isEmpty else { return }
+        
+        // 老用户迁移：首次升级到有此功能的版本时，标记所有现有分类为已知
+        prefManager.migrateKnownSubtypesIfNeeded(from: allItems)
+        
+        // 检测新分类
+        let newCats = prefManager.detectNewSubtypes(from: allItems)
+        if !newCats.isEmpty {
+            pendingNewCategories = newCats
+            showNewCategorySheet = true
+        }
+    }
+    
+    // MARK: - Info Bar
     private var infoBar: some View {
         HStack {
             if !syncManager.serverUpdateTime.isEmpty {
@@ -250,7 +299,7 @@ struct MainContainerView: View {
         .padding(.top, 4)
     }
     
-    // MARK: - 【新增】排序模式下拉菜单
+    // MARK: - 排序模式下拉菜单
     private var sortModeMenu: some View {
         Menu {
             Picker("排序", selection: $sortMode) {
@@ -373,6 +422,31 @@ struct MainContainerView: View {
         } catch {
             syncErrorMsg = "网络连接失败，请稍后重试"
             showSyncError = true
+        }
+    }
+
+    // 【新增】处理偏好设置按钮点击
+    private func handlePreferenceButtonTap() {
+        // 如果本地完全没有数据（说明之前没同步成功过），则先尝试同步
+        if hasNoDataAtAll {
+            Task {
+                do {
+                    try await syncManager.checkAndSync(isManual: true)
+                    // 同步成功后，如果有数据了，再打开偏好设置
+                    if !hasNoDataAtAll {
+                        showPreferenceSheet = true
+                    } else {
+                        syncErrorMsg = "服务器暂无数据"
+                        showSyncError = true
+                    }
+                } catch {
+                    syncErrorMsg = "网络连接失败，请检查网络权限后重试"
+                    showSyncError = true
+                }
+            }
+        } else {
+            // 已经有数据了，直接打开
+            showPreferenceSheet = true
         }
     }
     

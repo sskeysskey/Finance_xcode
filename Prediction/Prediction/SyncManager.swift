@@ -20,9 +20,13 @@ class SyncManager: ObservableObject {
     @Published var polymarketItems: [PredictionItem] = []
     @Published var kalshiItems: [PredictionItem] = []
     
-    // 【新增】Trend 文件数据（按趋势排序，含 new / volume_trend 字段）
+    // Trend 文件数据（按趋势排序，含 new / volume_trend 字段）
     @Published var polymarketTrendItems: [PredictionItem] = []
     @Published var kalshiTrendItems: [PredictionItem] = []
+    
+    // ✅ 新增：数据加载完成版本号，每次 loadLocalData 全部完成后 +1
+    // 父视图应该监听这个来触发新分类检测，而非监听各个 items 数组
+    @Published var dataGeneration: Int = 0
     
     private let serverBaseURL = "http://106.15.183.158:5001/api/Prediction"
     private let dismissedNotificationKey = "Pred_dismissedNotification"
@@ -34,9 +38,11 @@ class SyncManager: ObservableObject {
     
     private let urlSession: URLSession = {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 8.0
-        config.timeoutIntervalForResource = 30.0
-        config.waitsForConnectivity = false
+        // 延长超时时间，给用户留出点击网络授权弹窗的时间
+        config.timeoutIntervalForRequest = 15.0
+        config.timeoutIntervalForResource = 60.0
+        // 【关键优化】设置为 true。首次弹网络授权框时请求会挂起等待，点允许后自动继续。
+        config.waitsForConnectivity = true
         return URLSession(configuration: config)
     }()
     
@@ -93,7 +99,7 @@ class SyncManager: ObservableObject {
             self.kalshiItems = []
         }
         
-        // === 【新增】Trend 文件 ===
+        // === Trend 文件 ===
         
         // Polymarket Trend（可能不存在，兼容处理）
         if let polyTrendFile = findLatestFile(prefix: "polymarket_trend_", in: docDir),
@@ -110,6 +116,9 @@ class SyncManager: ObservableObject {
         } else {
             self.kalshiTrendItems = []
         }
+        
+        // ✅ 四个数组全部赋值完毕后，递增版本号作为"数据已就绪"的单一信号
+        dataGeneration += 1
     }
     
     // 【修改】支持排除特定子串的文件
