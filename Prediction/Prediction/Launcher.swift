@@ -248,34 +248,49 @@ struct MainContainerView: View {
     @ViewBuilder
     private func listPage(for mode: ListSortMode) -> some View {
         let items = itemsForMode(mode)
-        ScrollView {
-            LazyVStack(spacing: 14) {
-                // 通知条
-                if let note = syncManager.activeNotification {
-                    NotificationBanner(message: note) {
-                        syncManager.dismissNotification()
+        
+        // 1. 引入 ScrollViewReader 以便进行编程式滚动
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 14) {
+                    // 2. 在最顶部添加一个不可见的锚点视图，并赋予唯一 ID
+                    Color.clear.frame(height: 0)
+                        .id("top_anchor_\(mode)")
+                    
+                    // 通知条
+                    if let note = syncManager.activeNotification {
+                        NotificationBanner(message: note) {
+                            syncManager.dismissNotification()
+                        }
                     }
-                }
 
-                if items.isEmpty {
-                    emptyStateForMode(mode)
-                } else {
-                    ForEach(items) { item in
-                        PredictionCardView(
-                            item: item,
-                            isSubscribed: authManager.isSubscribed,
-                            onLockedTap: { handleLockedTap() }
-                        )
-                        .padding(.horizontal, 16)
+                    if items.isEmpty {
+                        emptyStateForMode(mode)
+                    } else {
+                        ForEach(items) { item in
+                            PredictionCardView(
+                                item: item,
+                                isSubscribed: authManager.isSubscribed,
+                                onLockedTap: { handleLockedTap() }
+                            )
+                            .padding(.horizontal, 16)
+                        }
                     }
-                }
 
-                Spacer().frame(height: 40)
+                    Spacer().frame(height: 40)
+                }
+                .padding(.top, 8)
             }
-            .padding(.top, 8)
+            // 3. 监听 sortMode 的变化。当用户滑动/点击切换到当前 mode 时，触发滚动到顶部
+            .onChange(of: sortMode) { newMode in
+                if newMode == mode {
+                    // 可以根据需要决定是否加 withAnimation
+                    proxy.scrollTo("top_anchor_\(mode)", anchor: .top)
+                }
+            }
+            // 切换数据源时强制重建 ScrollView，自动回到顶部
+            .id("page_\(mode)_\(selectedSource)")
         }
-        // 切换数据源时强制重建 ScrollView，自动回到顶部
-        .id("page_\(mode)_\(selectedSource)")
     }
 
     // MARK: - 检查新分类
