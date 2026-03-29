@@ -78,6 +78,8 @@ struct PredictionCardView: View {
                         )
                     }
                 }
+                // ✅ 修复长按透视bug：当需要遮挡时，直接把底层内容本身模糊掉，彻底防止透视
+                .blur(radius: showBlur ? 10 : 0)
                 
                 // 毛玻璃遮罩
                 if showBlur {
@@ -141,6 +143,8 @@ struct PredictionCardView: View {
                     .foregroundColor(.primary.opacity(0.7))
             }
         }
+        // ✅ 修复尺寸bug：使用负边距让遮罩稍微放大，确保边缘完全盖住底层内容
+        .padding(-8)
     }
 }
 

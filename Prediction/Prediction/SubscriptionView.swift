@@ -38,7 +38,7 @@ struct SubscriptionView: View {
             VStack(spacing: 25) {
                 // 标题
                 VStack(spacing: 10) {
-                    Text("今日免费点数已用完😭")
+                    Text("解锁所有预测资讯")
                         .font(.largeTitle.bold())
                         // 2. 自动适配文字颜色
                         .foregroundColor(.primary)
@@ -51,7 +51,7 @@ struct SubscriptionView: View {
                             }
                         }
                     
-                    Text("请选择“专业版”订阅\n订阅成功后一个月内您将获得无限查询权限")
+                    Text("请选择“专业版”订阅")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -67,7 +67,7 @@ struct SubscriptionView: View {
                             Text("【当前】免费版")
 //                                .font(.title2.bold())
                                 .foregroundColor(.primary) // 适配颜色
-                            Text("仅能使用 \(authManager.isSubscribed ? "每日受限" : "每日有限次数") 查询")
+                            Text("仅能浏览 \(authManager.isSubscribed ? "每日受限" : "未锁定的预测") 信息")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary) // 适配颜色
                         }
@@ -100,7 +100,7 @@ struct SubscriptionView: View {
                             Text("专业版\n(订阅时长 1 Month)")
                                 .font(.title2.bold())
                                 .foregroundColor(.primary)
-                            Text("不限次检索和查询所有数据")
+                            Text("订阅当月可无限浏览检索所有预测数据")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
@@ -160,7 +160,7 @@ struct SubscriptionView: View {
                         .foregroundColor(.orange)
                         .padding()
                 } else {
-                    Text("如果不选择付费，您将继续使用免费版，每日会有查询次数限制，如当天的用完，可第二天再来。")
+                    Text("如果不选择付费，您可以明天再来，每日会免费解锁部分新的预测资讯。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -326,7 +326,7 @@ struct SubscriptionView: View {
                 await MainActor.run {
                     isRestoring = false
                     if authManager.isSubscribed {
-                        restoreMessage = "成功恢复订阅！您现在可以无限制访问数据。"
+                        restoreMessage = "成功恢复订阅！您现在可以无限制访问所有预测数据。"
                     } else {
                         restoreMessage = "未发现有效的订阅记录。"
                     }

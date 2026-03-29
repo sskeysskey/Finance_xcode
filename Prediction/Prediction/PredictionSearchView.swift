@@ -18,12 +18,23 @@ struct PredictionSearchView: View {
         guard !keyword.isEmpty else { return [] }
 
         return items.filter { item in
-            // 英文原文匹配
+            // 1. 匹配标题 (name) 的中英文
             if item.name.lowercased().contains(keyword) { return true }
             // 中文译文匹配
             let translatedName = transManager.name(item.name).lowercased()
             if translatedName.contains(keyword) { return true }
+            
+            // ✅ 2. 新增：匹配大类 (type) 的中英文
+            if item.type.lowercased().contains(keyword) { return true }
+            let translatedType = transManager.type(item.type).lowercased()
+            if translatedType.contains(keyword) { return true }
+            
+            // ✅ 3. 新增：匹配子类 (subtype) 的中英文
+            if item.subtype.lowercased().contains(keyword) { return true }
+            let translatedSubtype = transManager.subtype(item.subtype).lowercased()
+            if translatedSubtype.contains(keyword) { return true }
 
+            // 4. 匹配选项 (options) 的中英文
             for opt in item.options {
                 if opt.label.lowercased().contains(keyword) { return true }
                 if opt.displayLabel.lowercased().contains(keyword) { return true }
@@ -46,7 +57,7 @@ struct PredictionSearchView: View {
                         HStack {
                             Image(systemName: "magnifyingglass")
                                 .foregroundColor(.secondary)
-                            TextField("搜索预测话题或选项...", text: $searchText)
+                            TextField("搜索预测话题、分类或选项...", text: $searchText)
                                 .foregroundColor(.primary)
                                 .focused($isSearchFocused)
                                 .autocorrectionDisabled()

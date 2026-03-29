@@ -28,7 +28,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     private(set) var userIdentifier: String?
     
     // 【修改】Finance 专用的 Key
-    private let userIdentifierKey = "zhangyan.Prediction"
+    private let userIdentifierKey = "com.zhangyan.Prediction"
     // 【修改】Finance 专用的 Product ID (需在 App Store Connect 创建)
     private let subscriptionProductID = "com.zhangyan.prediction.subscription.monthly"
     // 【修改】Finance API 地址
