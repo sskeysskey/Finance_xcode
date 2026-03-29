@@ -43,7 +43,7 @@ struct PredictionSearchView: View {
                             Image(systemName: "magnifyingglass")
                                 .foregroundColor(.secondary)
                             TextField("搜索预测话题或选项...", text: $searchText)
-                                .foregroundColor(.white)
+                                .foregroundColor(.primary)
                                 .focused($isSearchFocused)
                                 .autocorrectionDisabled()
                             

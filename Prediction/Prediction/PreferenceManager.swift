@@ -139,7 +139,7 @@ struct PreferenceSelectionView: View {
                 VStack(spacing: 8) {
                     Text(isOnboarding ? "选择您感兴趣的话题" : "偏好设置")
                         .font(.title2.bold())
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     Text("选择您想追踪的预测类别")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
@@ -216,7 +216,7 @@ struct PreferenceSelectionView: View {
                 } label: {
                     Text(isOnboarding ? "开始探索" : "保存设置")
                         .font(.headline)
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
                         .background {
@@ -279,7 +279,7 @@ struct NewCategorySheet: View {
                             .foregroundColor(.yellow)
                         Text("发现新分类")
                             .font(.title2.bold())
-                            .foregroundColor(.white)
+                            .foregroundColor(.primary)
                         Text("数据更新后出现了新的预测分类，请选择是否关注")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
@@ -341,7 +341,7 @@ struct NewCategorySheet: View {
                         } label: {
                             Text("确认添加 (\(tempSelected.count))")
                                 .font(.headline)
-                                .foregroundColor(.white)
+                                .foregroundColor(.primary)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 16)
                                 .background(
@@ -413,7 +413,7 @@ struct NewCategorySectionCard: View {
             HStack {
                 Text(typeName)
                     .font(.headline)
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                 Spacer()
                 Text("\(selectedCount)/\(subtypes.count) 已选")
                     .font(.caption)
@@ -444,14 +444,14 @@ struct NewCategorySectionCard: View {
                             
                             Text(subtype)
                                 .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(isSelected ? .white : .secondary)
+                                .foregroundColor(isSelected ? .primary : .secondary)
                                 .lineLimit(1)
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
                         .background(
                             RoundedRectangle(cornerRadius: 10)
-                                .fill(isSelected ? Color.blue.opacity(0.2) : Color.white.opacity(0.05))
+                                .fill(isSelected ? Color.blue.opacity(0.2) : Color.primary.opacity(0.05))
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
@@ -490,7 +490,7 @@ struct CategoryCard: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(transManager.type(typeName)) // ← 替换
                             .font(.headline)
-                            .foregroundColor(.white)
+                            .foregroundColor(.primary)
                         Text("\(selectedCount)/\(subtypes.count) 已选")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -529,14 +529,14 @@ struct CategoryCard: View {
                                 
                                 Text(transManager.subtype(subtype)) // ← 替换
                                     .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(isSelected ? .white : .secondary)
+                                    .foregroundColor(isSelected ? .primary : .secondary)
                                     .lineLimit(1)
                             }
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
                             .background(
                                 RoundedRectangle(cornerRadius: 10)
-                                    .fill(isSelected ? Color.blue.opacity(0.2) : Color.white.opacity(0.05))
+                                    .fill(isSelected ? Color.blue.opacity(0.2) : Color.primary.opacity(0.05))
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10)

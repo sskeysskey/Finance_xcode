@@ -1,14 +1,34 @@
 import SwiftUI
 
 extension Color {
-    // 主背景
-    static let appBg = Color(red: 0.04, green: 0.04, blue: 0.09)
-    // 卡片背景
-    static let cardBg = Color(red: 0.10, green: 0.10, blue: 0.16)
-    // 卡片高亮背景（悬浮）
-    static let cardBgHover = Color(red: 0.14, green: 0.14, blue: 0.22)
-    // 标签背景色
-    static let tagBg = Color.white.opacity(0.08)
+    // 动态主背景色
+    static let appBg = Color(UIColor { traitCollection in
+        return traitCollection.userInterfaceStyle == .dark 
+            ? UIColor(red: 0.04, green: 0.04, blue: 0.09, alpha: 1.0)
+            : UIColor.systemGroupedBackground
+    })
+    
+    // 动态卡片背景色
+    static let cardBg = Color(UIColor { traitCollection in
+        return traitCollection.userInterfaceStyle == .dark 
+            ? UIColor(red: 0.10, green: 0.10, blue: 0.16, alpha: 1.0)
+            : UIColor.secondarySystemGroupedBackground
+    })
+    
+    // 动态卡片高亮背景（悬浮）
+    static let cardBgHover = Color(UIColor { traitCollection in
+        return traitCollection.userInterfaceStyle == .dark 
+            ? UIColor(red: 0.14, green: 0.14, blue: 0.22, alpha: 1.0)
+            : UIColor.tertiarySystemGroupedBackground
+    })
+    
+    // 动态标签背景色
+    static let tagBg = Color(UIColor { traitCollection in
+        return traitCollection.userInterfaceStyle == .dark 
+            ? UIColor.white.withAlphaComponent(0.08)
+            : UIColor.black.withAlphaComponent(0.06)
+    })
+    
     // 绿色边框（用于百分比 pill）
     static let pillBorder = Color(red: 0.2, green: 0.7, blue: 0.4)
     

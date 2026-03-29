@@ -129,7 +129,7 @@ struct WelcomeView: View {
                     
                     Text("洞察全球预测市场")
                         .font(.title3.bold())
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(.primary.opacity(0.7))
                         .padding(.top, 8)
                     
                     Spacer()
@@ -156,7 +156,7 @@ struct WelcomeView: View {
                                 Text("选择您的偏好配置")
                                     .fontWeight(.semibold)
                             }
-                            .foregroundColor(.white)
+                            .foregroundColor(.primary)
                             .padding(.vertical, 16)
                             .frame(maxWidth: .infinity)
                             .background(
@@ -182,9 +182,9 @@ struct WelcomeView: View {
                 if syncManager.isSyncing {
                     Color.black.opacity(0.5).ignoresSafeArea()
                     VStack(spacing: 16) {
-                        ProgressView().tint(.white).scaleEffect(1.3)
+                        ProgressView().tint(.primary).scaleEffect(1.3)
                         Text("正在同步数据...")
-                            .font(.headline).foregroundColor(.white)
+                            .font(.headline).foregroundColor(.primary)
                     }
                 }
             }

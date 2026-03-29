@@ -24,7 +24,7 @@ struct PredictionApp: App {
             .environmentObject(authManager)
             .environmentObject(prefManager)
             .environmentObject(transManager) // ← 新增
-            .preferredColorScheme(.dark)
+            // 删除 .preferredColorScheme(.dark) 以跟随系统浅色/深色模式
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                 authManager.handleAppDidBecomeActive()
             }
@@ -192,7 +192,7 @@ struct MainContainerView: View {
                         } label: {
                             Text(transManager.language == .chinese ? "EN" : "中")
                                 .font(.system(size: 13, weight: .bold, design: .rounded))
-                                .foregroundColor(.white)
+                                .foregroundColor(.primary)
                                 .frame(width: 28, height: 28)
                                 .background(
                                     Circle().fill(Color.blue.opacity(0.3))
@@ -338,7 +338,7 @@ struct MainContainerView: View {
                             .fixedSize(horizontal: true, vertical: false) // ✅ 强制横向不被挤压换行
                     }
                     // 选中时文字为白色，未选中时为次要颜色
-                    .foregroundColor(sortMode == mode ? .white : .secondary)
+                    .foregroundColor(sortMode == mode ? .primary : .secondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     // 选中时背景为蓝色，未选中时为半透明灰色/蓝色
@@ -366,7 +366,7 @@ struct MainContainerView: View {
                     VStack(spacing: 8) {
                         Text(source.rawValue)
                             .font(.system(size: 15, weight: selectedSource == source ? .bold : .medium))
-                            .foregroundColor(selectedSource == source ? .white : .secondary)
+                            .foregroundColor(selectedSource == source ? .primary : .secondary)
                         
                         Rectangle()
                             .fill(selectedSource == source ? Color.blue : Color.clear)
@@ -421,8 +421,8 @@ struct MainContainerView: View {
     // MARK: - HUD
     private var syncHUD: some View {
         VStack(spacing: 12) {
-            ProgressView().tint(.white).scaleEffect(1.2)
-            Text("同步中...").font(.headline).foregroundColor(.white)
+            ProgressView().tint(.primary).scaleEffect(1.2)
+            Text("同步中...").font(.headline).foregroundColor(.primary)
         }
         .frame(width: 160, height: 120)
         .background(Material.ultraThinMaterial)
@@ -434,7 +434,7 @@ struct MainContainerView: View {
         VStack(spacing: 12) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 44)).foregroundColor(.green)
-            Text("已是最新").font(.headline).foregroundColor(.white)
+            Text("已是最新").font(.headline).foregroundColor(.primary)
         }
         .frame(width: 160, height: 120)
         .background(Material.ultraThinMaterial)
@@ -506,7 +506,7 @@ struct NotificationBanner: View {
                 .foregroundColor(.orange).font(.system(size: 14))
             Text(message)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .lineLimit(3)
             Spacer()
@@ -515,7 +515,7 @@ struct NotificationBanner: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.secondary)
                     .padding(5)
-                    .background(Color.white.opacity(0.1))
+                    .background(Color.primary.opacity(0.1))
                     .clipShape(Circle())
             }
         }

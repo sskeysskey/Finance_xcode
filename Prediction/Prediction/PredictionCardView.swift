@@ -51,7 +51,7 @@ struct PredictionCardView: View {
             // 标题
             Text(transManager.name(item.name))
                 .font(.system(size: 17, weight: .bold))
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
                 .lineLimit(3)
                 .multilineTextAlignment(.leading)
             
@@ -123,10 +123,10 @@ struct PredictionCardView: View {
             VStack(spacing: 6) {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 20))
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(.primary.opacity(0.8))
                 Text("订阅解锁详情")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(.primary.opacity(0.7))
             }
         }
     }
@@ -151,7 +151,7 @@ struct OptionRow: View {
                 // 原: Text(option.displayLabel)
                 Text(transManager.option(option.displayLabel)) // ← 替换
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                     .lineLimit(1)
                 
                 GeometryReader { geo in
@@ -174,7 +174,7 @@ struct OptionRow: View {
             // 百分比 pill
             Text(option.value)
                 .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
                 .background(

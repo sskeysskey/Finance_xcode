@@ -181,14 +181,14 @@ struct SubscriptionView: View {
                 VStack {
                     ProgressView()
                         .scaleEffect(1.5)
-                        .tint(.white)
+                        .tint(.primary)
                     
                     if isRestoring {
-                        Text("正在恢复购买...").foregroundColor(.white).padding(.top)
+                        Text("正在恢复购买...").foregroundColor(.primary).padding(.top)
                     } else if isPurchasing {
-                        Text("正在处理支付...").foregroundColor(.white).padding(.top)
+                        Text("正在处理支付...").foregroundColor(.primary).padding(.top)
                     } else if isRedeeming {
-                        Text("正在验证代码...").foregroundColor(.white).padding(.top)
+                        Text("正在验证代码...").foregroundColor(.primary).padding(.top)
                     }
                 }
             }

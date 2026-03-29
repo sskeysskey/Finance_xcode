@@ -35,12 +35,24 @@ class TranslationManager: ObservableObject {
         "subtypes": [:]
     ]
     
+    /// 预编译的选项词级别替换规则（按 key 长度降序排列，优先匹配更长的词组）
+    private var optionReplacements: [(regex: NSRegularExpression, template: String)] = []
+    
     private let languageKey = "Pred_DisplayLanguage"
     
     init() {
         if let saved = UserDefaults.standard.string(forKey: languageKey),
            let lang = Language(rawValue: saved) {
+            // 如果用户之前保存过语言偏好，使用保存的偏好
             language = lang
+        } else {
+            // 如果没有保存过，根据系统语言自动设置默认值
+            let systemLang = Locale.preferredLanguages.first ?? "en"
+            if systemLang.hasPrefix("zh") {
+                language = .chinese
+            } else {
+                language = .english
+            }
         }
         loadDictionary()
     }
@@ -60,10 +72,23 @@ class TranslationManager: ObservableObject {
         return dict["names"]?[key] ?? key
     }
     
-    /// 翻译选项标签 (传入 displayLabel，即已清洗掉排名前缀的文本)
+    /// 翻译选项标签：先尝试完整匹配（向后兼容），再逐词替换
     func option(_ key: String) -> String {
         guard language == .chinese else { return key }
-        return dict["options"]?[key] ?? key
+        
+        // 1. 完整匹配（兼容已有的完整短语条目）
+        if let exact = dict["options"]?[key] { return exact }
+        
+        // 2. 逐词替换：用预编译的正则按 \b 单词边界替换
+        var result = key
+        for entry in optionReplacements {
+            let range = NSRange(result.startIndex..., in: result)
+            result = entry.regex.stringByReplacingMatches(
+                in: result, options: [], range: range,
+                withTemplate: entry.template
+            )
+        }
+        return result
     }
     
     /// 翻译大类名 (type)
@@ -96,7 +121,32 @@ class TranslationManager: ObservableObject {
         }
         
         dict = parsed
+        buildOptionReplacements()
+        
         let total = parsed.values.reduce(0) { $0 + $1.count }
         print("✅ TranslationManager: 已加载字典共 \(total) 条 (names: \(parsed["names"]?.count ?? 0), options: \(parsed["options"]?.count ?? 0), types: \(parsed["types"]?.count ?? 0), subtypes: \(parsed["subtypes"]?.count ?? 0))")
+    }
+    
+    // MARK: - 预编译选项替换规则
+    
+    /// 将 options 字典编译为正则替换数组，按 key 长度降序排列
+    /// 这样 "New York" 会先于 "New" 被匹配，避免短词误替换长词组的一部分
+    private func buildOptionReplacements() {
+        guard let options = dict["options"], !options.isEmpty else {
+            optionReplacements = []
+            return
+        }
+        
+        let sorted = options.sorted { $0.key.count > $1.key.count }
+        optionReplacements = sorted.compactMap { (key, value) in
+            let escaped = NSRegularExpression.escapedPattern(for: key)
+            let pattern = "\\b\(escaped)\\b"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+                return nil
+            }
+            // 转义模板中的 $ 和 \ 以避免被当作反向引用
+            let safeTemplate = NSRegularExpression.escapedTemplate(for: value)
+            return (regex: regex, template: safeTemplate)
+        }
     }
 }

@@ -182,8 +182,8 @@ struct UserProfileView: View {
                 if isDeletingAccount {
                     Color.black.opacity(0.6).ignoresSafeArea()
                     VStack(spacing: 20) {
-                        ProgressView().scaleEffect(1.5).tint(.white)
-                        Text("正在删除账号...").foregroundColor(.white)
+                        ProgressView().scaleEffect(1.5).tint(.primary)
+                        Text("正在删除账号...").foregroundColor(.primary)
                     }
                     .zIndex(200)
                 }

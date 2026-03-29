@@ -34,7 +34,7 @@ struct PredictionDetailView: View {
                             // 替换 name 展示:
                             Text(transManager.name(item.name))
                                 .font(.title2.bold())
-                                .foregroundColor(.white)
+                                .foregroundColor(.primary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .padding(.horizontal, 16)
@@ -119,7 +119,7 @@ struct DetailOptionRow: View {
                 // 标签
                 Text(transManager.option(option.displayLabel)) // ← 替换
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                     .lineLimit(2)
                 
                 Spacer()
@@ -135,7 +135,7 @@ struct DetailOptionRow: View {
                 // 百分比
                 Text(option.value)
                     .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(

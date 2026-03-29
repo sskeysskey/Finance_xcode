@@ -345,13 +345,13 @@ struct ForceUpdateView: View {
             VStack(spacing: 30) {
                 Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
                     .font(.system(size: 80)).foregroundColor(.blue)
-                Text("需要更新").font(.largeTitle.bold()).foregroundColor(.white)
+                Text("需要更新").font(.largeTitle.bold()).foregroundColor(.primary)
                 Text("请更新至最新版本后继续使用。")
                     .foregroundColor(.gray).multilineTextAlignment(.center)
                 Button {
                     if let url = URL(string: storeURL) { UIApplication.shared.open(url) }
                 } label: {
-                    Text("前往更新").font(.headline).foregroundColor(.white)
+                    Text("前往更新").font(.headline).foregroundColor(.primary)
                         .padding().frame(maxWidth: .infinity)
                         .background(Color.blue).cornerRadius(12)
                 }
