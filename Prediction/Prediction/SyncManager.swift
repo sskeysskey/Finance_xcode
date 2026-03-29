@@ -179,13 +179,15 @@ class SyncManager: ObservableObject {
             }
             
             if tasksToDownload.isEmpty {
+                // ✅ 修复：在触发 loadLocalData 前提前结束 isSyncing，防止弹窗检测时获取到空数据闪退
+                isSyncing = false
+                
                 // ✅ 即使没有新文件要下载，也重新加载一次本地数据
                 // （cleanOldFiles 可能删除了不再有效的旧 polymarket 文件）
                 loadLocalData()
                 
                 if isManual {
                     showAlreadyUpToDateAlert = true
-                    isSyncing = false
                     resetAfterDelay()
                 }
                 return
@@ -195,6 +197,9 @@ class SyncManager: ObservableObject {
             for info in tasksToDownload {
                 try await downloadFile(named: info.name)
             }
+            
+            // ✅ 修复：在触发 loadLocalData 前提前结束 isSyncing，防止弹窗检测时获取到空数据闪退
+            isSyncing = false
             
             // 下载完成后重新加载数据
             loadLocalData()

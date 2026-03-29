@@ -109,7 +109,7 @@ enum ListSortMode: String, CaseIterable, Identifiable {
         switch self {
         case .trend: return "Trend"
         case .new: return "New"
-        case .highestVolume: return "Top Vol"
+        case .highestVolume: return "Top"
         }
     }
     

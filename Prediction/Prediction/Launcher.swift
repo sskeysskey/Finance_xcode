@@ -122,7 +122,7 @@ struct MainContainerView: View {
                     // 卡片列表
                     ScrollView {
                         LazyVStack(spacing: 14) {
-                            // 【修改】更新时间 + 排序下拉框 同一行
+                            // 【修改】更新时间 + 排序平铺按钮 同一行
                             infoBar
                             
                             // 通知条
@@ -286,42 +286,51 @@ struct MainContainerView: View {
     private var infoBar: some View {
         HStack {
             if !syncManager.serverUpdateTime.isEmpty {
-                Text("更新: \(syncManager.serverUpdateTime)")
+                Text("\(syncManager.serverUpdateTime)")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundColor(.secondary)
             }
             
             Spacer()
             
-            sortModeMenu
+            // 替换为平铺的按钮选择器
+            sortModeSelector
         }
         .padding(.horizontal, 16)
         .padding(.top, 4)
     }
     
-    // MARK: - 排序模式下拉菜单
-    private var sortModeMenu: some View {
-        Menu {
-            Picker("排序", selection: $sortMode) {
-                ForEach(ListSortMode.allCases) { mode in
-                    Label(mode.displayName, systemImage: mode.icon)
-                        .tag(mode)
+    // MARK: - 排序模式平铺选择器 (替换原有的 sortModeMenu)
+    private var sortModeSelector: some View {
+        HStack(spacing: 8) {
+            ForEach(ListSortMode.allCases) { mode in
+                Button {
+                    // 添加轻微动画让切换更平滑
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        sortMode = mode
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: mode.icon)
+                            .font(.system(size: 10))
+                        Text(mode.displayName)
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1) // ✅ 限制单行显示
+                            .fixedSize(horizontal: true, vertical: false) // ✅ 强制横向不被挤压换行
+                    }
+                    // 选中时文字为白色，未选中时为次要颜色
+                    .foregroundColor(sortMode == mode ? .white : .secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    // 选中时背景为蓝色，未选中时为半透明灰色/蓝色
+                    .background(
+                        sortMode == mode 
+                        ? Color.blue 
+                        : Color.blue.opacity(0.1)
+                    )
+                    .cornerRadius(8)
                 }
             }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: sortMode.icon)
-                    .font(.system(size: 10))
-                Text(sortMode.displayName)
-                    .font(.system(size: 11, weight: .semibold))
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8))
-            }
-            .foregroundColor(.blue)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Color.blue.opacity(0.12))
-            .cornerRadius(8)
         }
     }
     
