@@ -63,7 +63,10 @@ struct FloatingTopicsView: View {
     private func updateTopics() {
         topics = topics.compactMap { var t = $0; t.z += t.speed; return t.z < 1.0 ? t : nil }
         
-        if topics.count < 15 && !topicTexts.isEmpty && Double.random(in: 0...1) > 0.93 {
+        // 【修改1】动态调整生成概率：如果屏幕上话题少于 6 个（刚开始），阈值设为 0.2（极易生成）；否则恢复 0.93（缓慢生成）
+        let spawnThreshold = topics.count < 6 ? 0.2 : 0.93
+        
+        if topics.count < 15 && !topicTexts.isEmpty && Double.random(in: 0...1) > spawnThreshold {
             // 使用彩色池增加现代感
             let randomColor = Color.floatingColors.randomElement() ?? .indigo
             topics.append(FloatingTopic(
@@ -109,7 +112,8 @@ struct WelcomeView: View {
                 
                 // 飘浮话题
                 VStack {
-                    Spacer().frame(height: 140)
+                    // 【修改2】将 140 改为 200，使飘浮话题区域整体往下移
+                    Spacer().frame(height: 200)
                     FloatingTopicsView()
                         .frame(height: 380)
                         .mask(
@@ -123,7 +127,8 @@ struct WelcomeView: View {
                 
                 // 主文本
                 VStack(spacing: 0) {
-                    Spacer().frame(height: 90)
+                    // 【修改3】将 90 改为 50，使图标和大小标题整体往上移
+                    Spacer().frame(height: 50)
                     
                     Image(systemName: "chart.bar.xaxis.ascending")
                         .font(.system(size: 50))
@@ -144,7 +149,7 @@ struct WelcomeView: View {
                     // 底部按钮
                     VStack(spacing: 16) {
                         Button {
-                            // 【修改】如果有数据直接进，没数据先强制同步
+                            // 如果有数据直接进，没数据先强制同步
                             if syncManager.polymarketItems.isEmpty && syncManager.kalshiItems.isEmpty {
                                 Task {
                                     // isManual 设为 true 强制越过一些静默拦截
