@@ -110,7 +110,7 @@ class PreferenceManager: ObservableObject {
 }
 
 
-// MARK: - 完整偏好设置页面（已有，增加 markAllAsKnown 调用）
+// MARK: - 完整偏好设置页面
 struct PreferenceSelectionView: View {
     @EnvironmentObject var syncManager: SyncManager
     @EnvironmentObject var prefManager: PreferenceManager
@@ -153,7 +153,7 @@ struct PreferenceSelectionView: View {
                         withAnimation { prefManager.selectAll(subtypes: allSubtypes) }
                     }
                     .font(.caption.bold())
-                    .foregroundColor(.blue)
+                    .foregroundStyle(LinearGradient.brandGradient)
                     
                     Text("·").foregroundColor(.secondary)
                     
@@ -161,7 +161,7 @@ struct PreferenceSelectionView: View {
                         withAnimation { prefManager.selectedSubtypes.removeAll() }
                     }
                     .font(.caption.bold())
-                    .foregroundColor(.blue)
+                    .foregroundColor(.secondary)
                     
                     Spacer()
                     
@@ -216,17 +216,20 @@ struct PreferenceSelectionView: View {
                 } label: {
                     Text(isOnboarding ? "开始探索" : "保存设置")
                         .font(.headline)
-                        .foregroundColor(.primary)
+                        .foregroundColor(prefManager.selectedSubtypes.isEmpty ? .secondary : .white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
-                        .background {
-                            if prefManager.selectedSubtypes.isEmpty {
-                                Color.gray
-                            } else {
-                                LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing)
+                        .background(
+                            Group {
+                                if prefManager.selectedSubtypes.isEmpty {
+                                    Color.primary.opacity(0.1)
+                                } else {
+                                    LinearGradient.brandGradientHorizontal
+                                }
                             }
-                        }
+                        )
                         .cornerRadius(16)
+                        .shadow(color: prefManager.selectedSubtypes.isEmpty ? .clear : Color.brandStart.opacity(0.3), radius: 8, y: 4)
                 }
                 .disabled(prefManager.selectedSubtypes.isEmpty)
                 .padding(.horizontal, 20)
@@ -276,7 +279,7 @@ struct NewCategorySheet: View {
                     VStack(spacing: 10) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 40))
-                            .foregroundColor(.yellow)
+                            .foregroundStyle(LinearGradient.brandGradient)
                         Text("发现新分类")
                             .font(.title2.bold())
                             .foregroundColor(.primary)
@@ -295,7 +298,7 @@ struct NewCategorySheet: View {
                             withAnimation { tempSelected = Set(allNewSubtypes) }
                         }
                         .font(.caption.bold())
-                        .foregroundColor(.blue)
+                        .foregroundStyle(LinearGradient.brandGradient)
                         
                         Text("·").foregroundColor(.secondary)
                         
@@ -303,7 +306,7 @@ struct NewCategorySheet: View {
                             withAnimation { tempSelected.removeAll() }
                         }
                         .font(.caption.bold())
-                        .foregroundColor(.blue)
+                        .foregroundColor(.secondary)
                         
                         Spacer()
                         
@@ -341,14 +344,12 @@ struct NewCategorySheet: View {
                         } label: {
                             Text("确认添加 (\(tempSelected.count))")
                                 .font(.headline)
-                                .foregroundColor(.primary)
+                                .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 16)
-                                .background(
-                                    LinearGradient(colors: [.blue, .purple],
-                                                   startPoint: .leading, endPoint: .trailing)
-                                )
+                                .background(LinearGradient.brandGradientHorizontal)
                                 .cornerRadius(16)
+                                .shadow(color: Color.brandStart.opacity(0.3), radius: 8, y: 4)
                         }
                         
                         Button {
@@ -422,7 +423,7 @@ struct NewCategorySectionCard: View {
             .padding(.horizontal, 16)
             .padding(.top, 16)
             
-            let columns = [GridItem(.adaptive(minimum: 100, maximum: 200), spacing: 10)]
+            let columns = [GridItem(.adaptive(minimum: 120, maximum: 200), spacing: 10)]
             
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(subtypes, id: \.self) { subtype in
@@ -439,24 +440,24 @@ struct NewCategorySectionCard: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 14))
-                                .foregroundColor(isSelected ? .blue : .secondary)
-                            
+                                .font(.system(size: 14, weight: isSelected ? .bold : .regular))
                             Text(subtype)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(isSelected ? .primary : .secondary)
+                                .font(.system(size: 13, weight: isSelected ? .bold : .medium))
                                 .lineLimit(1)
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
+                        .foregroundColor(isSelected ? .white : .primary.opacity(0.8))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                         .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(isSelected ? Color.blue.opacity(0.2) : Color.primary.opacity(0.05))
+                            Group {
+                                if isSelected {
+                                    LinearGradient.brandGradientHorizontal
+                                } else {
+                                    Color.primary.opacity(0.06)
+                                }
+                            }
                         )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(isSelected ? Color.blue.opacity(0.5) : Color.clear, lineWidth: 1)
-                        )
+                        .cornerRadius(16)
                     }
                 }
             }
@@ -476,7 +477,7 @@ struct CategoryCard: View {
     let isExpanded: Bool
     @Binding var selectedSubtypes: Set<String>
     let onToggleExpand: () -> Void
-    @EnvironmentObject var transManager: TranslationManager // ← 新增
+    @EnvironmentObject var transManager: TranslationManager
     
     private var selectedCount: Int {
         subtypes.filter { selectedSubtypes.contains($0) }.count
@@ -488,7 +489,7 @@ struct CategoryCard: View {
             Button(action: onToggleExpand) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(transManager.type(typeName)) // ← 替换
+                        Text(transManager.type(typeName))
                             .font(.headline)
                             .foregroundColor(.primary)
                         Text("\(selectedCount)/\(subtypes.count) 已选")
@@ -507,7 +508,7 @@ struct CategoryCard: View {
             
             // 子类标签（可选）
             if isExpanded {
-                let columns = [GridItem(.adaptive(minimum: 100, maximum: 200), spacing: 10)]
+                let columns = [GridItem(.adaptive(minimum: 120, maximum: 200), spacing: 10)]
                 
                 LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(subtypes, id: \.self) { subtype in
@@ -523,25 +524,26 @@ struct CategoryCard: View {
                             }
                         } label: {
                             HStack(spacing: 6) {
+                                // 新增：空心圆圈与实心对勾指示器
                                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(isSelected ? .blue : .secondary)
-                                
-                                Text(transManager.subtype(subtype)) // ← 替换
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(isSelected ? .primary : .secondary)
+                                    .font(.system(size: 14, weight: isSelected ? .bold : .regular))
+                                Text(transManager.subtype(subtype))
+                                    .font(.system(size: 13, weight: isSelected ? .bold : .medium))
                                     .lineLimit(1)
                             }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
+                            .foregroundColor(isSelected ? .white : .primary.opacity(0.8))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
                             .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(isSelected ? Color.blue.opacity(0.2) : Color.primary.opacity(0.05))
+                                Group {
+                                    if isSelected {
+                                        LinearGradient.brandGradientHorizontal
+                                    } else {
+                                        Color.primary.opacity(0.06)
+                                    }
+                                }
                             )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(isSelected ? Color.blue.opacity(0.5) : Color.clear, lineWidth: 1)
-                            )
+                            .cornerRadius(16)
                         }
                     }
                 }

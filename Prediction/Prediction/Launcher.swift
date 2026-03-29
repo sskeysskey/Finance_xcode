@@ -122,12 +122,13 @@ struct MainContainerView: View {
                         sourceTabBar
                     }
                     
+                    // ✅ 将 infoBar 移出 ScrollView，使其固定在顶部
+                    infoBar
+                        .padding(.bottom, 8) // 增加底部间距，与下方滚动内容隔开
+                    
                     // 卡片列表
                     ScrollView {
                         LazyVStack(spacing: 14) {
-                            // 【修改】更新时间 + 排序平铺按钮 同一行
-                            infoBar
-                            
                             // 通知条
                             if let note = syncManager.activeNotification {
                                 NotificationBanner(message: note) {
@@ -184,7 +185,7 @@ struct MainContainerView: View {
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 14) {
-                        // ← 新增：语言切换按钮
+                        // ← 修改：语言切换按钮，去除蓝色，使用纯粹的黑白灰质感
                         Button {
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 transManager.toggle()
@@ -195,7 +196,7 @@ struct MainContainerView: View {
                                 .foregroundColor(.primary)
                                 .frame(width: 28, height: 28)
                                 .background(
-                                    Circle().fill(Color.blue.opacity(0.3))
+                                    Circle().fill(Color.primary.opacity(0.1))
                                 )
                         }
                         Button { showSearchSheet = true } label: {
@@ -316,7 +317,7 @@ struct MainContainerView: View {
             sortModeSelector
         }
         .padding(.horizontal, 16)
-        .padding(.top, 4)
+        .padding(.top, 8) // 稍微调整顶部间距
     }
     
     // MARK: - 排序模式平铺选择器 (替换原有的 sortModeMenu)
@@ -333,21 +334,21 @@ struct MainContainerView: View {
                         Image(systemName: mode.icon)
                             .font(.system(size: 10))
                         Text(mode.displayName)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: 11, weight: .bold)) // 加粗一点显得更精致
                             .lineLimit(1) // ✅ 限制单行显示
                             .fixedSize(horizontal: true, vertical: false) // ✅ 强制横向不被挤压换行
                     }
-                    // 选中时文字为白色，未选中时为次要颜色
-                    .foregroundColor(sortMode == mode ? .primary : .secondary)
-                    .padding(.horizontal, 10)
+                    // 修改：选中时文字为系统背景色（反色），未选中时为次要颜色
+                    .foregroundColor(sortMode == mode ? Color(UIColor.systemBackground) : .secondary)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    // 选中时背景为蓝色，未选中时为半透明灰色/蓝色
+                    // 修改：选中时背景为 Primary（黑/白），未选中时为极淡的灰色
                     .background(
                         sortMode == mode 
-                        ? Color.blue 
-                        : Color.blue.opacity(0.1)
+                        ? Color.primary 
+                        : Color.primary.opacity(0.06)
                     )
-                    .cornerRadius(8)
+                    .cornerRadius(12) // 增大圆角，呈现胶囊(Pill)形状
                 }
             }
         }
@@ -369,7 +370,7 @@ struct MainContainerView: View {
                             .foregroundColor(selectedSource == source ? .primary : .secondary)
                         
                         Rectangle()
-                            .fill(selectedSource == source ? Color.blue : Color.clear)
+                            .fill(selectedSource == source ? Color.primary : Color.clear) // 统一使用黑白配色
                             .frame(height: 3)
                             .cornerRadius(1.5)
                     }
@@ -412,7 +413,7 @@ struct MainContainerView: View {
                 Text("暂无匹配的预测项")
                     .foregroundColor(.secondary)
                 Button("调整偏好") { showPreferenceSheet = true }
-                    .font(.subheadline).foregroundColor(.blue)
+                    .font(.subheadline).foregroundColor(.primary)
             }
         }
         .padding(.top, 80)

@@ -37,6 +37,30 @@ extension Color {
         .red, .blue, .green, .orange, .purple,
         .pink, .teal, .indigo, .mint, .cyan
     ]
+    
+    // MARK: - 新增：品牌高级渐变色
+    static let brandStart = Color.indigo
+    static let brandEnd = Color.purple
+    
+    // 漂浮动画彩色池
+    static let floatingColors: [Color] = [
+        .indigo, .purple, .pink, .teal, .cyan, .blue
+    ]
+}
+
+// 渐变色扩展
+extension LinearGradient {
+    static let brandGradient = LinearGradient(
+        colors: [Color.brandStart, Color.brandEnd],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+    
+    static let brandGradientHorizontal = LinearGradient(
+        colors: [Color.brandStart, Color.brandEnd],
+        startPoint: .leading,
+        endPoint: .trailing
+    )
 }
 
 // 格式化工具

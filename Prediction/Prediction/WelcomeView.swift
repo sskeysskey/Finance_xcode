@@ -17,10 +17,6 @@ struct FloatingTopicsView: View {
     @State private var topicTexts: [String] = []
     @State private var isActive = false
     
-    private let colors: [Color] = [
-        .blue, .purple, .pink, .orange, .mint, .teal, .indigo, .red, .cyan, .green
-    ]
-    
     var body: some View {
         GeometryReader { geo in
             TimelineView(.animation) { _ in
@@ -68,12 +64,14 @@ struct FloatingTopicsView: View {
         topics = topics.compactMap { var t = $0; t.z += t.speed; return t.z < 1.0 ? t : nil }
         
         if topics.count < 15 && !topicTexts.isEmpty && Double.random(in: 0...1) > 0.93 {
+            // 使用彩色池增加现代感
+            let randomColor = Color.floatingColors.randomElement() ?? .indigo
             topics.append(FloatingTopic(
                 text: topicTexts.randomElement()!,
                 x: CGFloat.random(in: 0.5...1.5),
                 y: CGFloat.random(in: 0.5...1.5),
                 z: 0.0,
-                color: colors.randomElement()!,
+                color: randomColor.opacity(Double.random(in: 0.6...0.9)),
                 speed: CGFloat.random(in: 0.002...0.005),
                 angle: Double.random(in: 0...(2 * .pi))
             ))
@@ -96,6 +94,19 @@ struct WelcomeView: View {
             ZStack {
                 Color.appBg.ignoresSafeArea()
                 
+                // 背景高级光晕 (Mesh Gradient 风格)
+                Circle()
+                    .fill(Color.brandStart.opacity(0.15))
+                    .frame(width: 300)
+                    .blur(radius: 60)
+                    .offset(x: -100, y: -200)
+                
+                Circle()
+                    .fill(Color.brandEnd.opacity(0.15))
+                    .frame(width: 300)
+                    .blur(radius: 60)
+                    .offset(x: 150, y: 200)
+                
                 // 飘浮话题
                 VStack {
                     Spacer().frame(height: 140)
@@ -116,20 +127,16 @@ struct WelcomeView: View {
                     
                     Image(systemName: "chart.bar.xaxis.ascending")
                         .font(.system(size: 50))
-                        .foregroundStyle(
-                            LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
-                        )
+                        .foregroundStyle(LinearGradient.brandGradient)
                         .padding(.bottom, 12)
                     
                     Text("Prediction")
                         .font(.system(size: 52, weight: .black, design: .rounded))
-                        .foregroundStyle(
-                            LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing)
-                        )
+                        .foregroundColor(.primary)
                     
                     Text("洞察全球预测市场")
                         .font(.title3.bold())
-                        .foregroundColor(.primary.opacity(0.7))
+                        .foregroundColor(.secondary)
                         .padding(.top, 8)
                     
                     Spacer()
@@ -156,15 +163,12 @@ struct WelcomeView: View {
                                 Text("选择您的偏好配置")
                                     .fontWeight(.semibold)
                             }
-                            .foregroundColor(.primary)
+                            .foregroundColor(.white)
                             .padding(.vertical, 16)
                             .frame(maxWidth: .infinity)
-                            .background(
-                                LinearGradient(colors: [.blue, .purple],
-                                               startPoint: .leading, endPoint: .trailing)
-                            )
+                            .background(LinearGradient.brandGradientHorizontal)
                             .cornerRadius(16)
-                            .shadow(color: .blue.opacity(0.4), radius: 12, y: 6)
+                            .shadow(color: Color.brandStart.opacity(0.3), radius: 10, y: 4)
                         }
                         .padding(.horizontal, 40)
                         
@@ -182,9 +186,9 @@ struct WelcomeView: View {
                 if syncManager.isSyncing {
                     Color.black.opacity(0.5).ignoresSafeArea()
                     VStack(spacing: 16) {
-                        ProgressView().tint(.primary).scaleEffect(1.3)
+                        ProgressView().tint(.white).scaleEffect(1.3)
                         Text("正在同步数据...")
-                            .font(.headline).foregroundColor(.primary)
+                            .font(.headline).foregroundColor(.white)
                     }
                 }
             }
