@@ -23,8 +23,7 @@ struct PredictionApp: App {
             .environmentObject(syncManager)
             .environmentObject(authManager)
             .environmentObject(prefManager)
-            .environmentObject(transManager) // ← 新增
-            // 删除 .preferredColorScheme(.dark) 以跟随系统浅色/深色模式
+            .environmentObject(transManager)
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                 authManager.handleAppDidBecomeActive()
             }
@@ -36,11 +35,9 @@ struct MainContainerView: View {
     @EnvironmentObject var syncManager: SyncManager
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var prefManager: PreferenceManager
-    @EnvironmentObject var transManager: TranslationManager // ← 新增
-    
-    // ✅ 改动1：默认选中 kalshi（当前稳定的数据源）
+    @EnvironmentObject var transManager: TranslationManager
+
     @State private var selectedSource: PredictionSource = .kalshi
-    // 【新增】排序模式，默认 Trend
     @State private var sortMode: ListSortMode = .trend
     @State private var showProfileSheet = false
     @State private var showPreferenceSheet = false
@@ -50,14 +47,12 @@ struct MainContainerView: View {
     @State private var showSyncError = false
     @State private var syncErrorMsg = ""
     @State private var hasAttemptedSync = false
-    
-    // ✅ 新增：新分类弹窗相关状态
+
     @State private var showNewCategorySheet = false
     @State private var pendingNewCategories: [(type: String, subtypes: [String])] = []
-    
+
     @Environment(\.scenePhase) private var scenePhase
-    
-    // 动态计算当前有数据的来源列表（同时考虑主文件和 trend 文件）
+
     private var availableSources: [PredictionSource] {
         var sources: [PredictionSource] = []
         if !syncManager.polymarketItems.isEmpty || !syncManager.polymarketTrendItems.isEmpty {
@@ -68,20 +63,18 @@ struct MainContainerView: View {
         }
         return sources
     }
-    
-    // 【修改】根据 sortMode 决定数据源
-    private var filteredItems: [PredictionItem] {
+
+    // ✅ 改为函数，接收 mode 参数，供 TabView 每页独立使用
+    private func itemsForMode(_ mode: ListSortMode) -> [PredictionItem] {
         let baseItems: [PredictionItem]
-        
-        switch sortMode {
+
+        switch mode {
         case .highestVolume:
-            // 直接使用主文件（已按 volume 排序）
             baseItems = selectedSource == .polymarket
                 ? syncManager.polymarketItems
                 : syncManager.kalshiItems
-            
+
         case .trend:
-            // 使用 trend 文件；如果 trend 文件不存在则回退到主文件
             let trendItems = selectedSource == .polymarket
                 ? syncManager.polymarketTrendItems
                 : syncManager.kalshiTrendItems
@@ -92,87 +85,47 @@ struct MainContainerView: View {
             } else {
                 baseItems = trendItems
             }
-            
+
         case .new:
-            // 从 trend 文件中筛选 isNew == true 的项目
             let trendItems = selectedSource == .polymarket
                 ? syncManager.polymarketTrendItems
                 : syncManager.kalshiTrendItems
             baseItems = trendItems.filter { $0.isNew }
         }
-        
+
         if prefManager.selectedSubtypes.isEmpty { return baseItems }
         return baseItems.filter { prefManager.selectedSubtypes.contains($0.subtype) }
     }
-    
-    // 判断是否完全没有任何数据
+
     private var hasNoDataAtAll: Bool {
         syncManager.polymarketItems.isEmpty && syncManager.kalshiItems.isEmpty
         && syncManager.polymarketTrendItems.isEmpty && syncManager.kalshiTrendItems.isEmpty
     }
-    
+
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.appBg.ignoresSafeArea()
-                
+
                 VStack(spacing: 0) {
-                    // 仅当有多个来源时显示 Tab 栏
                     if availableSources.count > 1 {
                         sourceTabBar
                     }
-                    
-                    // ✅ 将 infoBar 移出 ScrollView，使其固定在顶部
+
                     infoBar
-                        .padding(.bottom, 8) // 增加底部间距，与下方滚动内容隔开
-                    
-                    // 卡片列表
-                    // ✅ 新增：使用 ScrollViewReader 来控制滚动位置
-                    ScrollViewReader { scrollProxy in
-                        ScrollView {
-                            LazyVStack(spacing: 14) {
-                                // ✅ 新增：顶部隐藏锚点，用于重置滚动位置
-                                Color.clear.frame(height: 0).id("topScrollAnchor")
-                                
-                                // 通知条
-                                if let note = syncManager.activeNotification {
-                                    NotificationBanner(message: note) {
-                                        syncManager.dismissNotification()
-                                    }
-                                }
-                                
-                                if filteredItems.isEmpty {
-                                    emptyStateView
-                                } else {
-                                    ForEach(filteredItems) { item in
-                                        PredictionCardView(
-                                            item: item,
-                                            isSubscribed: authManager.isSubscribed,
-                                            onLockedTap: { handleLockedTap() }
-                                        )
-                                        .padding(.horizontal, 16)
-                                    }
-                                }
-                                
-                                Spacer().frame(height: 40)
-                            }
-                            .padding(.top, 8)
-                        }
-                        // ✅ 新增：当排序模式或数据源改变时，滚动回顶部
-                        .onChange(of: sortMode) { _ in
-                            withAnimation {
-                                scrollProxy.scrollTo("topScrollAnchor", anchor: .top)
-                            }
-                        }
-                        .onChange(of: selectedSource) { _ in
-                            withAnimation {
-                                scrollProxy.scrollTo("topScrollAnchor", anchor: .top)
-                            }
+                        .padding(.bottom, 8)
+
+                    // ✅ 用 TabView(.page) 替代 ScrollView + simultaneousGesture
+                    // 系统原生处理水平滑动 vs 垂直滚动 vs 点击，零冲突
+                    TabView(selection: $sortMode) {
+                        ForEach(ListSortMode.allCases) { mode in
+                            listPage(for: mode)
+                                .tag(mode)
                         }
                     }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
                 }
-                
-                // 同步 HUD
+
                 if syncManager.isSyncing {
                     syncHUD
                 }
@@ -199,10 +152,9 @@ struct MainContainerView: View {
                         }
                     }
                 }
-                
+
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 14) {
-                        // ← 修改：语言切换按钮，去除蓝色，使用纯粹的黑白灰质感
                         Button {
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 transManager.toggle()
@@ -219,15 +171,14 @@ struct MainContainerView: View {
                         Button { showSearchSheet = true } label: {
                             Image(systemName: "magnifyingglass").font(.system(size: 15))
                         }
-                        
-                        // 【修改】偏好设置按钮增加兜底同步逻辑
+
                         Button {
                             handlePreferenceButtonTap()
                         } label: {
                             Image(systemName: "slider.horizontal.3").font(.system(size: 15))
                         }
                         .disabled(syncManager.isSyncing)
-                        
+
                         Button {
                             Task { await doManualSync() }
                         } label: {
@@ -245,7 +196,6 @@ struct MainContainerView: View {
                 }
             }
             .sheet(isPresented: $showSearchSheet) {
-                // 搜索依然使用主文件（数据最全）
                 PredictionSearchView(
                     items: syncManager.polymarketItems + syncManager.kalshiItems,
                     isSubscribed: authManager.isSubscribed,
@@ -255,7 +205,6 @@ struct MainContainerView: View {
             .sheet(isPresented: $authManager.showSubscriptionSheet) {
                 SubscriptionView()
             }
-            // ✅ 新增：新分类弹窗
             .sheet(isPresented: $showNewCategorySheet) {
                 NewCategorySheet(newCategories: pendingNewCategories)
             }
@@ -270,8 +219,7 @@ struct MainContainerView: View {
             }
             .onAppear {
                 adjustSelectedSource()
-                transManager.reload() // ← 新增
-                // 首次出现时延迟检查新分类（等数据加载完毕）
+                transManager.reload()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     checkForNewCategories()
                 }
@@ -280,11 +228,9 @@ struct MainContainerView: View {
             .onChange(of: syncManager.kalshiItems.count) { _ in adjustSelectedSource() }
             .onChange(of: syncManager.polymarketTrendItems.count) { _ in adjustSelectedSource() }
             .onChange(of: syncManager.kalshiTrendItems.count) { _ in adjustSelectedSource() }
-            // ✅ 新增：同步完成后检查新分类
             .onChange(of: syncManager.isSyncing) { isSyncing in
                 if !isSyncing {
-                    transManager.reload() // ← 新增：同步完成后刷新字典
-                    // 延迟一点，等 HUD 消失后再弹窗，体验更好
+                    transManager.reload()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                         checkForNewCategories()
                     }
@@ -297,28 +243,59 @@ struct MainContainerView: View {
             }
         }
     }
-    
-    // MARK: - ✅ 新增：检查是否有新分类需要弹窗
+
+    // MARK: - ✅ 每个排序模式的页面内容
+    @ViewBuilder
+    private func listPage(for mode: ListSortMode) -> some View {
+        let items = itemsForMode(mode)
+        ScrollView {
+            LazyVStack(spacing: 14) {
+                // 通知条
+                if let note = syncManager.activeNotification {
+                    NotificationBanner(message: note) {
+                        syncManager.dismissNotification()
+                    }
+                }
+
+                if items.isEmpty {
+                    emptyStateForMode(mode)
+                } else {
+                    ForEach(items) { item in
+                        PredictionCardView(
+                            item: item,
+                            isSubscribed: authManager.isSubscribed,
+                            onLockedTap: { handleLockedTap() }
+                        )
+                        .padding(.horizontal, 16)
+                    }
+                }
+
+                Spacer().frame(height: 40)
+            }
+            .padding(.top, 8)
+        }
+        // 切换数据源时强制重建 ScrollView，自动回到顶部
+        .id("page_\(mode)_\(selectedSource)")
+    }
+
+    // MARK: - 检查新分类
     private func checkForNewCategories() {
-        // 正在同步或已经弹窗中，跳过
         guard !syncManager.isSyncing,
               !syncManager.showAlreadyUpToDateAlert,
               !showNewCategorySheet else { return }
-        
+
         let allItems = syncManager.polymarketItems + syncManager.kalshiItems
         guard !allItems.isEmpty else { return }
-        
-        // 老用户迁移：首次升级到有此功能的版本时，标记所有现有分类为已知
+
         prefManager.migrateKnownSubtypesIfNeeded(from: allItems)
-        
-        // 检测新分类
+
         let newCats = prefManager.detectNewSubtypes(from: allItems)
         if !newCats.isEmpty {
             pendingNewCategories = newCats
             showNewCategorySheet = true
         }
     }
-    
+
     // MARK: - Info Bar
     private var infoBar: some View {
         HStack {
@@ -327,22 +304,20 @@ struct MainContainerView: View {
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundColor(.secondary)
             }
-            
+
             Spacer()
-            
-            // 替换为平铺的按钮选择器
+
             sortModeSelector
         }
         .padding(.horizontal, 16)
-        .padding(.top, 8) // 稍微调整顶部间距
+        .padding(.top, 8)
     }
-    
-    // MARK: - 排序模式平铺选择器 (替换原有的 sortModeMenu)
+
+    // MARK: - 排序模式选择器
     private var sortModeSelector: some View {
         HStack(spacing: 8) {
             ForEach(ListSortMode.allCases) { mode in
                 Button {
-                    // 添加轻微动画让切换更平滑
                     withAnimation(.easeInOut(duration: 0.2)) {
                         sortMode = mode
                     }
@@ -351,28 +326,25 @@ struct MainContainerView: View {
                         Image(systemName: mode.icon)
                             .font(.system(size: 10))
                         Text(mode.displayName)
-                            .font(.system(size: 11, weight: .bold)) // 加粗一点显得更精致
-                            .lineLimit(1) // ✅ 限制单行显示
-                            .fixedSize(horizontal: true, vertical: false) // ✅ 强制横向不被挤压换行
+                            .font(.system(size: 11, weight: .bold))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
-                    // 修改：选中时文字为系统背景色（反色），未选中时为次要颜色
                     .foregroundColor(sortMode == mode ? Color(UIColor.systemBackground) : .secondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    // 修改：选中时背景为 Primary（黑/白），未选中时为极淡的灰色
                     .background(
-                        sortMode == mode 
-                        ? Color.primary 
+                        sortMode == mode
+                        ? Color.primary
                         : Color.primary.opacity(0.06)
                     )
-                    .cornerRadius(12) // 增大圆角，呈现胶囊(Pill)形状
+                    .cornerRadius(12)
                 }
             }
         }
     }
-    
+
     // MARK: - Tab Bar
-    // ✅ 改动6：遍历 availableSources 而非 PredictionSource.allCases
     private var sourceTabBar: some View {
         HStack(spacing: 0) {
             ForEach(availableSources) { source in
@@ -385,9 +357,9 @@ struct MainContainerView: View {
                         Text(source.rawValue)
                             .font(.system(size: 15, weight: selectedSource == source ? .bold : .medium))
                             .foregroundColor(selectedSource == source ? .primary : .secondary)
-                        
+
                         Rectangle()
-                            .fill(selectedSource == source ? Color.primary : Color.clear) // 统一使用黑白配色
+                            .fill(selectedSource == source ? Color.primary : Color.clear)
                             .frame(height: 3)
                             .cornerRadius(1.5)
                     }
@@ -398,13 +370,12 @@ struct MainContainerView: View {
         .padding(.horizontal, 16)
         .padding(.top, 8)
     }
-    
-    // MARK: - 空状态
-    // ✅ 改动7：区分"完全无数据"和"偏好过滤导致为空"两种情况
-    private var emptyStateView: some View {
+
+    // MARK: - 空状态（改为接收 mode 参数）
+    @ViewBuilder
+    private func emptyStateForMode(_ mode: ListSortMode) -> some View {
         VStack(spacing: 16) {
             if hasNoDataAtAll {
-                // 完全没有数据（可能是首次启动、网络问题等）
                 Image(systemName: "icloud.and.arrow.down")
                     .font(.system(size: 50)).foregroundColor(.secondary.opacity(0.3))
                 Text("暂无数据")
@@ -413,8 +384,7 @@ struct MainContainerView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary.opacity(0.7))
                     .multilineTextAlignment(.center)
-            } else if sortMode == .new {
-                // New 模式下没有新项目
+            } else if mode == .new {
                 Image(systemName: "sparkles")
                     .font(.system(size: 50)).foregroundColor(.secondary.opacity(0.3))
                 Text("暂无新增预测项")
@@ -424,7 +394,6 @@ struct MainContainerView: View {
                     .foregroundColor(.secondary.opacity(0.7))
                     .multilineTextAlignment(.center)
             } else {
-                // 有数据但被偏好筛选过滤掉了
                 Image(systemName: "chart.bar.doc.horizontal")
                     .font(.system(size: 50)).foregroundColor(.secondary.opacity(0.3))
                 Text("暂无匹配的预测项")
@@ -435,7 +404,7 @@ struct MainContainerView: View {
         }
         .padding(.top, 80)
     }
-    
+
     // MARK: - HUD
     private var syncHUD: some View {
         VStack(spacing: 12) {
@@ -447,7 +416,7 @@ struct MainContainerView: View {
         .background(Color.black.opacity(0.4))
         .cornerRadius(20)
     }
-    
+
     private var upToDateHUD: some View {
         VStack(spacing: 12) {
             Image(systemName: "checkmark.circle.fill")
@@ -460,7 +429,7 @@ struct MainContainerView: View {
         .cornerRadius(20)
         .transition(.opacity.combined(with: .scale))
     }
-    
+
     // MARK: - 操作
     private func doManualSync() async {
         do {
@@ -471,14 +440,11 @@ struct MainContainerView: View {
         }
     }
 
-    // 【新增】处理偏好设置按钮点击
     private func handlePreferenceButtonTap() {
-        // 如果本地完全没有数据（说明之前没同步成功过），则先尝试同步
         if hasNoDataAtAll {
             Task {
                 do {
                     try await syncManager.checkAndSync(isManual: true)
-                    // 同步成功后，如果有数据了，再打开偏好设置
                     if !hasNoDataAtAll {
                         showPreferenceSheet = true
                     } else {
@@ -491,11 +457,10 @@ struct MainContainerView: View {
                 }
             }
         } else {
-            // 已经有数据了，直接打开
             showPreferenceSheet = true
         }
     }
-    
+
     private func handleLockedTap() {
         if authManager.isLoggedIn {
             authManager.showSubscriptionSheet = true
@@ -503,8 +468,7 @@ struct MainContainerView: View {
             showLoginSheet = true
         }
     }
-    
-    // ✅ 改动8：自动调整选中来源——如果当前选中的来源没有数据，切换到有数据的来源
+
     private func adjustSelectedSource() {
         guard !availableSources.isEmpty else { return }
         if !availableSources.contains(selectedSource) {
@@ -517,7 +481,7 @@ struct MainContainerView: View {
 struct NotificationBanner: View {
     let message: String
     let onClose: () -> Void
-    
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "bell.badge.fill")
