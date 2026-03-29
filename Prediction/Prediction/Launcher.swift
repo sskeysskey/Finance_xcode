@@ -5,9 +5,10 @@ struct PredictionApp: App {
     @StateObject private var syncManager = SyncManager()
     @StateObject private var authManager = AuthManager()
     @StateObject private var prefManager = PreferenceManager()
-    
+    @StateObject private var transManager = TranslationManager() // ← 新增
+
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
-    
+
     var body: some Scene {
         WindowGroup {
             Group {
@@ -22,6 +23,7 @@ struct PredictionApp: App {
             .environmentObject(syncManager)
             .environmentObject(authManager)
             .environmentObject(prefManager)
+            .environmentObject(transManager) // ← 新增
             .preferredColorScheme(.dark)
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
                 authManager.handleAppDidBecomeActive()
@@ -34,6 +36,7 @@ struct MainContainerView: View {
     @EnvironmentObject var syncManager: SyncManager
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var prefManager: PreferenceManager
+    @EnvironmentObject var transManager: TranslationManager // ← 新增
     
     // ✅ 改动1：默认选中 kalshi（当前稳定的数据源）
     @State private var selectedSource: PredictionSource = .kalshi
@@ -181,6 +184,20 @@ struct MainContainerView: View {
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 14) {
+                        // ← 新增：语言切换按钮
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                transManager.toggle()
+                            }
+                        } label: {
+                            Text(transManager.language == .chinese ? "EN" : "中")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                                .frame(width: 28, height: 28)
+                                .background(
+                                    Circle().fill(Color.blue.opacity(0.3))
+                                )
+                        }
                         Button { showSearchSheet = true } label: {
                             Image(systemName: "magnifyingglass").font(.system(size: 15))
                         }
@@ -235,6 +252,7 @@ struct MainContainerView: View {
             }
             .onAppear {
                 adjustSelectedSource()
+                transManager.reload() // ← 新增
                 // 首次出现时延迟检查新分类（等数据加载完毕）
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     checkForNewCategories()
@@ -247,6 +265,7 @@ struct MainContainerView: View {
             // ✅ 新增：同步完成后检查新分类
             .onChange(of: syncManager.isSyncing) { isSyncing in
                 if !isSyncing {
+                    transManager.reload() // ← 新增：同步完成后刷新字典
                     // 延迟一点，等 HUD 消失后再弹窗，体验更好
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                         checkForNewCategories()

@@ -6,17 +6,26 @@ struct PredictionSearchView: View {
     let onLockedTap: () -> Void
     
     @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var transManager: TranslationManager // ← 新增
     @State private var searchText = ""
     @FocusState private var isSearchFocused: Bool
     
     private var results: [PredictionItem] {
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !keyword.isEmpty else { return [] }
-        
+
         return items.filter { item in
+            // 英文原文匹配
             if item.name.lowercased().contains(keyword) { return true }
+            // 中文译文匹配
+            let translatedName = transManager.name(item.name).lowercased()
+            if translatedName.contains(keyword) { return true }
+
             for opt in item.options {
                 if opt.label.lowercased().contains(keyword) { return true }
+                if opt.displayLabel.lowercased().contains(keyword) { return true }
+                let translatedOpt = transManager.option(opt.displayLabel).lowercased()
+                if translatedOpt.contains(keyword) { return true }
             }
             return false
         }

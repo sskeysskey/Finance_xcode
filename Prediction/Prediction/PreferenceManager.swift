@@ -476,6 +476,7 @@ struct CategoryCard: View {
     let isExpanded: Bool
     @Binding var selectedSubtypes: Set<String>
     let onToggleExpand: () -> Void
+    @EnvironmentObject var transManager: TranslationManager // ← 新增
     
     private var selectedCount: Int {
         subtypes.filter { selectedSubtypes.contains($0) }.count
@@ -487,7 +488,7 @@ struct CategoryCard: View {
             Button(action: onToggleExpand) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(typeName)
+                        Text(transManager.type(typeName)) // ← 替换
                             .font(.headline)
                             .foregroundColor(.white)
                         Text("\(selectedCount)/\(subtypes.count) 已选")
@@ -526,7 +527,7 @@ struct CategoryCard: View {
                                     .font(.system(size: 14))
                                     .foregroundColor(isSelected ? .blue : .secondary)
                                 
-                                Text(subtype)
+                                Text(transManager.subtype(subtype)) // ← 替换
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundColor(isSelected ? .white : .secondary)
                                     .lineLimit(1)

@@ -3,7 +3,8 @@ import SwiftUI
 struct PredictionDetailView: View {
     let item: PredictionItem
     @Environment(\.dismiss) var dismiss
-    
+    @EnvironmentObject var transManager: TranslationManager // ← 新增
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -14,7 +15,8 @@ struct PredictionDetailView: View {
                         // MARK: - 顶部信息
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
-                                Text(item.subtype.uppercased())
+                                // 替换 subtype 展示:
+                                Text(transManager.subtype(item.subtype).uppercased())
                                     .font(.system(size: 11, weight: .bold, design: .rounded))
                                     .foregroundColor(.secondary)
                                     .padding(.horizontal, 10)
@@ -29,7 +31,8 @@ struct PredictionDetailView: View {
                                     .foregroundColor(.secondary.opacity(0.7))
                             }
                             
-                            Text(item.name)
+                            // 替换 name 展示:
+                            Text(transManager.name(item.name))
                                 .font(.title2.bold())
                                 .foregroundColor(.white)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -96,6 +99,8 @@ struct DetailOptionRow: View {
     let option: PredictionOption
     let rank: Int
     let color: Color
+
+    @EnvironmentObject var transManager: TranslationManager // ← 新增
     
     private var barWidth: CGFloat {
         guard let val = Fmt.percentValue(option.value) else { return 0.05 }
@@ -112,7 +117,7 @@ struct DetailOptionRow: View {
                     .frame(width: 32, alignment: .leading)
                 
                 // 标签
-                Text(option.displayLabel)
+                Text(transManager.option(option.displayLabel)) // ← 替换
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(.white)
                     .lineLimit(2)

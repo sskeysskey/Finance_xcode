@@ -4,7 +4,8 @@ struct PredictionCardView: View {
     let item: PredictionItem
     let isSubscribed: Bool
     let onLockedTap: () -> Void
-    
+
+    @EnvironmentObject var transManager: TranslationManager // ← 新增
     @State private var showDetail = false
     
     private var showBlur: Bool { item.isHidden && !isSubscribed }
@@ -31,7 +32,7 @@ struct PredictionCardView: View {
         VStack(alignment: .leading, spacing: 14) {
             // 顶部：subtype 标签
             HStack {
-                Text(item.subtype.uppercased())
+                Text(transManager.subtype(item.subtype).uppercased())
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 10)
@@ -48,7 +49,7 @@ struct PredictionCardView: View {
             }
             
             // 标题
-            Text(item.name)
+            Text(transManager.name(item.name))
                 .font(.system(size: 17, weight: .bold))
                 .foregroundColor(.white)
                 .lineLimit(3)
@@ -135,6 +136,8 @@ struct PredictionCardView: View {
 struct OptionRow: View {
     let option: PredictionOption
     let color: Color
+
+    @EnvironmentObject var transManager: TranslationManager // ← 新增
     
     private var barWidth: CGFloat {
         guard let val = Fmt.percentValue(option.value) else { return 0.05 }
@@ -145,7 +148,8 @@ struct OptionRow: View {
         HStack(spacing: 12) {
             // 标签 + 进度条
             VStack(alignment: .leading, spacing: 6) {
-                Text(option.displayLabel)
+                // 原: Text(option.displayLabel)
+                Text(transManager.option(option.displayLabel)) // ← 替换
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.white)
                     .lineLimit(1)

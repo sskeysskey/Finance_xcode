@@ -304,7 +304,7 @@ class SyncManager: ObservableObject {
     private func cleanOldFiles(validFiles: Set<String>) throws {
         let contents = try fileManager.contentsOfDirectory(atPath: documentsDirectory.path)
         let predictionFiles = contents.filter {
-            $0.hasPrefix("polymarket_") || $0.hasPrefix("kalshi_")
+            $0.hasPrefix("polymarket_") || $0.hasPrefix("kalshi_") || $0 == "translation_dict.json"  // 🌐 新增
         }
         for file in predictionFiles where !validFiles.contains(file) {
             let url = documentsDirectory.appendingPathComponent(file)
