@@ -147,9 +147,9 @@ struct PreferenceSelectionView: View {
                 .padding(.top, 20)
                 .padding(.bottom, 16)
                 
-                // 全选/全不选
+                // 全局全选/全不选
                 HStack {
-                    Button("全选") {
+                    Button("全局全选") {
                         withAnimation { prefManager.selectAll(subtypes: allSubtypes) }
                     }
                     .font(.caption.bold())
@@ -157,7 +157,7 @@ struct PreferenceSelectionView: View {
                     
                     Text("·").foregroundColor(.secondary)
                     
-                    Button("全不选") {
+                    Button("全局全不选") {
                         withAnimation { prefManager.selectedSubtypes.removeAll() }
                     }
                     .font(.caption.bold())
@@ -485,7 +485,7 @@ struct CategoryCard: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // 大类标题（不可选）
+            // 大类标题（不可选，点击展开/收起）
             Button(action: onToggleExpand) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -504,10 +504,48 @@ struct CategoryCard: View {
                         .foregroundColor(.secondary)
                 }
                 .padding(16)
+                .contentShape(Rectangle()) // 确保整行可点击
             }
+            .buttonStyle(PlainButtonStyle()) // 防止与内部按钮产生冲突
             
             // 子类标签（可选）
             if isExpanded {
+                
+                // ✅ 新增：分类级别的局部全选/全不选按钮
+                HStack(spacing: 12) {
+                    Spacer()
+                    
+                    Button {
+                        withAnimation(.spring(response: 0.25)) {
+                            selectedSubtypes.formUnion(subtypes)
+                        }
+                    } label: {
+                        Text("全选本类")
+                            .font(.caption2.bold())
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.primary.opacity(0.08))
+                            .cornerRadius(8)
+                    }
+                    
+                    Button {
+                        withAnimation(.spring(response: 0.25)) {
+                            selectedSubtypes.subtract(subtypes)
+                        }
+                    } label: {
+                        Text("全不选")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.primary.opacity(0.08))
+                            .cornerRadius(8)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+                
                 let columns = [GridItem(.adaptive(minimum: 120, maximum: 200), spacing: 10)]
                 
                 LazyVGrid(columns: columns, spacing: 10) {
@@ -524,7 +562,7 @@ struct CategoryCard: View {
                             }
                         } label: {
                             HStack(spacing: 6) {
-                                // 新增：空心圆圈与实心对勾指示器
+                                // 空心圆圈与实心对勾指示器
                                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                                     .font(.system(size: 14, weight: isSelected ? .bold : .regular))
                                 Text(transManager.subtype(subtype))
@@ -545,6 +583,7 @@ struct CategoryCard: View {
                             )
                             .cornerRadius(16)
                         }
+                        .buttonStyle(PlainButtonStyle())
                     }
                 }
                 .padding(.horizontal, 16)

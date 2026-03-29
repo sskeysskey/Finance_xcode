@@ -5,7 +5,7 @@ struct PredictionApp: App {
     @StateObject private var syncManager = SyncManager()
     @StateObject private var authManager = AuthManager()
     @StateObject private var prefManager = PreferenceManager()
-    @StateObject private var transManager = TranslationManager() // ← 新增
+    @StateObject private var transManager = TranslationManager()
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
@@ -127,31 +127,48 @@ struct MainContainerView: View {
                         .padding(.bottom, 8) // 增加底部间距，与下方滚动内容隔开
                     
                     // 卡片列表
-                    ScrollView {
-                        LazyVStack(spacing: 14) {
-                            // 通知条
-                            if let note = syncManager.activeNotification {
-                                NotificationBanner(message: note) {
-                                    syncManager.dismissNotification()
+                    // ✅ 新增：使用 ScrollViewReader 来控制滚动位置
+                    ScrollViewReader { scrollProxy in
+                        ScrollView {
+                            LazyVStack(spacing: 14) {
+                                // ✅ 新增：顶部隐藏锚点，用于重置滚动位置
+                                Color.clear.frame(height: 0).id("topScrollAnchor")
+                                
+                                // 通知条
+                                if let note = syncManager.activeNotification {
+                                    NotificationBanner(message: note) {
+                                        syncManager.dismissNotification()
+                                    }
                                 }
-                            }
-                            
-                            if filteredItems.isEmpty {
-                                emptyStateView
-                            } else {
-                                ForEach(filteredItems) { item in
-                                    PredictionCardView(
-                                        item: item,
-                                        isSubscribed: authManager.isSubscribed,
-                                        onLockedTap: { handleLockedTap() }
-                                    )
-                                    .padding(.horizontal, 16)
+                                
+                                if filteredItems.isEmpty {
+                                    emptyStateView
+                                } else {
+                                    ForEach(filteredItems) { item in
+                                        PredictionCardView(
+                                            item: item,
+                                            isSubscribed: authManager.isSubscribed,
+                                            onLockedTap: { handleLockedTap() }
+                                        )
+                                        .padding(.horizontal, 16)
+                                    }
                                 }
+                                
+                                Spacer().frame(height: 40)
                             }
-                            
-                            Spacer().frame(height: 40)
+                            .padding(.top, 8)
                         }
-                        .padding(.top, 8)
+                        // ✅ 新增：当排序模式或数据源改变时，滚动回顶部
+                        .onChange(of: sortMode) { _ in
+                            withAnimation {
+                                scrollProxy.scrollTo("topScrollAnchor", anchor: .top)
+                            }
+                        }
+                        .onChange(of: selectedSource) { _ in
+                            withAnimation {
+                                scrollProxy.scrollTo("topScrollAnchor", anchor: .top)
+                            }
+                        }
                     }
                 }
                 

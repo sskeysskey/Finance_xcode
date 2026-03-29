@@ -14,8 +14,19 @@ struct PredictionDetailView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         // MARK: - 顶部信息
                         VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                // 替换 subtype 展示:
+                            HStack(spacing: 6) {
+                                // 如果 type 和 subtype 不一样，则先显示 type（大分类）
+                                if item.type.lowercased() != item.subtype.lowercased() {
+                                    Text(transManager.type(item.type).uppercased())
+                                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                                        .foregroundColor(.secondary)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(Color.tagBg)
+                                        .cornerRadius(6)
+                                }
+                                
+                                // 显示 subtype（小分类）
                                 Text(transManager.subtype(item.subtype).uppercased())
                                     .font(.system(size: 11, weight: .bold, design: .rounded))
                                     .foregroundColor(.secondary)

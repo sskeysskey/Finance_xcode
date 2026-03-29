@@ -30,8 +30,20 @@ struct PredictionCardView: View {
     // MARK: - 卡片内容
     private var cardContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // 顶部：subtype 标签
-            HStack {
+            // 顶部：type 和 subtype 标签
+            HStack(spacing: 6) {
+                // 如果 type 和 subtype 不一样，则先显示 type（大分类）
+                if item.type.lowercased() != item.subtype.lowercased() {
+                    Text(transManager.type(item.type).uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.tagBg)
+                        .cornerRadius(6)
+                }
+                
+                // 显示 subtype（小分类）
                 Text(transManager.subtype(item.subtype).uppercased())
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(.secondary)
