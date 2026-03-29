@@ -35,8 +35,11 @@ class TranslationManager: ObservableObject {
         "subtypes": [:]
     ]
     
-    /// 预编译的选项词级别替换规则（按 key 长度降序排列，优先匹配更长的词组）
+    /// 预编译的选项词级别替换规则
     private var optionReplacements: [(regex: NSRegularExpression, template: String)] = []
+    
+    /// ✅ 新增：翻译缓存，避免每次搜索都重新执行庞大的正则循环
+    private var optionCache: [String: String] = [:]
     
     private let languageKey = "Pred_DisplayLanguage"
     
@@ -79,7 +82,10 @@ class TranslationManager: ObservableObject {
         // 1. 完整匹配（兼容已有的完整短语条目）
         if let exact = dict["options"]?[key] { return exact }
         
-        // 2. 逐词替换：用预编译的正则按 \b 单词边界替换
+        // ✅ 2. 检查缓存
+        if let cached = optionCache[key] { return cached }
+        
+        // 3. 逐词替换（极度消耗性能，因此必须缓存）
         var result = key
         for entry in optionReplacements {
             let range = NSRange(result.startIndex..., in: result)
@@ -88,6 +94,9 @@ class TranslationManager: ObservableObject {
                 withTemplate: entry.template
             )
         }
+        
+        // ✅ 4. 写入缓存
+        optionCache[key] = result
         return result
     }
     
@@ -121,10 +130,11 @@ class TranslationManager: ObservableObject {
         }
         
         dict = parsed
+        optionCache.removeAll() // ✅ 重新加载字典时清空缓存
         buildOptionReplacements()
         
         let total = parsed.values.reduce(0) { $0 + $1.count }
-        print("✅ TranslationManager: 已加载字典共 \(total) 条 (names: \(parsed["names"]?.count ?? 0), options: \(parsed["options"]?.count ?? 0), types: \(parsed["types"]?.count ?? 0), subtypes: \(parsed["subtypes"]?.count ?? 0))")
+        print("✅ TranslationManager: 已加载字典共 \(total) 条")
     }
     
     // MARK: - 预编译选项替换规则

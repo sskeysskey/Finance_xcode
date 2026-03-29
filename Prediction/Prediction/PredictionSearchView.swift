@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct PredictionSearchView: View {
     let items: [PredictionItem]
@@ -6,12 +7,14 @@ struct PredictionSearchView: View {
     let onLockedTap: () -> Void
     
     @Environment(\.dismiss) var dismiss
-    @EnvironmentObject var transManager: TranslationManager // ← 新增
+    @EnvironmentObject var transManager: TranslationManager
+    
     @State private var searchText = ""
+    @State private var debouncedText = "" // ✅ 新增防抖文本
     @FocusState private var isSearchFocused: Bool
     
     private var results: [PredictionItem] {
-        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let keyword = debouncedText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !keyword.isEmpty else { return [] }
 
         return items.filter { item in
@@ -24,6 +27,7 @@ struct PredictionSearchView: View {
             for opt in item.options {
                 if opt.label.lowercased().contains(keyword) { return true }
                 if opt.displayLabel.lowercased().contains(keyword) { return true }
+                
                 let translatedOpt = transManager.option(opt.displayLabel).lowercased()
                 if translatedOpt.contains(keyword) { return true }
             }
@@ -46,9 +50,23 @@ struct PredictionSearchView: View {
                                 .foregroundColor(.primary)
                                 .focused($isSearchFocused)
                                 .autocorrectionDisabled()
+                                // ✅ 监听输入并延迟 0.3 秒后赋值给 debouncedText
+                                .onChange(of: searchText) { newValue in
+                                    Task {
+                                        try? await Task.sleep(nanoseconds: 300_000_000)
+                                        if !Task.isCancelled {
+                                            await MainActor.run {
+                                                debouncedText = newValue
+                                            }
+                                        }
+                                    }
+                                }
                             
                             if !searchText.isEmpty {
-                                Button { searchText = "" } label: {
+                                Button { 
+                                    searchText = "" 
+                                    debouncedText = ""
+                                } label: {
                                     Image(systemName: "xmark.circle.fill")
                                         .foregroundColor(.secondary)
                                 }
@@ -65,7 +83,7 @@ struct PredictionSearchView: View {
                     .padding(.vertical, 12)
                     
                     // 结果
-                    if searchText.isEmpty {
+                    if debouncedText.isEmpty {
                         VStack(spacing: 16) {
                             Spacer()
                             Image(systemName: "magnifyingglass")

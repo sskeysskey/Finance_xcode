@@ -18,7 +18,9 @@ struct PredictionOption: Identifiable, Hashable {
     
     // 清理标签（去掉排名前缀如 "1Ludvig Aberg" → "Ludvig Aberg"）
     var displayLabel: String {
-        let pattern = "^T?\\d+"
+        // ✅ 修复：使用正向先行断言 (?=[A-Za-z])，确保数字后面紧跟的是字母，
+        // 避免误删 "19,999.99" 中的 "19" 或 "100 million" 中的 "100"
+        let pattern = "^T?\\d+(?=[A-Za-z])"
         if let range = label.range(of: pattern, options: .regularExpression) {
             let cleaned = String(label[range.upperBound...]).trimmingCharacters(in: .whitespaces)
             return cleaned.isEmpty ? label : cleaned
