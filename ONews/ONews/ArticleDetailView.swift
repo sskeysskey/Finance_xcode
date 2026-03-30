@@ -260,12 +260,12 @@ struct ArticleDetailView: View {
                     
                     // 【新增】在这里插入文字链接触发器
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(Localized.isEnglish ? "More from Developer" : "毛遂自荐：博主另外两款精品应用")
+                        Text(Localized.isEnglish ? "More from Developer" : "“毛遂自荐”——博主另外两款精品应用")
                             .font(.footnote)
                             .fontWeight(.semibold)
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 2)
-
+                        
                         HStack(spacing: 16) {
                             // 第一个应用：美股精灵
                             PromoCardView(
@@ -292,7 +292,7 @@ struct ArticleDetailView: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 10)
-                    .padding(.bottom, 30)
+                    .padding(.bottom, 100)
                 }
                 .padding(.vertical)
             }
@@ -912,15 +912,15 @@ struct NewsPromoView: View {
                     VStack(spacing: 25) {
                         // 2. 头部 ICON 和 标题
                         VStack(spacing: 15) {
-                            Image(systemName: "chart.line.uptrend.xyaxis.circle.fill")
+                            // 【修改】使用真实的 Asset 图片名称，去掉 foregroundStyle，加上圆角
+                            Image("logo_stock_elf_small") 
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
                                 .frame(width: 80, height: 80)
-                                .foregroundStyle(
-                                    .linearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
-                                )
+                                // 添加 App 图标标准的平滑圆角
+                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                                 .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
-
+                            
                             Text(Localized.promoTitle)
                                 .font(.system(size: 28, weight: .heavy))
                                 .foregroundColor(.primary)
@@ -1011,16 +1011,15 @@ struct SecondAppPromoView: View {
                     VStack(spacing: 25) {
                         // 头部 ICON 和 标题
                         VStack(spacing: 15) {
-                            Image(systemName: "sparkles.square.filled.on.square") // TODO: 替换图标
+                            Image("logo_prediction_small") 
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
                                 .frame(width: 80, height: 80)
-                                .foregroundStyle(
-                                    .linearGradient(colors: [.orange, .red], startPoint: .topLeading, endPoint: .bottomTrailing)
-                                )
-                                .shadow(color: .orange.opacity(0.3), radius: 10, x: 0, y: 5)
+                                // 添加 App 图标标准的平滑圆角
+                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
                             
-                            Text("新应用名称") // TODO: 替换标题
+                            Text("预测占卜") // TODO: 替换标题
                                 .font(.system(size: 28, weight: .heavy))
                                 .foregroundColor(.primary)
                                 .multilineTextAlignment(.center)
@@ -1031,11 +1030,11 @@ struct SecondAppPromoView: View {
                         VStack(alignment: .leading, spacing: 15) {
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: "checkmark.seal.fill").foregroundColor(.orange)
-                                Text("这里写新应用的核心卖点1。") // TODO: 替换文案
+                                Text("美国排名第一的预测网站kalshi.com景象站，内容完全一致，每日更新。\n最绝的是支持中英文双语显示！！")
                             }
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: "checkmark.seal.fill").foregroundColor(.orange)
-                                Text("这里写新应用的核心卖点2。") // TODO: 替换文案
+                                Text("内容包罗万象！\n从政治（特朗普什么时候下台？）到经济（比特币恢复到9万美元最早在什么时候？）\n从体育（F1大奖赛花落谁家？）到战事（伊朗能否扛住美国登陆作战这最后一击？）\n天下大事，人心向背，只需一款应用实现一网打尽。\n后续还会增加排名第二的PolyMarket网站，敬请期待。")
                             }
                         }
                         .font(.subheadline)
@@ -1141,42 +1140,48 @@ struct PromoCardView: View {
     
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 12) {
-                // 图标区域
-                Group {
-                    if isSystemIcon {
-                        Image(systemName: imageName)
-                            .font(.title2)
-                            .foregroundStyle(.linearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
-                    } else {
-                        Image(imageName) // 加载 Assets 中的图片
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 40, height: 40)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    }
-                }
-                .frame(width: 40, height: 40)
-                .background(Color(UIColor.systemBackground).opacity(0.8))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .shadow(color: colors.first!.opacity(0.2), radius: 5, x: 0, y: 2)
+            VStack(alignment: .leading, spacing: 10) {
                 
-                // 文本区域
-                VStack(alignment: .leading, spacing: 4) {
+                // 第一行：左边图标，右边名字
+                HStack(spacing: 12) {
+                    // 图标区域
+                    Group {
+                        if isSystemIcon {
+                            Image(systemName: imageName)
+                                .font(.title2)
+                                .foregroundStyle(.linearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                        } else {
+                            Image(imageName) // 加载 Assets 中的图片
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 32, height: 32) // 这里稍微缩小了一点图标尺寸，让横排更精致，你也可以保持40
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                    }
+                    .frame(width: 36, height: 36)
+                    .background(Color(UIColor.systemBackground).opacity(0.8))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .shadow(color: colors.first!.opacity(0.2), radius: 5, x: 0, y: 2)
+                    
+                    // 名字 (标题)
                     Text(title)
                         .font(.subheadline)
                         .fontWeight(.bold)
                         .foregroundColor(.primary)
                         .lineLimit(1)
-                    
-                    Text(subtitle)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
                 }
+                
+                // 下一行：说明文字
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    // 如果你想让说明文字显示多行，可以改成 .lineLimit(2) 或去掉此限制
+                    .lineLimit(2) 
+                    // 如果想让文字和上方图标左对齐稍微缩进，可加 padding
+                    // .padding(.leading, 2) 
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
+            .padding(14)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color(UIColor.secondarySystemGroupedBackground))
