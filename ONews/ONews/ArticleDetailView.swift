@@ -93,6 +93,7 @@ struct ArticleDetailView: View {
     
     // 【新增】控制推广弹窗显示
     @State private var showNewsPromoSheet = false
+    @State private var showSecondAppPromoSheet = false
     
     // 【优化】使用 @State 缓存耗时计算的结果，避免 body 每次刷新都重算
     @State private var cachedParagraphs: [String] = []
@@ -258,21 +259,40 @@ struct ArticleDetailView: View {
                     .padding(.top, 20) // 稍微调整上边距
                     
                     // 【新增】在这里插入文字链接触发器
-                    Button(action: {
-                        showNewsPromoSheet = true
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "star.fill").font(.caption)
-                            Text(Localized.promoLinkText)
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .underline() // 下划线增加链接感
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(Localized.isEnglish ? "More from Developer" : "毛遂自荐：博主另外两款精品应用")
+                            .font(.footnote)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 2)
+
+                        HStack(spacing: 16) {
+                            // 第一个应用：美股精灵
+                            PromoCardView(
+                                title: Localized.isEnglish ? "US Stock Elf" : "美股精灵",
+                                subtitle: Localized.isEnglish ? "AI Stock Picks" : "AI算法每日荐股，炒美股必备伴侣。",
+                                imageName: "logo_stock_elf_small", // 对应 Assets 中的名字
+    isSystemIcon: false,        // 告诉视图这不是系统图标
+                                colors: [.blue, .purple]
+                            ) {
+                                showNewsPromoSheet = true
+                            }
+                            
+                            // 第二个应用：你的新应用
+                            PromoCardView(
+                                title: Localized.isEnglish ? "Prediction" : "预测占卜",
+                                subtitle: Localized.isEnglish ? "Kalshi Mirror Site" : "美国kalshi镜像站，预测一切，占卜世界。",
+                                imageName: "logo_prediction_small", // 对应 Assets 中的名字
+                                isSystemIcon: false,          // 告诉视图这不是系统图标
+                                colors: [.orange, .red]
+                            ) {
+                                showSecondAppPromoSheet = true
+                            }
                         }
-                        .foregroundColor(.blue.opacity(0.8))
-                        .frame(maxWidth: .infinity)
-                        .padding(.bottom, 30) // 给底部留点空间
-                        .padding(.top, 5)
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+                    .padding(.bottom, 30)
                 }
                 .padding(.vertical)
             }
@@ -417,7 +437,17 @@ struct ArticleDetailView: View {
                 showNewsPromoSheet = false
                 // 延迟执行跳转，保证动画流畅
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    openNewsApp()
+                    openApp(scheme: "globalnews://", appId: "6754904170")
+                }
+            })
+        }
+        // 在原有的 .sheet(isPresented: $showNewsPromoSheet) { ... } 下方添加：
+        .sheet(isPresented: $showSecondAppPromoSheet) {
+            SecondAppPromoView(onOpenAction: {
+                showSecondAppPromoSheet = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    // TODO: 如果新应用有 URL Scheme，替换 "yourappscheme://"
+                    openApp(scheme: "yourappscheme://", appId: "6760702335")
                 }
             })
         }
@@ -495,22 +525,13 @@ struct ArticleDetailView: View {
         }
     }
     
-    private func openNewsApp() {
-        // 1. 定义跳转目标 URL Scheme (如果 App A 有定义)
-        let appSchemeStr = "globalnews://"
+    private func openApp(scheme: String, appId: String) {
+        let appUrl = URL(string: scheme)
+        let storeUrl = URL(string: "https://apps.apple.com/cn/app/id\(appId)")
         
-        // 2. 定义 App Store 下载链接 (记得替换这里的 ID)
-        let appStoreUrlStr = "https://apps.apple.com/cn/app/id6754904170"
-        
-        guard let appUrl = URL(string: appSchemeStr),
-              let storeUrl = URL(string: appStoreUrlStr) else {
-            return
-        }
-        
-        // 3. 尝试跳转
-        if UIApplication.shared.canOpenURL(appUrl) {
+        if let appUrl = appUrl, UIApplication.shared.canOpenURL(appUrl) {
             UIApplication.shared.open(appUrl)
-        } else {
+        } else if let storeUrl = storeUrl {
             UIApplication.shared.open(storeUrl)
         }
     }
@@ -964,6 +985,98 @@ struct NewsPromoView: View {
     }
 }
 
+// MARK: - 第二个应用推广页模版
+struct SecondAppPromoView: View {
+    var onOpenAction: () -> Void
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        ZStack {
+            // 背景：采用偏暖色的渐变，与美股精灵区分开
+            LinearGradient(
+                gradient: Gradient(colors: [Color.orange.opacity(0.1), Color(UIColor.systemBackground)]),
+                startPoint: .top,
+                endPoint: .center
+            )
+            .ignoresSafeArea()
+            
+            VStack(spacing: 25) {
+                // 顶部把手
+                Capsule()
+                    .fill(Color.secondary.opacity(0.3))
+                    .frame(width: 40, height: 5)
+                    .padding(.top, 10)
+                
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 25) {
+                        // 头部 ICON 和 标题
+                        VStack(spacing: 15) {
+                            Image(systemName: "sparkles.square.filled.on.square") // TODO: 替换图标
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 80, height: 80)
+                                .foregroundStyle(
+                                    .linearGradient(colors: [.orange, .red], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                )
+                                .shadow(color: .orange.opacity(0.3), radius: 10, x: 0, y: 5)
+                            
+                            Text("新应用名称") // TODO: 替换标题
+                                .font(.system(size: 28, weight: .heavy))
+                                .foregroundColor(.primary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.top, 20)
+                        
+                        // 核心介绍文案
+                        VStack(alignment: .leading, spacing: 15) {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "checkmark.seal.fill").foregroundColor(.orange)
+                                Text("这里写新应用的核心卖点1。") // TODO: 替换文案
+                            }
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "checkmark.seal.fill").foregroundColor(.orange)
+                                Text("这里写新应用的核心卖点2。") // TODO: 替换文案
+                            }
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding(20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color(UIColor.secondarySystemGroupedBackground))
+                                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+                        )
+                        .padding(.horizontal)
+                    }
+                    .padding(.bottom, 100)
+                }
+            }
+            
+            // 底部悬浮按钮
+            VStack {
+                Spacer()
+                Button(action: { onOpenAction() }) {
+                    HStack {
+                        Image(systemName: "app.badge.fill")
+                        Text("在 App Store 获取").fontWeight(.bold) // 可以使用 Localized 变量
+                    }
+                    .font(.title3)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .background(
+                        LinearGradient(colors: [.orange, .red], startPoint: .leading, endPoint: .trailing)
+                    )
+                    .cornerRadius(28)
+                    .shadow(color: .orange.opacity(0.4), radius: 8, x: 0, y: 4)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 30)
+            }
+        }
+    }
+}
+
 // 简单的流式布局辅助视图
 struct FlowLayoutView: View {
     let items: [String]
@@ -1014,5 +1127,62 @@ struct AudioToolbarButton: View {
             Image(systemName: audioPlayerManager.isPlaybackActive ? "headphones.slash" : "headphones")
         }
         .disabled(audioPlayerManager.isSynthesizing)
+    }
+}
+
+// MARK: - 现代化推荐卡片组件
+struct PromoCardView: View {
+    let title: String
+    let subtitle: String
+    let imageName: String // 改为图片名称
+    let isSystemIcon: Bool // 新增：标记是否为系统图标
+    let colors: [Color]
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 12) {
+                // 图标区域
+                Group {
+                    if isSystemIcon {
+                        Image(systemName: imageName)
+                            .font(.title2)
+                            .foregroundStyle(.linearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                    } else {
+                        Image(imageName) // 加载 Assets 中的图片
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 40, height: 40)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                }
+                .frame(width: 40, height: 40)
+                .background(Color(UIColor.systemBackground).opacity(0.8))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .shadow(color: colors.first!.opacity(0.2), radius: 5, x: 0, y: 2)
+                
+                // 文本区域
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(UIColor.secondarySystemGroupedBackground))
+                    .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 4)
+            )
+        }
+        .buttonStyle(PlainButtonStyle()) // 防止按钮默认的蓝色高亮破坏设计
     }
 }
