@@ -51,6 +51,9 @@ struct MainContainerView: View {
     @State private var showNewCategorySheet = false
     @State private var pendingNewCategories: [(type: String, subtypes: [String])] = []
 
+    // ✅ 新增：记录登录成功后是否需要自动弹出订阅页
+    @State private var pendingSubscriptionAfterLogin = false
+
     @Environment(\.scenePhase) private var scenePhase
 
     private var availableSources: [PredictionSource] {
@@ -214,8 +217,22 @@ struct MainContainerView: View {
                     Task { try? await syncManager.checkAndSync() }
                 }
             }
+            // ✅ 修改：登录成功后，自动弹出订阅页（如果有挂起的请求）
             .onChange(of: authManager.isLoggedIn) { newVal in
-                if newVal { showLoginSheet = false }
+                if newVal {
+                    showLoginSheet = false
+                    
+                    if pendingSubscriptionAfterLogin {
+                        pendingSubscriptionAfterLogin = false
+                        // 延迟等待登录 Sheet 关闭动画完成
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            // 登录后如果已经是订阅用户（服务器/Apple确认），就不再弹订阅页
+                            if !authManager.isSubscribed {
+                                authManager.showSubscriptionSheet = true
+                            }
+                        }
+                    }
+                }
             }
             .onAppear {
                 adjustSelectedSource()
@@ -476,10 +493,12 @@ struct MainContainerView: View {
         }
     }
 
+    // ✅ 修改：handleLockedTap 增加挂起标记
     private func handleLockedTap() {
         if authManager.isLoggedIn {
             authManager.showSubscriptionSheet = true
         } else {
+            pendingSubscriptionAfterLogin = true
             showLoginSheet = true
         }
     }

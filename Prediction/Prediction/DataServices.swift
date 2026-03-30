@@ -179,18 +179,16 @@ class PredictionParser {
             var options: [PredictionOption] = []
             var i = 1
             while let optLabel = dict["option\(i)"] as? String,
-                  let optValue = dict["value\(i)"] as? String {
+                let optValue = dict["value\(i)"] as? String {
                 let optChange = dict["change\(i)"] as? String
                 
-                // 过滤纯数字/排名标记的冗余项
-                let isRankOnly = optLabel.range(of: "^T?\\d+$", options: .regularExpression) != nil
-                if !isRankOnly {
-                    options.append(PredictionOption(
-                        label: optLabel,
-                        value: optValue,
-                        change: optChange
-                    ))
-                }
+                // 移除 isRankOnly 过滤，保留纯数字选项（例如预测次数 "1", "2" 等）
+                options.append(PredictionOption(
+                    label: optLabel,
+                    value: optValue,
+                    change: optChange
+                ))
+                
                 i += 1
             }
             

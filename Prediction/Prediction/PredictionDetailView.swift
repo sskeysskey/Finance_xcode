@@ -120,18 +120,21 @@ struct DetailOptionRow: View {
     
     var body: some View {
         VStack(spacing: 8) {
-            HStack(spacing: 12) {
+            // 如果想要顶部对齐，可以将原来的 HStack(spacing: 12) 改为：
+            HStack(alignment: .top, spacing: 12) {
                 // 排名
                 Text("#\(rank)")
                     .font(.system(size: 13, weight: .bold, design: .monospaced))
                     .foregroundColor(color)
                     .frame(width: 32, alignment: .leading)
+                    .padding(.top, 2) // 稍微往下移一点，让它和右侧多行文字的第一行视觉对齐
                 
                 // 标签
-                Text(transManager.option(option.displayLabel)) // ← 替换
+                Text(transManager.option(option.displayLabel)) 
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(.primary)
-                    .lineLimit(2)
+                    .lineLimit(nil) // ✅ 移除行数限制，允许无限换行（可以直接删掉这行，或者写 nil）
+                    .fixedSize(horizontal: false, vertical: true) // ✅ 强制允许垂直方向完整展开
                 
                 Spacer()
                 
