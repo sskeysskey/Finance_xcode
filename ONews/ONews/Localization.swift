@@ -123,7 +123,7 @@ struct Localized {
     static var imagePrepare: String { tr("准备中...", "Preparing...") }
     static var imageDownloaded: String { tr("已下载", "Downloaded") }
     
-    // 分页菜单相关
+    // 分享菜单相关
     static var shareTo: String { tr("分享至", "Share to") }
     static var weChat: String { tr("微信", "WeChat") }
     static var more: String { tr("更多", "More") }
