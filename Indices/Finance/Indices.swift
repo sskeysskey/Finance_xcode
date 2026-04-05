@@ -250,7 +250,7 @@ struct IndicesContentView: View {
     private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "Economic_All", "Economics", "Indices"])
     private let weekLowGroupNames = Set(["Basic_Materials", "Communication_Services", "Consumer_Cyclical", "Consumer_Defensive", "Energy", "Financial_Services", "Healthcare", "Industrials", "Real_Estate", "Technology", "Utilities"])
     private let historyBasedGroups: Set<String> = [
-        "PE_Volume", "PE_Volume_up", "Short", "Short_W", "PE_Volume_high",
+        "PE_Volume", "PE_Volume_up", "PE_Hot", "Short", "Short_W", "PE_Volume_high",
         "PE_W", "PE_Deeper", "OverSell_W", "PE_Deep", "PE_valid", "PE_invalid",
         "ETF_Volume_high", "ETF_Volume_low"
     ]
@@ -452,6 +452,7 @@ struct IndicesContentView: View {
         case "PE_invalid": return "1.circle"
         case "PE_valid": return "2.circle"
         case "PE_W": return "4.circle"
+        case "PE_Hot": return "8.circle"
         case "PE_Deeper": return "5.circle"
         case "PE_Deep": return "6.circle"
         case "Strategy12": return "3.circle"

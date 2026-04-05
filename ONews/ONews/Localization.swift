@@ -118,7 +118,7 @@ struct Localized {
         tr("\n\n...\n\n阅读全文请前往App Store免费下载“国外消息“应用程序",
         "\n\n...\n\nRead full article in ONews app, available on the App Store.")
     }
-    static var readNext: String { tr("读取下一篇", "Read Next") }
+    static var readNext: String { tr("阅读下一篇文章", "Read Next") }
     static var imageLoading: String { tr("正在加载图片...", "Loading images...") }
     static var imagePrepare: String { tr("准备中...", "Preparing...") }
     static var imageDownloaded: String { tr("已下载", "Downloaded") }

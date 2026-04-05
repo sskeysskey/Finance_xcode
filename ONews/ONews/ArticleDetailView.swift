@@ -261,10 +261,11 @@ struct ArticleDetailView: View {
                     // 【新增】在这里插入文字链接触发器
                     VStack(alignment: .leading, spacing: 12) {
                         Text(Localized.isEnglish ? "More from Developer" : "“毛遂自荐”——博主另外两款精品应用")
-                            .font(.footnote)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 2)
+                        .font(.footnote)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 2)
+                        .frame(maxWidth: .infinity, alignment: .center) // <--- 关键修改：让文字容器填满宽度并居中
                         
                         HStack(spacing: 16) {
                             // 第一个应用：美股精灵

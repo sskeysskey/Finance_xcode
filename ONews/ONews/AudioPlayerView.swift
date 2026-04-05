@@ -353,11 +353,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         self.nowPlayingTitle = title?.isEmpty == false ? title! : Localized.playingArticle
         // self.speechSynthesizer.delegate = self <--- 这一行删掉，reset方法里已经赋过值了
 
-        // 确定语音
+        // 【修复】确保 selectedVoice 即使在系统引擎未就绪时也有明确的语言兜底
         if language.starts(with: "en") {
             selectedVoice = AVSpeechSynthesisVoice(language: "en-US")
         } else {
-            selectedVoice = getBestVoice(for: text)
+            selectedVoice = getBestVoice(for: text) ?? AVSpeechSynthesisVoice(language: "zh-CN")
         }
 
         // 预处理文本并拆分为块
@@ -403,6 +403,13 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         let utterance = AVSpeechUtterance(string: chunkText)
         utterance.voice = selectedVoice
+        // 【修复】如果 voice 碰巧失效，强制指定 utterance 的语言，防止系统回退到英语
+        if selectedVoice == nil {
+            // 简单判断当前块是否包含中文，来决定兜底语言
+            let hasChinese = chunkText.range(of: "\\p{Han}", options: .regularExpression) != nil
+            utterance.voice = AVSpeechSynthesisVoice(language: hasChinese ? "zh-CN" : "en-US")
+        }
+        
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.pitchMultiplier = 1.0
         utterance.postUtteranceDelay = 0.05

@@ -22,7 +22,8 @@ struct PredictionCardView: View {
             cardContent
         }
         .buttonStyle(CardButtonStyle())
-        .sheet(isPresented: $showDetail) {
+        // ✅ 将 .sheet 改为 .navigationDestination，实现 Push 跳转
+        .navigationDestination(isPresented: $showDetail) {
             PredictionDetailView(item: item)
         }
     }

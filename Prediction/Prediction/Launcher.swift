@@ -52,7 +52,7 @@ struct MainContainerView: View {
     @State private var pendingNewCategories: [(type: String, subtypes: [String])] = []
 
     // ✅ 新增：记录登录成功后是否需要自动弹出订阅页
-    @State private var pendingSubscriptionAfterLogin = false
+    // @State private var pendingSubscriptionAfterLogin = false
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -121,7 +121,8 @@ struct MainContainerView: View {
                     // ✅ 用 TabView(.page) 替代 ScrollView + simultaneousGesture
                     // 系统原生处理水平滑动 vs 垂直滚动 vs 点击，零冲突
                     TabView(selection: $sortMode) {
-                        ForEach(ListSortMode.allCases) { mode in
+                        // 👇 将 ListSortMode.allCases 替换为自定义顺序的数组
+                        ForEach([ListSortMode.new, .trend, .highestVolume]) { mode in
                             listPage(for: mode)
                                 .tag(mode)
                         }
@@ -218,41 +219,54 @@ struct MainContainerView: View {
                 }
             }
             // ✅ 修改：登录成功后，自动弹出订阅页（如果有挂起的请求）
+            // .onChange(of: authManager.isLoggedIn) { newVal in
+            //     if newVal {
+            //         showLoginSheet = false
+                    
+            //         if pendingSubscriptionAfterLogin {
+            //             pendingSubscriptionAfterLogin = false
+            //             // 延迟等待登录 Sheet 关闭动画完成
+            //             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            //                 // 登录后如果已经是订阅用户（服务器/Apple确认），就不再弹订阅页
+            //                 if !authManager.isSubscribed {
+            //                     authManager.showSubscriptionSheet = true
+            //                 }
+            //             }
+            //         }
+            //     }
+            // }
+            
+            // ✅ 简化为：
             .onChange(of: authManager.isLoggedIn) { newVal in
                 if newVal {
                     showLoginSheet = false
-                    
-                    if pendingSubscriptionAfterLogin {
-                        pendingSubscriptionAfterLogin = false
-                        // 延迟等待登录 Sheet 关闭动画完成
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            // 登录后如果已经是订阅用户（服务器/Apple确认），就不再弹订阅页
-                            if !authManager.isSubscribed {
-                                authManager.showSubscriptionSheet = true
-                            }
-                        }
-                    }
                 }
             }
             .onAppear {
                 adjustSelectedSource()
                 transManager.reload()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    checkForNewCategories()
-                }
+                // 移除这里的 checkForNewCategories()，统一交由 dataGeneration 驱动
             }
             .onChange(of: syncManager.polymarketItems.count) { _ in adjustSelectedSource() }
             .onChange(of: syncManager.kalshiItems.count) { _ in adjustSelectedSource() }
             .onChange(of: syncManager.polymarketTrendItems.count) { _ in adjustSelectedSource() }
             .onChange(of: syncManager.kalshiTrendItems.count) { _ in adjustSelectedSource() }
+            
+            // ✅ 修复：移除监听 isSyncing 来触发新分类检测，改为监听翻译重载
             .onChange(of: syncManager.isSyncing) { isSyncing in
                 if !isSyncing {
                     transManager.reload()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                        checkForNewCategories()
-                    }
                 }
             }
+            
+            // ✅ 修复：真正的数据就绪信号，监听 dataGeneration 触发新分类检测
+            .onChange(of: syncManager.dataGeneration) { _ in
+                // 数据加载完成后，稍微延迟等待视图稳定再弹窗，避免与 SwiftUI 的重绘冲突
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    checkForNewCategories()
+                }
+            }
+            
             .alert("同步失败", isPresented: $showSyncError) {
                 Button("确定", role: .cancel) {}
             } message: {
@@ -348,7 +362,8 @@ struct MainContainerView: View {
     // MARK: - 排序模式选择器
     private var sortModeSelector: some View {
         HStack(spacing: 8) {
-            ForEach(ListSortMode.allCases) { mode in
+            // 👇 将 ListSortMode.allCases 替换为自定义顺序的数组
+            ForEach([ListSortMode.new, .trend, .highestVolume]) { mode in
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         sortMode = mode
@@ -494,13 +509,18 @@ struct MainContainerView: View {
     }
 
     // ✅ 修改：handleLockedTap 增加挂起标记
+    // private func handleLockedTap() {
+    //     if authManager.isLoggedIn {
+    //         authManager.showSubscriptionSheet = true
+    //     } else {
+    //         pendingSubscriptionAfterLogin = true
+    //         showLoginSheet = true
+    //     }
+    // }
+
+    // 🔧 简化 handleLockedTap：直接弹订阅页
     private func handleLockedTap() {
-        if authManager.isLoggedIn {
-            authManager.showSubscriptionSheet = true
-        } else {
-            pendingSubscriptionAfterLogin = true
-            showLoginSheet = true
-        }
+        authManager.showSubscriptionSheet = true
     }
 
     private func adjustSelectedSource() {

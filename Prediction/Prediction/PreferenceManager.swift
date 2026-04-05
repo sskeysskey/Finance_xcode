@@ -114,6 +114,7 @@ class PreferenceManager: ObservableObject {
 struct PreferenceSelectionView: View {
     @EnvironmentObject var syncManager: SyncManager
     @EnvironmentObject var prefManager: PreferenceManager
+    @EnvironmentObject var transManager: TranslationManager // ✅ 新增：引入翻译管理器
     @Environment(\.dismiss) var dismiss
     
     let isOnboarding: Bool
@@ -243,6 +244,24 @@ struct PreferenceSelectionView: View {
             }
         }
         .navigationBarBackButtonHidden(isOnboarding)
+        // ✅ 新增：在导航栏右侧添加中英切换按钮
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        transManager.toggle()
+                    }
+                } label: {
+                    Text(transManager.language == .chinese ? "EN" : "中")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(.primary)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            Circle().fill(Color.primary.opacity(0.1))
+                        )
+                }
+            }
+        }
         .onAppear {
             // 首次进入自动展开所有类别
             expandedTypes = Set(categories.map { $0.type })

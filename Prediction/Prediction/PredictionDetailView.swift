@@ -6,87 +6,98 @@ struct PredictionDetailView: View {
     @EnvironmentObject var transManager: TranslationManager // ← 新增
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.appBg.ignoresSafeArea()
-                
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        // MARK: - 顶部信息
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack(spacing: 6) {
-                                // 如果 type 和 subtype 不一样，则先显示 type（大分类）
-                                if item.type.lowercased() != item.subtype.lowercased() {
-                                    Text(transManager.type(item.type).uppercased())
-                                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                                        .foregroundColor(.secondary)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 5)
-                                        .background(Color.tagBg)
-                                        .cornerRadius(6)
-                                }
-                                
-                                // 显示 subtype（小分类）
-                                Text(transManager.subtype(item.subtype).uppercased())
+        // ✅ 移除了 NavigationStack，直接返回 ZStack
+        ZStack {
+            Color.appBg.ignoresSafeArea()
+            
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // MARK: - 顶部信息
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 6) {
+                            // 如果 type 和 subtype 不一样，则先显示 type（大分类）
+                            if item.type.lowercased() != item.subtype.lowercased() {
+                                Text(transManager.type(item.type).uppercased())
                                     .font(.system(size: 11, weight: .bold, design: .rounded))
                                     .foregroundColor(.secondary)
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 5)
                                     .background(Color.tagBg)
                                     .cornerRadius(6)
-                                
-                                Spacer()
-                                
-                                Text(item.source.rawValue)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(.secondary.opacity(0.7))
                             }
                             
-                            // 替换 name 展示:
-                            Text(transManager.name(item.name))
-                                .font(.title2.bold())
-                                .foregroundColor(.primary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.horizontal, 16)
-                        
-                        // MARK: - 所有选项
-                        VStack(spacing: 10) {
-                            ForEach(Array(item.displayOptions.enumerated()), id: \.element.id) { idx, option in
-                                DetailOptionRow(
-                                    option: option,
-                                    rank: idx + 1,
-                                    color: Color.barColors[idx % Color.barColors.count]
-                                )
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        
-                        // MARK: - 底部元数据
-                        VStack(spacing: 10) {
-                            metaRow(icon: "chart.bar.fill", text: "Volume: \(Fmt.volume(item.volume))")
+                            // 显示 subtype（小分类）
+                            Text(transManager.subtype(item.subtype).uppercased())
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.tagBg)
+                                .cornerRadius(6)
                             
-                            if let endDate = item.endDate {
-                                metaRow(icon: "calendar", text: "Ends: \(endDate)")
-                            }
+                            Spacer()
                             
-                            metaRow(icon: "list.number", text: "\(item.marketCount) \(item.marketCount == 1 ? "market" : "markets")")
+                            Text(item.source.rawValue)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.secondary.opacity(0.7))
                         }
-                        .padding(16)
-                        .background(Color.cardBg)
-                        .cornerRadius(14)
-                        .padding(.horizontal, 16)
                         
-                        Spacer().frame(height: 50)
+                        // 替换 name 展示:
+                        Text(transManager.name(item.name))
+                            .font(.title2.bold())
+                            .foregroundColor(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.top, 16)
+                    .padding(.horizontal, 16)
+                    
+                    // MARK: - 所有选项
+                    VStack(spacing: 10) {
+                        ForEach(Array(item.displayOptions.enumerated()), id: \.element.id) { idx, option in
+                            DetailOptionRow(
+                                option: option,
+                                rank: idx + 1,
+                                color: Color.barColors[idx % Color.barColors.count]
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    
+                    // MARK: - 底部元数据
+                    VStack(spacing: 10) {
+                        metaRow(icon: "chart.bar.fill", text: "Volume: \(Fmt.volume(item.volume))")
+                        
+                        if let endDate = item.endDate {
+                            metaRow(icon: "calendar", text: "Ends: \(endDate)")
+                        }
+                        
+                        metaRow(icon: "list.number", text: "\(item.marketCount) \(item.marketCount == 1 ? "market" : "markets")")
+                    }
+                    .padding(16)
+                    .background(Color.cardBg)
+                    .cornerRadius(14)
+                    .padding(.horizontal, 16)
+                    
+                    Spacer().frame(height: 50)
                 }
+                .padding(.top, 16)
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("关闭") { dismiss() }
-                        .foregroundColor(.blue)
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        // ✅ 新增：在导航栏右侧添加中英切换按钮
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        transManager.toggle()
+                    }
+                } label: {
+                    Text(transManager.language == .chinese ? "EN" : "中")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(.primary)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            Circle().fill(Color.primary.opacity(0.1))
+                        )
                 }
             }
         }

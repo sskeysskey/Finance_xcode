@@ -160,7 +160,7 @@ struct SubscriptionView: View {
                         .foregroundColor(.orange)
                         .padding()
                 } else {
-                    Text("如果不选择付费，您可以明天再来，每日会免费解锁部分新的预测资讯。")
+                    Text("如果不选择付费，您可以明天再来，每日会免费解锁部分新的预测资讯。另外，登录后可在多台设备间同步订阅状态。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -274,24 +274,48 @@ struct SubscriptionView: View {
     }
     
     // 【修改】处理购买：先检查登录
-    private func handlePurchase() {
-        // 1. 检查是否已登录
-        guard authManager.isLoggedIn else {
-            // 未登录 -> 弹出登录页
-            showLoginSheet = true
-            return
-        }
+    // private func handlePurchase() {
+    //     // 1. 检查是否已登录
+    //     guard authManager.isLoggedIn else {
+    //         // 未登录 -> 弹出登录页
+    //         showLoginSheet = true
+    //         return
+    //     }
         
-        // 2. 已登录 -> 执行原有购买逻辑
+    //     // 2. 已登录 -> 执行原有购买逻辑
+    //     isPurchasing = true
+    //     Task {
+    //         do {
+    //             try await authManager.purchaseSubscription()
+    //             await MainActor.run {
+    //                 isPurchasing = false
+    //                 // 【核心修改】
+    //                 // 只有当订阅状态确实变为 true (购买成功) 时，才关闭弹窗。
+    //                 // 如果用户取消了支付 (isSubscribed 仍为 false)，则不关闭，保留在当前页面。
+    //                 if authManager.isSubscribed {
+    //                     dismiss()
+    //                 } else {
+    //                     print("用户取消或未完成支付，保留订阅页面")
+    //                 }
+    //             }
+    //         } catch {
+    //             await MainActor.run {
+    //                 isPurchasing = false
+    //                 errorMessage = error.localizedDescription
+    //                 showError = true
+    //             }
+    //         }
+    //     }
+    // }
+
+    // 🔧 修改 handlePurchase：移除登录强制要求
+    private func handlePurchase() {
         isPurchasing = true
         Task {
             do {
                 try await authManager.purchaseSubscription()
                 await MainActor.run {
                     isPurchasing = false
-                    // 【核心修改】
-                    // 只有当订阅状态确实变为 true (购买成功) 时，才关闭弹窗。
-                    // 如果用户取消了支付 (isSubscribed 仍为 false)，则不关闭，保留在当前页面。
                     if authManager.isSubscribed {
                         dismiss()
                     } else {
@@ -309,19 +333,44 @@ struct SubscriptionView: View {
     }
     
     // 【修改】处理恢复购买：先检查登录
-    private func performRestore() {
-        // 1. 检查是否已登录
-        guard authManager.isLoggedIn else {
-            // 未登录 -> 弹出登录页
-            showLoginSheet = true
-            return
-        }
+    // private func performRestore() {
+    //     // 1. 检查是否已登录
+    //     guard authManager.isLoggedIn else {
+    //         // 未登录 -> 弹出登录页
+    //         showLoginSheet = true
+    //         return
+    //     }
         
-        // 2. 已登录 -> 执行原有恢复逻辑
+    //     // 2. 已登录 -> 执行原有恢复逻辑
+    //     isRestoring = true
+    //     Task {
+    //         do {
+    //             // 调用 AuthManager 的恢复方法
+    //             try await authManager.restorePurchases()
+    //             await MainActor.run {
+    //                 isRestoring = false
+    //                 if authManager.isSubscribed {
+    //                     restoreMessage = "成功恢复订阅！您现在可以无限制访问所有预测数据。"
+    //                 } else {
+    //                     restoreMessage = "未发现有效的订阅记录。"
+    //                 }
+    //                 showRestoreAlert = true
+    //             }
+    //         } catch {
+    //             await MainActor.run {
+    //                 isRestoring = false
+    //                 restoreMessage = "恢复失败: \(error.localizedDescription)"
+    //                 showRestoreAlert = true
+    //             }
+    //         }
+    //     }
+    // }
+
+    // 🔧 修改 performRestore：移除登录强制要求
+    private func performRestore() {
         isRestoring = true
         Task {
             do {
-                // 调用 AuthManager 的恢复方法
                 try await authManager.restorePurchases()
                 await MainActor.run {
                     isRestoring = false

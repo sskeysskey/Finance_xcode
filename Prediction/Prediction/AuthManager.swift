@@ -30,7 +30,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     // 【修改】Finance 专用的 Key
     private let userIdentifierKey = "com.zhangyan.Prediction"
     // 【修改】Finance 专用的 Product ID (需在 App Store Connect 创建)
-    private let subscriptionProductID = "com.zhangyan.prediction.subscription.monthly"
+    private let subscriptionProductID = "com.zhangyan.prediction.pro.monthly"
     // 【修改】Finance API 地址
     private let serverBaseURL = "http://106.15.183.158:5001/api/Prediction"
     
@@ -306,11 +306,34 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
 
-    func purchaseSubscription() async throws {
-        guard let userId = userIdentifier else { throw URLError(.userAuthenticationRequired) }
+    // func purchaseSubscription() async throws {
+    //     guard let userId = userIdentifier else { throw URLError(.userAuthenticationRequired) }
         
+    //     let products = try await Product.products(for: [subscriptionProductID])
+    //     guard let product = products.first else { throw NSError(domain: "StoreError", code: 404, userInfo: nil) }
+        
+    //     let result = try await product.purchase()
+        
+    //     switch result {
+    //     case .success(let verification):
+    //         let transaction = try checkVerified(verification)
+    //         await updateSubscriptionStatus()
+    //         try await syncPurchaseToServer(userId: userId)
+    //         await transaction.finish()
+    //         await MainActor.run { self.showSubscriptionSheet = false }
+    //     case .userCancelled, .pending:
+    //         break
+    //     @unknown default:
+    //         break
+    //     }
+    // }
+
+    // 🔧 修改 purchaseSubscription：不再强制要求 userId
+    func purchaseSubscription() async throws {
         let products = try await Product.products(for: [subscriptionProductID])
-        guard let product = products.first else { throw NSError(domain: "StoreError", code: 404, userInfo: nil) }
+        guard let product = products.first else {
+            throw NSError(domain: "StoreError", code: 404, userInfo: [NSLocalizedDescriptionKey: "未找到订阅产品"])
+        }
         
         let result = try await product.purchase()
         
@@ -318,7 +341,10 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         case .success(let verification):
             let transaction = try checkVerified(verification)
             await updateSubscriptionStatus()
-            try await syncPurchaseToServer(userId: userId)
+            // ✅ 只有已登录时才同步到服务器（可选，不阻塞本地权限）
+            if let userId = userIdentifier {
+                try? await syncPurchaseToServer(userId: userId)
+            }
             await transaction.finish()
             await MainActor.run { self.showSubscriptionSheet = false }
         case .userCancelled, .pending:
@@ -328,12 +354,22 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
 
+    // func restorePurchases() async throws {
+    //     guard let userId = userIdentifier else { throw URLError(.userAuthenticationRequired) }
+    //     try await AppStore.sync()
+    //     await updateSubscriptionStatus()
+    //     if isSubscribed {
+    //         try await syncPurchaseToServer(userId: userId)
+    //     }
+    // }
+
+    // 🔧 修改 restorePurchases：不再强制要求 userId
     func restorePurchases() async throws {
-        guard let userId = userIdentifier else { throw URLError(.userAuthenticationRequired) }
         try await AppStore.sync()
         await updateSubscriptionStatus()
-        if isSubscribed {
-            try await syncPurchaseToServer(userId: userId)
+        // ✅ 只有已登录且有订阅时才同步到服务器
+        if isSubscribed, let userId = userIdentifier {
+            try? await syncPurchaseToServer(userId: userId)
         }
     }
 
