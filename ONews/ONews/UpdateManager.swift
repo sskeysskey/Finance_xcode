@@ -73,7 +73,6 @@ struct ServerVersion: Codable {
     let notification: String? // 通知内容
     let update_time: String? // 服务器返回的更新时间
     let source_mappings: [String: String]?
-    let source_mappings_ios: [String: String]? // 【新增】iOS专属映射
     let files: [FileInfo]
 }
 
@@ -748,10 +747,7 @@ class ResourceManager: ObservableObject {
         
         await MainActor.run {
             self.serverDate = version.server_date ?? ""
-            
-            // 【核心修改】优先读取 ios 专属配置，如果没有则回退到通用的 source_mappings
-            self.sourceMappings = version.source_mappings_ios ?? version.source_mappings ?? [:]
-            
+            self.sourceMappings = version.source_mappings ?? [:]
             self.serverLockedDays = version.locked_days ?? 0
             self.updateNotificationStatus(serverMessage: version.notification)
             

@@ -77,7 +77,11 @@ struct UserProfileView: View {
                     if !authManager.isSubscribed {
                         Section {
                             Button {
-                                authManager.showSubscriptionSheet = true
+                                // 【修复】先关闭当前的个人中心 Sheet，延迟后再呼出订阅 Sheet
+                                dismiss() // 1. 先关闭个人中心
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    authManager.showSubscriptionSheet = true // 2. 等待关闭动画（约0.3秒）完成后，再触发订阅页
+                                }
                             } label: {
                                 HStack {
                                     Image(systemName: "crown.fill")
