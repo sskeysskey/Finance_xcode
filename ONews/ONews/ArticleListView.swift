@@ -231,6 +231,26 @@ struct ArticleRowButton: View {
                 filteredArticles: filteredArticles.map { $0.article }
             )
         }
+        // 【新增】左滑操作：标记为已读 / 标记为未读
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            if viewModel.isArticleEffectivelyRead(item.article) {
+                // 已读状态 → 提供"标记为未读"
+                Button {
+                    viewModel.markAsUnread(articleID: item.article.id)
+                } label: {
+                    Label(Localized.markAsUnread_text, systemImage: "circle")
+                }
+                .tint(.orange)
+            } else {
+                // 未读状态 → 提供"标记为已读"
+                Button {
+                    viewModel.markAsRead(articleID: item.article.id)
+                } label: {
+                    Label(Localized.markAsRead_text, systemImage: "checkmark.circle")
+                }
+                .tint(.blue)
+            }
+        }
     }
 }
 
@@ -383,8 +403,7 @@ struct ArticleListView: View {
     @State private var isDownloadingImages = false
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
-    
-    // 【修改】移除 selectedArticle 和 isNavigationActive
+    @State private var showMarkAllReadConfirmation = false
     
     @State private var showLoginSheet = false
     // 【新增】控制订阅弹窗
@@ -526,16 +545,25 @@ struct ArticleListView: View {
                     }
                     
                     if !isSearchActive {
-                        // 2. 【修改】大幅简化 Picker 的写法，解决编译器超时和 scope 找不到的问题
-                        Picker("Filter", selection: $filterMode) {
-                            ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                                Text("\(mode.localizedName) (\(self.getCount(for: mode)))")
-                                    .tag(mode)
+                        HStack(spacing: 8) {
+                            Picker("Filter", selection: $filterMode) {
+                                ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
+                                    Text("\(mode.localizedName) (\(self.getCount(for: mode)))")
+                                        .tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            
+                            // 【新增】"全部设为已读"按钮
+                            Button {
+                                showMarkAllReadConfirmation = true
+                            } label: {
+                                Image(systemName: "checkmark.circle")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(.blue)
                             }
                         }
-                        .pickerStyle(.segmented)
                         .padding([.horizontal, .bottom])
-                        // 【修改】当筛选模式改变时，强制重新执行自动展开逻辑（无视 hasPerformedAutoExpansion）
                         .onChange(of: filterMode) { _ in
                             autoExpandGroups()
                         }
@@ -667,6 +695,16 @@ struct ArticleListView: View {
                 .background(Color(UIColor.systemGroupedBackground))
                 .presentationDetents([.fraction(0.30)])
                 .presentationDragIndicator(.hidden)
+            }
+            .confirmationDialog(
+                Localized.markAllAsReadConfirm,
+                isPresented: $showMarkAllReadConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button(Localized.markAllAsRead, role: .destructive) {
+                    viewModel.markAllAsReadInSource(sourceName)
+                }
+                Button(Localized.cancel, role: .cancel) { }
             }
             .onChange(of: authManager.showSubscriptionSheet) { newValue in
                 self.showSubscriptionSheet = newValue
@@ -810,6 +848,7 @@ struct AllArticlesListView: View {
     @State private var isDownloadingImages = false
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
+    @State private var showMarkAllReadConfirmation = false
     
     // 【修改】移除 selectedArticleItem 和 isNavigationActive
     
@@ -937,15 +976,24 @@ struct AllArticlesListView: View {
                 }
                 
                 if !isSearchActive {
-                    // 修复 3：使用 getFilterTitle 简化视图逻辑
-                    Picker("Filter", selection: $filterMode) {
-                        ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                            Text(getFilterTitle(for: mode)).tag(mode)
+                    HStack(spacing: 8) {
+                        Picker("Filter", selection: $filterMode) {
+                            ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
+                                Text(getFilterTitle(for: mode)).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        
+                        // 【新增】"全部设为已读"按钮
+                        Button {
+                            showMarkAllReadConfirmation = true
+                        } label: {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 20))
+                                .foregroundColor(.blue)
                         }
                     }
-                    .pickerStyle(.segmented)
                     .padding([.horizontal, .bottom])
-                    // 【修改】当筛选模式改变时，强制重新执行自动展开逻辑（无视 hasPerformedAutoExpansion）
                     .onChange(of: filterMode) { _ in
                         autoExpandGroups()
                     }
@@ -1072,6 +1120,16 @@ struct AllArticlesListView: View {
             .background(Color(UIColor.systemGroupedBackground))
             .presentationDetents([.fraction(0.30)])
             .presentationDragIndicator(.hidden)
+        }
+        .confirmationDialog(
+            Localized.markAllAsReadConfirm,
+            isPresented: $showMarkAllReadConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(Localized.markAllAsRead, role: .destructive) {
+                viewModel.markAllAsReadInSource(nil) // nil 表示全部来源
+            }
+            Button(Localized.cancel, role: .cancel) { }
         }
         .onChange(of: authManager.showSubscriptionSheet) { newValue in
             self.showSubscriptionSheet = newValue

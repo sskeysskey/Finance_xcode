@@ -109,6 +109,10 @@ struct ArticleDetailView: View {
     @State private var showSystemActivitySheet = false
     // 【新增】控制微信引导页
     @State private var showWeChatGuideSheet = false
+    // 【新增】字体调整相关
+    @State private var showFontAdjustment = false
+    @AppStorage("articleBodyFontSize") private var articleBodyFontSize: Double = 25
+    @AppStorage("imageCaptionFontSize") private var imageCaptionFontSize: Double = 12
     
     // 【新增 2】判断是否存在有效的英文版本
     private var hasEnglishVersion: Bool {
@@ -334,6 +338,10 @@ struct ArticleDetailView: View {
         .onChange(of: isEnglishMode) { _ in
             prepareContent()
         }
+        // 【新增】监听字体大小变化，重新构建段落
+        .onChange(of: articleBodyFontSize) { _ in
+            prepareContent()
+        }
         // --- 核心修改区域：Toolbar ---
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -389,10 +397,15 @@ struct ArticleDetailView: View {
                         onAudioToggle: onAudioToggle
                     )
                     
-                    Button { 
-                        showCustomShareSheet = true 
-                    } label: { 
-                        Image(systemName: "square.and.arrow.up") 
+                    Menu {
+                        Button(action: { showCustomShareSheet = true }) {
+                            Label(Localized.isEnglish ? "Share" : "分享", systemImage: "square.and.arrow.up")
+                        }
+                        Button(action: { showFontAdjustment = true }) {
+                            Label(Localized.isEnglish ? "Font Size" : "字体大小", systemImage: "textformat.size")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
                 }
                 // 【修改点1】这里添加 .primary 颜色，使图标变为黑白（跟随系统主题）
@@ -452,6 +465,10 @@ struct ArticleDetailView: View {
                 }
             })
         }
+        .sheet(isPresented: $showFontAdjustment) {
+            FontAdjustmentView()
+                .presentationDetents([.medium])
+        }
     }
 
     // 【新增】生成分享文本的辅助函数，避免在 ViewBuilder 中写复杂逻辑
@@ -472,6 +489,7 @@ struct ArticleDetailView: View {
     private func prepareContent() {
         let currentArticle = self.article
         let currentMode = self.isEnglishMode
+        let currentBodyFontSize = CGFloat(self.articleBodyFontSize)
 
         // 使用 Task.detached 将纯文本处理移出主线程
         Task.detached(priority: .userInitiated) {
@@ -498,8 +516,8 @@ struct ArticleDetailView: View {
                 guard self.article.id == currentArticle.id else { return }
                 
                 // ⭐ 在主线程访问 UIKit 属性并生成 NSAttributedString，解决 Swift 6 报错
-                let font = NativeParagraphView.paragraphFont
-                let style = NativeParagraphView.paragraphStyle
+                let font = NativeParagraphView.makeFont(size: currentBodyFontSize)
+                let style = NativeParagraphView.makeParagraphStyle(for: currentBodyFontSize)
                 let textColor = UIColor.label
 
                 let attrParas = paras.map { text in
@@ -578,6 +596,24 @@ struct NativeParagraphView: UIViewRepresentable {
         return style
     }()
 
+    // 【新增】动态字号工厂方法
+    static func makeFont(size: CGFloat) -> UIFont {
+        if let font = UIFont(name: "NewYork-Regular", size: size) {
+            return font
+        }
+        let descriptor = UIFontDescriptor.preferredFontDescriptor(withTextStyle: .body)
+        if let serifDesc = descriptor.withDesign(.serif) {
+            return UIFont(descriptor: serifDesc, size: size)
+        }
+        return UIFont.systemFont(ofSize: size)
+    }
+
+    static func makeParagraphStyle(for fontSize: CGFloat) -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = round(fontSize * 0.48)
+        return style
+    }
+
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
         tv.isEditable = false
@@ -625,6 +661,7 @@ struct ArticleImageView: View {
     @State private var isShowingZoomView = false
     // 【新增】引入全局的 ResourceManager，用于下载缺失或损坏的图片
     @EnvironmentObject var resourceManager: ResourceManager
+    @AppStorage("imageCaptionFontSize") private var captionFontSize: Double = 12
     
     private let horizontalPadding: CGFloat = 20
     private var imagePath: String {
@@ -683,7 +720,7 @@ struct ArticleImageView: View {
             
             if imageLoader.image != nil {
                 Text((imageName as NSString).deletingPathExtension)
-                    .font(.caption)
+                    .font(.system(size: captionFontSize))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, horizontalPadding)
@@ -1190,5 +1227,123 @@ struct PromoCardView: View {
             )
         }
         .buttonStyle(PlainButtonStyle()) // 防止按钮默认的蓝色高亮破坏设计
+    }
+}
+
+// MARK: - 字体大小调整视图
+struct FontAdjustmentView: View {
+    @AppStorage("articleBodyFontSize") private var bodyFontSize: Double = 25
+    @AppStorage("imageCaptionFontSize") private var captionFontSize: Double = 12
+    @Environment(\.dismiss) var dismiss
+
+    private let bodyRange: ClosedRange<Double> = 16...36
+    private let captionRange: ClosedRange<Double> = 10...20
+    private let defaultBodySize: Double = 25
+    private let defaultCaptionSize: Double = 12
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 28) {
+
+                    // ── 正文字号 ──
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text(Localized.isEnglish ? "Body Font" : "正文字号")
+                                .font(.subheadline).fontWeight(.semibold)
+                            Spacer()
+                            Text("\(Int(bodyFontSize)) pt")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+
+                        HStack(spacing: 12) {
+                            Image(systemName: "textformat.size.smaller")
+                                .foregroundColor(.secondary)
+                            Slider(value: $bodyFontSize, in: bodyRange, step: 1)
+                                .tint(.blue)
+                            Image(systemName: "textformat.size.larger")
+                                .foregroundColor(.secondary)
+                        }
+
+                        // 实时预览
+                        Text(Localized.isEnglish
+                             ? "This is a preview of the body text at the selected size."
+                             : "这是一段示例正文，用来预览当前字体大小的实际效果。")
+                            .font(.system(size: bodyFontSize, design: .serif))
+                            .lineSpacing(bodyFontSize * 0.48)
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            .cornerRadius(12)
+                    }
+
+                    Divider()
+
+                    // ── 图注字号 ──
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text(Localized.isEnglish ? "Caption Font" : "图注字号")
+                                .font(.subheadline).fontWeight(.semibold)
+                            Spacer()
+                            Text("\(Int(captionFontSize)) pt")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+
+                        HStack(spacing: 12) {
+                            Image(systemName: "textformat.size.smaller")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Slider(value: $captionFontSize, in: captionRange, step: 1)
+                                .tint(.blue)
+                            Image(systemName: "textformat.size.larger")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+
+                        // 实时预览
+                        Text(Localized.isEnglish
+                             ? "Sample image caption text"
+                             : "示例图片说明文字")
+                            .font(.system(size: captionFontSize))
+                            .foregroundColor(.secondary)
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            .cornerRadius(12)
+                    }
+
+                    Spacer(minLength: 20)
+
+                    // ── 恢复默认 ──
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            bodyFontSize = defaultBodySize
+                            captionFontSize = defaultCaptionSize
+                        }
+                    }) {
+                        Text(Localized.isEnglish ? "Reset to Default" : "恢复默认")
+                            .font(.subheadline)
+                            .foregroundColor(.blue)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity)
+                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            .cornerRadius(12)
+                    }
+                }
+                .padding(20)
+            }
+            .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
+            .navigationTitle(Localized.isEnglish ? "Font Size" : "字体大小")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(Localized.isEnglish ? "Done" : "完成") { dismiss() }
+                }
+            }
+        }
     }
 }

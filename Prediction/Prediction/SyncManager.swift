@@ -203,7 +203,12 @@ class SyncManager: ObservableObject {
             
             // 下载完成后重新加载数据
             loadLocalData()
-            resetAfterDelay()
+            
+            // ✅ 修复：只在手动同步时才调用 resetAfterDelay()
+            // 自动同步时不需要，避免 withAnimation 在新分类弹窗动画期间触发干扰
+            if isManual {
+                resetAfterDelay()
+            }
             
         } catch {
             isSyncing = false
@@ -304,7 +309,7 @@ class SyncManager: ObservableObject {
     private func cleanOldFiles(validFiles: Set<String>) throws {
         let contents = try fileManager.contentsOfDirectory(atPath: documentsDirectory.path)
         let predictionFiles = contents.filter {
-            $0.hasPrefix("polymarket_") || $0.hasPrefix("kalshi_") || $0 == "translation_dict.json"  // 🌐 新增
+            $0.hasPrefix("polymarket_") || $0.hasPrefix("kalshi_") || $0 == "translation_dict.json"
         }
         for file in predictionFiles where !validFiles.contains(file) {
             let url = documentsDirectory.appendingPathComponent(file)

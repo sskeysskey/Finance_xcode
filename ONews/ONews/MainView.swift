@@ -826,6 +826,37 @@ class NewsViewModel: ObservableObject {
         }
     }
 
+    /// 批量将指定来源（或全部来源）的所有未读文章标记为已读
+    func markAllAsReadInSource(_ sourceName: String?) {
+        var changed = false
+        if let name = sourceName {
+            // 单一来源
+            if let sourceIndex = sources.firstIndex(where: { $0.name == name }) {
+                for j in sources[sourceIndex].articles.indices {
+                    if !sources[sourceIndex].articles[j].isRead {
+                        sources[sourceIndex].articles[j].isRead = true
+                        readRecords[sources[sourceIndex].articles[j].topic] = Date()
+                        changed = true
+                    }
+                }
+            }
+        } else {
+            // 全部来源
+            for i in sources.indices {
+                for j in sources[i].articles.indices {
+                    if !sources[i].articles[j].isRead {
+                        sources[i].articles[j].isRead = true
+                        readRecords[sources[i].articles[j].topic] = Date()
+                        changed = true
+                    }
+                }
+            }
+        }
+        if changed {
+            saveReadRecords()
+        }
+    }
+
     var totalUnreadCount: Int {
         sources.flatMap { $0.articles }.filter { !$0.isRead }.count
     }

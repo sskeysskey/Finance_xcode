@@ -88,6 +88,8 @@ struct Localized {
     static var noMore: String { tr("该分组内已无更多文章", "No more articles in this group") }
     static var needSubscription: String { tr("需订阅", "Premium") }
     static var contentMatch: String { tr("正文匹配", "Content Match") }
+    static var markAllAsRead: String {isEnglish ? "Mark All as Read" : "全部设为已读"}
+    static var markAllAsReadConfirm: String {isEnglish ? "This will mark all articles in the current list as read." : "这将把当前列表中所有文章标记为已读。"}
     
     // MARK: - 上下文菜单
     static var markAsRead_text: String { tr("标记为已读", "Mark as Read") }

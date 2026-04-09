@@ -51,8 +51,8 @@ struct MainContainerView: View {
     @State private var showNewCategorySheet = false
     @State private var pendingNewCategories: [(type: String, subtypes: [String])] = []
 
-    // ✅ 新增：记录登录成功后是否需要自动弹出订阅页
-    // @State private var pendingSubscriptionAfterLogin = false
+    // ✅ 新增：可取消的新分类检测任务，替代 DispatchQueue.main.asyncAfter
+    @State private var newCategoryCheckTask: Task<Void, Never>?
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -209,7 +209,8 @@ struct MainContainerView: View {
             .sheet(isPresented: $authManager.showSubscriptionSheet) {
                 SubscriptionView()
             }
-            .sheet(isPresented: $showNewCategorySheet) {
+            // ✅ 改用 fullScreenCover，避免与其他 .sheet 修饰符在同一层级产生冲突
+            .fullScreenCover(isPresented: $showNewCategorySheet) {
                 NewCategorySheet(newCategories: pendingNewCategories)
             }
             .onChange(of: scenePhase) { new in
@@ -259,10 +260,15 @@ struct MainContainerView: View {
                 }
             }
             
-            // ✅ 修复：真正的数据就绪信号，监听 dataGeneration 触发新分类检测
+            // ✅ 修复核心：用可取消的 Task 替代 DispatchQueue.main.asyncAfter
+            // 当 dataGeneration 连续变化时（init + sync），前一个 Task 会被取消
+            // 只有最后一次变化后等待 1.5 秒，所有状态稳定后才执行检测
             .onChange(of: syncManager.dataGeneration) { _ in
-                // 数据加载完成后，稍微延迟等待视图稳定再弹窗，避免与 SwiftUI 的重绘冲突
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                newCategoryCheckTask?.cancel()
+                newCategoryCheckTask = Task {
+                    // 使用 1.5 秒延迟，确保 sync 完成、HUD 消失、items 全部赋值稳定后再检测
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    guard !Task.isCancelled else { return }
                     checkForNewCategories()
                 }
             }
@@ -326,6 +332,7 @@ struct MainContainerView: View {
 
     // MARK: - 检查新分类
     private func checkForNewCategories() {
+        // ✅ 增加同步中、HUD 显示中、已经弹窗中的三重保护
         guard !syncManager.isSyncing,
               !syncManager.showAlreadyUpToDateAlert,
               !showNewCategorySheet else { return }
