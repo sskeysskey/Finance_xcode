@@ -8,6 +8,17 @@ class PreferenceManager: ObservableObject {
     @Published var selectedSubtypes: Set<String> = []
     @Published var knownSubtypes: Set<String> = []
     
+    // ✅ 新增：新分类检测结果（替代原来的弹窗机制，改为红点提示）
+    @Published var pendingNewCategories: [(type: String, subtypes: [String])] = []
+    
+    /// 是否存在尚未被用户确认的新分类
+    var hasNewCategories: Bool { !pendingNewCategories.isEmpty }
+    
+    /// 所有待确认的新 subtype 集合（用于在偏好页高亮显示）
+    var allPendingNewSubtypes: Set<String> {
+        Set(pendingNewCategories.flatMap { $0.subtypes })
+    }
+    
     private let storageKey = "Pred_SelectedSubtypes"
     private let knownStorageKey = "Pred_KnownSubtypes"
     
@@ -44,8 +55,14 @@ class PreferenceManager: ObservableObject {
     
     // MARK: - 新分类检测
     
+    /// ✅ 统一入口：更新新分类检测状态（替代原来的弹窗触发逻辑）
+    func updateNewCategoryStatus(from items: [PredictionItem]) {
+        migrateKnownSubtypesIfNeeded(from: items)
+        pendingNewCategories = detectNewSubtypes(from: items)
+    }
+    
     /// 老用户迁移：如果已有偏好但 knownSubtypes 为空，说明是从旧版本升级的
-    /// 此时将当前所有 subtype 视为"已知"，避免误弹窗
+    /// 此时将当前所有 subtype 视为"已知"，避免误触发
     func migrateKnownSubtypesIfNeeded(from items: [PredictionItem]) {
         if hasPreferences && knownSubtypes.isEmpty {
             markAllAsKnown(from: items)
@@ -69,26 +86,23 @@ class PreferenceManager: ObservableObject {
         return result
     }
     
-    /// ✅ 新增：安全的新分类检测入口
-    /// 同步进行中时直接返回空，避免在数据不稳定期间误检测
-    func safeDetectNewSubtypes(from items: [PredictionItem], isSyncing: Bool) -> [(type: String, subtypes: [String])] {
-        guard !isSyncing else {
-            print("⏳ 新分类检测跳过：数据同步进行中")
-            return []
-        }
-        return detectNewSubtypes(from: items)
-    }
-    
     func markAllAsKnown(from items: [PredictionItem]) {
         let allSubs = Set(items.map { $0.subtype })
         knownSubtypes.formUnion(allSubs)
         saveKnown()
+        // ✅ 清除新分类提示（红点消失）
+        pendingNewCategories = []
     }
     
     /// 将指定的 subtype 集合标记为已知
     func markAsKnown(_ subtypes: Set<String>) {
         knownSubtypes.formUnion(subtypes)
         saveKnown()
+        // 重新计算 pending
+        pendingNewCategories = pendingNewCategories.compactMap { cat in
+            let remaining = cat.subtypes.filter { !knownSubtypes.contains($0) }
+            return remaining.isEmpty ? nil : (type: cat.type, subtypes: remaining)
+        }
     }
     
     // MARK: - 分类提取
@@ -110,11 +124,11 @@ class PreferenceManager: ObservableObject {
 }
 
 
-// MARK: - 完整偏好设置页面
+// MARK: - 完整偏好设置页面（✅ 整合新分类提示 + 现有偏好编辑）
 struct PreferenceSelectionView: View {
     @EnvironmentObject var syncManager: SyncManager
     @EnvironmentObject var prefManager: PreferenceManager
-    @EnvironmentObject var transManager: TranslationManager // ✅ 新增：引入翻译管理器
+    @EnvironmentObject var transManager: TranslationManager
     @Environment(\.dismiss) var dismiss
     
     let isOnboarding: Bool
@@ -122,9 +136,25 @@ struct PreferenceSelectionView: View {
     
     @State private var expandedTypes: Set<String> = []
     
+    /// 当前待确认的新 subtype 集合
+    private var newSubtypes: Set<String> {
+        prefManager.allPendingNewSubtypes
+    }
+    
+    /// 分类列表：如果有新分类，含新 subtype 的类别排在前面
     private var categories: [(type: String, subtypes: [String])] {
         let all = syncManager.polymarketItems + syncManager.kalshiItems
-        return PreferenceManager.extractCategories(from: all)
+        let cats = PreferenceManager.extractCategories(from: all)
+        
+        if !newSubtypes.isEmpty {
+            return cats.sorted { cat1, cat2 in
+                let has1 = cat1.subtypes.contains(where: { newSubtypes.contains($0) })
+                let has2 = cat2.subtypes.contains(where: { newSubtypes.contains($0) })
+                if has1 != has2 { return has1 }
+                return cat1.type < cat2.type
+            }
+        }
+        return cats
     }
     
     private var allSubtypes: [String] {
@@ -176,6 +206,11 @@ struct PreferenceSelectionView: View {
                 // 类别列表
                 ScrollView {
                     LazyVStack(spacing: 12) {
+                        // ✅ 新分类发现提示条（仅在非 Onboarding 且有新分类时显示）
+                        if !isOnboarding && !newSubtypes.isEmpty {
+                            newCategoryBanner
+                        }
+                        
                         ForEach(categories, id: \.type) { category in
                             CategoryCard(
                                 typeName: category.type,
@@ -190,7 +225,8 @@ struct PreferenceSelectionView: View {
                                             expandedTypes.insert(category.type)
                                         }
                                     }
-                                }
+                                },
+                                newSubtypes: newSubtypes
                             )
                         }
                     }
@@ -206,7 +242,7 @@ struct PreferenceSelectionView: View {
                 Spacer()
                 Button {
                     prefManager.save()
-                    // ✅ 保存时将当前所有 subtype 标记为"已知"
+                    // ✅ 保存时将当前所有 subtype 标记为"已知"，同时清除红点
                     let allItems = syncManager.polymarketItems + syncManager.kalshiItems
                     prefManager.markAllAsKnown(from: allItems)
                     if isOnboarding {
@@ -273,233 +309,54 @@ struct PreferenceSelectionView: View {
             }
         }
     }
-}
-
-
-// MARK: - 新分类弹窗
-struct NewCategorySheet: View {
-    let newCategories: [(type: String, subtypes: [String])]
-    @EnvironmentObject var prefManager: PreferenceManager
-    @Environment(\.dismiss) var dismiss
     
-    @State private var tempSelected: Set<String> = []
-    
-    private var allNewSubtypes: [String] {
-        newCategories.flatMap { $0.subtypes }
-    }
-    
-    var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.appBg.ignoresSafeArea()
-                
-                VStack(spacing: 0) {
-                    // 顶部标题
-                    VStack(spacing: 10) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 40))
-                            .foregroundStyle(LinearGradient.brandGradient)
-                        Text("发现新分类")
-                            .font(.title2.bold())
-                            .foregroundColor(.primary)
-                        Text("数据更新后出现了新的预测分类，请选择是否关注")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 20)
-                    }
-                    .padding(.top, 24)
-                    .padding(.bottom, 16)
-                    
-                    // 全选 / 全不选
-                    HStack {
-                        Button("全选") {
-                            withAnimation { tempSelected = Set(allNewSubtypes) }
-                        }
-                        .font(.caption.bold())
-                        .foregroundStyle(LinearGradient.brandGradient)
-                        
-                        Text("·").foregroundColor(.secondary)
-                        
-                        Button("全不选") {
-                            withAnimation { tempSelected.removeAll() }
-                        }
-                        .font(.caption.bold())
-                        .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        Text("已选 \(tempSelected.count)/\(allNewSubtypes.count) 项")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 12)
-                    
-                    // 新分类列表
-                    ScrollView {
-                        LazyVStack(spacing: 12) {
-                            ForEach(newCategories, id: \.type) { category in
-                                NewCategorySectionCard(
-                                    typeName: category.type,
-                                    subtypes: category.subtypes,
-                                    selectedSubtypes: $tempSelected
-                                )
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 120)
-                    }
-                    
-                    Spacer()
-                }
-                
-                // 底部按钮
-                VStack {
-                    Spacer()
-                    VStack(spacing: 10) {
-                        Button {
-                            confirmSelection()
-                        } label: {
-                            Text("确认添加 (\(tempSelected.count))")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 16)
-                                .background(LinearGradient.brandGradientHorizontal)
-                                .cornerRadius(16)
-                                .shadow(color: Color.brandStart.opacity(0.3), radius: 8, y: 4)
-                        }
-                        
-                        Button {
-                            skipSelection()
-                        } label: {
-                            Text("暂不关注这些分类")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.bottom, 4)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 30)
-                    .background(
-                        LinearGradient(colors: [Color.appBg.opacity(0), Color.appBg],
-                                       startPoint: .top, endPoint: .bottom)
-                        .frame(height: 120)
-                        .allowsHitTesting(false)
-                    )
-                }
-            }
-            .interactiveDismissDisabled(true)
-        }
-        .onAppear {
-            // ✅ 修复：如果传入的 newCategories 实际为空（防御性处理），直接关闭
-            if allNewSubtypes.isEmpty {
-                dismiss()
-                return
-            }
-            tempSelected = Set(allNewSubtypes)
-        }
-    }
-    
-    private func confirmSelection() {
-        // 将用户勾选的新 subtype 加入偏好
-        prefManager.selectedSubtypes.formUnion(tempSelected)
-        prefManager.save()
-        // 所有新 subtype（无论是否勾选）标记为已知
-        prefManager.markAsKnown(Set(allNewSubtypes))
-        dismiss()
-    }
-    
-    private func skipSelection() {
-        // 不加入偏好，但标记为已知，下次不再弹窗
-        prefManager.markAsKnown(Set(allNewSubtypes))
-        dismiss()
-    }
-}
-
-// MARK: - 新分类卡片（单个 type 分组）
-struct NewCategorySectionCard: View {
-    let typeName: String
-    let subtypes: [String]
-    @Binding var selectedSubtypes: Set<String>
-    
-    private var selectedCount: Int {
-        subtypes.filter { selectedSubtypes.contains($0) }.count
-    }
-    
-    var body: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Text(typeName)
-                    .font(.headline)
+    // MARK: - 新分类发现提示条
+    private var newCategoryBanner: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 16))
+                    .foregroundStyle(LinearGradient.brandGradient)
+                Text("发现 \(newSubtypes.count) 个新分类")
+                    .font(.subheadline.bold())
                     .foregroundColor(.primary)
                 Spacer()
-                Text("\(selectedCount)/\(subtypes.count) 已选")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            
-            let columns = [GridItem(.adaptive(minimum: 120, maximum: 200), spacing: 10)]
-            
-            LazyVGrid(columns: columns, spacing: 10) {
-                ForEach(subtypes, id: \.self) { subtype in
-                    let isSelected = selectedSubtypes.contains(subtype)
-                    
-                    Button {
-                        withAnimation(.spring(response: 0.25)) {
-                            if isSelected {
-                                selectedSubtypes.remove(subtype)
-                            } else {
-                                selectedSubtypes.insert(subtype)
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 14, weight: isSelected ? .bold : .regular))
-                            Text(subtype)
-                                .font(.system(size: 13, weight: isSelected ? .bold : .medium))
-                                .lineLimit(1)
-                        }
-                        .foregroundColor(isSelected ? .white : .primary.opacity(0.8))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            Group {
-                                if isSelected {
-                                    LinearGradient.brandGradientHorizontal
-                                } else {
-                                    Color.primary.opacity(0.06)
-                                }
-                            }
-                        )
-                        .cornerRadius(16)
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
+            Text("带有 NEW 标记的为新增分类，勾选后保存即可追踪")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(Color.cardBg)
-        .cornerRadius(16)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.brandStart.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.brandStart.opacity(0.2), lineWidth: 1)
+                )
+        )
     }
 }
 
 
-// MARK: - 类别卡片（完整偏好页面用）
+// MARK: - 类别卡片（✅ 新增 newSubtypes 参数，支持 "NEW" 标记）
 struct CategoryCard: View {
     let typeName: String
     let subtypes: [String]
     let isExpanded: Bool
     @Binding var selectedSubtypes: Set<String>
     let onToggleExpand: () -> Void
+    var newSubtypes: Set<String> = []
     @EnvironmentObject var transManager: TranslationManager
     
     private var selectedCount: Int {
         subtypes.filter { selectedSubtypes.contains($0) }.count
+    }
+    
+    /// 本类别中有多少个新 subtype
+    private var newCountInCategory: Int {
+        subtypes.filter { newSubtypes.contains($0) }.count
     }
     
     var body: some View {
@@ -508,9 +365,25 @@ struct CategoryCard: View {
             Button(action: onToggleExpand) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(transManager.type(typeName))
-                            .font(.headline)
-                            .foregroundColor(.primary)
+                        HStack(spacing: 6) {
+                            Text(transManager.type(typeName))
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                            // ✅ 如果本类别包含新 subtype，显示提示
+                            if newCountInCategory > 0 {
+                                HStack(spacing: 2) {
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 10))
+                                    Text("\(newCountInCategory) new")
+                                        .font(.system(size: 10, weight: .bold))
+                                }
+                                .foregroundColor(.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.12))
+                                .cornerRadius(6)
+                            }
+                        }
                         Text("\(selectedCount)/\(subtypes.count) 已选")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -523,14 +396,14 @@ struct CategoryCard: View {
                         .foregroundColor(.secondary)
                 }
                 .padding(16)
-                .contentShape(Rectangle()) // 确保整行可点击
+                .contentShape(Rectangle())
             }
-            .buttonStyle(PlainButtonStyle()) // 防止与内部按钮产生冲突
+            .buttonStyle(PlainButtonStyle())
             
             // 子类标签（可选）
             if isExpanded {
                 
-                // ✅ 新增：分类级别的局部全选/全不选按钮
+                // 分类级别的局部全选/全不选按钮
                 HStack(spacing: 12) {
                     Spacer()
                     
@@ -570,6 +443,7 @@ struct CategoryCard: View {
                 LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(subtypes, id: \.self) { subtype in
                         let isSelected = selectedSubtypes.contains(subtype)
+                        let isNew = newSubtypes.contains(subtype)
                         
                         Button {
                             withAnimation(.spring(response: 0.25)) {
@@ -587,6 +461,20 @@ struct CategoryCard: View {
                                 Text(transManager.subtype(subtype))
                                     .font(.system(size: 13, weight: isSelected ? .bold : .medium))
                                     .lineLimit(1)
+                                // ✅ 新增：NEW 标记
+                                if isNew {
+                                    Text("NEW")
+                                        .font(.system(size: 8, weight: .heavy))
+                                        .foregroundColor(.orange)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 2)
+                                        .background(
+                                            isSelected
+                                                ? Color.white.opacity(0.25)
+                                                : Color.orange.opacity(0.15)
+                                        )
+                                        .cornerRadius(4)
+                                }
                             }
                             .foregroundColor(isSelected ? .white : .primary.opacity(0.8))
                             .padding(.horizontal, 12)

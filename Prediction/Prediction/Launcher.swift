@@ -48,10 +48,7 @@ struct MainContainerView: View {
     @State private var syncErrorMsg = ""
     @State private var hasAttemptedSync = false
 
-    @State private var showNewCategorySheet = false
-    @State private var pendingNewCategories: [(type: String, subtypes: [String])] = []
-
-    // ✅ 新增：可取消的新分类检测任务，替代 DispatchQueue.main.asyncAfter
+    // ✅ 保留：可取消的新分类检测任务（用于 debounce）
     @State private var newCategoryCheckTask: Task<Void, Never>?
 
     @Environment(\.scenePhase) private var scenePhase
@@ -176,10 +173,20 @@ struct MainContainerView: View {
                             Image(systemName: "magnifyingglass").font(.system(size: 15))
                         }
 
+                        // ✅ 偏好设置按钮：带红点提示
                         Button {
                             handlePreferenceButtonTap()
                         } label: {
-                            Image(systemName: "slider.horizontal.3").font(.system(size: 15))
+                            Image(systemName: "slider.horizontal.3")
+                                .font(.system(size: 15))
+                                .overlay(alignment: .topTrailing) {
+                                    if prefManager.hasNewCategories {
+                                        Circle()
+                                            .fill(Color.red)
+                                            .frame(width: 8, height: 8)
+                                            .offset(x: 4, y: -4)
+                                    }
+                                }
                         }
                         .disabled(syncManager.isSyncing)
 
@@ -208,10 +215,6 @@ struct MainContainerView: View {
             }
             .sheet(isPresented: $authManager.showSubscriptionSheet) {
                 SubscriptionView()
-            }
-            // ✅ 改用 fullScreenCover，避免与其他 .sheet 修饰符在同一层级产生冲突
-            .fullScreenCover(isPresented: $showNewCategorySheet) {
-                NewCategorySheet(newCategories: pendingNewCategories)
             }
             .onChange(of: scenePhase) { new in
                 if new == .active && !hasAttemptedSync {
@@ -260,14 +263,12 @@ struct MainContainerView: View {
                 }
             }
             
-            // ✅ 修复核心：用可取消的 Task 替代 DispatchQueue.main.asyncAfter
-            // 当 dataGeneration 连续变化时（init + sync），前一个 Task 会被取消
-            // 只有最后一次变化后等待 1.5 秒，所有状态稳定后才执行检测
+            // ✅ 修复核心：用可取消的 Task debounce，延迟缩短为 0.5 秒
+            // 移除了对 showAlreadyUpToDateAlert 的依赖，消除竞态条件
             .onChange(of: syncManager.dataGeneration) { _ in
                 newCategoryCheckTask?.cancel()
                 newCategoryCheckTask = Task {
-                    // 使用 1.5 秒延迟，确保 sync 完成、HUD 消失、items 全部赋值稳定后再检测
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    try? await Task.sleep(nanoseconds: 500_000_000)
                     guard !Task.isCancelled else { return }
                     checkForNewCategories()
                 }
@@ -330,23 +331,14 @@ struct MainContainerView: View {
         }
     }
 
-    // MARK: - 检查新分类
+    // MARK: - ✅ 简化：检查新分类（只更新 prefManager 状态，不弹窗）
     private func checkForNewCategories() {
-        // ✅ 增加同步中、HUD 显示中、已经弹窗中的三重保护
-        guard !syncManager.isSyncing,
-              !syncManager.showAlreadyUpToDateAlert,
-              !showNewCategorySheet else { return }
-
+        guard !syncManager.isSyncing else { return }
+        
         let allItems = syncManager.polymarketItems + syncManager.kalshiItems
         guard !allItems.isEmpty else { return }
-
-        prefManager.migrateKnownSubtypesIfNeeded(from: allItems)
-
-        let newCats = prefManager.detectNewSubtypes(from: allItems)
-        if !newCats.isEmpty {
-            pendingNewCategories = newCats
-            showNewCategorySheet = true
-        }
+        
+        prefManager.updateNewCategoryStatus(from: allItems)
     }
 
     // MARK: - Info Bar
