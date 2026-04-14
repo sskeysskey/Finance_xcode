@@ -79,8 +79,8 @@ struct Localized {
 
     // MARK: - 主页 / 列表页
     static var mySubscriptions: String { tr("我的订阅", "My Subscriptions") }
-    static var allArticles: String { tr("全部文章", "All Articles") }
-    static var allArticlesDesc: String { tr("汇集所有订阅源", "Aggregated Feed") }
+    static var allArticles: String { tr("所有新闻", "All Articles") }
+    static var allArticlesDesc: String { tr("汇集全部订阅源", "Aggregated Feeds") }
     static var unread: String { tr("未读", "Unread") }
     static var read: String { tr("已读", "Read") }
     static var searchResults: String { tr("搜索结果", "Results") }
@@ -165,7 +165,7 @@ struct Localized {
     static var planFreeDetail: String { tr("可免费浏览 三天前 的所有文章", "Access articles older than 3 days") }
     static var planFreeDetailSubbed: String { tr("可免费浏览 全部 文章", "Access ALL articles") }
     static var planPro: String { tr("专业版套餐", "Pro Plan") }
-    static var planProDesc: String { tr("解锁最新日期资讯，与世界同频", "Unlock latest news instantly") }
+    static var planProDesc: String { tr("解锁最新日期资讯和所有预测数据，与世界同频", "Unlock latest news and Prediction Data instantly") }
     static var pricePerMonth: String { tr("¥12/月", "$1.99/mo") }
     static var currentProUser: String { tr("您当前是尊贵的专业版用户", "You are currently a Pro member") }
     static var freePlanFootnote: String { tr("如果不选择付费，您将继续使用免费版，仍可以浏览三天前的文章。", "If you don't upgrade, you can still enjoy articles older than 3 days for free.") }

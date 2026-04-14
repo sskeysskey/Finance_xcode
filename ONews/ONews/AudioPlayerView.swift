@@ -279,7 +279,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     // MARK: - ▶ 分块文本拆分
-    private func splitIntoChunks(_ text: String) -> [String] {
+    nonisolated private func splitIntoChunks(_ text: String) -> [String] {
         let firstChunkTarget = 300    // 第一块目标较小，确保快速开始播放
         let normalChunkTarget = 800   // 后续块较大，减少块间衔接
 
@@ -361,30 +361,41 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         }
 
         // 预处理文本并拆分为块
-        let processedText = preprocessText(text, language: language)
-        textChunks = splitIntoChunks(processedText)
-        chunkFileURLs = Array(repeating: nil, count: textChunks.count)
-        chunkDurations = Array(repeating: 0.0, count: textChunks.count)
-        currentPlayingChunkIndex = 0
-        currentSynthesizingChunkIndex = 0
-        isAllSynthesized = false
-        waitingForChunk = false
-
-        isSynthesizing = true
-        isPlaybackActive = true
-
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .spokenAudio)
-            try session.setActive(true, options: [])
-        } catch {
-            print("\(Localized.errSessionFailed): \(error.localizedDescription)")
+        // 【优化】将繁重的正则替换和长文本分块操作，移入后台并发线程
+        Task {
+            // 在后台执行，彻底解放主线程
+            let chunks = await Task.detached { [weak self] () -> [String] in
+                guard let self = self else { return [] }
+                let processedText = self.preprocessText(text, language: language)
+                return self.splitIntoChunks(processedText)
+            }.value
+            
+            guard !chunks.isEmpty else { return }
+            
+            // 回到主线程，安全地更新 UI 并启动播放引擎
+            self.textChunks = chunks
+            self.chunkFileURLs = Array(repeating: nil, count: self.textChunks.count)
+            self.chunkDurations = Array(repeating: 0.0, count: self.textChunks.count)
+            self.currentPlayingChunkIndex = 0
+            self.currentSynthesizingChunkIndex = 0
+            self.isAllSynthesized = false
+            self.waitingForChunk = false
+            self.isSynthesizing = true
+            self.isPlaybackActive = true
+            
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playback, mode: .spokenAudio)
+                try session.setActive(true, options: [])
+            } catch {
+                print("Session setup failed: \(error.localizedDescription)")
+            }
+            self.refreshNowPlayingInfo(playbackRate: 0.0)
+            
+            // 开始合成第一个块
+            self.synthesizeChunk(at: 0)
         }
 
-        refreshNowPlayingInfo(playbackRate: 0.0)
-
-        // 开始合成第一个块
-        synthesizeChunk(at: 0)
     }
 
     // MARK: - ▶ 合成单个块
@@ -794,7 +805,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
     // MARK: - 以下所有文本预处理方法保持不变
 
-    private func removeCommasFromNumbers(_ text: String) -> String {
+    nonisolated private func removeCommasFromNumbers(_ text: String) -> String {
         let pattern = #"(\d),(\d{3})"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return text
@@ -810,7 +821,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return result
     }
 
-    private func formatDigitsToChinesePerChar(_ digits: String) -> String {
+    nonisolated private func formatDigitsToChinesePerChar(_ digits: String) -> String {
         let map: [Character: String] = [
             "0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
             "5": "五", "6": "六", "7": "七", "8": "八", "9": "九"
@@ -818,7 +829,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return digits.compactMap { map[$0] }.joined()
     }
 
-    private func normalizeDash(_ text: String) -> String {
+    nonisolated private func normalizeDash(_ text: String) -> String {
         let dashes = ["—", "–", "―", "–", "－", "‑", "‒", "〜", "~", "—", "——"]
         var t = text
         for d in dashes {
@@ -830,7 +841,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return t
     }
 
-    private func readChineseNumber(_ n: Int) -> String {
+    nonisolated private func readChineseNumber(_ n: Int) -> String {
         let digits = ["零","一","二","三","四","五","六","七","八","九"]
         if n < 10 { return digits[n] }
         if n < 20 {
@@ -895,7 +906,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return String(n).map { String($0) }.joined(separator: "")
     }
 
-    private func replaceYearMentionsForChinese(_ text: String) -> String {
+    nonisolated private func replaceYearMentionsForChinese(_ text: String) -> String {
         var result = text
 
         let linkedYearPattern = #"(?<!\d)(\d{4})(?=\s*(?:和|与|、)\s*\d{4}\s*(?:年|年代))"#
@@ -962,7 +973,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return result
     }
 
-    private func preprocessText(_ text: String, language: String) -> String {
+    nonisolated private func preprocessText(_ text: String, language: String) -> String {
         let textWithoutURLs = text.replacingOccurrences(of: "https?://[^\\s]+", with: Localized.linkPlaceholder, options: .regularExpression)
 
         if language.starts(with: "en") {
@@ -988,7 +999,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return modifiedText
     }
 
-    private func insertDotForDecimalBeforePercentageWords(_ text: String) -> String {
+    nonisolated private func insertDotForDecimalBeforePercentageWords(_ text: String) -> String {
         var result = text
         let pattern = #"(?<!\d)(\d+).(\d+)\s*(个百分点|百分比|百分点)"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return result }
@@ -1017,7 +1028,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return result
     }
 
-    private func processEnglishText(_ input: String) -> String {
+    nonisolated private func processEnglishText(_ input: String) -> String {
         var processed = input
             .replacingOccurrences(of: "\u{201C}", with: "")
             .replacingOccurrences(of: "\u{201D}", with: "")

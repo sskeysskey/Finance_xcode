@@ -33,6 +33,9 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     
     // 服务器地址
     private let serverBaseURL = "http://106.15.183.158:5001/api/ONews"
+
+    // 【新增】Prediction 的服务器地址
+    private let predictionServerBaseURL = "http://106.15.183.158:5001/api/Prediction"
     
     // 【新增】缓存 Key
     private let cacheIsSubscribedKey = "AuthCache_IsSubscribed"
@@ -363,8 +366,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     }
     
     // MARK: - Server Communication
-    
     private func sendTokenToServer(token: String, userId: String) async throws {
+        // 1. 向 ONews 后端认证（原有逻辑）
         let url = URL(string: "\(serverBaseURL)/auth/apple")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -374,24 +377,31 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         request.httpBody = try JSONEncoder().encode(body)
         
         let (data, response) = try await URLSession.shared.data(for: request)
-        
         guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
             throw URLError(.badServerResponse)
         }
         
-        // 【修改】解析服务器返回的订阅状态
         struct AuthResponse: Codable {
             let is_subscribed: Bool
             let subscription_expires_at: String?
         }
-        
         let authResponse = try JSONDecoder().decode(AuthResponse.self, from: data)
         
         await MainActor.run {
             self.isSubscribed = authResponse.is_subscribed
             self.subscriptionExpiryDate = authResponse.subscription_expires_at
-            // 登录成功，保存缓存
             self.saveSubscriptionCache(isSubscribed: authResponse.is_subscribed, expiryDate: authResponse.subscription_expires_at)
+        }
+        
+        // 2. 【新增】同时向 Prediction 后端注册（静默，失败不影响主流程）
+        Task {
+            guard let predURL = URL(string: "\(predictionServerBaseURL)/auth/apple") else { return }
+            var predRequest = URLRequest(url: predURL)
+            predRequest.httpMethod = "POST"
+            predRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            predRequest.httpBody = try? JSONEncoder().encode(body)
+            _ = try? await URLSession.shared.data(for: predRequest)
+            print("AuthManager: 已同步注册到 Prediction 后端")
         }
     }
     
@@ -460,42 +470,95 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     
     // MARK: - Server Sync (保留与 Python 的通信)
     
-    // 复用你之前的逻辑，但在 StoreKit 成功后调用
+    // 【修改】购买成功后同步到两个后端
     private func syncPurchaseToServer(userId: String) async throws {
-        let url = URL(string: "\(serverBaseURL)/payment/subscribe")!
+        // 1. 同步到 ONews 后端
+        try await syncToEndpoint(
+            url: "\(serverBaseURL)/payment/subscribe",
+            userId: userId
+        )
+        
+        // 2. 同步到 Prediction 后端（保证两边状态一致）
+        try? await syncToEndpoint(
+            url: "\(predictionServerBaseURL)/payment/subscribe",
+            userId: userId
+        )
+        // 注意 Prediction 端用 try? 容错，防止一端失败导致整体报错
+    }
+
+    // 【新增】抽取为通用同步方法
+    private func syncToEndpoint(url urlString: String, userId: String) async throws {
+        guard let url = URL(string: urlString) else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        // 【核心修改】构建请求体
         var body: [String: Any] = ["user_id": userId]
-        
-        // 检查 AuthManager 中是否已经有了从 Apple 获取的过期时间
-        // 注意：purchaseSubscription 和 restorePurchases 都会先调用 updateSubscriptionStatus
-        // 所以此时 self.subscriptionExpiryDate 应该是最新的真实时间
         if let realExpiryDate = self.subscriptionExpiryDate {
-            // 传给服务器字段：explicit_expiry
             body["explicit_expiry"] = realExpiryDate
         } else {
-            // 如果实在拿不到时间（极少情况），再回退到加30天
             body["days"] = 30
         }
-        
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
         let (_, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            print("同步服务器失败，但本地已购买成功")
+            print("同步到 \(urlString) 失败")
             return
         }
-        print("服务器同步成功")
+        print("同步到 \(urlString) 成功")
     }
     
     // 【新增】检查服务器上的订阅状态
     func checkServerSubscriptionStatus() async {
         guard let userId = userIdentifier else { return }
-        guard let url = URL(string: "\(serverBaseURL)/user/status?user_id=\(userId)") else { return }
         
+        // 1. 先查 ONews 端
+        let onewsResult = await checkEndpointStatus(
+            url: "\(serverBaseURL)/user/status?user_id=\(userId)"
+        )
+        
+        if onewsResult.isSubscribed {
+            await MainActor.run {
+                self.isSubscribed = true
+                self.subscriptionExpiryDate = onewsResult.expiryDate
+                self.saveSubscriptionCache(isSubscribed: true, expiryDate: onewsResult.expiryDate)
+            }
+            return
+        }
+        
+        // 2. ONews 端没订阅，再查 Prediction 端
+        let predResult = await checkEndpointStatus(
+            url: "\(predictionServerBaseURL)/user/status?user_id=\(userId)"
+        )
+        
+        if predResult.isSubscribed {
+            await MainActor.run {
+                self.isSubscribed = true
+                self.subscriptionExpiryDate = predResult.expiryDate
+                self.saveSubscriptionCache(isSubscribed: true, expiryDate: predResult.expiryDate)
+            }
+            // 同步到 ONews 端
+            Task { try? await self.syncToEndpoint(url: "\(serverBaseURL)/payment/subscribe", userId: userId) }
+            return
+        }
+        
+        // 3. 两端都没订阅
+        await MainActor.run {
+            if self.isSubscribedViaAppleLocal() {
+                // 本地 Apple 凭证有效，保持 VIP
+                Task { try? await self.syncPurchaseToServer(userId: userId) }
+            } else {
+                self.isSubscribed = false
+                self.subscriptionExpiryDate = nil
+                self.clearSubscriptionCache()
+            }
+        }
+    }
+
+    // 【新增】抽取的端点状态查询
+    private func checkEndpointStatus(url urlString: String) async -> (isSubscribed: Bool, expiryDate: String?) {
+        guard let url = URL(string: urlString) else { return (false, nil) }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             struct StatusResponse: Codable {
@@ -503,37 +566,9 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                 let subscription_expires_at: String?
             }
             let status = try JSONDecoder().decode(StatusResponse.self, from: data)
-            
-            await MainActor.run {
-                // 1. 如果服务器说 "是 VIP"
-                if status.is_subscribed {
-                    self.isSubscribed = true
-                    self.subscriptionExpiryDate = status.subscription_expires_at
-                    // 服务器校验成功，更新缓存
-                    self.saveSubscriptionCache(isSubscribed: true, expiryDate: status.subscription_expires_at)
-                    print("AuthManager: 服务器确认 VIP 身份。")
-                } 
-                // 2. 如果服务器说 "不是 VIP"
-                else {
-                    // 【核心修复】
-                    // 只有在 "本地 Apple 凭证也过期" 的情况下，才听服务器的。
-                    // 如果我们刚刚通过 StoreKit 确认了本地权限有效，就忽略服务器的 "false"。
-                    if self.isSubscribedViaAppleLocal() {
-                        print("AuthManager: 服务器返回未订阅，但本地 Apple 凭证有效。忽略服务器结果，保持 VIP。")
-                        // 可选：这里可以触发一次静默的同步，告诉服务器更新状态
-                        Task { try? await self.syncPurchaseToServer(userId: userId) }
-                    } else {
-                        // 确实没订阅，也没本地凭证，那才是真的没订阅
-                        self.isSubscribed = false
-                        self.subscriptionExpiryDate = nil
-                        self.clearSubscriptionCache()
-                        print("AuthManager: 服务器确认未订阅，且无本地凭证。")
-                    }
-                }
-            }
+            return (status.is_subscribed, status.subscription_expires_at)
         } catch {
-            print("AuthManager: 检查服务器状态失败: \(error)")
-            // 网络失败时不操作，保持现有状态（依赖缓存或本地凭证）
+            return (false, nil)
         }
     }
     

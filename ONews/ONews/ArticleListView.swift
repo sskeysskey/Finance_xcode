@@ -261,11 +261,11 @@ struct ArticleContextMenu: View {
     let filteredArticles: [Article]
     
     var body: some View {
-        if article.isRead {
+        // 【关键修复】使用 viewModel.isArticleEffectivelyRead 来获取最准确的已读状态
+        if viewModel.isArticleEffectivelyRead(article) {
             Button { viewModel.markAsUnread(articleID: article.id) }
             label: { Label(Localized.markAsUnread_text, systemImage: "circle") }
         } else {
-            // ✅ 修正：添加了 label: { ... }
             Button { viewModel.markAsRead(articleID: article.id) }
             label: { Label(Localized.markAsRead_text, systemImage: "checkmark.circle") }
             
@@ -593,16 +593,15 @@ struct ArticleListView: View {
                         ZStack {
                             Circle()
                                 .strokeBorder(Color.primary, lineWidth: 1.5)
-                                // 如果是英文模式(true)，背景实心，代表状态激活
-                                .background(isGlobalEnglishMode ? Color.primary : Color.clear)
+                                // 【修改】逻辑反转：!isGlobalEnglishMode (即中文模式) 时实心
+                                .background(!isGlobalEnglishMode ? Color.primary : Color.clear)
                                 .clipShape(Circle())
                             
-                            // 【修正文字逻辑】
-                            // isGlobalEnglishMode 为 true (英文状态) -> 显示 "中" (提示点击切回中文)
-                            // isGlobalEnglishMode 为 false (中文状态) -> 显示 "En" (提示点击切成英文)
-                            Text(isGlobalEnglishMode ? "中" : "En") 
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(isGlobalEnglishMode ? Color.viewBackground : Color.primary)
+                            // 【修改】逻辑反转：中文模式下显示“中”，英文模式下显示“英”
+                            Text(isGlobalEnglishMode ? "中" : "英")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                // 【修改】逻辑反转：!isGlobalEnglishMode (即中文模式) 时文字反色
+                                .foregroundColor(!isGlobalEnglishMode ? Color.viewBackground : Color.primary)
                         }
                         .frame(width: 24, height: 24)
                     }
@@ -1022,13 +1021,15 @@ struct AllArticlesListView: View {
                     ZStack {
                         Circle()
                             .strokeBorder(Color.primary, lineWidth: 1.5)
-                            .background(isGlobalEnglishMode ? Color.primary : Color.clear)
+                            // 【修改】逻辑反转：!isGlobalEnglishMode (即中文模式) 时实心
+                            .background(!isGlobalEnglishMode ? Color.primary : Color.clear)
                             .clipShape(Circle())
                         
-                        // 修正：英文状态显示“中”，中文状态显示“En”
-                        Text(isGlobalEnglishMode ? "中" : "En")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(isGlobalEnglishMode ? Color.viewBackground : Color.primary)
+                        // 【修改】逻辑反转：中文模式下显示“中”，英文模式下显示“英”
+                        Text(isGlobalEnglishMode ? "中" : "英")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            // 【修改】逻辑反转：!isGlobalEnglishMode (即中文模式) 时文字反色
+                            .foregroundColor(!isGlobalEnglishMode ? Color.viewBackground : Color.primary)
                     }
                     .frame(width: 24, height: 24)
                 }

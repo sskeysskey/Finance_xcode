@@ -231,7 +231,6 @@ struct SectorsPanel: Decodable {
 }
 
 // MARK: - Views
-
 struct IndicesContentView: View {
     @EnvironmentObject var dataService: DataService
     @EnvironmentObject var authManager: AuthManager
@@ -246,13 +245,15 @@ struct IndicesContentView: View {
     @State private var navigateToBigOrders = false
     @State private var navigateToOptionsList = false
     
-    // 【修改点】：从经济数据面板中彻底移除 "ETFs"
     private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "Economic_All", "Economics", "Indices"])
-    private let weekLowGroupNames = Set(["Basic_Materials", "Communication_Services", "Consumer_Cyclical", "Consumer_Defensive", "Energy", "Financial_Services", "Healthcare", "Industrials", "Real_Estate", "Technology", "Utilities"])
+    private let weekLowGroupNames = Set([
+        "Basic_Materials", "Communication_Services", "Consumer_Cyclical",
+        "Consumer_Defensive", "Energy", "Financial_Services", "Healthcare",
+        "Industrials", "Real_Estate", "Technology", "Utilities"])
     private let historyBasedGroups: Set<String> = [
         "PE_Volume", "PE_Volume_up", "PE_Hot", "Short", "Short_W", "PE_Volume_high",
-        "PE_W", "PE_Deeper", "OverSell_W", "PE_Deep", "PE_valid", "PE_invalid",
-        "ETF_Volume_high", "ETF_Volume_low"
+        "PE_W", "PE_Deeper", "SupportLevel_Close", "SupportLevel_Over", "OverSell_W", "PE_Deep",
+        "PE_valid", "PE_invalid", "ETF_Volume_high", "ETF_Volume_low"
     ]
     
     @State private var selectedHistoryGroup: String?
@@ -446,6 +447,8 @@ struct IndicesContentView: View {
         case "PE_Volume": return "7.circle"
         case "PE_Volume_up": return "arrow.up.circle"
         case "PE_Volume_high": return "arrow.up.circle"
+        case "SupportLevel_Close": return "9.circle"
+        case "SupportLevel_Over": return "10.circle"
         case "ETF_Volume_high": return "arrow.up.circle"
         case "ETF_Volume_low": return "arrow.down.circle"
         case "OverSell_W": return "flame.fill"

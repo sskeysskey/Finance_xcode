@@ -21,6 +21,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     // 【新增】创建 AuthManager 实例
     let authManager = AuthManager()
     
+    // 【新增】Prediction 相关管理器
+    let predictionSyncManager = PredictionSyncManager()
+    let preferenceManager = PreferenceManager()
+    let translationManager = TranslationManager()
+    
     // 添加一个标记,表示权限是否已请求完成
     var hasRequestedPermissions = false
     
@@ -31,9 +36,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         
         // --- 🌍 国际化智能初始化逻辑 ---
         initializeLanguagePreference()
-        // ------------------------------------
-
-        // ... (原有的接线操作)
+        
         newsViewModel.badgeUpdater = { [weak self] count in
             self?.badgeManager.updateBadge(count: count)
         }
@@ -116,6 +119,10 @@ struct NewsReaderAppApp: App {
                 .environmentObject(appDelegate.resourceManager)
                 // 【新增】注入 AuthManager
                 .environmentObject(appDelegate.authManager)
+                // 【新增】注入 Prediction 管理器
+                .environmentObject(appDelegate.predictionSyncManager)
+                .environmentObject(appDelegate.preferenceManager)
+                .environmentObject(appDelegate.translationManager)
         }
         .onChange(of: scenePhase) { newPhase in
             // 获取 ViewModel 和 AuthManager 的引用
@@ -198,11 +205,25 @@ struct SearchBarInline: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
+                
                 TextField(placeholder, text: $text, onCommit: onCommit)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled(true)
                     .submitLabel(.search)
                     .focused($isFocused)
+                
+                // 【新增】一键清除按钮
+                if !text.isEmpty {
+                    Button(action: {
+                        text = ""           // 清空输入内容
+                        isFocused = true    // 保持输入框焦点，不收起键盘
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary.opacity(0.6))
+                            .padding(.trailing, 4) // 稍微增加一点右侧边距，避免太贴边
+                    }
+                    .buttonStyle(PlainButtonStyle()) // 防止触发外层其他点击事件
+                }
             }
             .padding(10)
             .background(Color(.secondarySystemBackground))
@@ -386,13 +407,15 @@ class NewsViewModel: ObservableObject {
     private var lastSilentCommittedIDs: Set<UUID> = []
     
     // 放在 NewsViewModel 类内，lockCheckFormatter 附近即可
-    private static func djb2Hash(_ string: String) -> UInt64 {
+    // 添加 nonisolated 关键字，允许后台线程调用它进行高速排序
+    nonisolated private static func djb2Hash(_ string: String) -> UInt64 {
         var hash: UInt64 = 5381
         for byte in string.utf8 {
             hash = (hash &<< 5) &+ hash &+ UInt64(byte)
         }
         return hash
     }
+
 
     // 【优化】静态 DateFormatter 缓存，避免重复创建
     private static let lockCheckFormatter: DateFormatter = {
@@ -406,24 +429,8 @@ class NewsViewModel: ObservableObject {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    var allArticlesSortedForDisplay: [(article: Article, sourceName: String, sourceNameEN: String)] {
-        let flatList = self.sources.flatMap { source in
-            // 这里返回的是 3 个元素，现在类型签名匹配了
-            source.articles.map { (article: $0, sourceName: source.name, sourceNameEN: source.name_en) }
-        }
-        
-        return flatList.sorted { item1, item2 in
-            // 时间戳不同：新的排前面，规则不变
-            if item1.article.timestamp != item2.article.timestamp {
-                return item1.article.timestamp > item2.article.timestamp
-            }
-            // 【核心修改】同一时间戳内：用标题+来源名的稳定哈希排序，产生跨来源混淆效果
-            let key1 = NewsViewModel.djb2Hash(item1.article.topic + item1.sourceName)
-            let key2 = NewsViewModel.djb2Hash(item2.article.topic + item2.sourceName)
-            return key1 < key2
-        }
-    }
-
+    // 【优化1】改为存储属性，直接缓存排序好的数据，供 UI 零延迟读取
+    @Published var allArticlesSortedForDisplay: [(article: Article, sourceName: String, sourceNameEN: String)] = []
 
     init() {
         loadReadRecords()
@@ -630,12 +637,25 @@ class NewsViewModel: ObservableObject {
             }
             
             // 【关键修改】在切换回 MainActor 之前，将 var 转为 let。
-            // 这解决了 "Reference to captured var" 警告。
             let finalSources = tempSources
+            
+            // 【优化2】在后台线程提前完成合并与哈希排序，彻底解放主线程
+            let flatList = finalSources.flatMap { source in
+                source.articles.map { (article: $0, sourceName: source.name, sourceNameEN: source.name_en) }
+            }
+            let finalAllArticles = flatList.sorted { item1, item2 in
+                if item1.article.timestamp != item2.article.timestamp {
+                    return item1.article.timestamp > item2.article.timestamp
+                }
+                let key1 = NewsViewModel.djb2Hash(item1.article.topic + item1.sourceName)
+                let key2 = NewsViewModel.djb2Hash(item2.article.topic + item2.sourceName)
+                return key1 < key2
+            }
             
             // 回到主线程更新 UI
             await MainActor.run {
                 self.sources = finalSources
+                self.allArticlesSortedForDisplay = finalAllArticles // 把计算好的结果直接赋给 UI
                 print("新闻数据加载/刷新完成！(后台线程处理)")
             }
         }
@@ -667,7 +687,15 @@ class NewsViewModel: ObservableObject {
     }
 
     func isArticleEffectivelyRead(_ article: Article) -> Bool {
-        return isEffectivelyRead(articleID: article.id)
+        // 1. 优先查是否在本次会话中暂存为已读 (Set 查询，O(1) 复杂度)
+        if isArticlePendingRead(articleID: article.id) { return true }
+        
+        // 2. 直接通过 topic 查询持久化的已读字典 readRecords (Dictionary 查询，O(1) 复杂度！)
+        // 彻底移除了原先去 sources 中逐层遍历的性能瓶颈
+        if readRecords[article.topic] != nil { return true }
+        
+        // 3. 兜底返回结构体本身的状态
+        return article.isRead
     }
 
     /// 提交所有暂存的已读文章并刷新 UI。

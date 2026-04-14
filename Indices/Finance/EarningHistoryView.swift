@@ -6,7 +6,68 @@ struct EarningHistoryView: View {
     @EnvironmentObject var usageManager: UsageManager
 
     private let excludedGroups = ["season", "no_season", "_Tag_Blacklist"]
-    private let lowPriorityGroups = ["PE_W", "OverSell_W", "PE_Deeper", "PE_Deep", "PE_valid", "PE_invalid"]
+    private let lowPriorityGroups = ["OverSell_W", "PE_Deeper", "PE_Deep", "PE_valid", "PE_invalid"]
+
+    // MARK: - 新增：计算多组共振（次数统计）数据
+    private var frequencyData: [(count: Int, symbols: [String])] {
+        // 改为记录每个 symbol 出现的具体分组集合，而不仅仅是次数
+        var symbolGroups: [String: Set<String>] = [:]
+        
+        // 1. 遍历所有分组
+        for (group, dateMap) in dataService.earningHistoryData {
+            // 排除不需要统计的分组
+            if excludedGroups.contains(group) { continue }
+            
+            // 2. 获取该分组的最新日期
+            let sortedDates = dateMap.keys.sorted(by: >)
+            guard let latestDate = sortedDates.first,
+                  let symbols = dateMap[latestDate] else { continue }
+            
+            // 3. 清洗 Symbol 并去重
+            let cleanSymbols = Set(symbols.map { $0.cleanTicker.uppercased() })
+            
+            // 4. 记录该 Symbol 所在的分组
+            for sym in cleanSymbols {
+                symbolGroups[sym, default: []].insert(group)
+            }
+        }
+        
+        // 定义需要特殊处理的源头分组和衍生分组
+        let supportLevelGroups: Set<String> = ["SupportLevel_Close", "SupportLevel_Over"]
+        let sourceGroups: Set<String> = [
+            "Short", "Short_W", "Strategy12", "Strategy34", "OverSell_W",
+            "PE_Deep", "PE_Deeper", "PE_W", "PE_valid", "PE_invalid",
+            "PE_Volume", "PE_Volume_up", "PE_Hot", "PE_Volume_high"
+        ]
+        
+        // 5. 按次数分组，并过滤掉无意义的 2 次共振
+        var countToSymbols: [Int: [String]] = [:]
+        for (sym, groups) in symbolGroups {
+            let count = groups.count
+            
+            if count >= 2 {
+                // 特殊过滤逻辑：如果共振次数恰好为 2
+                if count == 2 {
+                    // 判断是否包含衍生组
+                    let hasSupport = !groups.isDisjoint(with: supportLevelGroups)
+                    // 判断是否包含源头组
+                    let hasSource = !groups.isDisjoint(with: sourceGroups)
+                    
+                    // 如果这 2 个分组刚好是一个衍生组配一个源头组，则毫无意义，直接跳过
+                    if hasSupport && hasSource {
+                        continue
+                    }
+                }
+                
+                countToSymbols[count, default: []].append(sym)
+            }
+        }
+        
+        // 6. 转换为数组，按次数降序排列，内部 Symbol 按字母排序
+        return countToSymbols.keys.sorted(by: >).map { count in
+            (count: count, symbols: countToSymbols[count]!.sorted())
+        }
+    }
 
     private var groupNames: [String] {
         let allKeys = dataService.earningHistoryData.keys
@@ -40,23 +101,55 @@ struct EarningHistoryView: View {
                 }
             } else {
                 List {
-                    ForEach(groupNames, id: \.self) { group in
-                        NavigationLink(
-                            destination: EarningHistoryDetailView(groupName: group)
-                        ) {
-                            HStack {
-                                Text(formatGroupName(group))
-                                    .font(.system(size: 16, weight: .medium))
-                                Spacer()
-                                // 可选：显示该分类下共有多少个日期
-                                if let datesMap = dataService.earningHistoryData[group] {
-                                    Text("\(datesMap.keys.count) 个日期")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                    // MARK: - 新增：次数统计 Section
+                    let freqData = frequencyData
+                    if !freqData.isEmpty {
+                        Section {
+                            ForEach(freqData, id: \.count) { item in
+                                NavigationLink(
+                                    destination: FrequencyDetailView(count: item.count, symbols: item.symbols)
+                                ) {
+                                    HStack {
+                                        Text("共振 \(item.count) 个分组")
+                                            .font(.system(size: 16, weight: .bold))
+                                            .foregroundColor(.orange)
+                                        Spacer()
+                                        Text("\(item.symbols.count) 只")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.vertical, 4)
                                 }
                             }
-                            .padding(.vertical, 4)
+                        } header: {
+                            Text("最新日期 - 多组共振统计")
+                                .font(.system(size: 14, weight: .bold))
                         }
+                    }
+                    
+                    // MARK: - 原有：所有分组 Section
+                    Section {
+                        ForEach(groupNames, id: \.self) { group in
+                            NavigationLink(
+                                destination: EarningHistoryDetailView(groupName: group)
+                            ) {
+                                HStack {
+                                    Text(formatGroupName(group))
+                                        .font(.system(size: 16, weight: .medium))
+                                    Spacer()
+                                    // 可选：显示该分类下共有多少个日期
+                                    if let datesMap = dataService.earningHistoryData[group] {
+                                        Text("\(datesMap.keys.count) 个日期")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+                    } header: {
+                        Text("所有分组")
+                            .font(.system(size: 14, weight: .bold))
                     }
                 }
                 .listStyle(.insetGrouped)
@@ -68,6 +161,37 @@ struct EarningHistoryView: View {
 
     private func formatGroupName(_ name: String) -> String {
         name.replacingOccurrences(of: "_", with: " ")
+    }
+}
+
+// MARK: - 新增：次数统计详情页
+struct FrequencyDetailView: View {
+    let count: Int
+    let symbols: [String]
+    
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(symbols, id: \.self) { symbol in
+                    HistorySymbolRow(
+                        symbol: symbol,
+                        dateStr: "最新", // 传入假日期，因为 isLatestDate 为 true 时不会使用它请求历史涨跌幅
+                        isLatestDate: true, // 设为 true，这样会展示 PE 而不是去请求历史涨跌幅
+                        isFetchInitiated: false
+                    )
+                    
+                    if symbol != symbols.last {
+                        Divider().padding(.leading, 16)
+                    }
+                }
+            }
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .cornerRadius(12)
+            .padding()
+        }
+        .navigationTitle("共振 \(count) 次的标的")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(UIColor.systemGroupedBackground))
     }
 }
 

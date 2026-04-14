@@ -93,7 +93,6 @@ struct ArticleDetailView: View {
     
     // 【新增】控制推广弹窗显示
     @State private var showNewsPromoSheet = false
-    @State private var showSecondAppPromoSheet = false
     
     // 【优化】使用 @State 缓存耗时计算的结果，避免 body 每次刷新都重算
     @State private var cachedParagraphs: [String] = []
@@ -264,35 +263,27 @@ struct ArticleDetailView: View {
                     
                     // 【新增】在这里插入文字链接触发器
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(Localized.isEnglish ? "More from Developer" : "“毛遂自荐”——博主另外两款精品应用")
+                        Text(Localized.isEnglish ? "More from Developer" : "“毛遂自荐”博主另一款精品应用")
                         .font(.footnote)
                         .fontWeight(.semibold)
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 2)
                         .frame(maxWidth: .infinity, alignment: .center) // <--- 关键修改：让文字容器填满宽度并居中
                         
-                        HStack(spacing: 16) {
-                            // 第一个应用：美股精灵
+                        HStack {
+                            Spacer()
+                            // 唯一保留的应用：美股精灵
                             PromoCardView(
                                 title: Localized.isEnglish ? "US Stock Elf" : "美股精灵",
-                                subtitle: Localized.isEnglish ? "AI Stock Picks" : "AI算法每日荐股，炒美股必备伴侣。",
+                                subtitle: Localized.isEnglish ? "AI Stock Picks" : "AI算法每日荐股，全球财经数据一站搞定，炒美股必备伴侣。",
                                 imageName: "logo_stock_elf_small", // 对应 Assets 中的名字
-    isSystemIcon: false,        // 告诉视图这不是系统图标
+                                isSystemIcon: false,        // 告诉视图这不是系统图标
                                 colors: [.blue, .purple]
                             ) {
                                 showNewsPromoSheet = true
                             }
-                            
-                            // 第二个应用：你的新应用
-                            PromoCardView(
-                                title: Localized.isEnglish ? "Prediction" : "预测占卜",
-                                subtitle: Localized.isEnglish ? "Kalshi Mirror Site" : "美国kalshi镜像站，预测一切，占卜世界。",
-                                imageName: "logo_prediction_small", // 对应 Assets 中的名字
-                                isSystemIcon: false,          // 告诉视图这不是系统图标
-                                colors: [.orange, .red]
-                            ) {
-                                showSecondAppPromoSheet = true
-                            }
+                            .frame(width: 220) // 限制宽度使其保持原本的方块感
+                            Spacer()
                         }
                     }
                     .padding(.horizontal, 20)
@@ -377,14 +368,14 @@ struct ArticleDetailView: View {
                             ZStack {
                                 Circle()
                                     .strokeBorder(Color.primary, lineWidth: 1.5)
-                                    // 逻辑：如果是英文模式，圆圈实心（高亮），否则空心
-                                    .background(isEnglishMode ? Color.primary : Color.clear)
+                                    // 【修改】逻辑反转：!isEnglishMode (即中文模式) 时实心
+                                    .background(!isEnglishMode ? Color.primary : Color.clear)
                                     .clipShape(Circle())
                                     
-                                Text(isEnglishMode ? "中" : "En")
-                                    .font(.system(size: 10, weight: .bold)) // 字体小一点以适应圆圈
-                                    // 颜色适配：实心时文字反色，空心时文字主色
-                                    .foregroundColor(isEnglishMode ? Color.viewBackground : Color.primary)
+                                Text(isEnglishMode ? "中" : "英")
+                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                                    // 【修改】逻辑反转：!isEnglishMode (即中文模式) 时文字反色
+                                    .foregroundColor(!isEnglishMode ? Color.viewBackground : Color.primary)
                             }
                             .frame(width: 24, height: 24)
                         }
@@ -455,19 +446,9 @@ struct ArticleDetailView: View {
                 }
             })
         }
-        // 在原有的 .sheet(isPresented: $showNewsPromoSheet) { ... } 下方添加：
-        .sheet(isPresented: $showSecondAppPromoSheet) {
-            SecondAppPromoView(onOpenAction: {
-                showSecondAppPromoSheet = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    // TODO: 如果新应用有 URL Scheme，替换 "yourappscheme://"
-                    openApp(scheme: "yourappscheme://", appId: "6760702335")
-                }
-            })
-        }
         .sheet(isPresented: $showFontAdjustment) {
             FontAdjustmentView()
-                .presentationDetents([.medium])
+                .presentationDetents([.large])
         }
     }
 
@@ -1015,97 +996,6 @@ struct NewsPromoView: View {
                     )
                     .cornerRadius(28)
                     .shadow(color: .blue.opacity(0.4), radius: 8, x: 0, y: 4)
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 30)
-            }
-        }
-    }
-}
-
-// MARK: - 第二个应用推广页模版
-struct SecondAppPromoView: View {
-    var onOpenAction: () -> Void
-    @Environment(\.dismiss) var dismiss
-    
-    var body: some View {
-        ZStack {
-            // 背景：采用偏暖色的渐变，与美股精灵区分开
-            LinearGradient(
-                gradient: Gradient(colors: [Color.orange.opacity(0.1), Color(UIColor.systemBackground)]),
-                startPoint: .top,
-                endPoint: .center
-            )
-            .ignoresSafeArea()
-            
-            VStack(spacing: 25) {
-                // 顶部把手
-                Capsule()
-                    .fill(Color.secondary.opacity(0.3))
-                    .frame(width: 40, height: 5)
-                    .padding(.top, 10)
-                
-                ScrollView(showsIndicators: false) {
-                    VStack(spacing: 25) {
-                        // 头部 ICON 和 标题
-                        VStack(spacing: 15) {
-                            Image("logo_prediction_small") 
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 80, height: 80)
-                                // 添加 App 图标标准的平滑圆角
-                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
-                            
-                            Text("预测占卜") // TODO: 替换标题
-                                .font(.system(size: 28, weight: .heavy))
-                                .foregroundColor(.primary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .padding(.top, 20)
-                        
-                        // 核心介绍文案
-                        VStack(alignment: .leading, spacing: 15) {
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "checkmark.seal.fill").foregroundColor(.orange)
-                                Text("美国排名第一的预测网站kalshi.com景象站，内容完全一致，每日更新。\n最绝的是支持中英文双语显示！！")
-                            }
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "checkmark.seal.fill").foregroundColor(.orange)
-                                Text("内容包罗万象！\n从政治（特朗普什么时候下台？）到经济（比特币恢复到9万美元最早在什么时候？）\n从体育（F1大奖赛花落谁家？）到战事（伊朗能否扛住美国登陆作战这最后一击？）\n天下大事，人心向背，只需一款应用实现一网打尽。\n后续还会增加排名第二的PolyMarket网站，敬请期待。")
-                            }
-                        }
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .padding(20)
-                        .background(
-                            RoundedRectangle(cornerRadius: 16)
-                                .fill(Color(UIColor.secondarySystemGroupedBackground))
-                                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-                        )
-                        .padding(.horizontal)
-                    }
-                    .padding(.bottom, 100)
-                }
-            }
-            
-            // 底部悬浮按钮
-            VStack {
-                Spacer()
-                Button(action: { onOpenAction() }) {
-                    HStack {
-                        Image(systemName: "app.badge.fill")
-                        Text("在 App Store 获取").fontWeight(.bold) // 可以使用 Localized 变量
-                    }
-                    .font(.title3)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .background(
-                        LinearGradient(colors: [.orange, .red], startPoint: .leading, endPoint: .trailing)
-                    )
-                    .cornerRadius(28)
-                    .shadow(color: .orange.opacity(0.4), radius: 8, x: 0, y: 4)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 30)
