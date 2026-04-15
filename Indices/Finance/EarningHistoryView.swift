@@ -40,18 +40,33 @@ struct EarningHistoryView: View {
             "PE_Volume", "PE_Volume_up", "PE_Hot", "PE_Volume_high"
         ]
         
+        // 新增：定义 PE_Hot 的源头分组
+        let peHotSources: Set<String> = [
+            "PE_Deep", "PE_Deeper", "PE_W", "OverSell_W",
+            "PE_valid", "PE_invalid", "season"
+        ]
+        
         // 5. 按次数分组，并过滤掉无意义的 2 次共振
         var countToSymbols: [Int: [String]] = [:]
         for (sym, groups) in symbolGroups {
-            let count = groups.count
+            // 核心修改：计算“有效分组”集合
+            var effectiveGroups = groups
+            
+            // 如果包含 PE_Hot，则剔除它的所有源头分组，使它们合并只算 1 次共振
+            if effectiveGroups.contains("PE_Hot") {
+                effectiveGroups.subtract(peHotSources)
+            }
+            
+            // 使用剔除后的有效分组数量作为共振次数
+            let count = effectiveGroups.count
             
             if count >= 2 {
                 // 特殊过滤逻辑：如果共振次数恰好为 2
                 if count == 2 {
-                    // 判断是否包含衍生组
-                    let hasSupport = !groups.isDisjoint(with: supportLevelGroups)
+                    // 判断是否包含衍生组 (使用 effectiveGroups 进行判断)
+                    let hasSupport = !effectiveGroups.isDisjoint(with: supportLevelGroups)
                     // 判断是否包含源头组
-                    let hasSource = !groups.isDisjoint(with: sourceGroups)
+                    let hasSource = !effectiveGroups.isDisjoint(with: sourceGroups)
                     
                     // 如果这 2 个分组刚好是一个衍生组配一个源头组，则毫无意义，直接跳过
                     if hasSupport && hasSource {
