@@ -28,6 +28,10 @@ struct PredictionMainContainerView: View {
 
     // ✅ 保留：可取消的新分类检测任务（用于 debounce）
     @State private var newCategoryCheckTask: Task<Void, Never>?
+    
+    // ✅ 新增：用于 matchedGeometryEffect 的命名空间
+    @Namespace private var sourceTabNS
+    @Namespace private var sortTabNS
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -42,22 +46,22 @@ struct PredictionMainContainerView: View {
         return sources
     }
 
-    // ✅ 改为函数，接收 mode 参数，供 TabView 每页独立使用
-    private func itemsForMode(_ mode: ListSortMode) -> [PredictionItem] {
+    // ✅ 改：接收 source 参数，让 TabView 每个 source 分页独立
+    private func itemsForMode(_ mode: ListSortMode, source: PredictionSource) -> [PredictionItem] {
         let baseItems: [PredictionItem]
 
         switch mode {
         case .highestVolume:
-            baseItems = selectedSource == .polymarket
+            baseItems = source == .polymarket
                 ? syncManager.polymarketItems
                 : syncManager.kalshiItems
 
         case .trend:
-            let trendItems = selectedSource == .polymarket
+            let trendItems = source == .polymarket
                 ? syncManager.polymarketTrendItems
                 : syncManager.kalshiTrendItems
             if trendItems.isEmpty {
-                baseItems = selectedSource == .polymarket
+                baseItems = source == .polymarket
                     ? syncManager.polymarketItems
                     : syncManager.kalshiItems
             } else {
@@ -65,7 +69,7 @@ struct PredictionMainContainerView: View {
             }
 
         case .new:
-            let trendItems = selectedSource == .polymarket
+            let trendItems = source == .polymarket
                 ? syncManager.polymarketTrendItems
                 : syncManager.kalshiTrendItems
             baseItems = trendItems.filter { $0.isNew }
@@ -89,14 +93,17 @@ struct PredictionMainContainerView: View {
                 if availableSources.count > 1 {
                     sourceTabBar
                 }
-                infoBar.padding(.bottom, 8)
+                infoBar.padding(.bottom, 6)
 
-                TabView(selection: $sortMode) {
-                    ForEach([ListSortMode.new, .trend, .highestVolume]) { mode in
-                        listPage(for: mode).tag(mode)
+                // ✅ 关键改动：TabView 现在绑定 selectedSource，滑动切换数据源
+                TabView(selection: $selectedSource) {
+                    ForEach(availableSources) { source in
+                        listPage(for: source, mode: sortMode)
+                            .tag(source)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                .animation(.easeInOut(duration: 0.25), value: selectedSource)
             }
 
             if syncManager.isSyncing { syncHUD }
@@ -134,7 +141,7 @@ struct PredictionMainContainerView: View {
                         // ✅ 修改：显式指定颜色
                         Image(systemName: "magnifyingglass")
                             .font(.system(size: 15))
-                            .foregroundColor(.primary) 
+                            .foregroundColor(.primary)
                     }
                     
                     // 偏好
@@ -233,10 +240,10 @@ struct PredictionMainContainerView: View {
         } message: { Text(syncErrorMsg) }
     }
 
-    // MARK: - listPage（与原版基本一致，PredictionCardView 已经共用 ONews AuthManager）
+    // MARK: - listPage（接收 source + mode 两个参数）
     @ViewBuilder
-    private func listPage(for mode: ListSortMode) -> some View {
-        let items = itemsForMode(mode)
+    private func listPage(for source: PredictionSource, mode: ListSortMode) -> some View {
+        let items = itemsForMode(mode, source: source)
         
         // 1. 引入 ScrollViewReader 以便进行编程式滚动
         ScrollViewReader { proxy in
@@ -244,7 +251,7 @@ struct PredictionMainContainerView: View {
                 LazyVStack(spacing: 14) {
                     // 2. 在最顶部添加一个不可见的锚点视图，并赋予唯一 ID
                     Color.clear.frame(height: 0)
-                        .id("top_anchor_\(mode)")
+                        .id("top_anchor_\(source)_\(mode)")
                     
                     // 通知条
                     if let note = syncManager.activeNotification {
@@ -260,8 +267,8 @@ struct PredictionMainContainerView: View {
                             PredictionCardView(
                                 item: item,
                                 isSubscribed: authManager.isSubscribed,
-                                onLockedTap: { handleLockedTap() },          // ✅ 补上逗号
-                                onNavigateToDetail: { selectedDetailItem = item }  // ✅ 修正参数名
+                                onLockedTap: { handleLockedTap() },
+                                onNavigateToDetail: { selectedDetailItem = item }
                             )
                             .padding(.horizontal, 16)
                         }
@@ -270,15 +277,20 @@ struct PredictionMainContainerView: View {
                 }
                 .padding(.top, 8)
             }
-            // 3. 监听 sortMode 的变化。当用户滑动/点击切换到当前 mode 时，触发滚动到顶部
+            // 切换排序模式时滚到顶部
             .onChange(of: sortMode) { newMode in
-                if newMode == mode {
-                    // 可以根据需要决定是否加 withAnimation
-                    proxy.scrollTo("top_anchor_\(mode)", anchor: .top)
+                if source == selectedSource {
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        proxy.scrollTo("top_anchor_\(source)_\(newMode)", anchor: .top)
+                    }
                 }
             }
-            // 切换数据源时强制重建 ScrollView，自动回到顶部
-            .id("page_\(mode)_\(selectedSource)")
+            // 切换 source 到当前页时也回到顶部
+            .onChange(of: selectedSource) { newSource in
+                if newSource == source {
+                    proxy.scrollTo("top_anchor_\(source)_\(sortMode)", anchor: .top)
+                }
+            }
         }
     }
 
@@ -292,13 +304,21 @@ struct PredictionMainContainerView: View {
         prefManager.updateNewCategoryStatus(from: allItems)
     }
 
-    // MARK: - Info Bar
+    // MARK: - Info Bar（更新时间 + 排序选择器）
     private var infoBar: some View {
-        HStack {
+        HStack(spacing: 10) {
             if !syncManager.serverUpdateTime.isEmpty {
-                Text("\(syncManager.serverUpdateTime)")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(.secondary)
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(Color.green.opacity(0.7))
+                        .frame(width: 6, height: 6)
+                    // ✅ 修改点：添加 lineLimit(1) 和 fixedSize()
+                    Text(syncManager.serverUpdateTime.replacingOccurrences(of: "\n", with: " "))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
             }
 
             Spacer()
@@ -309,30 +329,30 @@ struct PredictionMainContainerView: View {
         .padding(.top, 8)
     }
 
-    // MARK: - 排序模式选择器
+    // MARK: - 排序模式选择器（Segmented Pill 风格）
     private var sortModeSelector: some View {
-        HStack(spacing: 8) {
-            // 👇 将 ListSortMode.allCases 替换为自定义顺序的数组
+        HStack(spacing: 4) {
             ForEach([ListSortMode.new, .trend, .highestVolume]) { mode in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                         sortMode = mode
                     }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: mode.icon)
-                            .font(.system(size: 10))
+                            .font(.system(size: 10, weight: .semibold))
                         Text(mode.displayName)
                             .font(.system(size: 11, weight: .bold))
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                     }
-                    .foregroundColor(sortMode == mode ? Color(UIColor.systemBackground) : .secondary)
+                    // 修改点：使用 Color(uiColor: .systemBackground) 确保在 Dark Mode 下背景是白色时，文字是黑色
+                .foregroundColor(sortMode == mode ? Color(uiColor: .systemBackground) : .secondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(
                         sortMode == mode
-                        ? Color.primary
+                        ? Color.primary // 在 Dark Mode 下是白色
                         : Color.primary.opacity(0.06)
                     )
                     .cornerRadius(12)
@@ -341,12 +361,12 @@ struct PredictionMainContainerView: View {
         }
     }
 
-    // MARK: - Tab Bar
+    // MARK: - Source Tab Bar（matched indicator 动画）
     private var sourceTabBar: some View {
         HStack(spacing: 0) {
             ForEach(availableSources) { source in
                 Button {
-                    withAnimation(.spring(response: 0.3)) {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                         selectedSource = source
                     }
                 } label: {
@@ -354,14 +374,25 @@ struct PredictionMainContainerView: View {
                         Text(source.rawValue)
                             .font(.system(size: 15, weight: selectedSource == source ? .bold : .medium))
                             .foregroundColor(selectedSource == source ? .primary : .secondary)
+                            .animation(.easeInOut(duration: 0.2), value: selectedSource)
 
-                        Rectangle()
-                            .fill(selectedSource == source ? Color.primary : Color.clear)
-                            .frame(height: 3)
-                            .cornerRadius(1.5)
+                        ZStack {
+                            Capsule()
+                                .fill(Color.clear)
+                                .frame(height: 3)
+                            if selectedSource == source {
+                                Capsule()
+                                    .fill(LinearGradient.brandGradientHorizontal)
+                                    .frame(height: 3)
+                                    .matchedGeometryEffect(id: "sourceUnderline", in: sourceTabNS)
+                            }
+                        }
+                        .frame(width: 120)
                     }
                     .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 16)
@@ -372,34 +403,47 @@ struct PredictionMainContainerView: View {
     @ViewBuilder
     private func emptyStateForMode(_ mode: ListSortMode) -> some View {
         VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient.brandGradient.opacity(0.12))
+                    .frame(width: 96, height: 96)
+                Image(systemName: emptyIconName(for: mode))
+                    .font(.system(size: 40, weight: .light))
+                    .foregroundStyle(LinearGradient.brandGradient)
+            }
+
             if hasNoDataAtAll {
-                Image(systemName: "icloud.and.arrow.down")
-                    .font(.system(size: 50)).foregroundColor(.secondary.opacity(0.3))
                 Text("暂无数据")
-                    .foregroundColor(.secondary)
+                    .font(.headline)
+                    .foregroundColor(.primary)
                 Text("请点击右上角刷新按钮同步最新数据")
                     .font(.subheadline)
                     .foregroundColor(.secondary.opacity(0.7))
                     .multilineTextAlignment(.center)
             } else if mode == .new {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 50)).foregroundColor(.secondary.opacity(0.3))
                 Text("暂无新增预测项")
-                    .foregroundColor(.secondary)
+                    .font(.headline)
+                    .foregroundColor(.primary)
                 Text("当前没有标记为「New」的预测项目")
                     .font(.subheadline)
                     .foregroundColor(.secondary.opacity(0.7))
                     .multilineTextAlignment(.center)
             } else {
-                Image(systemName: "chart.bar.doc.horizontal")
-                    .font(.system(size: 50)).foregroundColor(.secondary.opacity(0.3))
                 Text("暂无匹配的预测项")
-                    .foregroundColor(.secondary)
+                    .font(.headline)
+                    .foregroundColor(.primary)
                 Button("调整偏好") { showPreferenceSheet = true }
-                    .font(.subheadline).foregroundColor(.primary)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(LinearGradient.brandGradient)
             }
         }
         .padding(.top, 80)
+    }
+
+    private func emptyIconName(for mode: ListSortMode) -> String {
+        if hasNoDataAtAll { return "icloud.and.arrow.down" }
+        if mode == .new { return "sparkles" }
+        return "chart.bar.doc.horizontal"
     }
 
     // MARK: - HUD

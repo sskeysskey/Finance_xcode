@@ -1165,13 +1165,13 @@ struct SourceListView: View {
                     .font(.title)
                     .foregroundColor(.white)
                 
-                Text(isGlobalEnglishMode ? "Global prediction markets" : "全球预测市场")
+                Text(isGlobalEnglishMode ? "Prediction Markets" : "预测市场")
                     .font(.headline.bold())
                     .foregroundColor(.white)
                 
-                // 【修改】增加 Polymarket 的副标题，并稍微减小间距
+                // 增加 Polymarket 的副标题，并稍微减小间距
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(isGlobalEnglishMode ? "Polymarket.com Mirror Site" : "全球第一 Polymarket 镜像站")
+                    Text(isGlobalEnglishMode ? "Polymarket Mirror Site" : "全球第一 Polymarket 镜像站")
                         .font(.system(size: 9))
                         .foregroundColor(.white.opacity(0.75))
                         .lineLimit(1)
@@ -1198,7 +1198,7 @@ struct SourceListView: View {
                         .padding(.bottom, 3)
                 }
                 
-                // 【修改】改为两个并排的按钮
+                // 【修改】改为两个并排的按钮，并将颜色统一改为 .blue
                 HStack(spacing: 6) {
                     // Polymarket 按钮
                     Button(action: {
@@ -1208,7 +1208,7 @@ struct SourceListView: View {
                             Text("Polymarket")
                                 .font(.system(size: 10, weight: .bold))
                         }
-                        .foregroundColor(.indigo)
+                        .foregroundColor(.blue) // 【修改】从 .indigo 改为 .blue
                         .padding(.horizontal, 8)
                         .padding(.vertical, 7)
                         .background(Color.white)
@@ -1224,7 +1224,7 @@ struct SourceListView: View {
                             Text("Kalshi")
                                 .font(.system(size: 10, weight: .bold))
                         }
-                        .foregroundColor(.indigo)
+                        .foregroundColor(.blue) // 【修改】从 .indigo 改为 .blue
                         .padding(.horizontal, 8)
                         .padding(.vertical, 7)
                         .background(Color.white)

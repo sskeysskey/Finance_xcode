@@ -111,7 +111,7 @@ enum ListSortMode: String, CaseIterable, Identifiable {
         switch self {
         case .trend: return "趋势"
         case .new: return "最新"
-        case .highestVolume: return "排行榜"
+        case .highestVolume: return "榜单"
         }
     }
     

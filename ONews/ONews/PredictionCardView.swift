@@ -33,33 +33,23 @@ struct PredictionCardView: View {
             HStack(spacing: 6) {
                 // 如果 type 和 subtype 不一样，则先显示 type（大分类）
                 if item.type.lowercased() != item.subtype.lowercased() {
-                    Text(transManager.type(item.type).uppercased())
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(Color.tagBg)
-                        .cornerRadius(6)
+                    tagLabel(transManager.type(item.type))
                 }
-                
-                // 显示 subtype（小分类）
-                Text(transManager.subtype(item.subtype).uppercased())
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Color.tagBg)
-                    .cornerRadius(6)
+                tagLabel(transManager.subtype(item.subtype))
                 
                 Spacer()
                 
                 // 来源小标
                 Text(item.source.rawValue)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.secondary.opacity(0.6))
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(.secondary.opacity(0.7))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule().stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                    )
             }
             
-            // 标题
             Text(transManager.name(item.name))
                 .font(.system(size: 17, weight: .bold))
                 .foregroundColor(.primary)
@@ -117,17 +107,31 @@ struct PredictionCardView: View {
                 
                 if canExpand {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary.opacity(0.5))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.secondary.opacity(0.6))
                 }
             }
         }
         .padding(16)
-        .background(Color.cardBg)
-        .cornerRadius(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.cardBg)
+                .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 2)
+        )
     }
     
-    // MARK: - 毛玻璃遮罩
+    // 🆕 标签抽成方法
+    private func tagLabel(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(
+                Capsule().fill(Color.tagBg)
+            )
+    }
+    
     private var blurOverlay: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 10)
@@ -169,9 +173,14 @@ struct OptionRow: View {
                     .lineLimit(1)
                 
                 GeometryReader { geo in
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(color)
-                        .frame(width: geo.size.width * barWidth, height: 4)
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(color.opacity(0.15))
+                            .frame(height: 4)
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(color)
+                            .frame(width: geo.size.width * barWidth, height: 4)
+                    }
                 }
                 .frame(height: 4)
             }
