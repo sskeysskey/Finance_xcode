@@ -79,13 +79,22 @@ struct PredictionCardView: View {
             // 底部信息栏
             HStack {
                 HStack(spacing: 4) {
-                    Image(systemName: "chart.bar.fill")
-                        .font(.system(size: 10))
+                // 🔽 趋势模式下使用 flame 图标（橙色），表示"今日新增热度"
+                Image(systemName: item.volumeTrend != nil ? "flame.fill" : "chart.bar.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(item.volumeTrend != nil ? .orange : .secondary)
+                
+                if let trend = item.volumeTrend {
+                    // 使用 volume_trend 字段，加 "+" 表示这是日增量
+                    Text("+\(Fmt.volume(trend)) vol")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundColor(.secondary)
+                } else {
                     Text("\(Fmt.volume(item.volume)) vol")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
+            }
                 
                 if let endDate = item.endDate {
                     Text("·").foregroundColor(.secondary)
