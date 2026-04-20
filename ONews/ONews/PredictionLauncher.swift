@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct PredictionMainContainerView: View {
+    // 【新增】接收从外部传入的初始栏目参数
+    var initialSource: String? = nil
+    
     @EnvironmentObject var syncManager: PredictionSyncManager
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var prefManager: PreferenceManager
@@ -188,6 +191,15 @@ struct PredictionMainContainerView: View {
             }
         }
         .onAppear {
+            // 【新增】根据传入的参数设置初始选中的栏目
+            if let source = initialSource {
+                if source == "polymarket" {
+                    selectedSource = .polymarket
+                } else if source == "kalshi" {
+                    selectedSource = .kalshi
+                }
+            }
+            
             adjustSelectedSource()
             transManager.reload()
             
@@ -201,7 +213,6 @@ struct PredictionMainContainerView: View {
                 }
             }
         }
-
         .onChange(of: syncManager.polymarketItems.count) { _ in adjustSelectedSource() }
         .onChange(of: syncManager.kalshiItems.count) { _ in adjustSelectedSource() }
         .onChange(of: syncManager.polymarketTrendItems.count) { _ in adjustSelectedSource() }

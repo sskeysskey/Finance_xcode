@@ -5,8 +5,8 @@ enum NavigationTarget: Hashable {
     case allArticles
     case source(String)
     case articleDetail(Article, String, String, Bool)
-    // 【新增】Prediction 入口
-    case predictionEntry
+    // 【修改】Prediction 入口，增加一个可选参数用于指定初始栏目 ("polymarket" 或 "kalshi")
+    case predictionEntry(String?)
 }
 
 // 【新增】定义一个环境变量，用于跨视图传递 NavigationPath
@@ -719,9 +719,9 @@ struct SourceListView: View {
                         resourceManager: resourceManager,
                         autoPlayOnAppear: autoPlay
                     )
-                // 【新增】Prediction 入口
-                case .predictionEntry:
-                    PredictionEntryView()
+                // 【修改】Prediction 入口，接收参数并传递给 EntryView
+                case .predictionEntry(let source):
+                    PredictionEntryView(initialSource: source)
                 }
             }
         }
@@ -1158,8 +1158,9 @@ struct SourceListView: View {
     
     // MARK: - 右侧 Prediction 卡片
     private var predictionCard: some View {
-        NavigationLink(value: NavigationTarget.predictionEntry) {
-            VStack(alignment: .leading, spacing: 10) {
+        // 默认点击卡片空白处进入 polymarket
+        NavigationLink(value: NavigationTarget.predictionEntry("polymarket")) {
+            VStack(alignment: .leading, spacing: 8) {
                 Image(systemName: "chart.bar.xaxis.ascending")
                     .font(.title)
                     .foregroundColor(.white)
@@ -1168,10 +1169,18 @@ struct SourceListView: View {
                     .font(.headline.bold())
                     .foregroundColor(.white)
                 
-                Text(isGlobalEnglishMode ? "Kalshi.com Mirror Site" : "美国第一 kalshi.com 镜像站")
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.75))
-                    .lineLimit(2)
+                // 【修改】增加 Polymarket 的副标题，并稍微减小间距
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isGlobalEnglishMode ? "Polymarket.com Mirror Site" : "全球第一 Polymarket 镜像站")
+                        .font(.system(size: 9))
+                        .foregroundColor(.white.opacity(0.75))
+                        .lineLimit(1)
+                    
+                    Text(isGlobalEnglishMode ? "Kalshi.com Mirror Site" : "全美第一 kalshi.com 镜像站")
+                        .font(.system(size: 9))
+                        .foregroundColor(.white.opacity(0.75))
+                        .lineLimit(1)
+                }
                 
                 Spacer()
                 
@@ -1189,20 +1198,42 @@ struct SourceListView: View {
                         .padding(.bottom, 3)
                 }
                 
-                // 进入按钮
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 10))
-                    Text(isGlobalEnglishMode ? "Explore" : "探索")
-                        .font(.system(size: 11, weight: .bold))
+                // 【修改】改为两个并排的按钮
+                HStack(spacing: 6) {
+                    // Polymarket 按钮
+                    Button(action: {
+                        navPath.append(NavigationTarget.predictionEntry("polymarket"))
+                    }) {
+                        HStack(spacing: 2) {
+                            Text("Polymarket")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundColor(.indigo)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 7)
+                        .background(Color.white)
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(PlainButtonStyle()) // 防止触发外层 NavigationLink
+                    
+                    // Kalshi 按钮
+                    Button(action: {
+                        navPath.append(NavigationTarget.predictionEntry("kalshi"))
+                    }) {
+                        HStack(spacing: 2) {
+                            Text("Kalshi")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundColor(.indigo)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 7)
+                        .background(Color.white)
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(PlainButtonStyle()) // 防止触发外层 NavigationLink
                 }
-                .foregroundColor(.indigo)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(Color.white)
-                .cornerRadius(16)
             }
-            .padding(18)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: 220)
             .background(
@@ -1446,6 +1477,9 @@ struct SourceIconView: View {
 }
 
 struct PredictionEntryView: View {
+    // 【新增】接收初始栏目参数
+    var initialSource: String? = nil
+    
     @AppStorage("hasCompletedPredictionOnboarding") private var hasCompletedPredictionOnboarding = false
     
     @EnvironmentObject var predictionSyncManager: PredictionSyncManager
@@ -1456,7 +1490,8 @@ struct PredictionEntryView: View {
     var body: some View {
         Group {
             if hasCompletedPredictionOnboarding {
-                PredictionMainContainerView()
+                // 【修改】将参数传递给主容器
+                PredictionMainContainerView(initialSource: initialSource)
             } else {
                 PredictionWelcomeView(hasCompletedOnboarding: $hasCompletedPredictionOnboarding)
             }
