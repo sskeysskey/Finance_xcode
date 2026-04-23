@@ -233,6 +233,9 @@ class DataService: ObservableObject {
     
     // 【新增】存储符合条件的最新财报数值：Key=Symbol, Value=Price
     @Published var recentEarningPrices: [String: Double] = [:]
+    
+    // 【新增】存储 Polymarket 预测数据：Key=Symbol, Value=Percentage
+    @Published var polymarketPredictions: [String: String] = [:]
 
     // 【新增】存储历史分组的涨跌幅：Key 为 "SYMBOL_DATE" (如 "AAPL_2023-10-12"), Value 为涨跌幅比例
     @Published var historyPriceChanges: [String: Double] = [:]
@@ -506,6 +509,8 @@ class DataService: ObservableObject {
             // 【新增】加载期权大单 CSV
             await self.loadOptionBigOrders() 
             await self.loadEarningHistory()
+            // 【新增】加载 Polymarket 数据
+            await self.loadPolymarketData()
             // 【新增】加载成交额数据
             await self.loadVolumeHighData()
 
@@ -517,6 +522,40 @@ class DataService: ObservableObject {
             
             // 3. 启动网络请求 (本身就是 async 的)
             await self.loadMarketCapData()
+        }
+    }
+
+    // MARK: - 【新增】加载并解析 Polymarket 预测数据
+    private func loadPolymarketData() async {
+        // 匹配 earning_polymarket_xxxxxx.txt
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "earning_polymarket") else {
+            if !isInitialLoad {
+                print("DataService: earning_polymarket 文件未在 Documents 中找到")
+            }
+            return
+        }
+        
+        do {
+            let content = try String(contentsOf: url, encoding: .utf8)
+            let lines = content.split(separator: "\n", omittingEmptySubsequences: true)
+            
+            var tempPredictions: [String: String] = [:]
+            
+            for line in lines {
+                let parts = line.split(separator: ":", maxSplits: 1)
+                if parts.count == 2 {
+                    let symbol = String(parts[0]).trimmingCharacters(in: .whitespaces).uppercased()
+                    let percentage = String(parts[1]).trimmingCharacters(in: .whitespaces)
+                    tempPredictions[symbol] = percentage
+                }
+            }
+            
+            let finalPredictions = tempPredictions
+            await MainActor.run {
+                self.polymarketPredictions = finalPredictions
+            }
+        } catch {
+            print("DataService: 解析 earning_polymarket 文件时出错: \(error)")
         }
     }
 

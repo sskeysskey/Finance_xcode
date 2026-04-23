@@ -731,6 +731,8 @@ struct SourceListView: View {
         .onAppear {
             viewModel.loadNews()
             Task { await syncResources() }
+            // ✅ 新增：启动时轻量级检查预测数据源可用性（不下载文件）
+            Task { await predictionSyncManager.refreshAvailabilityFromServer() }
         }
         .sheet(isPresented: $showAddSourceSheet, onDismiss: { viewModel.loadNews() }) {
             NavigationView {
@@ -1158,8 +1160,13 @@ struct SourceListView: View {
     
     // MARK: - 右侧 Prediction 卡片
     private var predictionCard: some View {
-        // 默认点击卡片空白处进入 polymarket
-        NavigationLink(value: NavigationTarget.predictionEntry("polymarket")) {
+        // ✅ 根据服务器可用性决定默认跳转和显示
+        let hasPoly = predictionSyncManager.hasPolymarketAvailable
+        let hasKal = predictionSyncManager.hasKalshiAvailable
+        // 默认优先 polymarket；若只有 kalshi 则跳 kalshi；两者都没有兜底 polymarket
+        let defaultSource: String = hasPoly ? "polymarket" : (hasKal ? "kalshi" : "polymarket")
+        
+        return NavigationLink(value: NavigationTarget.predictionEntry(defaultSource)) {
             VStack(alignment: .leading, spacing: 8) {
                 Image(systemName: "chart.bar.xaxis.ascending")
                     .font(.title)
@@ -1169,17 +1176,21 @@ struct SourceListView: View {
                     .font(.headline.bold())
                     .foregroundColor(.white)
                 
-                // 增加 Polymarket 的副标题，并稍微减小间距
+                // ✅ 副标题：根据可用性动态显示
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(isGlobalEnglishMode ? "Polymarket Mirror Site" : "全球第一 Polymarket 镜像站")
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.75))
-                        .lineLimit(1)
+                    if hasPoly {
+                        Text(isGlobalEnglishMode ? "Polymarket Mirror Site" : "全球第一 Polymarket 镜像站")
+                            .font(.system(size: 9))
+                            .foregroundColor(.white.opacity(0.75))
+                            .lineLimit(1)
+                    }
                     
-                    Text(isGlobalEnglishMode ? "Kalshi.com Mirror Site" : "全美第一 kalshi.com 镜像站")
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.75))
-                        .lineLimit(1)
+                    if hasKal {
+                        Text(isGlobalEnglishMode ? "Kalshi.com Mirror Site" : "全美第一 kalshi.com 镜像站")
+                            .font(.system(size: 9))
+                            .foregroundColor(.white.opacity(0.75))
+                            .lineLimit(1)
+                    }
                 }
                 
                 Spacer()
@@ -1198,39 +1209,41 @@ struct SourceListView: View {
                         .padding(.bottom, 3)
                 }
                 
-                // 【修改】改为两个并排的按钮，并将颜色统一改为 .blue
+                // ✅ 按钮：根据可用性动态显示
                 HStack(spacing: 6) {
-                    // Polymarket 按钮
-                    Button(action: {
-                        navPath.append(NavigationTarget.predictionEntry("polymarket"))
-                    }) {
-                        HStack(spacing: 2) {
-                            Text("Polymarket")
-                                .font(.system(size: 10, weight: .bold))
+                    if hasPoly {
+                        Button(action: {
+                            navPath.append(NavigationTarget.predictionEntry("polymarket"))
+                        }) {
+                            HStack(spacing: 2) {
+                                Text("Polymarket")
+                                    .font(.system(size: 10, weight: .bold))
+                            }
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 7)
+                            .background(Color.white)
+                            .cornerRadius(12)
                         }
-                        .foregroundColor(.blue) // 【修改】从 .indigo 改为 .blue
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 7)
-                        .background(Color.white)
-                        .cornerRadius(12)
+                        .buttonStyle(PlainButtonStyle())
                     }
-                    .buttonStyle(PlainButtonStyle()) // 防止触发外层 NavigationLink
                     
-                    // Kalshi 按钮
-                    Button(action: {
-                        navPath.append(NavigationTarget.predictionEntry("kalshi"))
-                    }) {
-                        HStack(spacing: 2) {
-                            Text("Kalshi")
-                                .font(.system(size: 10, weight: .bold))
+                    if hasKal {
+                        Button(action: {
+                            navPath.append(NavigationTarget.predictionEntry("kalshi"))
+                        }) {
+                            HStack(spacing: 2) {
+                                Text("Kalshi")
+                                    .font(.system(size: 10, weight: .bold))
+                            }
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 7)
+                            .background(Color.white)
+                            .cornerRadius(12)
                         }
-                        .foregroundColor(.blue) // 【修改】从 .indigo 改为 .blue
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 7)
-                        .background(Color.white)
-                        .cornerRadius(12)
+                        .buttonStyle(PlainButtonStyle())
                     }
-                    .buttonStyle(PlainButtonStyle()) // 防止触发外层 NavigationLink
                 }
             }
             .padding(16)

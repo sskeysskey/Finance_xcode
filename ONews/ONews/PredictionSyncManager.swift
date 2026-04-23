@@ -27,6 +27,11 @@ class PredictionSyncManager: ObservableObject {
     // ✅ 新增：数据加载完成版本号，每次 loadLocalData 全部完成后 +1
     // 父视图应该监听这个来触发新分类检测，而非监听各个 items 数组
     @Published var dataGeneration: Int = 0
+
+    // ✅ 新增：数据源可用性标志（来自服务器文件清单）
+    // 默认 true，避免首屏闪烁；拿到服务器响应后会被精确更新
+    @Published var hasPolymarketAvailable: Bool = true
+    @Published var hasKalshiAvailable: Bool = true
     
     private let serverBaseURL = "http://106.15.183.158:5001/api/Prediction"
     private let dismissedNotificationKey = "Pred_dismissedNotification"
@@ -225,6 +230,17 @@ class PredictionSyncManager: ObservableObject {
             return defaultTopics
         }
     }
+
+    /// ✅ 新增：轻量级检查服务器可用的预测数据源
+    /// 仅请求 check_version，不下载文件，用于首屏快速判断哪些入口可显示
+    func refreshAvailabilityFromServer() async {
+        guard isNetworkAvailable else { return }
+        do {
+            _ = try await fetchServerVersion()
+        } catch {
+            print("预测数据源可用性检查失败: \(error.localizedDescription)")
+        }
+    }
     
     private let defaultTopics = [
         "Presidential Race 🇺🇸", "Bitcoin 📈", "Premier League ⚽",
@@ -244,6 +260,11 @@ class PredictionSyncManager: ObservableObject {
             if let time = version.update_time { self.serverUpdateTime = time }
             updateNotification(version.notification)
             checkForceUpdate(version)
+
+            // ✅ 新增：根据服务器文件清单更新数据源可用性
+            let jsonNames = version.files.filter { $0.type == "json" }.map { $0.name }
+            self.hasPolymarketAvailable = jsonNames.contains { $0.hasPrefix("polymarket_") }
+            self.hasKalshiAvailable = jsonNames.contains { $0.hasPrefix("kalshi_") }
         }
         
         return version

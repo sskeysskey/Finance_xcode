@@ -218,11 +218,18 @@ struct EarningReleaseView: View {
                     Text(item.symbol)
                         .font(.system(.body, design: .monospaced))
                     
-                    // 如果 DataService 缓存中有这个 Symbol 的近两个月价格，则显示
-                    if let price = dataService.recentEarningPrices[item.symbol.uppercased()] {
-                        Text(String(format: "%@%.2f", price >= 0 ? "+" : "", price))
-                            .font(.system(.subheadline, design: .monospaced).bold())
-                            .foregroundColor(price >= 0 ? .red : .green)
+                    // 【修改点】使用 Spacer 将后面的内容推到右侧
+                    Spacer()
+                    
+                    // 修改后的代码
+                    if let prediction = dataService.polymarketPredictions[item.symbol.uppercased()] {
+                        (Text("Polymarket预测：")
+                            .foregroundColor(.secondary) // 前缀保持灰色
+                        + Text(" \(prediction)")
+                            .foregroundColor(.red)        // 数字部分设置为红色
+                            .fontWeight(.bold)           // 可选：加粗让红色更醒目
+                        )
+                        .font(.system(.subheadline))
                     }
                 }
                 if let tags = getTags(for: item.symbol), !tags.isEmpty {
@@ -238,10 +245,7 @@ struct EarningReleaseView: View {
             // 保持 Symbol 行的缩进
             .padding(.leading)
         }
-        .onAppear {
-            // --- 修改点：行出现时触发数据检查 ---
-            dataService.fetchRecentEarningPriceIfNeeded(for: item.symbol)
-        }
+        // 【修改点】移除了 .onAppear { dataService.fetchRecentEarningPriceIfNeeded(...) }
     }
 
     // 【修改】这里是修改后的初始化状态方法
