@@ -992,10 +992,10 @@ struct SourceListView: View {
                         // ========================================
                         HStack(spacing: 12) {
                             // --- 左侧：ONews ALL 卡片 (缩窄版) ---
-                            onewsAllCard
+                            predictionCard
                             
                             // --- 右侧：Prediction 卡片 ---
-                            predictionCard
+                            onewsAllCard
                         }
                         .padding(.horizontal, 16)
                         
