@@ -788,13 +788,24 @@ struct ArticleListView: View {
         // 1. 获取当前模式下（未读/已读）的所有日期分组
         let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
         
-        // 2. 核心逻辑：如果只有一个分组，则展开；如果有多个，则全部折叠（清空展开集合）
-        if groupedArticles.keys.count == 1, let singleTimestamp = groupedArticles.keys.first {
-            viewModel.expandedTimestampsBySource[sourceName] = [singleTimestamp]
+        // 2. 获取所有时间戳并降序排列（最新日期在最前）
+        let sortedTimestamps = groupedArticles.keys.sorted(by: >)
+        
+        // 3. 判断逻辑
+        if authManager.isSubscribed {
+            // 【新增逻辑】如果已订阅，始终展开最新日期的那个分组
+            if let latestTimestamp = sortedTimestamps.first {
+                viewModel.expandedTimestampsBySource[sourceName] = [latestTimestamp]
+            } else {
+                viewModel.expandedTimestampsBySource[sourceName] = []
+            }
         } else {
-            // 如果大于1个分组，强制折叠所有（清空集合）
-            // 这样每次切换模式或进入页面，如果分组多，就会自动收起，符合你的需求
-            viewModel.expandedTimestampsBySource[sourceName] = []
+            // 【原有逻辑】如果未订阅，只有一个分组才展开，否则全部折叠
+            if sortedTimestamps.count == 1, let singleTimestamp = sortedTimestamps.first {
+                viewModel.expandedTimestampsBySource[sourceName] = [singleTimestamp]
+            } else {
+                viewModel.expandedTimestampsBySource[sourceName] = []
+            }
         }
     }
     
@@ -1217,11 +1228,24 @@ struct AllArticlesListView: View {
         // 1. 获取当前模式下（未读/已读）的所有日期分组
         let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
         
-        // 2. 核心逻辑：如果只有一个分组，则展开；如果有多个，则全部折叠
-        if groupedArticles.keys.count == 1, let singleTimestamp = groupedArticles.keys.first {
-            viewModel.expandedTimestampsBySource[key] = [singleTimestamp]
+        // 2. 获取所有时间戳并降序排列
+        let sortedTimestamps = groupedArticles.keys.sorted(by: >)
+        
+        // 3. 判断逻辑
+        if authManager.isSubscribed {
+            // 【新增逻辑】如果已订阅，始终展开最新日期的那个分组
+            if let latestTimestamp = sortedTimestamps.first {
+                viewModel.expandedTimestampsBySource[key] = [latestTimestamp]
+            } else {
+                viewModel.expandedTimestampsBySource[key] = []
+            }
         } else {
-            viewModel.expandedTimestampsBySource[key] = []
+            // 【原有逻辑】如果未订阅，只有一个分组才展开，否则全部折叠
+            if sortedTimestamps.count == 1, let singleTimestamp = sortedTimestamps.first {
+                viewModel.expandedTimestampsBySource[key] = [singleTimestamp]
+            } else {
+                viewModel.expandedTimestampsBySource[key] = []
+            }
         }
     }
     

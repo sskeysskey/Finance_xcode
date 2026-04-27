@@ -11,6 +11,9 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     @Published var isPlaybackActive = false
     @Published var isPlaying = false
     @Published var isSynthesizing = false
+    // 用户为不同语言挑选的语音：key 用语言前缀，例如 "zh" / "en"
+    @Published var preferredVoiceIdentifiers: [String: String] = [:]
+    private let preferredVoicesKey = "audio.preferredVoices"
 
     @Published var progress: Double = 0.0
     @Published var currentTimeString: String = "00:00"
@@ -105,6 +108,10 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             self.isAutoPlayEnabled = UserDefaults.standard.bool(forKey: autoPlayEnabledKey)
         } else {
             self.isAutoPlayEnabled = true
+        }
+        // ▶ 新增：加载用户的语音偏好
+        if let saved = UserDefaults.standard.dictionary(forKey: preferredVoicesKey) as? [String: String] {
+            self.preferredVoiceIdentifiers = saved
         }
         setupRemoteTransportControls()
         setupNotifications()
@@ -355,7 +362,12 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         // 【修复】确保 selectedVoice 即使在系统引擎未就绪时也有明确的语言兜底
         if language.starts(with: "en") {
-            selectedVoice = AVSpeechSynthesisVoice(language: "en-US")
+            if let prefId = preferredVoiceIdentifiers["en"],
+            let v = AVSpeechSynthesisVoice(identifier: prefId) {
+                selectedVoice = v
+            } else {
+                selectedVoice = AVSpeechSynthesisVoice(language: "en-US")
+            }
         } else {
             selectedVoice = getBestVoice(for: text) ?? AVSpeechSynthesisVoice(language: "zh-CN")
         }
@@ -531,12 +543,59 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         }
     }
 
+    // MARK: - ▶ 用户语音偏好
+
+    /// 获取系统所有可用语音，按语言分组
+    func availableVoicesGrouped() -> [(language: String, voices: [AVSpeechSynthesisVoice])] {
+        let voices = AVSpeechSynthesisVoice.speechVoices()
+        let grouped = Dictionary(grouping: voices, by: { $0.language })
+        return grouped.map { (lang, list) in
+            let sorted = list.sorted { a, b in
+                // 质量高的排前面：premium > enhanced > default
+                if a.quality.rawValue != b.quality.rawValue {
+                    return a.quality.rawValue > b.quality.rawValue
+                }
+                return a.name < b.name
+            }
+            return (lang, sorted)
+        }
+        .sorted { lhs, rhs in
+            // 把当前系统/中文相关的排前面
+            let zhPriority: (String) -> Int = {
+                if $0.hasPrefix("zh") { return 0 }
+                if $0.hasPrefix("en") { return 1 }
+                return 2
+            }
+            let pl = zhPriority(lhs.language), pr = zhPriority(rhs.language)
+            if pl != pr { return pl < pr }
+            return lhs.language < rhs.language
+        }
+    }
+
+    /// 把某个语音设置为对应语言的"偏好"
+    func setPreferredVoice(_ voice: AVSpeechSynthesisVoice) {
+        let langKey = String(voice.language.prefix(2)) // "zh-CN" -> "zh"
+        preferredVoiceIdentifiers[langKey] = voice.identifier
+        UserDefaults.standard.set(preferredVoiceIdentifiers, forKey: preferredVoicesKey)
+    }
+
+    /// 清除某语言的偏好（恢复"自动选择最佳")
+    func clearPreferredVoice(forLanguagePrefix prefix: String) {
+        preferredVoiceIdentifiers.removeValue(forKey: prefix)
+        UserDefaults.standard.set(preferredVoiceIdentifiers, forKey: preferredVoicesKey)
+    }
+
+    /// 判断当前某语音是否被选中
+    func isPreferredVoice(_ voice: AVSpeechSynthesisVoice) -> Bool {
+        let langKey = String(voice.language.prefix(2))
+        return preferredVoiceIdentifiers[langKey] == voice.identifier
+    }
+
     private func getBestVoice(for text: String) -> AVSpeechSynthesisVoice? {
         let textForDetection = text.replacingOccurrences(of: "https?://[^\\s]+", with: "", options: .regularExpression)
         let hasChineseChar = textForDetection.range(of: "\\p{Han}", options: .regularExpression) != nil
 
         var finalLanguageCode = "zh-CN"
-
         if hasChineseChar {
             finalLanguageCode = "zh-CN"
         } else {
@@ -547,6 +606,13 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             } else {
                 finalLanguageCode = Locale.current.language.languageCode?.identifier ?? "zh-CN"
             }
+        }
+
+        // ▶ 新增：优先使用用户选择的语音
+        let langKey = String(finalLanguageCode.prefix(2))
+        if let prefId = preferredVoiceIdentifiers[langKey],
+        let voice = AVSpeechSynthesisVoice(identifier: prefId) {
+            return voice
         }
 
         let voices = AVSpeechSynthesisVoice.speechVoices()
@@ -1351,6 +1417,7 @@ struct AudioPlayerView: View {
     @ObservedObject var playerManager: AudioPlayerManager
     @State private var sliderValue: Double = 0.0
     @State private var isEditingSlider = false
+    @State private var showVoicePicker = false
     private let rates: [Float] = [1.0, 1.25, 1.5, 1.75, 2.0]
     var playNextAndStart: (() -> Void)?
     var toggleCollapse: (() -> Void)?
@@ -1464,13 +1531,24 @@ struct AudioPlayerView: View {
         .cornerRadius(18)
         // 1. 将最小化按钮（minus）移到右上角：alignment 改为 .topTrailing
         .overlay(
-            Button(action: { toggleCollapse?() }) {
-                Image(systemName: "minus")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(.white)
-                    .padding(6)
-                    .clipShape(Circle())
-                    .accessibilityLabel(Localized.minimizePlayer)
+            HStack(spacing: 8) {
+                Button(action: { showVoicePicker = true }) {
+                    Image(systemName: "person.wave.2.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(6)
+                        .background(Color.white.opacity(0.18))
+                        .clipShape(Circle())
+                        .accessibilityLabel("选择声音")
+                }
+                Button(action: { toggleCollapse?() }) {
+                    Image(systemName: "minus")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(6)
+                        .clipShape(Circle())
+                        .accessibilityLabel(Localized.minimizePlayer)
+                }
             }
             .padding(6),
             alignment: .topTrailing
@@ -1496,6 +1574,9 @@ struct AudioPlayerView: View {
         }
         .safeAreaInset(edge: .bottom) {
             Color.clear.frame(height: 0)
+        }
+        .sheet(isPresented: $showVoicePicker) {
+            VoicePickerView(playerManager: playerManager)
         }
     }
 }
@@ -1527,5 +1608,112 @@ struct MiniAudioBubbleView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         .allowsHitTesting(true)
+    }
+}
+
+struct VoicePickerView: View {
+    @ObservedObject var playerManager: AudioPlayerManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var groups: [(language: String, voices: [AVSpeechSynthesisVoice])] = []
+    @State private var previewSynth = AVSpeechSynthesizer()
+
+    var body: some View {
+        NavigationView {
+            List {
+                ForEach(groups, id: \.language) { group in
+                    Section(header: Text(sectionTitle(for: group.language))) {
+                        ForEach(group.voices, id: \.identifier) { voice in
+                            Button(action: {
+                                playerManager.setPreferredVoice(voice)
+                                preview(voice)
+                            }) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(spacing: 6) {
+                                            Text(voice.name)
+                                                .font(.body)
+                                                .foregroundColor(.primary)
+                                            if let gender = genderLabel(voice) {
+                                                Text(gender)
+                                                    .font(.caption2)
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 1)
+                                                    .background(Color.secondary.opacity(0.15))
+                                                    .clipShape(Capsule())
+                                            }
+                                        }
+                                        Text("\(voice.language) · \(qualityLabel(voice.quality))")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    if playerManager.isPreferredVoice(voice) {
+                                        Image(systemName: "checkmark")
+                                            .foregroundColor(.accentColor)
+                                            .fontWeight(.semibold)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("选择声音")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+            .onAppear {
+                groups = playerManager.availableVoicesGrouped()
+            }
+            .onDisappear {
+                previewSynth.stopSpeaking(at: .immediate)
+            }
+        }
+    }
+
+    private func preview(_ voice: AVSpeechSynthesisVoice) {
+        previewSynth.stopSpeaking(at: .immediate)
+        let sample: String
+        if voice.language.hasPrefix("zh") {
+            sample = "你好，这是声音预览。"
+        } else if voice.language.hasPrefix("en") {
+            sample = "Hello, this is a voice preview."
+        } else if voice.language.hasPrefix("ja") {
+            sample = "こんにちは、これは音声のプレビューです。"
+        } else {
+            sample = "Hello."
+        }
+        let u = AVSpeechUtterance(string: sample)
+        u.voice = voice
+        u.rate = AVSpeechUtteranceDefaultSpeechRate
+        previewSynth.speak(u)
+    }
+
+    private func sectionTitle(for code: String) -> String {
+        let locale = Locale(identifier: code)
+        let name = Locale.current.localizedString(forIdentifier: code)
+            ?? locale.localizedString(forIdentifier: code)
+            ?? code
+        return "\(name) (\(code))"
+    }
+
+    private func qualityLabel(_ q: AVSpeechSynthesisVoiceQuality) -> String {
+        switch q {
+        case .premium:  return "Premium"
+        case .enhanced: return "Enhanced"
+        default:        return "Default"
+        }
+    }
+
+    private func genderLabel(_ voice: AVSpeechSynthesisVoice) -> String? {
+        switch voice.gender {
+        case .male:   return "男声"
+        case .female: return "女声"
+        default:      return nil
+        }
     }
 }

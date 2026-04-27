@@ -599,6 +599,12 @@ class NewsViewModel: ObservableObject {
                     if $0.timestamp != $1.timestamp {
                         return $0.timestamp > $1.timestamp
                     }
+                    // 【新增】同一天内：hot=1 优先
+                    let h1 = $0.hot ?? 0
+                    let h2 = $1.hot ?? 0
+                    if h1 != h2 {
+                        return h1 > h2
+                    }
                     return $0.topic < $1.topic
                 }
                 
@@ -646,6 +652,12 @@ class NewsViewModel: ObservableObject {
             let finalAllArticles = flatList.sorted { item1, item2 in
                 if item1.article.timestamp != item2.article.timestamp {
                     return item1.article.timestamp > item2.article.timestamp
+                }
+                // 【新增】同一天内：hot=1 优先
+                let h1 = item1.article.hot ?? 0
+                let h2 = item2.article.hot ?? 0
+                if h1 != h2 {
+                    return h1 > h2
                 }
                 let key1 = NewsViewModel.djb2Hash(item1.article.topic + item1.sourceName)
                 let key2 = NewsViewModel.djb2Hash(item2.article.topic + item2.sourceName)
@@ -984,19 +996,18 @@ struct Article: Identifiable, Codable, Hashable {
     var id = UUID()
     let topic: String
     let article: String
-    // --- 新增下面两个字段 ---
-    let topic_eng: String?   // 英文标题 (可选)
-    let article_eng: String? // 英文正文 (可选)
-    // ----------------------
+    let topic_eng: String?
+    let article_eng: String?
     let images: [String]
     let source_id: String?
     let url: String?
+    let hot: Int?           // 【新增】热门标记，可选以兼容旧数据
     var isRead: Bool = false
     var timestamp: String = ""
 
     enum CodingKeys: String, CodingKey {
-        // --- 记得在这里添加映射 ---
-        case topic, article, images, source_id, url, topic_eng, article_eng
+        // 【新增】添加 hot 映射
+        case topic, article, images, source_id, url, topic_eng, article_eng, hot
     }
 
     func hash(into hasher: inout Hasher) {

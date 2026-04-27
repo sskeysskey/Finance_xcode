@@ -707,6 +707,9 @@ struct MainContentView: View {
     // 【新增】控制“财经要闻”弹窗显示
     @State private var showNewsPromoSheet = false 
     @State private var showGuestMenu = false
+    
+    // 【新增】控制顶部搜索按钮的跳转状态
+    @State private var showSearchFromTop = false 
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -863,6 +866,7 @@ struct MainContentView: View {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         HStack(spacing: 12) { // 稍微调整间距
                                 
+
                             // 1. 【修改】“新闻”按钮 -> “财经要闻”醒目文字按钮
                             Button {
                                 // 点击不再直接跳转，而是弹出介绍页
@@ -871,7 +875,7 @@ struct MainContentView: View {
                                 HStack(spacing: 4) {
                                     // Image(systemName: "flame.fill") // 加个小火苗图标增加紧迫感/热度
                                     //     .font(.caption)
-                                    Text("财经要闻")
+                                    Text("新闻")
                                         .font(.system(size: 14, weight: .bold))
                                 }
                                 .padding(.vertical, 6)
@@ -904,8 +908,20 @@ struct MainContentView: View {
                                 Image(systemName: "arrow.clockwise")
                             }
                             .disabled(isUpdateInProgress)
+
+                            // 1. 【新增】顶部搜索按钮
+                            Button {
+                                showSearchFromTop = true
+                            } label: {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.system(size: 18))
+                            }
                         }
                     }
+                }
+                // 【新增】添加导航目标，确保点击后能跳转到 SearchView
+                .navigationDestination(isPresented: $showSearchFromTop) {
+                    SearchView(isSearchActive: true, dataService: dataService)
                 }
             }
             .environmentObject(dataService)
