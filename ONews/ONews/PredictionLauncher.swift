@@ -95,15 +95,31 @@ struct PredictionMainContainerView: View {
                 }
                 infoBar.padding(.bottom, 6)
 
-                // ✅ 关键改动：TabView 现在绑定 selectedSource，滑动切换数据源
-                TabView(selection: $selectedSource) {
-                    ForEach(availableSources) { source in
-                        listPage(for: source, mode: sortMode)
-                            .tag(source)
+                // ✅ 关键改动：根据可用数据源数量，决定左右滑动的行为
+                if availableSources.count > 1 {
+                    // 多个数据源时，左右滑动切换数据源
+                    TabView(selection: $selectedSource) {
+                        ForEach(availableSources) { source in
+                            listPage(for: source, mode: sortMode)
+                                .tag(source)
+                        }
                     }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    .animation(.easeInOut(duration: 0.25), value: selectedSource)
+                } else if let singleSource = availableSources.first {
+                    // 只有一个数据源时，左右滑动切换排序模式 (New / Trend / Top)
+                    TabView(selection: $sortMode) {
+                        ForEach([ListSortMode.new, .trend, .highestVolume]) { mode in
+                            listPage(for: singleSource, mode: mode)
+                                .tag(mode)
+                        }
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    .animation(.easeInOut(duration: 0.25), value: sortMode)
+                } else {
+                    // 没有数据源时的兜底显示
+                    listPage(for: .polymarket, mode: sortMode)
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .animation(.easeInOut(duration: 0.25), value: selectedSource)
             }
 
             if syncManager.isSyncing { syncHUD }
@@ -279,7 +295,7 @@ struct PredictionMainContainerView: View {
             }
             // 切换排序模式时滚到顶部
             .onChange(of: sortMode) { newMode in
-                if source == selectedSource {
+                if source == selectedSource || availableSources.count <= 1 {
                     withAnimation(.easeOut(duration: 0.25)) {
                         proxy.scrollTo("top_anchor_\(source)_\(newMode)", anchor: .top)
                     }

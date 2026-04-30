@@ -1441,6 +1441,7 @@ struct AudioPlayerView: View {
 
     var body: some View {
         VStack(spacing: 12) {
+            // 进度条区域
             HStack(spacing: 10) {
                 Text(playerManager.currentTimeString)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -1475,13 +1476,15 @@ struct AudioPlayerView: View {
                 }
                 .frame(height: 66)
 
+                // 核心修改：控制栏现在包含 4 个按钮
                 HStack {
+                    // 1. 循环/自动播放
                     HStack {
                         Button(action: {
                             playerManager.isAutoPlayEnabled.toggle()
                         }) {
                             Image(systemName: playerManager.isAutoPlayEnabled ? "repeat.circle.fill" : "repeat.1.circle.fill")
-                                .font(.system(size: 35, weight: .semibold))
+                                .font(.system(size: 30, weight: .semibold))
                                 .symbolRenderingMode(.hierarchical)
                                 .foregroundColor(playerManager.isAutoPlayEnabled ? .white : .white.opacity(0.45))
                         }
@@ -1490,6 +1493,20 @@ struct AudioPlayerView: View {
                     }
                     .frame(maxWidth: .infinity)
 
+                    // 2. 新增：语音选择按钮
+                    HStack {
+                        Spacer(minLength: 0)
+                        Button(action: { showVoicePicker = true }) {
+                            Image(systemName: "person.wave.2.fill")
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+                        .accessibilityLabel("选择声音")
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    // 3. 倍速按钮
                     HStack {
                         Spacer(minLength: 0)
                         Button(action: {
@@ -1497,10 +1514,10 @@ struct AudioPlayerView: View {
                             playerManager.playbackRate = newRate
                         }) {
                             Text(rateLabel)
-                                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
                                 .foregroundColor(.white)
-                                .padding(.vertical, 7)
-                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 10)
                                 .background(Color.white.opacity(0.18))
                                 .clipShape(Capsule())
                         }
@@ -1509,6 +1526,7 @@ struct AudioPlayerView: View {
                     }
                     .frame(maxWidth: .infinity)
 
+                    // 4. 下一首
                     HStack {
                         Spacer(minLength: 0)
                         Button(action: {
@@ -1529,26 +1547,15 @@ struct AudioPlayerView: View {
         .padding(EdgeInsets(top: 28, leading: 16, bottom: 10, trailing: 16))
         .background(.black.opacity(0.8))
         .cornerRadius(18)
-        // 1. 将最小化按钮（minus）移到右上角：alignment 改为 .topTrailing
+        // 移除右上角的语音按钮，只保留最小化按钮
         .overlay(
-            HStack(spacing: 8) {
-                Button(action: { showVoicePicker = true }) {
-                    Image(systemName: "person.wave.2.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(6)
-                        .background(Color.white.opacity(0.18))
-                        .clipShape(Circle())
-                        .accessibilityLabel("选择声音")
-                }
-                Button(action: { toggleCollapse?() }) {
-                    Image(systemName: "minus")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(6)
-                        .clipShape(Circle())
-                        .accessibilityLabel(Localized.minimizePlayer)
-                }
+            Button(action: { toggleCollapse?() }) {
+                Image(systemName: "minus")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(6)
+                    .clipShape(Circle())
+                    .accessibilityLabel(Localized.minimizePlayer)
             }
             .padding(6),
             alignment: .topTrailing
