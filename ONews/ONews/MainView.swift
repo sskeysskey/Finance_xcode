@@ -158,7 +158,6 @@ struct NewsReaderAppApp: App {
 }
 
 // 这是你的 MainAppView.swift 文件中的 body 部分
-// 【无需改动】这部分代码已经是正确的了。
 struct MainAppView: View {
     @AppStorage("hasCompletedInitialSetup") private var hasCompletedInitialSetup = false
     
@@ -176,15 +175,29 @@ struct MainAppView: View {
                 WelcomeView(hasCompletedInitialSetup: $hasCompletedInitialSetup)
             }
             
-            // 【新增】强制更新拦截层
-            // 只要 showForceUpdate 为 true，这个视图就会盖住底下所有内容
+            // 强制更新拦截层(自家版本升级)
             if resourceManager.showForceUpdate {
                 ForceUpdateView(storeURL: resourceManager.appStoreURL)
                     .transition(.opacity)
-                    .zIndex(999) // 确保在最上层
+                    .zIndex(998)
+            }
+            
+            // 【新增】App 搬家迁移层
+            if resourceManager.showMigrationSheet, 
+               let config = resourceManager.activeMigration {
+                MigrationView(
+                    config: config,
+                    // 强制模式不传 onDismiss,UI 上就不会显示"稍后"按钮
+                    onDismiss: config.isForced ? nil : {
+                        resourceManager.dismissMigration()
+                    }
+                )
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .zIndex(999)  // 比 ForceUpdate 优先级更高
             }
         }
         .animation(.easeInOut, value: resourceManager.showForceUpdate)
+        .animation(.easeInOut, value: resourceManager.showMigrationSheet)
     }
 }
 

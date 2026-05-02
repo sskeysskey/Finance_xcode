@@ -63,6 +63,46 @@ struct ForceUpdateView: View {
     }
 }
 
+// MARK: - 迁移配置数据模型
+struct MigrationConfig: Codable, Equatable {
+    let enabled: Bool
+    let isForced: Bool
+    let configId: String
+    let newAppId: String
+    let newAppUrl: String
+    let fallbackUrl: String
+    
+    let titleZh: String
+    let titleEn: String
+    let subtitleZh: String
+    let subtitleEn: String
+    let contentZh: [String]
+    let contentEn: [String]
+    let subscriptionNoticeZh: String
+    let subscriptionNoticeEn: String
+    let primaryButtonZh: String
+    let primaryButtonEn: String
+    let secondaryButtonZh: String
+    let secondaryButtonEn: String
+    
+    enum CodingKeys: String, CodingKey {
+        case enabled, isForced = "is_forced"
+        case configId = "config_id"
+        case newAppId = "new_app_id"
+        case newAppUrl = "new_app_url"
+        case fallbackUrl = "fallback_url"
+        case titleZh = "title_zh", titleEn = "title_en"
+        case subtitleZh = "subtitle_zh", subtitleEn = "subtitle_en"
+        case contentZh = "content_zh", contentEn = "content_en"
+        case subscriptionNoticeZh = "subscription_notice_zh"
+        case subscriptionNoticeEn = "subscription_notice_en"
+        case primaryButtonZh = "primary_button_zh"
+        case primaryButtonEn = "primary_button_en"
+        case secondaryButtonZh = "secondary_button_zh"
+        case secondaryButtonEn = "secondary_button_en"
+    }
+}
+
 // 为 ServerVersion 添加 locked_days 字段
 struct ServerVersion: Codable {
     let version: String
@@ -73,6 +113,7 @@ struct ServerVersion: Codable {
     let notification: String? // 通知内容
     let update_time: String? // 服务器返回的更新时间
     let source_mappings: [String: String]?
+    let migration: MigrationConfig?
     let files: [FileInfo]
 }
 
@@ -102,10 +143,17 @@ class ResourceManager: ObservableObject {
     @Published var activeNotification: String? = nil
 
     @Published var serverDate: String = "" // 存储服务器日期
+
+    @Published var activeMigration: MigrationConfig? = nil
+    @Published var showMigrationSheet: Bool = false
     
     private let serverBaseURL = "http://106.15.183.158:5001/api/ONews"
     // UserDefaults Key
     private let dismissedNotificationKey = "dismissedNotificationContent"
+
+    // 缓存 Key
+    private let migrationCacheKey = "CachedMigrationConfig"
+    private let migrationDismissedConfigIdKey = "DismissedMigrationConfigId"
     
     private let fileManager = FileManager.default
     private var documentsDirectory: URL {
@@ -142,6 +190,7 @@ class ResourceManager: ObservableObject {
             }
         }
         networkMonitor.start(queue: monitorQueue)
+        loadMigrationFromCache()
     }
     
     deinit {
@@ -215,6 +264,65 @@ class ResourceManager: ObservableObject {
             self.activeNotification = message
         } else {
             self.activeNotification = nil
+        }
+    }
+
+    // 启动时读缓存(在 init() 末尾调用)
+    private func loadMigrationFromCache() {
+        if let data = UserDefaults.standard.data(forKey: migrationCacheKey),
+        let config = try? JSONDecoder().decode(MigrationConfig.self, from: data) {
+            // 先用缓存兜底,保证离线也能引导
+            self.evaluateMigration(config)
+        }
+    }
+
+    private func handleMigrationFromServer(_ config: MigrationConfig?) {
+        if let config = config {
+            // 只要拿到就缓存(无论是否 enabled)
+            if let data = try? JSONEncoder().encode(config) {
+                UserDefaults.standard.set(data, forKey: migrationCacheKey)
+            }
+            evaluateMigration(config)
+        } else {
+            // 服务器明确说没有迁移,清掉
+            UserDefaults.standard.removeObject(forKey: migrationCacheKey)
+            self.activeMigration = nil
+            self.showMigrationSheet = false
+        }
+    }
+
+    private func evaluateMigration(_ config: MigrationConfig) {
+        guard config.enabled else {
+            self.activeMigration = nil
+            self.showMigrationSheet = false
+            return
+        }
+        
+        // 强制模式:无视任何"不再提醒"标记
+        if config.isForced {
+            self.activeMigration = config
+            self.showMigrationSheet = true
+            return
+        }
+        
+        // 软模式:检查用户是否已经关闭过这个版本
+        let dismissedId = UserDefaults.standard.string(forKey: migrationDismissedConfigIdKey)
+        if dismissedId == config.configId {
+            // 用户已关闭过当前版本,不再弹
+            self.activeMigration = nil
+            self.showMigrationSheet = false
+        } else {
+            self.activeMigration = config
+            self.showMigrationSheet = true
+        }
+    }
+
+    func dismissMigration() {
+        guard let config = activeMigration, !config.isForced else { return }
+        UserDefaults.standard.set(config.configId, forKey: migrationDismissedConfigIdKey)
+        withAnimation { 
+            self.showMigrationSheet = false
+            self.activeMigration = nil
         }
     }
     
@@ -750,6 +858,7 @@ class ResourceManager: ObservableObject {
             self.sourceMappings = version.source_mappings ?? [:]
             self.serverLockedDays = version.locked_days ?? 0
             self.updateNotificationStatus(serverMessage: version.notification)
+            self.handleMigrationFromServer(version.migration)
             
             // 持久化存储，防止离线时丢失基准
             if let sDate = version.server_date {
