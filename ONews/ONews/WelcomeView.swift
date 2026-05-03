@@ -296,8 +296,15 @@ struct WelcomeView: View {
                 }
             }
             .navigationDestination(isPresented: $showAddSourceView) {
-                AddSourceView(isFirstTimeSetup: true, onComplete: { self.hasCompletedInitialSetup = true })
-                    .environmentObject(resourceManager)
+                AddSourceView(isFirstTimeSetup: true, onComplete: { 
+                    // 【新增】在标记完成的同时，记录"是否在审核模式下完成设置"
+                    UserDefaults.standard.set(
+                        resourceManager.serverReviewMode, 
+                        forKey: "setupCompletedDuringReviewMode"
+                    )
+                    self.hasCompletedInitialSetup = true 
+                })
+                .environmentObject(resourceManager)
             }
         }
         .tint(.blue)

@@ -115,7 +115,7 @@ struct PredictionSearchView: View {
                         .background(Color.cardBg)
                         .cornerRadius(12)
                         
-                        // 根据输入状态显示“搜索”或“取消”
+                        // ✅ 修改点：移除 if-else 互斥逻辑，让“取消”按钮始终存在
                         if !searchText.isEmpty {
                             Button("搜索") {
                                 performSearch()
@@ -123,10 +123,11 @@ struct PredictionSearchView: View {
                             .foregroundColor(isSearching ? .gray : .blue)
                             .bold()
                             .disabled(isSearching) // ✅ 搜索中禁用按钮
-                        } else {
-                            Button("取消") { dismiss() }
-                                .foregroundColor(.primary)
                         }
+                        
+                        // 始终显示取消按钮
+                        Button("取消") { dismiss() }
+                            .foregroundColor(.primary)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)

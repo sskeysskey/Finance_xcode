@@ -428,15 +428,30 @@ struct ArticleContainerView: View {
 
     struct ToastView: View {
         let message: String
+        
         var body: some View {
-            Text(message)
-                .font(.subheadline)
-                .padding()
-                .background(Color.black.opacity(0.75))
-                .foregroundColor(.white)
-                .cornerRadius(10)
-                .padding(.bottom, 50)
-                .transition(.opacity.animation(.easeInOut))
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(.green)
+                
+                Text(message)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.primary)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            // 使用毛玻璃效果，适配深色/浅色模式
+            .background(.ultraThinMaterial)
+            // 胶囊形状
+            .clipShape(Capsule())
+            // 增加阴影，使其浮在内容之上
+            .shadow(color: Color.black.opacity(0.15), radius: 8, x: 0, y: 4)
+            // 底部间距稍微调大，避免遮挡悬浮按钮
+            .padding(.bottom, 350)
+            // 动画：从底部滑入 + 透明度变化
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 }

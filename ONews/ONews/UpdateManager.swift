@@ -113,6 +113,8 @@ struct ServerVersion: Codable {
     let notification: String? // 通知内容
     let update_time: String? // 服务器返回的更新时间
     let source_mappings: [String: String]?
+    let source_mappings_review: [String: String]?   // 【新增】
+    let review_mode: Bool?                          // 【新增】
     let migration: MigrationConfig?
     let files: [FileInfo]
 }
@@ -137,7 +139,40 @@ class ResourceManager: ObservableObject {
     
     // 存储从服务器获取的配置
     @Published var serverLockedDays: Int = 0
-    @Published var sourceMappings: [String: String] = [:]
+    // 【修改】把原来的 sourceMappings 拆成两份独立存储
+    @Published var realMappings: [String: String] = [:]
+    @Published var reviewMappings: [String: String] = [:]
+    @Published var serverReviewMode: Bool = false
+
+    // 【新增】UserDefaults Key
+    private let setupDuringReviewKey = "setupCompletedDuringReviewMode"
+    
+    // 【新增】对外暴露的"有效映射表"——其它文件都用这个属性，无需修改
+    var sourceMappings: [String: String] {
+        // 1. 服务器关了审核模式：所有人看真名
+        guard serverReviewMode else {
+            return realMappings
+        }
+        
+        // 2. 服务器开了审核模式：判断是新装还是老用户
+        let defaults = UserDefaults.standard
+        let hasCompletedSetup = defaults.bool(forKey: "hasCompletedInitialSetup")
+        let setupDuringReview = defaults.bool(forKey: setupDuringReviewKey)
+        
+        if !hasCompletedSetup {
+            // 还没完成首次设置 → 新装机（含审核员），显示假名
+            return reviewMappings
+        }
+        
+        if setupDuringReview {
+            // 老用户，但是是在"审核模式开启时"完成的设置（典型审核员）
+            // 永久锁定假名直到服务器关闭审核模式
+            return reviewMappings
+        }
+        
+        // 真正的老用户（在审核模式开启之前就完成了设置）
+        return realMappings
+    }
     
     // 当前需要显示的通知（如果为 nil 则不显示）
     @Published var activeNotification: String? = nil
@@ -855,7 +890,10 @@ class ResourceManager: ObservableObject {
         
         await MainActor.run {
             self.serverDate = version.server_date ?? ""
-            self.sourceMappings = version.source_mappings ?? [:]
+            // 【修改】分别保存两份映射 + 审核开关
+            self.realMappings = version.source_mappings ?? [:]
+            self.reviewMappings = version.source_mappings_review ?? (version.source_mappings ?? [:])
+            self.serverReviewMode = version.review_mode ?? false
             self.serverLockedDays = version.locked_days ?? 0
             self.updateNotificationStatus(serverMessage: version.notification)
             self.handleMigrationFromServer(version.migration)
