@@ -345,9 +345,9 @@ struct ArticleDetailView: View {
                     
                     HStack(spacing: 8) {
                         if unreadCountForGroup == totalUnreadCount {
-                            Text("\(totalUnreadCount) \(Localized.unread)")
+                            Text("\(totalUnreadCount)")
                         } else {
-                            Text("\(unreadCountForGroup) | \(totalUnreadCount) \(Localized.unread)")
+                            Text("\(unreadCountForGroup) | \(totalUnreadCount)")
                         }
                         // 这里调用的是 formatMonthDay，下面已经修改了该函数的实现
                         Text(formatMonthDay(from: article.timestamp))

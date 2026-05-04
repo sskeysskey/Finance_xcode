@@ -1,7 +1,7 @@
 import SwiftUI
 import AVKit
 import AVFoundation
-import Combine // 修复报错：引入 Combine 框架以支持 ObservableObject 和 @Published
+import Combine
 
 // MARK: - 1. 数据模型
 struct VideoItem: Identifiable {
@@ -50,7 +50,8 @@ class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDelegate {
         task.resume()
         
         DispatchQueue.main.async {
-            self.downloadProgress[urlString] = 0.01 // 初始进度
+            // 修复闪回问题：初始进度设为 0.0，而不是 0.01
+            self.downloadProgress[urlString] = 0.0
         }
     }
     
@@ -97,7 +98,9 @@ class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDelegate {
         }
         
         DispatchQueue.main.async {
-            self.downloadProgress[urlString] = percentComplete
+            // 修复闪回问题：取当前进度和新进度的最大值，确保进度条只增不减
+            let currentProgress = self.downloadProgress[urlString] ?? 0.0
+            self.downloadProgress[urlString] = max(currentProgress, percentComplete)
         }
     }
     
