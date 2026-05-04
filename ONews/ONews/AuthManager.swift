@@ -44,6 +44,15 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     // 【新增】用于监听交易更新的任务
     private var updateListenerTask: Task<Void, Error>?
 
+    // ==========================================
+    // 【新增】判断是否为后门/永久 VIP 用户
+    // ==========================================
+    var isPermanentVIP: Bool {
+        guard isSubscribed, let dateStr = subscriptionExpiryDate else { return false }
+        // 后端对于邀请码兑换的用户，返回的过期时间为 2099 年
+        return dateStr.starts(with: "2099")
+    }
+
     override init() {
         super.init()
         // 应用启动时检查钥匙串中是否已有登录凭证

@@ -2,7 +2,15 @@ import SwiftUI
 import UIKit
 import Photos
 
-// MARK: - ActivityView (保持不变)
+// MARK: - 1. 定义用于检测滚动位置的 PreferenceKey
+struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+// MARK: - ActivityView
 struct ActivityView: UIViewControllerRepresentable {
     let activityItems: [Any]
     let applicationActivities: [UIActivity]? = nil
@@ -82,6 +90,9 @@ struct ArticleDetailView: View {
     @Binding var isEnglishMode: Bool 
     @ObservedObject var viewModel: NewsViewModel
 
+    // 【新增】引入全局的 AuthManager 用于判断是否为后门 VIP
+    @EnvironmentObject var authManager: AuthManager
+
     // 【修改为】：让它变成普通属性，不再触发 ArticleDetailView 的整体刷新
     let audioPlayerManager: AudioPlayerManager
     var requestNextArticle: () async -> Void
@@ -112,6 +123,9 @@ struct ArticleDetailView: View {
     @State private var showFontAdjustment = false
     @AppStorage("articleBodyFontSize") private var articleBodyFontSize: Double = 25
     @AppStorage("imageCaptionFontSize") private var imageCaptionFontSize: Double = 12
+
+    // 【新增】用于标题吸附的状态
+    @State private var isTitleVisible = true
     
     // 【新增 2】判断是否存在有效的英文版本
     private var hasEnglishVersion: Bool {
@@ -161,7 +175,7 @@ struct ArticleDetailView: View {
     }()
     
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) { // 修改 ZStack 对齐方式为 top
             ScrollView {
                 // 【优化 1】使用 LazyVStack 替代 VStack
                 // 这使得只有进入屏幕的段落和图片才会被渲染，极大减少长文章的内存占用和卡顿
@@ -196,7 +210,17 @@ struct ArticleDetailView: View {
                     .padding(.horizontal, 20)
                     // 【优化】给头部一个固定的 ID，防止 LazyVStack 刷新时跳动
                     .id("Header-\(article.id)")
+                    // 【新增】监测此 Header 的位置
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: ScrollOffsetPreferenceKey.self,
+                                value: geo.frame(in: .named("Scroll")).minY
+                            )
+                        }
+                    )
                     
+                    // ... (原有内容逻辑保持不变) ...
                     if let firstImage = article.images.first {
                         ArticleImageView(imageName: firstImage, timestamp: article.timestamp)
                             .padding(.horizontal, 0) // 图片内部已有 padding
@@ -228,7 +252,7 @@ struct ArticleDetailView: View {
                             }
                         }
 
-                        // 尾部多余图片（保持不变）
+                        // 尾部多余图片
                         if !cachedDistributeEvenly && cachedRemainingImages.count > cachedParagraphs.count {
                             let extraImages = cachedRemainingImages.dropFirst(cachedParagraphs.count)
                             ForEach(Array(extraImages), id: \.self) { imageName in
@@ -292,26 +316,40 @@ struct ArticleDetailView: View {
                 }
                 .padding(.vertical)
             }
+            .coordinateSpace(name: "Scroll") // 【新增】命名空间
+            .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
+                // 当标题的 minY 小于 0 时，说明标题已经滑出屏幕顶部
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isTitleVisible = value > 0
+                }
+            }
+
+            // ==========================================
+            // 【修改】吸附条视图：仅当标题不可见 且 是后门VIP时才显示
+            // ==========================================
+            if !isTitleVisible && authManager.isPermanentVIP {
+                Text(displayTopic)
+                    .font(.subheadline) // 建议用 subheadline 或 headline，看起来更像导航栏标题
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                    .padding(.horizontal, 16) // 【修复问题3】去掉 40，改为标准边距 16，充分利用宽度
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity)
+                    // 【修复问题2】使用 Rectangle 填充背景并忽略顶部安全区，彻底消除与 Toolbar 的缝隙
+                    .background(
+                        Rectangle()
+                            .fill(.ultraThinMaterial)
+                            .ignoresSafeArea(edges: .top) 
+                    )
+                    .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(10) // 确保在最上层
+            }
         }
-        .onAppear {
-            // 每次出现时，重置为中文模式（或者你可以根据需求保留状态）
-            // isEnglishMode = false 
-            prepareContent()
-        }
-        .onChange(of: article) { _ in
-            // 文章切换时，先标记未就绪，避免显示旧内容
-            isContentReady = false
-            prepareContent()
-        }
-        // 【新增 4】监听语言模式切换，重新计算段落布局
-        .onChange(of: isEnglishMode) { _ in
-            prepareContent()
-        }
-        // 【新增】监听字体大小变化，重新构建段落
-        .onChange(of: articleBodyFontSize) { _ in
-            prepareContent()
-        }
-        // --- 核心修改区域：Toolbar ---
+        .onAppear { prepareContent() }
+        .onChange(of: article) { _ in isContentReady = false; prepareContent() }
+        .onChange(of: isEnglishMode) { _ in prepareContent() }
+        .onChange(of: articleBodyFontSize) { _ in prepareContent() }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 2) {
