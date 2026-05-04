@@ -100,7 +100,10 @@ class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDelegate {
         DispatchQueue.main.async {
             // 修复闪回问题：取当前进度和新进度的最大值，确保进度条只增不减
             let currentProgress = self.downloadProgress[urlString] ?? 0.0
-            self.downloadProgress[urlString] = max(currentProgress, percentComplete)
+            let newProgress = max(currentProgress, percentComplete)
+        
+            // 【核心修复】：使用 min(1.0, ...) 确保进度值不会超过 1.0，从而消除警告
+            self.downloadProgress[urlString] = min(1.0, newProgress)
         }
     }
     
@@ -167,6 +170,7 @@ struct ContentView: View {
     
     let videos = [
         VideoItem(title: "视频 1 (ffzy)", url: "https://vip.ffzy-plays.com/20260424/52786_73fd522f/index.m3u8"),
+        VideoItem(title: "视频 1.5 (unknow)", url: "https://cnvod.jimxtc.com/20260328/14496_7903be1c/index.m3u8?sign=3f5af365605d8a78bdacdb4148975698"),
         VideoItem(title: "视频 2 (fengbao)", url: "https://s1.fengbao9.com/video/pizibaoyihuqianxiandierji/a410bff188fb/index.m3u8"),
         VideoItem(title: "视频 3 (dytt)", url: "https://vip.dytt-cine.com/20260109/66739_80d68c37/index.m3u8")
     ]
