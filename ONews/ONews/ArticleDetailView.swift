@@ -292,28 +292,6 @@ struct ArticleDetailView: View {
                 }
                 .padding(.vertical)
             }
-            
-            // if showCopyToast {
-            //     VStack {
-            //         HStack {
-            //             Image(systemName: "checkmark.circle.fill")
-            //                 .foregroundColor(.white)
-            //             Text(toastMessage)
-            //                 .foregroundColor(.white)
-            //                 .fontWeight(.semibold)
-            //         }
-            //         .padding(.vertical, 12)
-            //         .padding(.horizontal, 20)
-            //         .background(Color.black.opacity(0.75))
-            //         .clipShape(Capsule())
-            //         .shadow(radius: 10)
-                    
-            //         Spacer()
-            //     }
-            //     .padding(.top, 5)
-            //     .transition(.move(edge: .top).combined(with: .opacity))
-            //     .zIndex(1)
-            // }
         }
         .onAppear {
             // 每次出现时，重置为中文模式（或者你可以根据需求保留状态）
