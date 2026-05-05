@@ -13,6 +13,7 @@ struct PredictionCardView: View {
     private var canExpand: Bool { !item.displayOptions.isEmpty }
     
     var body: some View {
+        let _ = transManager.reloadTrigger 
         Button {
             if showBlur {
                 onLockedTap()

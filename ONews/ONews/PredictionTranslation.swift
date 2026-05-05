@@ -27,6 +27,8 @@ class TranslationManager: ObservableObject {
     }
     
     @Published var language: Language = .chinese
+    // ✅ 新增：用于强制触发视图更新的计数器
+    @Published var reloadTrigger: Int = 0
     
     private var dict: [String: [String: String]] = [
         "names": [:],
@@ -116,6 +118,8 @@ class TranslationManager: ObservableObject {
     
     func reload() {
         loadDictionary()
+        // ✅ 新增：字典加载完成后，修改此变量，强制所有观察此对象的视图刷新
+        reloadTrigger += 1 
     }
     
     private func loadDictionary() {
