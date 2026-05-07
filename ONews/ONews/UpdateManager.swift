@@ -173,6 +173,32 @@ class ResourceManager: ObservableObject {
         // 真正的老用户（在审核模式开启之前就完成了设置）
         return realMappings
     }
+
+    // 在 ResourceManager 类中，紧跟 sourceMappings 后面添加
+    var showVideoModule: Bool {
+        // 1. 服务器关了审核模式：所有人都能看
+        guard serverReviewMode else {
+            return true
+        }
+        
+        // 2. 服务器开了审核模式：区分新老用户
+        let defaults = UserDefaults.standard
+        let hasCompletedSetup = defaults.bool(forKey: "hasCompletedInitialSetup")
+        let setupDuringReview = defaults.bool(forKey: setupDuringReviewKey)
+        
+        // 新装用户(还没完成首次设置) → 隐藏
+        if !hasCompletedSetup {
+            return false
+        }
+        
+        // 在审核模式下完成首次设置的用户(典型审核员) → 隐藏
+        if setupDuringReview {
+            return false
+        }
+        
+        // 真正的老用户(审核模式开启前就装好的) → 可见
+        return true
+    }
     
     // 当前需要显示的通知（如果为 nil 则不显示）
     @Published var activeNotification: String? = nil

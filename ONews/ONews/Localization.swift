@@ -80,7 +80,7 @@ struct Localized {
     // MARK: - 主页 / 列表页
     static var mySubscriptions: String { tr("我的订阅", "My Subscriptions") }
     static var allArticles: String { tr("所有新闻", "All Articles") }
-    static var allArticlesDesc: String { tr("汇集全部订阅源", "Aggregated Feeds") }
+    static var allArticlesDesc: String { tr("汇集全部新闻源", "Aggregated Feeds") }
     static var unread: String { tr("未读", "Unread") }
     static var read: String { tr("已读", "Read") }
     static var searchResults: String { tr("搜索结果", "Results") }

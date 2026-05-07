@@ -7,6 +7,7 @@ enum NavigationTarget: Hashable {
     case articleDetail(Article, String, String, Bool)
     // 【修改】Prediction 入口，增加一个可选参数用于指定初始栏目 ("polymarket" 或 "kalshi")
     case predictionEntry(String?)
+    case videoModule   // 【新增】
 }
 
 // 【新增】定义一个环境变量，用于跨视图传递 NavigationPath
@@ -722,6 +723,8 @@ struct SourceListView: View {
                 // 【修改】Prediction 入口，接收参数并传递给 EntryView
                 case .predictionEntry(let source):
                     PredictionEntryView(initialSource: source)
+                case .videoModule:
+                    VideoModuleView()
                 }
             }
         }
@@ -892,6 +895,98 @@ struct SourceListView: View {
         }
     }
 
+    // MARK: - 视频模块入口卡片 (华丽设计)
+    private var videoModuleCard: some View {
+        NavigationLink(value: NavigationTarget.videoModule) {
+            HStack(spacing: 14) {
+                // 左侧：图标带光晕
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.pink.opacity(0.9), Color.orange.opacity(0.9)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 44, height: 44)
+                        .shadow(color: .pink.opacity(0.5), radius: 6, x: 0, y: 3)
+                    
+                    Image(systemName: "play.rectangle.fill")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                
+                // 中间：文字
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Text(isGlobalEnglishMode ? "Video Library" : "影视频道")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.white)
+                        
+                        // HOT 小标签
+                        Text("HOT")
+                            .font(.system(size: 9, weight: .heavy))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.red)
+                            .cornerRadius(4)
+                    }
+                    
+                    Text(isGlobalEnglishMode ? "US Drama · K-Drama · Variety · Anime" : "美剧 · 韩剧 · 综艺 · 动漫")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.85))
+                }
+                
+                Spacer()
+                
+                // 右侧：箭头
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white.opacity(0.7))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(
+                ZStack {
+                    // 深色渐变基底
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.15, green: 0.15, blue: 0.35),
+                            Color(red: 0.35, green: 0.12, blue: 0.45),
+                            Color(red: 0.50, green: 0.15, blue: 0.35)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    
+                    // 叠加一个光晕效果
+                    RadialGradient(
+                        colors: [Color.white.opacity(0.15), Color.clear],
+                        center: .topLeading,
+                        startRadius: 5,
+                        endRadius: 150
+                    )
+                }
+            )
+            .cornerRadius(16)
+            .shadow(color: Color.purple.opacity(0.3), radius: 8, x: 0, y: 4)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.3), Color.white.opacity(0.05)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(ScaleButtonStyle())
+    }
+
     // MARK: - 搜索结果视图 (使用新的卡片)
     private var searchResultsView: some View {
         List {
@@ -991,14 +1086,21 @@ struct SourceListView: View {
                         // 【核心改动】双卡片布局：ONews + Prediction
                         // ========================================
                         HStack(spacing: 12) {
-                            // --- 左侧：ONews ALL 卡片 (缩窄版) ---
+                            // --- 右侧：Prediction 卡片 ---
                             predictionCard
                             
-                            // --- 右侧：Prediction 卡片 ---
+                            // --- 左侧：ONews ALL 卡片 (缩窄版) ---
                             onewsAllCard
                         }
                         .padding(.horizontal, 16)
-                        
+
+                        // 【新增】视频模块入口 ← 插入在这里
+                        if resourceManager.showVideoModule {
+                            videoModuleCard
+                                .padding(.horizontal, 16)
+                                .padding(.top, 4)
+                        }
+
                         // 更新时间条 (放在双卡片下方)
                         if !resourceManager.serverUpdateTime.isEmpty {
                             HStack {
@@ -1070,21 +1172,21 @@ struct SourceListView: View {
         }
     }
     
-    // MARK: - 左侧 ONews ALL 卡片
+    // MARK: - 右侧 ONews ALL 卡片
     private var onewsAllCard: some View {
         // 注意：这里仍然保留 NavigationLink，以便点击卡片空白处也能跳转
         NavigationLink(value: NavigationTarget.allArticles) {
             VStack(alignment: .leading, spacing: 10) {
-                Image(systemName: "square.stack.3d.up.fill")
-                    .font(.title2)
-                    .foregroundColor(.white)
+                // Image(systemName: "square.stack.3d.up.fill")
+                //     .font(.title2)
+                //     .foregroundColor(.white)
                 
-                Text(Localized.allArticles)
-                    .font(.headline.bold())
-                    .foregroundColor(.white)
+                // Text(Localized.allArticles)
+                //     .font(.headline.bold())
+                //     .foregroundColor(.white)
                 
                 Text(Localized.allArticlesDesc)
-                    .font(.system(size: 10))
+                    .font(.system(size: 15))
                     .foregroundColor(.white.opacity(0.75))
                     .lineLimit(2)
                 
@@ -1144,7 +1246,7 @@ struct SourceListView: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 220)
+            .frame(height: 150)
             .background(
                 LinearGradient(
                     gradient: Gradient(colors: [Color.blue, Color.purple]),
@@ -1158,7 +1260,7 @@ struct SourceListView: View {
         .buttonStyle(ScaleButtonStyle())
     }
     
-    // MARK: - 右侧 Prediction 卡片
+    // MARK: - 左侧 Prediction 卡片
     private var predictionCard: some View {
         // ✅ 根据服务器可用性决定默认跳转和显示
         let hasPoly = predictionSyncManager.hasPolymarketAvailable
@@ -1168,26 +1270,26 @@ struct SourceListView: View {
         
         return NavigationLink(value: NavigationTarget.predictionEntry(defaultSource)) {
             VStack(alignment: .leading, spacing: 8) {
-                Image(systemName: "chart.bar.xaxis.ascending")
-                    .font(.title)
-                    .foregroundColor(.white)
+                // Image(systemName: "chart.bar.xaxis.ascending")
+                //     .font(.title)
+                //     .foregroundColor(.white)
                 
-                Text(isGlobalEnglishMode ? "Prediction Markets" : "预测市场")
-                    .font(.headline.bold())
-                    .foregroundColor(.white)
+                // Text(isGlobalEnglishMode ? "Prediction Markets" : "预测市场")
+                //     .font(.headline.bold())
+                //     .foregroundColor(.white)
                 
                 // ✅ 副标题：根据可用性动态显示
                 VStack(alignment: .leading, spacing: 2) {
                     if hasPoly {
                         Text(isGlobalEnglishMode ? "Polymarket Mirror Site" : "全球第一 Polymarket 镜像站")
-                            .font(.system(size: 9))
+                            .font(.system(size: 11))
                             .foregroundColor(.white.opacity(0.75))
                             .lineLimit(1)
                     }
                     
                     if hasKal {
                         Text(isGlobalEnglishMode ? "Kalshi.com Mirror Site" : "全美第一 kalshi.com 镜像站")
-                            .font(.system(size: 9))
+                            .font(.system(size: 11))
                             .foregroundColor(.white.opacity(0.75))
                             .lineLimit(1)
                     }
@@ -1248,7 +1350,7 @@ struct SourceListView: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 220)
+            .frame(height: 150)
             .background(
                 LinearGradient(
                     gradient: Gradient(colors: [Color.indigo, Color.purple]),
