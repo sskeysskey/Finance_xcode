@@ -228,7 +228,7 @@ struct UserProfileView: View {
                                     Text("728308386@qq.com")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
-                                }
+                                    }
                                 Spacer()
                                 Image(systemName: "arrow.up.right")
                                     .font(.caption)
@@ -934,7 +934,7 @@ struct SourceListView: View {
                             .cornerRadius(4)
                     }
                     
-                    Text(isGlobalEnglishMode ? "US Drama · K-Drama · Variety · Anime" : "美剧 · 韩剧 · 综艺 · 动漫")
+                    Text(isGlobalEnglishMode ? "Movies · US Drama · K-Drama · Variety Show · Anime" : "电影 · 美剧 · 韩剧 · 综艺 · 动漫")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white.opacity(0.85))
                 }
@@ -1095,7 +1095,8 @@ struct SourceListView: View {
                         .padding(.horizontal, 16)
 
                         // 【新增】视频模块入口 ← 插入在这里
-                        if resourceManager.showVideoModule {
+                        // 【后门逻辑】如果正常开关开启则显示；如果关闭但用户是邀请码进来的永久VIP，也强制显示
+                        if resourceManager.showVideoModule || authManager.isPermanentVIP {
                             videoModuleCard
                                 .padding(.horizontal, 16)
                                 .padding(.top, 4)

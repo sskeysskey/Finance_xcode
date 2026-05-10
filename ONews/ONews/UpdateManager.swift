@@ -115,6 +115,7 @@ struct ServerVersion: Codable {
     let source_mappings: [String: String]?
     let source_mappings_review: [String: String]?   // 【新增】
     let review_mode: Bool?                          // 【新增】
+    let video_module_enabled: Bool?   // 【新增】视频模块总开关
     let migration: MigrationConfig?
     let files: [FileInfo]
 }
@@ -143,6 +144,8 @@ class ResourceManager: ObservableObject {
     @Published var realMappings: [String: String] = [:]
     @Published var reviewMappings: [String: String] = [:]
     @Published var serverReviewMode: Bool = false
+    // 【新增】视频模块总开关，默认为 true（兼容旧版本服务器没返回这个字段的情况）
+    @Published var serverVideoModuleEnabled: Bool = true
 
     // 【新增】UserDefaults Key
     private let setupDuringReviewKey = "setupCompletedDuringReviewMode"
@@ -176,6 +179,11 @@ class ResourceManager: ObservableObject {
 
     // 在 ResourceManager 类中，紧跟 sourceMappings 后面添加
     var showVideoModule: Bool {
+        // 【新增】0. 最高优先级：总开关。关了就谁都看不到
+        guard serverVideoModuleEnabled else {
+            return false
+        }
+
         // 1. 服务器关了审核模式：所有人都能看
         guard serverReviewMode else {
             return true
@@ -920,6 +928,8 @@ class ResourceManager: ObservableObject {
             self.realMappings = version.source_mappings ?? [:]
             self.reviewMappings = version.source_mappings_review ?? (version.source_mappings ?? [:])
             self.serverReviewMode = version.review_mode ?? false
+            // 【新增】读取视频模块开关，默认 true（向后兼容）
+            self.serverVideoModuleEnabled = version.video_module_enabled ?? true
             self.serverLockedDays = version.locked_days ?? 0
             self.updateNotificationStatus(serverMessage: version.notification)
             self.handleMigrationFromServer(version.migration)
