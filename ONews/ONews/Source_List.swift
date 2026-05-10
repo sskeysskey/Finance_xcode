@@ -1083,7 +1083,16 @@ struct SourceListView: View {
                     LazyVStack(spacing: 16) {
                         
                         // ========================================
-                        // 【核心改动】双卡片布局：ONews + Prediction
+                        // 【已修改】将视频模块入口移至最上方
+                        // ========================================
+                        if resourceManager.showVideoModule || authManager.isPermanentVIP {
+                            videoModuleCard
+                                .padding(.horizontal, 16)
+                                .padding(.top, 1) // 顶部留一点间距
+                        }
+
+                        // ========================================
+                        // 双卡片布局：ONews + Prediction
                         // ========================================
                         HStack(spacing: 12) {
                             // --- 右侧：Prediction 卡片 ---
@@ -1093,14 +1102,6 @@ struct SourceListView: View {
                             onewsAllCard
                         }
                         .padding(.horizontal, 16)
-
-                        // 【新增】视频模块入口 ← 插入在这里
-                        // 【后门逻辑】如果正常开关开启则显示；如果关闭但用户是邀请码进来的永久VIP，也强制显示
-                        if resourceManager.showVideoModule || authManager.isPermanentVIP {
-                            videoModuleCard
-                                .padding(.horizontal, 16)
-                                .padding(.top, 4)
-                        }
 
                         // 更新时间条 (放在双卡片下方)
                         if !resourceManager.serverUpdateTime.isEmpty {

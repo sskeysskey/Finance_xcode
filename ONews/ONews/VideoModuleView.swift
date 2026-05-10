@@ -78,7 +78,7 @@ struct OVideoItem: Codable, Identifiable, Hashable {
     let date: String?
     let alias: String?
     let intro: String?
-    let ratings: [String]?
+    let ratings: [String: String]? // 修改点：将 [String]? 改为 [String: String]?
     let playlist: [OVideoChannel]
     
     enum CodingKeys: String, CodingKey {
@@ -553,8 +553,10 @@ struct VideoDetailView: View {
                 }
                 if let ratings = item.ratings, !ratings.isEmpty {
                     HStack(spacing: 6) {
-                        ForEach(ratings, id: \.self) { r in
-                            Text(r)
+                        // 修改点：因为 ratings 变成了字典，所以需要遍历字典的键值对。
+                        // 为了保证每次显示的顺序一致，这里使用 sorted(by:) 对键进行了排序。
+                        ForEach(ratings.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                            Text("\(key) \(value)")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundColor(.orange)
                                 .padding(.horizontal, 6).padding(.vertical, 3)
