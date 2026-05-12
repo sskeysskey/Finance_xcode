@@ -916,14 +916,34 @@ class NewsViewModel: ObservableObject {
 
     /// 按显示顺序寻找下一篇未读：跳过已读和“已暂存为已读”的文章
     func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
-        // 1. 统一数据源类型
+        // 1. 动态获取当前最新的文章列表，确保 isRead 状态是最新的
         let candidates: [(article: Article, sourceName: String)]
         
-        if let name = sourceName, let source = self.sources.first(where: { $0.name == name }) {
-            candidates = source.articles.map { (article: $0, sourceName: name) }
+        if let name = sourceName {
+            // 如果指定了来源，只取该来源
+            if let source = self.sources.first(where: { $0.name == name }) {
+                candidates = source.articles.map { (article: $0, sourceName: name) }
+            } else {
+                return nil
+            }
         } else {
-            // allArticlesSortedForDisplay 现在包含 3 个元素，我们只取前两个用于查找逻辑
-            candidates = self.allArticlesSortedForDisplay.map { ($0.article, $0.sourceName) }
+            // 【核心修改】不要使用 allArticlesSortedForDisplay 缓存，而是实时从 sources 展开
+            // 这样能保证拿到最新的 isRead 状态
+            candidates = self.sources.flatMap { source in
+                source.articles.map { (article: $0, sourceName: source.name) }
+            }.sorted { item1, item2 in
+                // 保持和 loadNews 中相同的排序逻辑
+                if item1.article.timestamp != item2.article.timestamp {
+                    return item1.article.timestamp > item2.article.timestamp
+                }
+                let h1 = item1.article.hot ?? 0
+                let h2 = item2.article.hot ?? 0
+                if h1 != h2 { return h1 > h2 }
+                // 使用哈希排序保持一致性
+                let key1 = NewsViewModel.djb2Hash(item1.article.topic + item1.sourceName)
+                let key2 = NewsViewModel.djb2Hash(item2.article.topic + item2.sourceName)
+                return key1 < key2
+            }
         }
         
         // 2. 查找当前文章索引
@@ -931,15 +951,17 @@ class NewsViewModel: ObservableObject {
             return nil
         }
         
-        // 3. 【修复点】这里必须使用 candidates，而不是旧的 baseList
+        // 3. 查找后续文章
         let subsequentItems = candidates.suffix(from: currentIndex + 1)
         
-        // 4. 核心过滤逻辑
+        // 4. 核心过滤逻辑：使用 isArticleEffectivelyRead 检查
         let nextUnreadItem = subsequentItems.first { item in
-            let isPending = isArticlePendingRead(articleID: item.article.id)
-            // 【修改】寻找下一篇时，也要跳过锁定的文章
+            // 检查是否已读（包含 pending 状态）
+            let isRead = isArticleEffectivelyRead(item.article)
+            // 检查是否锁定
             let isLocked = !isLoggedInNow() && isTimestampLocked(timestamp: item.article.timestamp)
-            return !item.article.isRead && !isPending && !isLocked
+            
+            return !isRead && !isLocked
         }
         
         return nextUnreadItem
