@@ -345,6 +345,20 @@ struct ArticleDetailView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(10) // 确保在最上层
             }
+            // --- 新增：右下角悬浮按钮 ---
+            VStack {
+                Spacer() // 将内容推到底部
+                HStack {
+                    Spacer() // 将按钮推到右侧
+                    NextArticleFloatingButton {
+                        Task {
+                            await self.requestNextArticle()
+                        }
+                    }
+                }
+            }
+            // 确保按钮在最上层，且不会被其他视图遮挡
+            .zIndex(100) 
         }
         .onAppear { prepareContent() }
         .onChange(of: article) { _ in isContentReady = false; prepareContent() }
@@ -1251,5 +1265,28 @@ struct FontAdjustmentView: View {
                 }
             }
         }
+    }
+}
+
+struct NextArticleFloatingButton: View {
+    var action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.right")
+                .font(.system(size: 18, weight: .bold)) // 保持缩小后的尺寸
+                .foregroundColor(Color.primary) // 浅色模式为黑，深色模式为白
+                .frame(width: 44, height: 44) // 保持缩小后的尺寸
+                .background(Color(UIColor.systemBackground)) // 浅色模式为白，深色模式为黑
+                .clipShape(Circle())
+                // 添加一个细微的边框，防止在深色模式下背景色与页面背景融为一体
+                .overlay(
+                    Circle()
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
+                )
+                .shadow(color: Color.black.opacity(0.15), radius: 4, x: 0, y: 2)
+        }
+        .padding(.trailing, 20)
+        .padding(.bottom, 30)
     }
 }

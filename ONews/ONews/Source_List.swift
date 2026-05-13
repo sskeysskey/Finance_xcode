@@ -1120,15 +1120,13 @@ struct SourceListView: View {
                             ForEach(viewModel.sources) { source in
                                 NavigationLink(value: NavigationTarget.source(source.name)) {
                                     HStack(spacing: 15) {
-                                        // 源图标占位 (可以使用首字母)
-                                        // 使用新的智能图标组件
+                                        
+                                        
                                         SourceIconView(sourceName: source.name)
                                         
-                                        // 【修改这里】
                                         Text(isGlobalEnglishMode ? source.name_en : source.name)
                                             .font(.body.weight(.medium))
                                             .foregroundColor(.primary)
-                                            // 添加动画让切换顺滑
                                             .animation(.none, value: isGlobalEnglishMode)
                                         Spacer()
                                         if source.unreadCount > 0 {
@@ -1144,19 +1142,28 @@ struct SourceListView: View {
                                                 .font(.caption)
                                                 .foregroundColor(.secondary.opacity(0.5))
                                         }
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary.opacity(0.3))
+                                        // 【修改】高级透明播放按钮
+                                        Button(action: {
+                                            Task { await handlePlaySource(source.name) }
+                                        }) {
+                                            Image(systemName: "play.fill")
+                                                .font(.system(size: 14, weight: .bold))
+                                                .symbolRenderingMode(.hierarchical) // 让图标根据层级自动调整透明度
+                                                .foregroundStyle(.primary) // 自动适应深浅模式
+                                                .padding(8)
+                                                .background(Circle().fill(Color.secondary.opacity(0.12)))
+                                        }
+                                        .buttonStyle(PlainButtonStyle()) // 阻止触发外层的 NavigationLink
                                     }
                                     .padding(.vertical, 12)
                                     .padding(.horizontal, 16)
-                                    .background(Color.cardBackground) // 使用卡片背景
+                                    .background(Color.cardBackground)
                                 }
                                 
-                                // 自定义分割线 (除了最后一个)
                                 if source.id != viewModel.sources.last?.id {
                                     Divider()
-                                        .padding(.leading, 70) // 对齐文字
+                                        // 【修改】因为左侧多了一个播放按钮，调整分割线的左边距以对齐文字
+                                        .padding(.leading, 110)
                                         .background(Color.cardBackground)
                                 }
                             }
@@ -1234,7 +1241,7 @@ struct SourceListView: View {
                         HStack(spacing: 4) {
                             Image(systemName: "play.fill")
                                 .font(.system(size: 10))
-                            Text(isGlobalEnglishMode ? "Play" : "语音")
+                            Text(isGlobalEnglishMode ? "Play" : "音频")
                                 .font(.system(size: 11, weight: .bold))
                         }
                         .foregroundColor(.blue)
@@ -1387,7 +1394,21 @@ struct SourceListView: View {
         // 开启自动播放导航
         await handleArticleTap(itemToPlay, autoPlay: true)
     }
-
+    
+    // 【新增】处理点击单个新闻源的“播放”按钮逻辑
+    private func handlePlaySource(_ sourceName: String) async {
+        guard let source = viewModel.sources.first(where: { $0.name == sourceName }) else { return }
+        
+        // 筛选出该新闻源下所有未读的文章
+        let unreadItems = source.articles.filter { !viewModel.isArticleEffectivelyRead($0) }
+        
+        // 优先取第一篇未读；如果全部已读，则兜底取整个列表的第一篇（最新的那篇）
+        guard let targetArticle = unreadItems.first ?? source.articles.first else { return }
+        
+        // 构造数据结构并跳转，开启自动播放
+        let itemToPlay = (article: targetArticle, sourceName: sourceName, isContentMatch: false)
+        await handleArticleTap(itemToPlay, autoPlay: true)
+    }
     // 【修改】更新函数签名，增加 autoPlay 参数
     private func handleArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool), autoPlay: Bool = false) async {
         let article = item.article
