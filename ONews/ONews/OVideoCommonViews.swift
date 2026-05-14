@@ -589,10 +589,9 @@ struct VideoBrowseView: View {
         if isGlobalEnglishMode { return key }
         switch key {
         case "Movie": return "电影"
-        case "Drama": return "剧集"
-        case "Show":  return "综艺"
+        case "Drama": return "电视剧"
+        case "Show":  return "综艺节目"
         case "Anime": return "动漫"
-        case "TV":    return "电视剧"
         default:      return key
         }
     }
