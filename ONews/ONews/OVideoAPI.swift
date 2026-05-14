@@ -133,6 +133,65 @@ extension OVideoItem {
         guard let r = ratings else { return 0 }
         return r.values.compactMap { Double($0) }.max() ?? 0
     }
+
+    // 这里定义你的归类逻辑
+    var normalizedRegion: String {
+        guard let r = region, !r.isEmpty else { return "其它" }
+        
+        // 归类映射
+        let chinaRegions = ["中国大陆", "中国大陆 / 中国台湾 / 中国香港", "中国大陆 / 中国香港", "中国澳门", "内地", "澳门", "大陆", "大陆国语"]
+        let chinataiwanRegions = ["台湾"]
+        let chinahongkongRegions = ["香港"]
+        let europeRegions = ["西班牙", "挪威", "瑞典", "丹麦", "乌克兰", "南斯拉夫", "塞浦路斯", "奥地利", "澳大利亚", "爱尔兰", "瑞士", "突尼斯", "立陶宛", "芬兰", "荷兰"]
+        let asiaRegions = ["乌兹别克斯坦", "俄罗斯", "印度尼西亚", "土耳其", "新加坡", "格鲁吉亚", "泰国", "苏联", "菲律宾", "巴基斯坦"]
+        let middleastRegions = ["伊拉克", "伊朗", "以色列", "埃及", "巴勒斯坦"]
+        let americaRegions = ["加拿大", "墨西哥", "哥伦比亚", "巴西", "智利", "厄瓜多尔", "阿根廷", "秘鲁"]
+        
+        if chinaRegions.contains(r) { return "中国" }
+        if chinataiwanRegions.contains(r) { return "中国台湾" }
+        if chinahongkongRegions.contains(r) { return "中国香港" }
+        if europeRegions.contains(r) { return "欧洲" }
+        if asiaRegions.contains(r) { return "亚洲" }
+        if middleastRegions.contains(r) { return "中东" }
+        if americaRegions.contains(r) { return "北美洲/南美洲" }
+        
+        return r // 如果不在列表中，返回原始名称
+    }
+
+    // 新增：类型映射逻辑
+    var normalizedTypes: [String] {
+        guard let types = types else { return [] }
+        
+        // 定义映射字典：key 是原始名称，value 是归一化后的名称
+        let typeMapping: [String: String] = [
+            "科幻片": "科幻", "奇幻": "科幻", "异世界": "科幻",
+            "动作片": "动作", "武侠": "动作", "运动": "动作",
+            "战争片": "战争", "战斗": "战争",
+            "校园": "青春",
+            
+            "人性": "剧情", "港台剧": "剧情",
+            "国产剧": "剧情", "国产": "剧情", "香港": "剧情",
+            "文艺": "剧情", "日常": "剧情", "泰国": "剧情",
+            "港台": "剧情", "韩国": "剧情", "韩国剧": "剧情",
+            
+            
+            "喜剧片": "喜剧", "搞笑": "喜剧",
+            "爱情片": "爱情", "恋爱": "爱情", "情": "爱情",
+            "丧尸": "恐怖",
+            "纪录片": "纪录", "记录": "纪录",
+            
+            "国产综艺": "综艺", "选秀": "综艺", "大陆综艺": "综艺", "欧美综艺": "综艺",
+            "港台综艺": "综艺", "日韩综艺": "综艺",
+
+            "动画": "动漫", "国产动漫": "动漫", "日本动漫": "动漫",
+            "日韩动漫": "动漫", "有声动漫": "动漫", "机战": "动漫",
+            "欧美动漫": "动漫", "游戏": "动漫", "热血": "动漫", "致郁": "动漫",
+        ]
+        
+        // 映射并去重
+        let normalized = types.map { typeMapping[$0] ?? $0 }
+        return Array(Set(normalized)) // 返回去重后的数组
+    }
 }
 
 enum VideoSortOption: String, CaseIterable {

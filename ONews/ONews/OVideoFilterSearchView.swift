@@ -12,24 +12,44 @@ struct VideoFilterView: View {
     @State private var selectedYear: Int? = nil
     @State private var selectedRegion: String? = nil
     
+    // --- 新增：定义自定义排序规则 ---
+    private let typeOrder = ["综艺", "动漫", "剧情", "动作", "科幻", "喜剧", "爱情", "恐怖", "犯罪", "惊悚", "悬疑", "西部", "古装", "纪录"]
+    private let regionOrder = ["美国", "韩国", "中国", "日本", "中国香港", "中国台湾", "欧洲", "亚洲", "中东", "北美洲/南美洲"]
+    
+    // --- 修改：使用自定义排序逻辑 ---
     private var allTypes: [String] {
-        let set = Set(dataManager.allItems.flatMap { $0.types ?? [] })
-        return set.sorted()
+        let set = Set(dataManager.allItems.flatMap { $0.normalizedTypes })
+        return set.sorted { (a, b) -> Bool in
+            let indexA = typeOrder.firstIndex(of: a) ?? Int.max
+            let indexB = typeOrder.firstIndex(of: b) ?? Int.max
+            if indexA != indexB { return indexA < indexB }
+            return a < b // 如果都在自定义列表中，按顺序；如果都不在，按字母排序
+        }
     }
+    
     private var allYears: [Int] {
         let set = Set(dataManager.allItems.compactMap { $0.releaseYear })
         return set.sorted(by: >)
     }
+    
     private var allRegions: [String] {
-        let set = Set(dataManager.allItems.compactMap { $0.region }).filter { !$0.isEmpty }
-        return set.sorted()
+        // 使用 normalizedRegion 进行去重和排序
+        let set = Set(dataManager.allItems.map { $0.normalizedRegion }).filter { $0 != "其它" }
+        return set.sorted { (a, b) -> Bool in
+            let indexA = regionOrder.firstIndex(of: a) ?? Int.max
+            let indexB = regionOrder.firstIndex(of: b) ?? Int.max
+            if indexA != indexB { return indexA < indexB }
+            return a < b
+        }
     }
     
+    // --- 修改：过滤逻辑，使用 normalizedTypes ---
     private var filteredItems: [OVideoItem] {
         dataManager.allItems.filter { item in
-            if let t = selectedType, !(item.types?.contains(t) ?? false) { return false }
+            // 修改这里：使用 normalizedTypes 匹配
+            if let t = selectedType, !item.normalizedTypes.contains(t) { return false }
             if let y = selectedYear, item.releaseYear != y { return false }
-            if let r = selectedRegion, item.region != r { return false }
+            if let r = selectedRegion, item.normalizedRegion != r { return false }
             return true
         }
     }
