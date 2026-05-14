@@ -4,26 +4,6 @@
 import SwiftUI
 import AVKit
 
-enum VideoSortOption: String, CaseIterable {
-    case date, rating
-    func displayName(_ en: Bool) -> String {
-        switch self {
-        case .date:   return en ? "By Date" : "按时间"
-        case .rating: return en ? "By Rating" : "按评分"
-        }
-    }
-    /// 简短名，用于 Toolbar 上的状态指示
-    func shortName(_ en: Bool) -> String {
-        switch self {
-        case .date:   return en ? "Date" : "时间排序"
-        case .rating: return en ? "Rating" : "评分排序"
-        }
-    }
-    var icon: String {
-        self == .date ? "calendar" : "star.fill"
-    }
-}
-
 // MARK: - 播放器封装
 struct VideoPlayerView: UIViewControllerRepresentable {
     let videoURL: URL
@@ -577,7 +557,7 @@ struct VideoBrowseView: View {
                 }
             }
             
-            // ⭐ 排序指示器：显示文字 + 图标，不用蓝色，用主题色做轻提示
+            // ⭐ 排序指示器：已移除背景框，统一图标在右侧，菜单内仅显示对勾
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
                     ForEach(VideoSortOption.allCases, id: \.self) { opt in
@@ -587,23 +567,18 @@ struct VideoBrowseView: View {
                             if opt == sortOption {
                                 Label(opt.displayName(isGlobalEnglishMode), systemImage: "checkmark")
                             } else {
-                                Label(opt.displayName(isGlobalEnglishMode), systemImage: opt.icon)
+                                Text(opt.displayName(isGlobalEnglishMode))
                             }
                         }
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: sortOption.icon)
-                            .font(.system(size: 12, weight: .semibold))
                         Text(sortOption.shortName(isGlobalEnglishMode))
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.system(size: 9, weight: .semibold))
                     }
                     .foregroundColor(.primary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule().fill(Color.secondary.opacity(0.15))
-                    )
                     .animation(.easeInOut(duration: 0.2), value: sortOption)
                 }
             }

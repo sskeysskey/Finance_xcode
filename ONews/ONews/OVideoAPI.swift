@@ -135,6 +135,26 @@ extension OVideoItem {
     }
 }
 
+enum VideoSortOption: String, CaseIterable {
+    case date, rating
+    func displayName(_ en: Bool) -> String {
+        switch self {
+        case .date:   return en ? "By Date" : "按时间"
+        case .rating: return en ? "By Rating" : "按评分"
+        }
+    }
+    /// 简短名，用于 Toolbar 上的状态指示
+    func shortName(_ en: Bool) -> String {
+        switch self {
+        case .date:   return en ? "Date" : "时间"
+        case .rating: return en ? "Rating" : "评分"
+        }
+    }
+    var icon: String {
+        self == .date ? "calendar" : "star.fill"
+    }
+}
+
 // MARK: - 缓存元数据
 struct VideoCacheMetadata: Codable {
     let title: String
