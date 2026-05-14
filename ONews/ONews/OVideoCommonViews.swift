@@ -1,11 +1,28 @@
 // VideoPlayerView、CachedAsyncImage、OImageCache、WaterfallGridView、VideoCardView
-// 共享复用的 UI 组件
-
 // VideoModuleView、VideoBottomBar、VideoBrowseView
-// 首页入口 + 底部栏
 
 import SwiftUI
 import AVKit
+
+enum VideoSortOption: String, CaseIterable {
+    case date, rating
+    func displayName(_ en: Bool) -> String {
+        switch self {
+        case .date:   return en ? "By Date" : "按时间"
+        case .rating: return en ? "By Rating" : "按评分"
+        }
+    }
+    /// 简短名，用于 Toolbar 上的状态指示
+    func shortName(_ en: Bool) -> String {
+        switch self {
+        case .date:   return en ? "Date" : "时间排序"
+        case .rating: return en ? "Rating" : "评分排序"
+        }
+    }
+    var icon: String {
+        self == .date ? "calendar" : "star.fill"
+    }
+}
 
 // MARK: - 播放器封装
 struct VideoPlayerView: UIViewControllerRepresentable {
@@ -201,19 +218,58 @@ struct VideoCardView: View {
     }
 }
 
-// MARK: - 顶层入口
+// MARK: - 频道主题（颜色 + 图标），用于顶部视觉区分
+enum VideoCategoryTheme {
+    static func color(for key: String) -> Color {
+        switch key {
+        case "Movie": return Color(red: 0.25, green: 0.55, blue: 0.95) // 蓝
+        case "Drama": return Color(red: 0.62, green: 0.36, blue: 0.85) // 紫
+        case "Show":  return Color(red: 0.98, green: 0.55, blue: 0.20) // 橙
+        case "Anime": return Color(red: 0.95, green: 0.35, blue: 0.58) // 粉
+        case "TV":    return Color(red: 0.20, green: 0.72, blue: 0.45) // 绿
+        default:      return Color(red: 0.45, green: 0.50, blue: 0.58) // 灰
+        }
+    }
+    static func icon(for key: String) -> String {
+        switch key {
+        case "Movie": return "film.fill"
+        case "Drama": return "theatermasks.fill"
+        case "Show":  return "sparkles"
+        case "Anime": return "star.bubble.fill"
+        case "TV":    return "tv.fill"
+        default:      return "square.stack.fill"
+        }
+    }
+}
+
+// MARK: - 顶层入口（排序选项持久化）
 struct VideoModuleView: View {
     @StateObject private var dataManager = OVideoDataManager()
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
-    @State private var selectedCategoryIndex = 0
-    @State private var sortOption: VideoSortOption = .date
+    // ⭐ 持久化排序状态
+    @AppStorage("OVideo_SortOption") private var sortOptionRaw: String = VideoSortOption.date.rawValue
+    @AppStorage("OVideo_SelectedCategoryIndex") private var selectedCategoryIndex: Int = 0
+    
+    private var sortBinding: Binding<VideoSortOption> {
+        Binding(
+            get: { VideoSortOption(rawValue: sortOptionRaw) ?? .date },
+            set: { sortOptionRaw = $0.rawValue }
+        )
+    }
+    
+    private var categoryIndexBinding: Binding<Int> {
+        Binding(
+            get: { selectedCategoryIndex },
+            set: { selectedCategoryIndex = $0 }
+        )
+    }
     
     var body: some View {
         ZStack(alignment: .bottom) {
             VideoBrowseView(dataManager: dataManager,
-                            selectedCategoryIndex: $selectedCategoryIndex,
-                            sortOption: $sortOption)
+                            selectedCategoryIndex: categoryIndexBinding,
+                            sortOption: sortBinding)
                 .padding(.bottom, 60)
             
             VideoBottomBar(dataManager: dataManager)
@@ -286,29 +342,23 @@ struct VideoBottomBar: View {
     }
 }
 
-// MARK: - 单个分类的视频列表
+// MARK: - ⭐ 单个分类的视频列表 —— 直接按 sortOption 计算，消除缓存带来的错乱
 struct CategoryVideoListView: View {
     let category: OVideoCategory
     let sortOption: VideoSortOption
     @ObservedObject var dataManager: OVideoDataManager
     
-    // 使用 State 缓存排序结果，避免在滑动时每帧重复计算
-    @State private var sortedItems: [OVideoItem] = []
-    
     var body: some View {
+        // 直接计算，不再使用 @State 缓存，避免 UIPageViewController 缓存的
+        // UIHostingController 脱离视图层级时，onChange 不触发导致的数据错乱
+        let sortedItems = dataManager.sortItems(category.items, by: sortOption)
+        
         ScrollView {
             WaterfallGridView(items: sortedItems)
                 .padding(.top, 10)
                 .padding(.bottom, 20)
         }
         .background(Color(UIColor.systemGroupedBackground))
-        .onAppear { updateItems() }
-        .onChange(of: sortOption) { _ in updateItems() }
-        .onChange(of: category) { _ in updateItems() }
-    }
-    
-    private func updateItems() {
-        sortedItems = dataManager.sortItems(category.items, by: sortOption)
     }
 }
 
@@ -334,7 +384,8 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
         pageViewController.view.backgroundColor = .clear
 
         if !categories.isEmpty {
-            let initialVC = context.coordinator.viewController(for: selectedIndex)
+            let safeIndex = min(max(0, selectedIndex), categories.count - 1)
+            let initialVC = context.coordinator.viewController(for: safeIndex)
             pageViewController.setViewControllers([initialVC], direction: .forward, animated: false)
         }
 
@@ -343,9 +394,11 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
 
     func updateUIViewController(_ pageViewController: UIPageViewController, context: Context) {
         context.coordinator.parent = self
+        
+        guard !categories.isEmpty else { return }
 
-        // 1. 同步更新所有已缓存的视图 (例如排序方式改变时)
-        for (index, vc) in context.coordinator.controllers {
+        // 1. 同步更新所有已缓存视图（排序方式或分类数据变化）
+        for (index, vc) in context.coordinator.controllers where index < categories.count {
             vc.rootView = CategoryVideoListView(
                 category: categories[index],
                 sortOption: sortOption,
@@ -353,29 +406,26 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
             )
         }
 
-        // 2. 处理外部索引改变 (如点击顶部菜单)
-        if context.coordinator.currentIndex != selectedIndex && !categories.isEmpty {
+        // 2. 处理外部索引改变（点击顶部菜单切换频道）
+        let safeTarget = min(max(0, selectedIndex), categories.count - 1)
+        if context.coordinator.currentIndex != safeTarget {
             let count = categories.count
             let current = context.coordinator.currentIndex
-            let target = selectedIndex
-
-            // 计算最短滑动方向
-            var diff = target - current
+            var diff = safeTarget - current
             if diff > count / 2 { diff -= count }
             else if diff < -count / 2 { diff += count }
 
-            let direction: UIPageViewController.NavigationDirection = diff > 0 ? .forward : .reverse
-            let vc = context.coordinator.viewController(for: selectedIndex)
+            let direction: UIPageViewController.NavigationDirection = diff >= 0 ? .forward : .reverse
+            let vc = context.coordinator.viewController(for: safeTarget)
             
             pageViewController.setViewControllers([vc], direction: direction, animated: true)
-            context.coordinator.currentIndex = selectedIndex
+            context.coordinator.currentIndex = safeTarget
         }
     }
 
     class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
         var parent: InfinitePageViewController
         var currentIndex: Int
-        // 缓存 UIHostingController，避免重复创建导致卡顿
         var controllers = [Int: UIHostingController<CategoryVideoListView>]()
 
         init(_ parent: InfinitePageViewController) {
@@ -385,6 +435,12 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
 
         func viewController(for index: Int) -> UIViewController {
             if let cached = controllers[index] {
+                // 确保缓存里的 rootView 也是最新的 sortOption
+                cached.rootView = CategoryVideoListView(
+                    category: parent.categories[index],
+                    sortOption: parent.sortOption,
+                    dataManager: parent.dataManager
+                )
                 return cached
             }
             let view = CategoryVideoListView(
@@ -403,7 +459,6 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
             guard let hostingVC = viewController as? UIHostingController<CategoryVideoListView> else { return nil }
             guard let index = controllers.first(where: { $0.value == hostingVC })?.key else { return nil }
 
-            // 取模算法：首尾相连
             let previousIndex = (index - 1 + parent.categories.count) % parent.categories.count
             return self.viewController(for: previousIndex)
         }
@@ -413,7 +468,6 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
             guard let hostingVC = viewController as? UIHostingController<CategoryVideoListView> else { return nil }
             guard let index = controllers.first(where: { $0.value == hostingVC })?.key else { return nil }
 
-            // 取模算法：首尾相连
             let nextIndex = (index + 1) % parent.categories.count
             return self.viewController(for: nextIndex)
         }
@@ -423,7 +477,6 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
                let visibleVC = pageViewController.viewControllers?.first as? UIHostingController<CategoryVideoListView>,
                let index = controllers.first(where: { $0.value == visibleVC })?.key {
                 currentIndex = index
-                // 异步更新 SwiftUI 状态
                 DispatchQueue.main.async {
                     if self.parent.selectedIndex != index {
                         self.parent.selectedIndex = index
@@ -442,10 +495,23 @@ struct VideoBrowseView: View {
     
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
+    private var currentCategoryKey: String {
+        guard selectedCategoryIndex < dataManager.categories.count else { return "" }
+        return dataManager.categories[selectedCategoryIndex].name
+    }
+    
     private var currentCategoryDisplay: String {
         guard selectedCategoryIndex < dataManager.categories.count
         else { return isGlobalEnglishMode ? "Video" : "影视" }
         return categoryDisplayName(dataManager.categories[selectedCategoryIndex].name)
+    }
+    
+    private var currentCategoryColor: Color {
+        VideoCategoryTheme.color(for: currentCategoryKey)
+    }
+    
+    private var currentCategoryIcon: String {
+        VideoCategoryTheme.icon(for: currentCategoryKey)
     }
     
     var body: some View {
@@ -459,7 +525,6 @@ struct VideoBrowseView: View {
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // 替换掉臃肿的 TabView，使用封装好的原生高性能 Pager
                 InfinitePageViewController(
                     categories: dataManager.categories,
                     selectedIndex: $selectedCategoryIndex,
@@ -471,6 +536,7 @@ struct VideoBrowseView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // ⭐ 频道指示器：根据频道切换色彩和图标，滑动时能立刻看出身处哪个频道
             ToolbarItem(placement: .principal) {
                 Menu {
                     ForEach(Array(dataManager.categories.enumerated()), id: \.offset) { idx, cat in
@@ -480,25 +546,38 @@ struct VideoBrowseView: View {
                             if idx == selectedCategoryIndex {
                                 Label(categoryDisplayName(cat.name), systemImage: "checkmark")
                             } else {
-                                Text(categoryDisplayName(cat.name))
+                                Label(categoryDisplayName(cat.name),
+                                      systemImage: VideoCategoryTheme.icon(for: cat.name))
                             }
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: currentCategoryIcon)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(currentCategoryColor)
                         Text(currentCategoryDisplay)
-                            .font(.system(size: 17, weight: .bold))
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.primary)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(currentCategoryColor.opacity(0.8))
                     }
-                    .foregroundColor(.primary)
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Capsule().fill(Color.secondary.opacity(0.12)))
-                    // 让顶栏切换也有平滑过渡
-                    .animation(.easeInOut(duration: 0.2), value: selectedCategoryIndex)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(currentCategoryColor.opacity(0.15))
+                    )
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(currentCategoryColor.opacity(0.45), lineWidth: 1)
+                    )
+                    .animation(.easeInOut(duration: 0.25), value: selectedCategoryIndex)
                 }
             }
             
+            // ⭐ 排序指示器：显示文字 + 图标，不用蓝色，用主题色做轻提示
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
                     ForEach(VideoSortOption.allCases, id: \.self) { opt in
@@ -513,8 +592,19 @@ struct VideoBrowseView: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "arrow.up.arrow.down.circle")
-                        .font(.system(size: 18, weight: .medium))
+                    HStack(spacing: 4) {
+                        Image(systemName: sortOption.icon)
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(sortOption.shortName(isGlobalEnglishMode))
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule().fill(Color.secondary.opacity(0.15))
+                    )
+                    .animation(.easeInOut(duration: 0.2), value: sortOption)
                 }
             }
         }

@@ -7,7 +7,7 @@ import Foundation
 import SwiftUI
 import AVFoundation
 
-// MARK: - 服务器地址    
+// MARK: - 服务器地址
 enum OVideoAPI {
     static let baseURL = "http://106.15.183.158:5001/api/OVideo"
     
@@ -132,19 +132,6 @@ extension OVideoItem {
     var bestRating: Double {
         guard let r = ratings else { return 0 }
         return r.values.compactMap { Double($0) }.max() ?? 0
-    }
-}
-
-enum VideoSortOption: String, CaseIterable {
-    case date, rating
-    func displayName(_ en: Bool) -> String {
-        switch self {
-        case .date:   return en ? "By Date" : "按时间"
-        case .rating: return en ? "By Rating" : "按评分"
-        }
-    }
-    var icon: String {
-        self == .date ? "calendar" : "star.fill"
     }
 }
 
