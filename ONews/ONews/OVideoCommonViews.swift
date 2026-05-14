@@ -112,7 +112,8 @@ struct VideoCardView: View {
     let item: OVideoItem
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        // 增加整体间距 spacing，让文字与图片之间有更多空隙
+        VStack(alignment: .leading, spacing: 10) { 
             Color.clear
                 .aspectRatio(2.0/3.0, contentMode: .fit)
                 .overlay(
@@ -144,25 +145,37 @@ struct VideoCardView: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             
+            // 名字：字体调大，增加一点内边距
+            // 名字：修改为两行显示
             Text(item.name)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold)) // 保持你调整后的字号
                 .foregroundColor(.primary)
-                .lineLimit(1)
+                .lineLimit(2) // 关键点：改为 2 行
+                .multilineTextAlignment(.leading) // 关键点：确保多行时左对齐
+                .fixedSize(horizontal: false, vertical: true) // 关键点：允许垂直方向根据内容自动撑开
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 2)
+                .padding(.top, 2)
             
+            // 时间/类型：字体调大
             if let date = item.date, !date.isEmpty {
                 Text(date.split(separator: "(").first.map(String.init) ?? date)
-                    .font(.system(size: 11))
+                    .font(.system(size: 13)) // 从 11 改为 13
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+                    .padding(.horizontal, 2)
             } else if let types = item.types, !types.isEmpty {
                 Text(types.joined(separator: " / "))
-                    .font(.system(size: 11))
+                    .font(.system(size: 15)) // 从 11 改为 13
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+                    .padding(.horizontal, 2)
             }
+            
+            // 如果你觉得空间还不够高，可以在这里添加一个 Spacer 或者固定的 padding
+            // Spacer(minLength: 4) 
         }
-        .padding(.bottom, 2)
+        .padding(.bottom, 8) // 增加底部 padding，让卡片底部看起来更饱满
     }
     
     @ViewBuilder
