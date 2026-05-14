@@ -286,7 +286,7 @@ struct VideoBottomBar: View {
     }
 }
 
-// MARK: - 单个分类的视频列表 (解决滑动卡顿与位置共享问题)
+// MARK: - 单个分类的视频列表
 struct CategoryVideoListView: View {
     let category: OVideoCategory
     let sortOption: VideoSortOption
@@ -302,19 +302,135 @@ struct CategoryVideoListView: View {
                 .padding(.bottom, 20)
         }
         .background(Color(UIColor.systemGroupedBackground))
-        .onAppear {
-            updateItems()
-        }
-        .onChange(of: sortOption) { _ in
-            updateItems()
-        }
-        .onChange(of: category) { _ in
-            updateItems()
-        }
+        .onAppear { updateItems() }
+        .onChange(of: sortOption) { _ in updateItems() }
+        .onChange(of: category) { _ in updateItems() }
     }
     
     private func updateItems() {
         sortedItems = dataManager.sortItems(category.items, by: sortOption)
+    }
+}
+
+// MARK: - ⭐️ 核心优化：丝滑无限循环 Pager (封装 UIPageViewController)
+struct InfinitePageViewController: UIViewControllerRepresentable {
+    var categories: [OVideoCategory]
+    @Binding var selectedIndex: Int
+    var sortOption: VideoSortOption
+    var dataManager: OVideoDataManager
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIViewController(context: Context) -> UIPageViewController {
+        let pageViewController = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal,
+            options: nil
+        )
+        pageViewController.dataSource = context.coordinator
+        pageViewController.delegate = context.coordinator
+        pageViewController.view.backgroundColor = .clear
+
+        if !categories.isEmpty {
+            let initialVC = context.coordinator.viewController(for: selectedIndex)
+            pageViewController.setViewControllers([initialVC], direction: .forward, animated: false)
+        }
+
+        return pageViewController
+    }
+
+    func updateUIViewController(_ pageViewController: UIPageViewController, context: Context) {
+        context.coordinator.parent = self
+
+        // 1. 同步更新所有已缓存的视图 (例如排序方式改变时)
+        for (index, vc) in context.coordinator.controllers {
+            vc.rootView = CategoryVideoListView(
+                category: categories[index],
+                sortOption: sortOption,
+                dataManager: dataManager
+            )
+        }
+
+        // 2. 处理外部索引改变 (如点击顶部菜单)
+        if context.coordinator.currentIndex != selectedIndex && !categories.isEmpty {
+            let count = categories.count
+            let current = context.coordinator.currentIndex
+            let target = selectedIndex
+
+            // 计算最短滑动方向
+            var diff = target - current
+            if diff > count / 2 { diff -= count }
+            else if diff < -count / 2 { diff += count }
+
+            let direction: UIPageViewController.NavigationDirection = diff > 0 ? .forward : .reverse
+            let vc = context.coordinator.viewController(for: selectedIndex)
+            
+            pageViewController.setViewControllers([vc], direction: direction, animated: true)
+            context.coordinator.currentIndex = selectedIndex
+        }
+    }
+
+    class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
+        var parent: InfinitePageViewController
+        var currentIndex: Int
+        // 缓存 UIHostingController，避免重复创建导致卡顿
+        var controllers = [Int: UIHostingController<CategoryVideoListView>]()
+
+        init(_ parent: InfinitePageViewController) {
+            self.parent = parent
+            self.currentIndex = parent.selectedIndex
+        }
+
+        func viewController(for index: Int) -> UIViewController {
+            if let cached = controllers[index] {
+                return cached
+            }
+            let view = CategoryVideoListView(
+                category: parent.categories[index],
+                sortOption: parent.sortOption,
+                dataManager: parent.dataManager
+            )
+            let vc = UIHostingController(rootView: view)
+            vc.view.backgroundColor = .clear
+            controllers[index] = vc
+            return vc
+        }
+
+        func pageViewController(_ pageViewController: UIPageViewController, viewControllerBefore viewController: UIViewController) -> UIViewController? {
+            guard !parent.categories.isEmpty else { return nil }
+            guard let hostingVC = viewController as? UIHostingController<CategoryVideoListView> else { return nil }
+            guard let index = controllers.first(where: { $0.value == hostingVC })?.key else { return nil }
+
+            // 取模算法：首尾相连
+            let previousIndex = (index - 1 + parent.categories.count) % parent.categories.count
+            return self.viewController(for: previousIndex)
+        }
+
+        func pageViewController(_ pageViewController: UIPageViewController, viewControllerAfter viewController: UIViewController) -> UIViewController? {
+            guard !parent.categories.isEmpty else { return nil }
+            guard let hostingVC = viewController as? UIHostingController<CategoryVideoListView> else { return nil }
+            guard let index = controllers.first(where: { $0.value == hostingVC })?.key else { return nil }
+
+            // 取模算法：首尾相连
+            let nextIndex = (index + 1) % parent.categories.count
+            return self.viewController(for: nextIndex)
+        }
+
+        func pageViewController(_ pageViewController: UIPageViewController, didFinishAnimating finished: Bool, previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
+            if completed,
+               let visibleVC = pageViewController.viewControllers?.first as? UIHostingController<CategoryVideoListView>,
+               let index = controllers.first(where: { $0.value == visibleVC })?.key {
+                currentIndex = index
+                // 异步更新 SwiftUI 状态
+                DispatchQueue.main.async {
+                    if self.parent.selectedIndex != index {
+                        self.parent.selectedIndex = index
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -343,19 +459,14 @@ struct VideoBrowseView: View {
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // ⭐️ 核心改动：TabView 左右翻页，使用独立的 View 结构体
-                TabView(selection: $selectedCategoryIndex) {
-                    ForEach(Array(dataManager.categories.enumerated()), id: \.offset) { idx, category in
-                        CategoryVideoListView(
-                            category: category,
-                            sortOption: sortOption,
-                            dataManager: dataManager
-                        )
-                        .tag(idx)   // 必须有 tag 才能和 selection 绑定
-                    }
-                }
-                .tabViewStyle(.page(indexDisplayMode: .never))   // 隐藏底部小圆点
-                .animation(.easeInOut(duration: 0.25), value: selectedCategoryIndex)
+                // 替换掉臃肿的 TabView，使用封装好的原生高性能 Pager
+                InfinitePageViewController(
+                    categories: dataManager.categories,
+                    selectedIndex: $selectedCategoryIndex,
+                    sortOption: sortOption,
+                    dataManager: dataManager
+                )
+                .ignoresSafeArea(edges: .bottom)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -364,7 +475,7 @@ struct VideoBrowseView: View {
                 Menu {
                     ForEach(Array(dataManager.categories.enumerated()), id: \.offset) { idx, cat in
                         Button {
-                            withAnimation { selectedCategoryIndex = idx }
+                            selectedCategoryIndex = idx
                         } label: {
                             if idx == selectedCategoryIndex {
                                 Label(categoryDisplayName(cat.name), systemImage: "checkmark")
