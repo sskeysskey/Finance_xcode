@@ -382,6 +382,21 @@ struct TimestampHeader: View {
 
 // ==================== 单一来源列表 ====================
 
+struct EmptyStateView: View {
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "tray")
+                .font(.system(size: 60))
+                .foregroundColor(.secondary.opacity(0.3))
+            Text("当前无未读文章")
+                .font(.headline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.viewBackground)
+    }
+}
+
 struct ArticleListView: View {
     let sourceName: String // 这是中文名，用于数据库查找
     @ObservedObject var viewModel: NewsViewModel
@@ -481,95 +496,100 @@ struct ArticleListView: View {
             .background(Color.viewBackground.ignoresSafeArea())
         } else {
             ZStack {
-                VStack(spacing: 0) {
-                    if isSearching {
-                        SearchBarInline(
-                            text: $searchText,
-                            placeholder: Localized.searchPlaceholder, // 【修改】
-                            onCommit: {
-                                isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            },
-                            onCancel: {
-                                withAnimation {
-                                    isSearching = false
-                                    isSearchActive = false
-                                    searchText = ""
-                                }
-                            }
-                        )
-                    }
-                    
-                    // 【新增】通知条插入位置
-                    // 注意：由于我们在 Source_List.swift 定义了 NotificationBannerView，
-                    // 只要它们在同一个 Target 下，这里可以直接使用。
-                    if let message = resourceManager.activeNotification {
-                        NotificationBannerView(message: message) {
-                            resourceManager.dismissNotification()
-                        }
-                        // 稍微给下面一点间距，或者让Banner自带padding
-                        .background(Color.viewBackground) // 确保背景色一致
-                    }
-
-                    List {
-                        if isSearchActive {
-                            SearchResultsList(
-                                results: searchResults,
-                                viewModel: viewModel,
-                                authManager: authManager, // 传递
-                                // 【新增】传递状态
-                        showEnglish: isGlobalEnglishMode, 
-                                onArticleTap: handleArticleTap
-                            )
-                        } else {
-                            ArticleListContent(
-                                items: baseFilteredArticles,
-                                filterMode: filterMode,
-                                expandedTimestamps: viewModel.expandedTimestampsBySource[sourceName, default: Set<String>()],
-                                viewModel: viewModel,
-                                authManager: authManager,
-                                showEnglish: isGlobalEnglishMode, 
-                                onToggleTimestamp: { timestamp in
-                                    viewModel.toggleTimestampExpansion(for: sourceName, timestamp: timestamp)
+                // 【核心修改】判断是否为空
+                if filterMode == .unread && baseFilteredArticles.isEmpty {
+                    EmptyStateView()
+                } else {
+                    VStack(spacing: 0) {
+                        if isSearching {
+                            SearchBarInline(
+                                text: $searchText,
+                                placeholder: Localized.searchPlaceholder, // 【修改】
+                                onCommit: {
+                                    isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 },
-                                onArticleTap: handleArticleTap
+                                onCancel: {
+                                    withAnimation {
+                                        isSearching = false
+                                        isSearchActive = false
+                                        searchText = ""
+                                    }
+                                }
                             )
                         }
-                    }
-                    .listStyle(PlainListStyle())
-                    // 【修复需求】修改 onAppear 逻辑：仅在首次进入时执行自动展开
-                    .onAppear {
-                        if !hasPerformedAutoExpansion {
-                            autoExpandGroups()
-                            hasPerformedAutoExpansion = true
+                        
+                        // 【新增】通知条插入位置
+                        // 注意：由于我们在 Source_List.swift 定义了 NotificationBannerView，
+                        // 只要它们在同一个 Target 下，这里可以直接使用。
+                        if let message = resourceManager.activeNotification {
+                            NotificationBannerView(message: message) {
+                                resourceManager.dismissNotification()
+                            }
+                            // 稍微给下面一点间距，或者让Banner自带padding
+                            .background(Color.viewBackground) // 确保背景色一致
                         }
-                    }
-                    
-                    if !isSearchActive {
-                        HStack(spacing: 8) {
-                            Picker("Filter", selection: $filterMode) {
-                                ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                                    Text("\(mode.localizedName) (\(self.getCount(for: mode)))")
-                                        .tag(mode)
+
+                        List {
+                            if isSearchActive {
+                                SearchResultsList(
+                                    results: searchResults,
+                                    viewModel: viewModel,
+                                    authManager: authManager, // 传递
+                                    // 【新增】传递状态
+                            showEnglish: isGlobalEnglishMode, 
+                                    onArticleTap: handleArticleTap
+                                )
+                            } else {
+                                ArticleListContent(
+                                    items: baseFilteredArticles,
+                                    filterMode: filterMode,
+                                    expandedTimestamps: viewModel.expandedTimestampsBySource[sourceName, default: Set<String>()],
+                                    viewModel: viewModel,
+                                    authManager: authManager,
+                                    showEnglish: isGlobalEnglishMode, 
+                                    onToggleTimestamp: { timestamp in
+                                        viewModel.toggleTimestampExpansion(for: sourceName, timestamp: timestamp)
+                                    },
+                                    onArticleTap: handleArticleTap
+                                )
+                            }
+                        }
+                        .listStyle(PlainListStyle())
+                        // 【修复需求】修改 onAppear 逻辑：仅在首次进入时执行自动展开
+                        .onAppear {
+                            if !hasPerformedAutoExpansion {
+                                autoExpandGroups()
+                                hasPerformedAutoExpansion = true
+                            }
+                        }
+                        
+                        if !isSearchActive {
+                            HStack(spacing: 8) {
+                                Picker("Filter", selection: $filterMode) {
+                                    ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
+                                        Text("\(mode.localizedName) (\(self.getCount(for: mode)))")
+                                            .tag(mode)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                
+                                // 【新增】"全部设为已读"按钮
+                                Button {
+                                    showMarkAllReadConfirmation = true
+                                } label: {
+                                    Image(systemName: "checkmark.circle")
+                                        .font(.system(size: 20))
+                                        .foregroundColor(.blue)
                                 }
                             }
-                            .pickerStyle(.segmented)
-                            
-                            // 【新增】"全部设为已读"按钮
-                            Button {
-                                showMarkAllReadConfirmation = true
-                            } label: {
-                                Image(systemName: "checkmark.circle")
-                                    .font(.system(size: 20))
-                                    .foregroundColor(.blue)
+                            .padding([.horizontal, .bottom])
+                            .onChange(of: filterMode) { _ in
+                                autoExpandGroups()
                             }
                         }
-                        .padding([.horizontal, .bottom])
-                        .onChange(of: filterMode) { _ in
-                            autoExpandGroups()
-                        }
                     }
+                    .background(Color.viewBackground.ignoresSafeArea())
                 }
-                .background(Color.viewBackground.ignoresSafeArea())
             }
             // 【修改】移除这里的 navigationDestination
             .navigationTitle(displayTitle.replacingOccurrences(of: "_", with: " "))

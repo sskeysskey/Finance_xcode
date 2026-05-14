@@ -1383,8 +1383,9 @@ struct SourceListView: View {
             !viewModel.isArticleEffectivelyRead(item.article)
         }
         
-        // 3. 优先取第一篇未读；如果全部已读，则兜底取整个列表的第一篇（最新的那篇）
-        guard let targetItem = unreadItems.first ?? allItems.first else {
+        // 【修改】移除 ?? allItems.first，如果没有未读，直接返回
+        guard let targetItem = unreadItems.first else {
+            print("没有未读文章，无需播放。")
             return
         }
         
@@ -1402,17 +1403,25 @@ struct SourceListView: View {
         // 筛选出该新闻源下所有未读的文章
         let unreadItems = source.articles.filter { !viewModel.isArticleEffectivelyRead($0) }
         
-        // 优先取第一篇未读；如果全部已读，则兜底取整个列表的第一篇（最新的那篇）
-        guard let targetArticle = unreadItems.first ?? source.articles.first else { return }
+        // 【核心修改】如果没有未读文章，直接跳转到该源的列表页，不要返回
+        guard let targetArticle = unreadItems.first else { 
+            print("该新闻源没有未读文章，跳转到空状态页。")
+            await MainActor.run {
+                // 使用全局导航路径跳转到该源的详情页，由于没有未读文章，它会自动显示 EmptyStateView
+                navPath.append(NavigationTarget.source(sourceName))
+            }
+            return 
+        }
         
         // 构造数据结构并跳转，开启自动播放
         let itemToPlay = (article: targetArticle, sourceName: sourceName, isContentMatch: false)
         await handleArticleTap(itemToPlay, autoPlay: true)
     }
+
     // 【修改】更新函数签名，增加 autoPlay 参数
     private func handleArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool), autoPlay: Bool = false) async {
         let article = item.article
-        let sourceName = item.sourceName
+        let sourceName = item.sourceName // 这是当前源的名称
         
         // ⚠️ 修复 Bug：将 showSubscriptionSheet 替换为 authManager.showSubscriptionSheet
         if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
@@ -1423,7 +1432,7 @@ struct SourceListView: View {
         // 【修改】使用全局 navPath 进行跳转
         let prepareNavigation = {
             await MainActor.run {
-                self.navPath.append(NavigationTarget.articleDetail(article, sourceName, "all", autoPlay))
+                self.navPath.append(NavigationTarget.articleDetail(article, sourceName, sourceName, autoPlay))
             }
         }
 
