@@ -286,6 +286,38 @@ struct VideoBottomBar: View {
     }
 }
 
+// MARK: - 单个分类的视频列表 (解决滑动卡顿与位置共享问题)
+struct CategoryVideoListView: View {
+    let category: OVideoCategory
+    let sortOption: VideoSortOption
+    @ObservedObject var dataManager: OVideoDataManager
+    
+    // 使用 State 缓存排序结果，避免在滑动时每帧重复计算
+    @State private var sortedItems: [OVideoItem] = []
+    
+    var body: some View {
+        ScrollView {
+            WaterfallGridView(items: sortedItems)
+                .padding(.top, 10)
+                .padding(.bottom, 20)
+        }
+        .background(Color(UIColor.systemGroupedBackground))
+        .onAppear {
+            updateItems()
+        }
+        .onChange(of: sortOption) { _ in
+            updateItems()
+        }
+        .onChange(of: category) { _ in
+            updateItems()
+        }
+    }
+    
+    private func updateItems() {
+        sortedItems = dataManager.sortItems(category.items, by: sortOption)
+    }
+}
+
 // MARK: - 首页
 struct VideoBrowseView: View {
     @ObservedObject var dataManager: OVideoDataManager
@@ -293,12 +325,6 @@ struct VideoBrowseView: View {
     @Binding var sortOption: VideoSortOption
     
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    
-    private var currentItems: [OVideoItem] {
-        guard selectedCategoryIndex < dataManager.categories.count else { return [] }
-        return dataManager.sortItems(dataManager.categories[selectedCategoryIndex].items,
-                                     by: sortOption)
-    }
     
     private var currentCategoryDisplay: String {
         guard selectedCategoryIndex < dataManager.categories.count
@@ -317,12 +343,19 @@ struct VideoBrowseView: View {
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    WaterfallGridView(items: currentItems)
-                        .padding(.top, 10)
-                        .padding(.bottom, 20)
+                // ⭐️ 核心改动：TabView 左右翻页，使用独立的 View 结构体
+                TabView(selection: $selectedCategoryIndex) {
+                    ForEach(Array(dataManager.categories.enumerated()), id: \.offset) { idx, category in
+                        CategoryVideoListView(
+                            category: category,
+                            sortOption: sortOption,
+                            dataManager: dataManager
+                        )
+                        .tag(idx)   // 必须有 tag 才能和 selection 绑定
+                    }
                 }
-                .background(Color(UIColor.systemGroupedBackground))
+                .tabViewStyle(.page(indexDisplayMode: .never))   // 隐藏底部小圆点
+                .animation(.easeInOut(duration: 0.25), value: selectedCategoryIndex)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -350,6 +383,8 @@ struct VideoBrowseView: View {
                     .foregroundColor(.primary)
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                    // 让顶栏切换也有平滑过渡
+                    .animation(.easeInOut(duration: 0.2), value: selectedCategoryIndex)
                 }
             }
             
