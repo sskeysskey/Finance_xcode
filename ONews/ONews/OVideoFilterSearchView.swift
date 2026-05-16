@@ -11,12 +11,14 @@ struct VideoFilterView: View {
     @State private var selectedType: String? = nil
     @State private var selectedYear: Int? = nil
     @State private var selectedRegion: String? = nil
+    // --- 新增：排序状态，默认按时间 ---
+    @State private var selectedSort: VideoSortOption = .date
     
-    // --- 新增：定义自定义排序规则 ---
+    // --- 定义自定义排序规则 ---
     private let typeOrder = ["综艺", "动漫", "剧情", "动作", "科幻", "喜剧", "爱情", "恐怖", "犯罪", "惊悚", "悬疑", "西部", "古装", "纪录"]
     private let regionOrder = ["美国", "韩国", "中国", "日本", "中国香港", "中国台湾", "欧洲", "亚洲", "中东", "北美洲/南美洲"]
     
-    // --- 修改：使用自定义排序逻辑 ---
+    // --- 使用自定义排序逻辑 ---
     private var allTypes: [String] {
         let set = Set(dataManager.allItems.flatMap { $0.normalizedTypes })
         return set.sorted { (a, b) -> Bool in
@@ -43,15 +45,16 @@ struct VideoFilterView: View {
         }
     }
     
-    // --- 修改：过滤逻辑，使用 normalizedTypes ---
+    // --- 修改：过滤逻辑 + 排序逻辑 ---
     private var filteredItems: [OVideoItem] {
-        dataManager.allItems.filter { item in
-            // 修改这里：使用 normalizedTypes 匹配
+        let filtered = dataManager.allItems.filter { item in
             if let t = selectedType, !item.normalizedTypes.contains(t) { return false }
             if let y = selectedYear, item.releaseYear != y { return false }
             if let r = selectedRegion, item.normalizedRegion != r { return false }
             return true
         }
+        // 应用排序
+        return dataManager.sortItems(filtered, by: selectedSort)
     }
     
     var body: some View {
@@ -74,6 +77,9 @@ struct VideoFilterView: View {
                         selectedRegion = (v == "All") ? nil : v
                     }
                     
+                    // --- 新增：排序选择行 ---
+                    sortRow()
+                    
                     Divider().padding(.horizontal, 16)
                     
                     HStack {
@@ -83,9 +89,14 @@ struct VideoFilterView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(.secondary)
                         Spacer()
-                        if selectedType != nil || selectedYear != nil || selectedRegion != nil {
+                        
+                        // 修改：如果任意条件被修改过，显示重置按钮
+                        if selectedType != nil || selectedYear != nil || selectedRegion != nil || selectedSort != .date {
                             Button {
-                                selectedType = nil; selectedYear = nil; selectedRegion = nil
+                                selectedType = nil
+                                selectedYear = nil
+                                selectedRegion = nil
+                                selectedSort = .date
                             } label: {
                                 Label(isGlobalEnglishMode ? "Reset" : "重置",
                                       systemImage: "arrow.counterclockwise")
@@ -124,6 +135,41 @@ struct VideoFilterView: View {
                             onSelect(opt)
                         } label: {
                             Text(opt == "All" ? (isGlobalEnglishMode ? "All" : "全部") : opt)
+                                .font(.system(size: 13,
+                                              weight: isSelected ? .bold : .medium))
+                                .foregroundColor(isSelected ? .white : .primary)
+                                .padding(.horizontal, 14).padding(.vertical, 7)
+                                .background(
+                                    Capsule().fill(isSelected
+                                                   ? Color.accentColor
+                                                   : Color.secondary.opacity(0.12))
+                                )
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+    
+    // --- 新增：单独的排序行视图 ---
+    private func sortRow() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(isGlobalEnglishMode ? "Sort" : "排序")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 16)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(VideoSortOption.allCases, id: \.self) { opt in
+                        let isSelected = opt == selectedSort
+                        Button {
+                            withAnimation {
+                                selectedSort = opt
+                            }
+                        } label: {
+                            Text(opt.displayName(isGlobalEnglishMode))
                                 .font(.system(size: 13,
                                               weight: isSelected ? .bold : .medium))
                                 .foregroundColor(isSelected ? .white : .primary)

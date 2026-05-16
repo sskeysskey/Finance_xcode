@@ -715,12 +715,16 @@ class ResourceManager: ObservableObject {
             }
             
             self.isDownloading = true
-            let total = tasksToDownload.count
-            for (index, info) in tasksToDownload.enumerated() {
-                self.progressText = "\(index + 1)/\(total)"
-                self.downloadProgress = Double(index + 1) / Double(total)
-                self.syncMessage = Localized.downloadingData
-                try await downloadSingleFile(named: info.name)
+            self.syncMessage = Localized.downloadingData
+            let fileNames = tasksToDownload.map { $0.name }
+
+            try await downloadFilesConcurrently(
+                fileNames: fileNames,
+                maxConcurrent: 5
+            ) { [weak self] completed, total in
+                guard let self = self else { return }
+                self.progressText = "\(completed)/\(total)"
+                self.downloadProgress = Double(completed) / Double(total)
             }
             
             self.isDownloading = false
@@ -835,16 +839,20 @@ class ResourceManager: ObservableObject {
             print("需要处理的任务列表: \(downloadTasks.map { $0.fileInfo.name })")
             
             self.isDownloading = true
-            let totalTasks = downloadTasks.count
-            
-            for (index, task) in downloadTasks.enumerated() {
-                self.progressText = "\(index + 1)/\(totalTasks)"
-                self.downloadProgress = Double(index + 1) / Double(totalTasks)
-                
-                if task.fileInfo.type == "json" {
-                    self.syncMessage = Localized.downloadingFiles
-                    try await downloadSingleFile(named: task.fileInfo.name)
-                }
+            self.syncMessage = Localized.downloadingFiles
+
+            // 只挑出 json 类型的任务（图片任务原代码也没真正下载）
+            let fileNames = downloadTasks
+                .filter { $0.fileInfo.type == "json" }
+                .map { $0.fileInfo.name }
+
+            try await downloadFilesConcurrently(
+                fileNames: fileNames,
+                maxConcurrent: 5
+            ) { [weak self] completed, total in
+                guard let self = self else { return }
+                self.progressText = "\(completed)/\(total)"
+                self.downloadProgress = Double(completed) / Double(total)
             }
             
             self.isDownloading = false
@@ -964,6 +972,56 @@ class ResourceManager: ObservableObject {
     private func getLocalFiles() throws -> Set<String> {
         let contents = try fileManager.contentsOfDirectory(atPath: documentsDirectory.path)
         return Set(contents)
+    }
+
+    /// 并发下载多个文件，限制最大并发数，并实时回调进度
+    /// - Parameters:
+    ///   - fileNames: 要下载的文件名数组
+    ///   - maxConcurrent: 最大并发数（默认 6）
+    ///   - progressHandler: 进度回调 (已完成数, 总数)
+    private func downloadFilesConcurrently(
+        fileNames: [String],
+        maxConcurrent: Int = 6,
+        progressHandler: @MainActor (Int, Int) -> Void
+    ) async throws {
+        let total = fileNames.count
+        guard total > 0 else { return }
+        
+        // 立即回调一次，初始化 UI
+        progressHandler(0, total)
+        
+        var completed = 0
+        
+        try await withThrowingTaskGroup(of: String.self) { group in
+            var index = 0
+            
+            // 1. 先塞满"初始批次"
+            let initialBatch = min(maxConcurrent, total)
+            while index < initialBatch {
+                let name = fileNames[index]
+                group.addTask {
+                    try await self.downloadSingleFile(named: name)
+                    return name
+                }
+                index += 1
+            }
+            
+            // 2. 每完成一个，就启动下一个，保持并发数稳定
+            while let finishedName = try await group.next() {
+                completed += 1
+                progressHandler(completed, total)
+                print("✅ 并发下载完成 (\(completed)/\(total)): \(finishedName)")
+                
+                if index < total {
+                    let name = fileNames[index]
+                    group.addTask {
+                        try await self.downloadSingleFile(named: name)
+                        return name
+                    }
+                    index += 1
+                }
+            }
+        }
     }
     
     private func downloadSingleFile(named filename: String) async throws {
