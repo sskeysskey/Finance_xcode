@@ -26,7 +26,9 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     let preferenceManager = PreferenceManager()
     let translationManager = TranslationManager()
     
-    // 添加一个标记,表示权限是否已请求完成
+    // 【新增】视频模块数据管理器（全局共享，用于预加载）
+    let videoDataManager = OVideoDataManager()
+    
     var hasRequestedPermissions = false
     
     // 这是 App 启动后会调用的方法，是执行一次性设置的完美位置。
@@ -53,7 +55,15 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             }
         }
         
-        // 3. 配置全局 UI 外观
+        // 【新增】视频模块预加载：延迟 1.5 秒后在后台预加载，避免抢占新闻模块首屏资源
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000) // 等新闻先加载完
+            guard let self = self else { return }
+            print("📺 [预加载] 开始后台预加载视频模块数据...")
+            await self.videoDataManager.loadVideosIfNeeded()
+            print("📺 [预加载] 视频模块数据预加载完成。")
+        }
+        
         let tv = UITableView.appearance()
         tv.backgroundColor = .clear
         tv.separatorStyle = .none
@@ -123,6 +133,8 @@ struct NewsReaderAppApp: App {
                 .environmentObject(appDelegate.predictionSyncManager)
                 .environmentObject(appDelegate.preferenceManager)
                 .environmentObject(appDelegate.translationManager)
+                // 【新增】注入视频模块数据管理器
+                .environmentObject(appDelegate.videoDataManager)
         }
         .onChange(of: scenePhase) { newPhase in
             // 获取 ViewModel 和 AuthManager 的引用

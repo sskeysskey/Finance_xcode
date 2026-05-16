@@ -237,7 +237,9 @@ enum VideoCategoryTheme {
 
 // MARK: - 顶层入口（排序选项持久化）
 struct VideoModuleView: View {
-    @StateObject private var dataManager = OVideoDataManager()
+    // 【修改】从 @StateObject 改为 @EnvironmentObject，复用全局已预加载的实例
+    @EnvironmentObject private var dataManager: OVideoDataManager
+    
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
     // ⭐ 持久化排序状态
@@ -267,6 +269,7 @@ struct VideoModuleView: View {
             
             VideoBottomBar(dataManager: dataManager)
         }
+        // 【说明】这里仍然保留 task，作为兜底。如果预加载已完成，loadVideosIfNeeded 内部应该会立即返回不重复加载
         .task { await dataManager.loadVideosIfNeeded() }
         .refreshable { await dataManager.loadVideos() }
     }
