@@ -365,6 +365,10 @@ struct CategoryVideoListView: View {
                 .padding(.bottom, 20)
         }
         .background(Color(UIColor.systemGroupedBackground))
+        // ⭐️ 核心修复：将下拉刷新移到 UIHostingController 内部的 ScrollView 上
+        .refreshable {
+            await dataManager.loadVideos()
+        }
     }
 }
 
