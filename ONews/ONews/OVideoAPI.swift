@@ -113,6 +113,22 @@ struct OVideoResolveResponse: Codable {
 
 // MARK: - 排序 / 筛选辅助
 extension OVideoItem {
+    // ⭐ 性能优化：用字符串作为排序 key，避免 DateFormatter 调用
+    // "yyyy-MM-dd HH:mm:ss" 的字典序与时间序一致
+    var updateSortKey: String { update ?? "" }
+    
+    // 上映日期清洗后字典序也等同时间序（年-月-日 定长前缀）
+    var releaseSortKey: String {
+        guard let raw = date, !raw.isEmpty else { return "" }
+        return raw.split(separator: "(").first.map(String.init) ?? raw
+    }
+    
+    // 下面这两个 Date 计算属性保留用于详情页等"展示用途"，不再用于排序
+    var updateDate: Date {
+        guard let raw = update, !raw.isEmpty else { return .distantPast }
+        return OVideoItem.updateDateFormatter.date(from: raw) ?? .distantPast
+    }
+    
     var releaseDate: Date {
         guard let raw = date, !raw.isEmpty else { return .distantPast }
         let cleaned = raw.split(separator: "(").first.map(String.init) ?? raw
@@ -124,6 +140,12 @@ extension OVideoItem {
         if parts.count >= 3, let d = Int(parts[2]) { comp.day = d }
         return Calendar.current.date(from: comp) ?? .distantPast
     }
+    
+    private static let updateDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
     
     var releaseYear: Int? {
         guard let raw = date, !raw.isEmpty else { return nil }
@@ -212,23 +234,31 @@ extension OVideoItem {
     }
 }
 
+// 【修改】增加 update 选项，并修改 date 的显示文本
 enum VideoSortOption: String, CaseIterable {
-    case date, rating
+    case update, date, rating
+    
     func displayName(_ en: Bool) -> String {
         switch self {
-        case .date:   return en ? "By Date" : "按时间"
+        case .update: return en ? "By Last Updated" : "按更新日期"
+        case .date:   return en ? "By Release Date" : "按上映日期"
         case .rating: return en ? "By Rating" : "按评分"
         }
     }
     /// 简短名，用于 Toolbar 上的状态指示
     func shortName(_ en: Bool) -> String {
         switch self {
-        case .date:   return en ? "Date" : "时间"
+        case .update: return en ? "Updated" : "更新"
+        case .date:   return en ? "Release" : "上映"
         case .rating: return en ? "Rating" : "评分"
         }
     }
     var icon: String {
-        self == .date ? "calendar" : "star.fill"
+        switch self {
+        case .update: return "clock"
+        case .date:   return "calendar"
+        case .rating: return "star.fill"
+        }
     }
 }
 
@@ -246,6 +276,9 @@ class OVideoDataManager: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String? = nil
     private var hasLoaded = false
+
+    // ⭐ 新增：排序结果缓存。key = "categoryName|sortOption"
+    private var sortCache: [String: [OVideoItem]] = [:]
     
     func loadVideosIfNeeded() async {
         if hasLoaded { return }
@@ -258,6 +291,7 @@ class OVideoDataManager: ObservableObject {
         defer { isLoading = false }
         do {
             self.categories = try await OVideoAPI.fetchVideos()
+            self.sortCache.removeAll()    // ⭐ 数据刷新时清缓存
             self.hasLoaded = true
         } catch {
             errorMessage = error.localizedDescription
@@ -266,13 +300,32 @@ class OVideoDataManager: ObservableObject {
     
     var allItems: [OVideoItem] { categories.flatMap { $0.items } }
     
-    func sortItems(_ items: [OVideoItem], by option: VideoSortOption) -> [OVideoItem] {
+    // ⭐ 新版：sortKey 做字符串比较 + 结果缓存
+    func sortItems(_ items: [OVideoItem],
+                   by option: VideoSortOption,
+                   cacheKey: String? = nil) -> [OVideoItem] {
+        if let key = cacheKey {
+            let fullKey = "\(key)|\(option.rawValue)"
+            if let cached = sortCache[fullKey] { return cached }
+            let sorted = performSort(items, by: option)
+            sortCache[fullKey] = sorted
+            return sorted
+        }
+        return performSort(items, by: option)
+    }
+
+    private func performSort(_ items: [OVideoItem],
+                             by option: VideoSortOption) -> [OVideoItem] {
         switch option {
+        case .update:
+            return items.sorted { $0.updateSortKey > $1.updateSortKey }
         case .date:
-            return items.sorted { $0.releaseDate > $1.releaseDate }
+            return items.sorted { $0.releaseSortKey > $1.releaseSortKey }
         case .rating:
             return items.sorted { a, b in
-                if a.bestRating == b.bestRating { return a.releaseDate > b.releaseDate }
+                if a.bestRating == b.bestRating {
+                    return a.releaseSortKey > b.releaseSortKey
+                }
                 return a.bestRating > b.bestRating
             }
         }
@@ -281,12 +334,26 @@ class OVideoDataManager: ObservableObject {
     func search(keyword: String) -> [OVideoItem] {
         let kw = keyword.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !kw.isEmpty else { return [] }
-        return allItems.filter { item in
-            item.name.lowercased().contains(kw)
-            || (item.director?.lowercased().contains(kw) ?? false)
-            || (item.cast?.contains(where: { $0.lowercased().contains(kw) }) ?? false)
-            || (item.intro?.lowercased().contains(kw) ?? false)
+        
+        // 1. 先筛选出所有匹配项，并计算得分
+        let scoredItems = allItems.compactMap { item -> (item: OVideoItem, score: Int)? in
+            var score = 0
+            
+            // 名字匹配权重最高 (3分)
+            if item.name.lowercased().contains(kw) { score += 3 }
+            
+            // 导演或演员匹配 (2分)
+            if (item.director?.lowercased().contains(kw) ?? false) { score += 2 }
+            if (item.cast?.contains(where: { $0.lowercased().contains(kw) }) ?? false) { score += 2 }
+            
+            // 简介匹配权重最低 (1分)
+            if (item.intro?.lowercased().contains(kw) ?? false) { score += 1 }
+            
+            return score > 0 ? (item, score) : nil
         }
+        
+        // 2. 按得分从高到低排序
+        return scoredItems.sorted { $0.score > $1.score }.map { $0.item }
     }
 }
 

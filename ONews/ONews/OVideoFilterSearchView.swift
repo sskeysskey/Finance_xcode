@@ -12,7 +12,7 @@ struct VideoFilterView: View {
     @State private var selectedYear: Int? = nil
     @State private var selectedRegion: String? = nil
     // --- 新增：排序状态，默认按时间 ---
-    @State private var selectedSort: VideoSortOption = .date
+    @State private var selectedSort: VideoSortOption = .update
     
     // --- 定义自定义排序规则 ---
     private let typeOrder = ["综艺", "动漫", "剧情", "动作", "科幻", "喜剧", "爱情", "恐怖", "犯罪", "惊悚", "悬疑", "西部", "古装", "纪录"]

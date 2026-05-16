@@ -243,7 +243,7 @@ struct VideoModuleView: View {
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
     // ⭐ 持久化排序状态
-    @AppStorage("OVideo_SortOption") private var sortOptionRaw: String = VideoSortOption.date.rawValue
+    @AppStorage("OVideo_SortOption") private var sortOptionRaw: String = VideoSortOption.update.rawValue
     @AppStorage("OVideo_SelectedCategoryIndex") private var selectedCategoryIndex: Int = 0
     
     // ⭐ 新增：持久化记录用户是否已经看过滑动引导
@@ -354,9 +354,10 @@ struct CategoryVideoListView: View {
     @ObservedObject var dataManager: OVideoDataManager
     
     var body: some View {
-        // 直接计算，不再使用 @State 缓存，避免 UIPageViewController 缓存的
-        // UIHostingController 脱离视图层级时，onChange 不触发导致的数据错乱
-        let sortedItems = dataManager.sortItems(category.items, by: sortOption)
+        // ⭐ 用 category.name 做 cacheKey，避免重复排序
+        let sortedItems = dataManager.sortItems(category.items,
+                                                by: sortOption,
+                                                cacheKey: category.name)
         
         ScrollView {
             WaterfallGridView(items: sortedItems)
@@ -399,19 +400,26 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
 
     func updateUIViewController(_ pageViewController: UIPageViewController, context: Context) {
         context.coordinator.parent = self
-        
         guard !categories.isEmpty else { return }
-
-        // 1. 同步更新所有已缓存视图（排序方式或分类数据变化）
-        for (index, vc) in context.coordinator.controllers where index < categories.count {
-            vc.rootView = CategoryVideoListView(
-                category: categories[index],
-                sortOption: sortOption,
-                dataManager: dataManager
-            )
+        
+        // ⭐ 只有 sortOption 或 categories 真正改变时，才重置已缓存视图的 rootView
+        let signature = categories.map { "\($0.name):\($0.items.count)" }.joined(separator: ",")
+        let sortChanged = context.coordinator.lastSortOption != sortOption
+        let dataChanged = context.coordinator.lastCategoriesSignature != signature
+        
+        if sortChanged || dataChanged {
+            for (index, vc) in context.coordinator.controllers where index < categories.count {
+                vc.rootView = CategoryVideoListView(
+                    category: categories[index],
+                    sortOption: sortOption,
+                    dataManager: dataManager
+                )
+            }
+            context.coordinator.lastSortOption = sortOption
+            context.coordinator.lastCategoriesSignature = signature
         }
-
-        // 2. 处理外部索引改变（点击顶部菜单切换频道）
+        
+        // ⭐ 处理外部索引改变（点击顶部菜单切换频道）—— 保持原逻辑
         let safeTarget = min(max(0, selectedIndex), categories.count - 1)
         if context.coordinator.currentIndex != safeTarget {
             let count = categories.count
@@ -419,10 +427,8 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
             var diff = safeTarget - current
             if diff > count / 2 { diff -= count }
             else if diff < -count / 2 { diff += count }
-
             let direction: UIPageViewController.NavigationDirection = diff >= 0 ? .forward : .reverse
             let vc = context.coordinator.viewController(for: safeTarget)
-            
             pageViewController.setViewControllers([vc], direction: direction, animated: true)
             context.coordinator.currentIndex = safeTarget
         }
@@ -433,6 +439,10 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
         var currentIndex: Int
         var controllers = [Int: UIHostingController<CategoryVideoListView>]()
 
+        // ⭐ 新增：记住上一次的 sortOption 和 categories 标识
+        var lastSortOption: VideoSortOption?
+        var lastCategoriesSignature: String = ""
+
         init(_ parent: InfinitePageViewController) {
             self.parent = parent
             self.currentIndex = parent.selectedIndex
@@ -440,13 +450,7 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
 
         func viewController(for index: Int) -> UIViewController {
             if let cached = controllers[index] {
-                // 确保缓存里的 rootView 也是最新的 sortOption
-                cached.rootView = CategoryVideoListView(
-                    category: parent.categories[index],
-                    sortOption: parent.sortOption,
-                    dataManager: parent.dataManager
-                )
-                return cached
+                return cached    // ⭐ 直接返回，不再重新赋值 rootView
             }
             let view = CategoryVideoListView(
                 category: parent.categories[index],
