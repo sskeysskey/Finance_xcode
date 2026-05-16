@@ -246,6 +246,9 @@ struct VideoModuleView: View {
     @AppStorage("OVideo_SortOption") private var sortOptionRaw: String = VideoSortOption.date.rawValue
     @AppStorage("OVideo_SelectedCategoryIndex") private var selectedCategoryIndex: Int = 0
     
+    // ⭐ 新增：持久化记录用户是否已经看过滑动引导
+    @AppStorage("hasSeenVideoSwipeGuide") private var hasSeenVideoSwipeGuide = false
+    
     private var sortBinding: Binding<VideoSortOption> {
         Binding(
             get: { VideoSortOption(rawValue: sortOptionRaw) ?? .date },
@@ -268,6 +271,13 @@ struct VideoModuleView: View {
                 .padding(.bottom, 60)
             
             VideoBottomBar(dataManager: dataManager)
+            
+            // ⭐ 新增：如果还没看过引导，则显示新手引导遮罩
+            if !hasSeenVideoSwipeGuide {
+                VideoSwipeGuideView(hasSeenGuide: $hasSeenVideoSwipeGuide)
+                    .zIndex(1) // 确保引导视图在最上层，遮挡住底部栏和导航栏
+                    .transition(.opacity) // 消失时带有淡出效果
+            }
         }
         // 【说明】这里仍然保留 task，作为兜底。如果预加载已完成，loadVideosIfNeeded 内部应该会立即返回不重复加载
         .task { await dataManager.loadVideosIfNeeded() }
@@ -624,5 +634,64 @@ struct VideoBrowseView: View {
             .background(Color.blue).foregroundColor(.white).cornerRadius(16)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - 新手引导视图
+struct VideoSwipeGuideView: View {
+    @Binding var hasSeenGuide: Bool
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    
+    // 用于控制手势图标的左右滑动动画
+    @State private var iconOffset: CGFloat = 40
+
+    var body: some View {
+        ZStack {
+            // 半透明黑色背景，遮盖底层内容
+            Color.black.opacity(0.75)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 30) {
+                // 动态滑动手势图标
+                Image(systemName: "hand.draw.fill")
+                    .font(.system(size: 65))
+                    .foregroundColor(.white)
+                    .offset(x: iconOffset)
+                    .onAppear {
+                        // 视图出现时，执行循环的左右平移动画
+                        withAnimation(Animation.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                            iconOffset = -40
+                        }
+                    }
+                
+                // 提示文字
+                VStack(spacing: 12) {
+                    Text(isGlobalEnglishMode ? "Swipe to switch channels" : "左右滑动切换频道")
+                        .font(.title2.bold())
+                        .foregroundColor(.white)
+                    
+                    Text(isGlobalEnglishMode ? "Movies / Dramas / Shows / Anime" : "电影 / 电视剧 / 综艺 / 动漫")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.8))
+                }
+                
+                // “知道了”按钮
+                Button {
+                    // 点击后更新状态，配合 withAnimation 让视图淡出
+                    withAnimation(.easeInOut) {
+                        hasSeenGuide = true
+                    }
+                } label: {
+                    Text(isGlobalEnglishMode ? "Got it" : "知道了")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 40)
+                        .padding(.vertical, 14)
+                        .background(Color.white)
+                        .clipShape(Capsule())
+                }
+                .padding(.top, 20)
+            }
+        }
     }
 }

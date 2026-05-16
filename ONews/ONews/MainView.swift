@@ -55,9 +55,9 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             }
         }
         
-        // 【新增】视频模块预加载：延迟 1.5 秒后在后台预加载，避免抢占新闻模块首屏资源
+        // 【新增】视频模块预加载：延迟 0.01 秒后在后台预加载，避免抢占新闻模块首屏资源
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_500_000_000) // 等新闻先加载完
+            try? await Task.sleep(nanoseconds: 10_000_000) // 等新闻先加载完
             guard let self = self else { return }
             print("📺 [预加载] 开始后台预加载视频模块数据...")
             await self.videoDataManager.loadVideosIfNeeded()
