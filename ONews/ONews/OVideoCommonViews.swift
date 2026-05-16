@@ -119,27 +119,30 @@ struct VideoCardView: View {
                 .overlay(
                     ZStack(alignment: .bottomTrailing) {
                         coverImage
-                        if let info = item.info, !info.isEmpty {
-                            Text(info)
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 6).padding(.vertical, 3)
-                                .background(Capsule().fill(Color.black.opacity(0.65)))
-                                .padding(6)
-                        }
+                        // 评分：左上角
                         if item.bestRating > 0 {
                             VStack {
                                 HStack {
                                     Text(String(format: "%.1f", item.bestRating))
                                         .font(.system(size: 11, weight: .bold))
                                         .foregroundColor(.white)
-                                        .padding(.horizontal, 5).padding(.vertical, 2)
+                                        .padding(.horizontal, 10).padding(.vertical, 3)
                                         .background(Capsule().fill(Color.orange.opacity(0.9)))
-                                        .padding(6)
+                                        .padding(12) // 关键：增加 Padding，让它远离边缘
                                     Spacer()
                                 }
                                 Spacer()
                             }
+                        }
+                        
+                        // 信息：右下角
+                        if let info = item.info, !info.isEmpty {
+                            Text(info)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 10).padding(.vertical, 3)
+                                .background(Capsule().fill(Color.black.opacity(0.65)))
+                                .padding(12) // 关键：增加 Padding，让它远离边缘
                         }
                     }
                 )
