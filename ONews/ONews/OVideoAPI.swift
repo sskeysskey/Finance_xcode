@@ -466,3 +466,44 @@ class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDelegate {
         }
     }
 }
+
+// MARK: - 搜索历史管理器
+@MainActor
+final class SearchHistoryManager: ObservableObject {
+    @Published private(set) var histories: [String] = []
+    
+    private let storageKey = "ONews_VideoSearchHistory"
+    private let maxCount = 20
+    
+    init() { load() }
+    
+    /// 添加一条记录（已存在则置顶；空字符串忽略）
+    func add(_ keyword: String) {
+        let kw = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !kw.isEmpty else { return }
+        histories.removeAll { $0.caseInsensitiveCompare(kw) == .orderedSame }
+        histories.insert(kw, at: 0)
+        if histories.count > maxCount {
+            histories = Array(histories.prefix(maxCount))
+        }
+        save()
+    }
+    
+    func remove(_ keyword: String) {
+        histories.removeAll { $0 == keyword }
+        save()
+    }
+    
+    func clearAll() {
+        histories.removeAll()
+        save()
+    }
+    
+    private func save() {
+        UserDefaults.standard.set(histories, forKey: storageKey)
+    }
+    
+    private func load() {
+        histories = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
+    }
+}

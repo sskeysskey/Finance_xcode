@@ -191,15 +191,21 @@ struct VideoFilterView: View {
 // MARK: - 搜索 Tab
 struct VideoSearchTabView: View {
     @ObservedObject var dataManager: OVideoDataManager
+    @StateObject private var historyManager = SearchHistoryManager()
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
     @State private var keyword: String = ""
     @FocusState private var focused: Bool
     
+    private var trimmedKeyword: String {
+        keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
     private var results: [OVideoItem] { dataManager.search(keyword: keyword) }
     
     var body: some View {
         VStack(spacing: 0) {
+            // 搜索框
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundColor(.secondary)
                 TextField(isGlobalEnglishMode
@@ -209,6 +215,7 @@ struct VideoSearchTabView: View {
                     .focused($focused)
                     .submitLabel(.search)
                     .autocorrectionDisabled()
+                    .onSubmit { commitSearch() }
                 if !keyword.isEmpty {
                     Button { keyword = "" } label: {
                         Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
@@ -222,9 +229,14 @@ struct VideoSearchTabView: View {
             .padding(.top, 10)
             .padding(.bottom, 4)
             
-            if keyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                hintView(icon: "magnifyingglass",
-                         text: isGlobalEnglishMode ? "Type to search" : "输入关键词开始搜索")
+            // 内容区
+            if trimmedKeyword.isEmpty {
+                if historyManager.histories.isEmpty {
+                    hintView(icon: "magnifyingglass",
+                             text: isGlobalEnglishMode ? "Type to search" : "输入关键词开始搜索")
+                } else {
+                    historyView
+                }
             } else if results.isEmpty {
                 hintView(icon: "tray",
                          text: isGlobalEnglishMode ? "No results" : "暂无搜索结果")
@@ -235,11 +247,88 @@ struct VideoSearchTabView: View {
                         .padding(.bottom, 20)
                 }
                 .background(Color(UIColor.systemGroupedBackground))
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        // 用户在结果区域里点了某一项 → 记录当前关键词
+                        historyManager.add(trimmedKeyword)
+                    }
+                )
             }
         }
         .navigationTitle(isGlobalEnglishMode ? "Search" : "搜索")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { focused = true }
+    }
+    
+    // MARK: - Actions
+    private func commitSearch() {
+        historyManager.add(trimmedKeyword)
+        focused = false
+    }
+    
+    // MARK: - 历史视图
+    private var historyView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text(isGlobalEnglishMode ? "Recent Searches" : "搜索历史")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button {
+                        withAnimation { historyManager.clearAll() }
+                    } label: {
+                        Label(isGlobalEnglishMode ? "Clear" : "清空",
+                              systemImage: "trash")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                
+                FlowLayout(spacing: 8) {
+                    ForEach(historyManager.histories, id: \.self) { kw in
+                        historyChip(kw)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 20)
+            }
+        }
+        .background(Color(UIColor.systemGroupedBackground))
+    }
+    
+    private func historyChip(_ kw: String) -> some View {
+        HStack(spacing: 4) {
+            // 关键词主体（点击 = 重新搜索 + 置顶）
+            Text(kw)
+                .font(.system(size: 13))
+                .lineLimit(1)
+                .foregroundColor(.primary)
+                .padding(.leading, 12)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    keyword = kw
+                    historyManager.add(kw)   // 置顶
+                    focused = false
+                }
+            
+            // 单独的 ✕（点击 = 删除这一条）
+            Button {
+                withAnimation { historyManager.remove(kw) }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .padding(6)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 4)
+        }
+        .background(Capsule().fill(Color.secondary.opacity(0.12)))
     }
     
     private func hintView(icon: String, text: String) -> some View {
@@ -249,5 +338,56 @@ struct VideoSearchTabView: View {
             Text(text).foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - 自适应换行布局（用于历史 chip）
+// 需要 iOS 16+
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+    
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+        
+        for sub in subviews {
+            let size = sub.sizeThatFits(.unspecified)
+            if rowWidth + size.width > maxWidth, rowWidth > 0 {
+                totalHeight += rowHeight + spacing
+                totalWidth = max(totalWidth, rowWidth - spacing)
+                rowWidth = 0
+                rowHeight = 0
+            }
+            rowWidth += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        totalHeight += rowHeight
+        totalWidth = max(totalWidth, rowWidth - spacing)
+        return CGSize(width: maxWidth.isFinite ? maxWidth : totalWidth,
+                      height: totalHeight)
+    }
+    
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
+                       subviews: Subviews, cache: inout ()) {
+        var x: CGFloat = bounds.minX
+        var y: CGFloat = bounds.minY
+        var rowHeight: CGFloat = 0
+        
+        for sub in subviews {
+            let size = sub.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, x > bounds.minX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            sub.place(at: CGPoint(x: x, y: y),
+                      anchor: .topLeading,
+                      proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }
