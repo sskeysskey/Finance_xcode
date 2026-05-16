@@ -84,8 +84,11 @@ struct OVideoItem: Codable, Identifiable, Hashable {
     let ratings: [String: String]?
     let playlist: [OVideoChannel]
     
+    // 【新增】添加 update 字段
+    let update: String?
+    
     enum CodingKeys: String, CodingKey {
-        case time, name, url, info, image, date, alias, intro, playlist
+        case time, name, url, info, image, date, alias, intro, playlist, update // 【新增】添加 update
         case director = "导演"
         case writers  = "编剧"
         case cast     = "主演"
@@ -132,6 +135,17 @@ extension OVideoItem {
     var bestRating: Double {
         guard let r = ratings else { return 0 }
         return r.values.compactMap { Double($0) }.max() ?? 0
+    }
+
+    // 新增：演员拆分逻辑
+    var starringCast: [String] {
+        guard let cast = cast else { return [] }
+        return Array(cast.prefix(2))
+    }
+    
+    var otherCast: [String] {
+        guard let cast = cast, cast.count > 3 else { return [] }
+        return Array(cast.dropFirst(2))
     }
 
     // 这里定义你的归类逻辑

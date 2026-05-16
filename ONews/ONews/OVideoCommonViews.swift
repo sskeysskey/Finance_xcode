@@ -281,7 +281,6 @@ struct VideoModuleView: View {
         }
         // 【说明】这里仍然保留 task，作为兜底。如果预加载已完成，loadVideosIfNeeded 内部应该会立即返回不重复加载
         .task { await dataManager.loadVideosIfNeeded() }
-        .refreshable { await dataManager.loadVideos() }
     }
 }
 
@@ -365,10 +364,6 @@ struct CategoryVideoListView: View {
                 .padding(.bottom, 20)
         }
         .background(Color(UIColor.systemGroupedBackground))
-        // ⭐️ 核心修复：将下拉刷新移到 UIHostingController 内部的 ScrollView 上
-        .refreshable {
-            await dataManager.loadVideos()
-        }
     }
 }
 

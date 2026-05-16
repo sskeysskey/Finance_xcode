@@ -13,16 +13,21 @@ struct VideoDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 headerSection
-                if let cast = item.cast, !cast.isEmpty {
-                    sectionBlock(title: isGlobalEnglishMode ? "Cast" : "主演",
-                                 content: cast.joined(separator: " / "))
+                
+                // 需求1：将播放列表整块放到图片下方原来'主演'的位置
+                playlistSection
+                
+                // 需求2：其他演员（如果超过3个）
+                if !item.otherCast.isEmpty {
+                    sectionBlock(title: isGlobalEnglishMode ? "Other Cast" : "其他演员",
+                                 content: item.otherCast.joined(separator: " / "))
                 }
-                auxInfoSection
+                
+                // 简介
                 if let intro = item.intro, !intro.isEmpty {
                     sectionBlock(title: isGlobalEnglishMode ? "Synopsis" : "简介", content: intro)
                 }
-                Divider().padding(.horizontal, 16)
-                playlistSection
+                
                 Spacer(minLength: 30)
             }
         }
@@ -52,20 +57,40 @@ struct VideoDetailView: View {
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(.primary).lineLimit(2)
                 
+                // 导演
                 if let director = item.director, !director.isEmpty {
                     infoRow(label: isGlobalEnglishMode ? "Director" : "导演", value: director)
                 }
+                
+                // 需求2：领衔主演 (前3个)
+                if !item.starringCast.isEmpty {
+                    infoRow(label: isGlobalEnglishMode ? "Starring" : "主演",
+                            value: item.starringCast.joined(separator: "、"))
+                }
+                
+                // 编剧
                 if let writers = item.writers, !writers.isEmpty {
                     infoRow(label: isGlobalEnglishMode ? "Writers" : "编剧",
                             value: writers.joined(separator: "、"))
                 }
+                
+                // 类型
                 if let types = item.types, !types.isEmpty {
                     infoRow(label: isGlobalEnglishMode ? "Genre" : "类型",
                             value: types.joined(separator: "、"))
                 }
+                
+                // 地区
                 if let region = item.region, !region.isEmpty {
                     infoRow(label: isGlobalEnglishMode ? "Region" : "地区", value: region)
                 }
+                
+                // 需求3：上映日期 (放到地区下方，评分上方)
+                if let date = item.date, !date.isEmpty {
+                    infoRow(label: isGlobalEnglishMode ? "Release" : "上映日期", value: date)
+                }
+                
+                // 评分
                 if let ratings = item.ratings, !ratings.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(ratings.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
@@ -104,6 +129,7 @@ struct VideoDetailView: View {
                     .foregroundColor(.secondary).padding(.horizontal, 16)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
+                    Divider().padding(.horizontal, 16) // 添加分割线增加层次感
                     Text(isGlobalEnglishMode ? "Sources" : "播放列表")
                         .font(.system(size: 16, weight: .bold))
                         .padding(.horizontal, 16)
@@ -162,7 +188,7 @@ struct VideoDetailView: View {
     private func infoRow(label: String, value: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Text("\(label):").font(.system(size: 12)).foregroundColor(.secondary)
-            Text(value).font(.system(size: 12)).foregroundColor(.primary).lineLimit(2)
+            Text(value).font(.system(size: 12)).foregroundColor(.primary).fixedSize(horizontal: false, vertical: true)
         }
     }
     
