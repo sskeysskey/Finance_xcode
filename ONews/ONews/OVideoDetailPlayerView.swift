@@ -2,6 +2,21 @@
 // 详情、播放、缓存管理
 
 import SwiftUI
+import AVKit
+
+// MARK: - 播放器封装
+struct VideoPlayerView: UIViewControllerRepresentable {
+    let videoURL: URL
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        let player = AVPlayer(url: videoURL)
+        controller.player = player
+        controller.allowsPictureInPicturePlayback = true
+        player.play()
+        return controller
+    }
+    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
+}
 
 // MARK: - 视频详情页
 struct VideoDetailView: View {
@@ -31,7 +46,11 @@ struct VideoDetailView: View {
                 Spacer(minLength: 30)
             }
         }
-        .navigationTitle(item.name)
+        .navigationTitle(
+            (item.info != nil && !item.info!.isEmpty) 
+            ? "\(item.name) · \(item.info!)" 
+            : item.name
+        )
         .navigationBarTitleDisplayMode(.inline)
     }
     
@@ -52,11 +71,7 @@ struct VideoDetailView: View {
             }
             .frame(width: 120, height: 170).clipped().cornerRadius(10)
             
-            VStack(alignment: .leading, spacing: 6) {
-                Text(item.name)
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(.primary).lineLimit(2)
-                
+            VStack(alignment: .leading, spacing: 6) {                
                 // 导演
                 if let director = item.director, !director.isEmpty {
                     infoRow(label: isGlobalEnglishMode ? "Director" : "导演", value: director)

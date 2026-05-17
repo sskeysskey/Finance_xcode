@@ -2,21 +2,6 @@
 // VideoModuleView、VideoBottomBar、VideoBrowseView
 
 import SwiftUI
-import AVKit
-
-// MARK: - 播放器封装
-struct VideoPlayerView: UIViewControllerRepresentable {
-    let videoURL: URL
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController()
-        let player = AVPlayer(url: videoURL)
-        controller.player = player
-        controller.allowsPictureInPicturePlayback = true
-        player.play()
-        return controller
-    }
-    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
-}
 
 // MARK: - 简易图片内存缓存
 final class OImageCache {
