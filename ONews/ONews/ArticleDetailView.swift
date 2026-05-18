@@ -112,6 +112,7 @@ struct ArticleDetailView: View {
     @State private var cachedDistributeEvenly: Bool = false
     // 【新增】标记内容是否准备就绪，防止闪烁
     @State private var isContentReady = false
+    @State private var prepareTask: Task<Void, Never>? = nil
 
     // 【修改】控制自定义分享菜单
     @State private var showCustomShareSheet = false
@@ -179,7 +180,8 @@ struct ArticleDetailView: View {
             ScrollView {
                 // 【优化 1】使用 LazyVStack 替代 VStack
                 // 这使得只有进入屏幕的段落和图片才会被渲染，极大减少长文章的内存占用和卡顿
-                LazyVStack(alignment: .leading, spacing: 16) {
+                // LazyVStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 16) {
                     
                     // 头部信息区域
                     VStack(alignment: .leading, spacing: 8) {
@@ -318,9 +320,11 @@ struct ArticleDetailView: View {
             }
             .coordinateSpace(name: "Scroll") // 【新增】命名空间
             .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
-                // 当标题的 minY 小于 0 时，说明标题已经滑出屏幕顶部
+                let shouldBeVisible = value > 0
+                // 只有真的变化时才触发动画
+                guard shouldBeVisible != isTitleVisible else { return }
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    isTitleVisible = value > 0
+                    isTitleVisible = shouldBeVisible
                 }
             }
 
@@ -498,12 +502,18 @@ struct ArticleDetailView: View {
     
     // 【优化 2】将耗时的文本处理移至后台线程，富文本构建保留在主线程（适配 Swift 6 并发安全）
     private func prepareContent() {
+        // 取消上一个任务
+        prepareTask?.cancel()
+
         let currentArticle = self.article
         let currentMode = self.isEnglishMode
         let currentBodyFontSize = CGFloat(self.articleBodyFontSize)
 
         // 使用 Task.detached 将纯文本处理移出主线程
-        Task.detached(priority: .userInitiated) {
+        prepareTask = Task.detached(priority: .userInitiated) {
+            // 关键检查点
+            if Task.isCancelled { return }
+
             // 1. 选择文本源
             let contentToParse: String
             if currentMode, let contentEng = currentArticle.article_eng, !contentEng.isEmpty {
@@ -517,6 +527,8 @@ struct ArticleDetailView: View {
                 .components(separatedBy: .newlines)
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
+            if Task.isCancelled { return }
+
             // 3. 图片分布逻辑 (后台执行)
             let imgs = Array(currentArticle.images.dropFirst())
             let distribute = !imgs.isEmpty && imgs.count < paras.count
@@ -524,6 +536,7 @@ struct ArticleDetailView: View {
 
             // 4. 回到主线程构建 NSAttributedString 并更新 UI
             await MainActor.run {
+                guard !Task.isCancelled else { return }
                 guard self.article.id == currentArticle.id else { return }
                 
                 // ⭐ 在主线程访问 UIKit 属性并生成 NSAttributedString，解决 Swift 6 报错
@@ -589,6 +602,14 @@ struct ArticleDetailView: View {
 struct NativeParagraphView: UIViewRepresentable {
     let attributedText: NSAttributedString
 
+    // 【新增】用 Coordinator 缓存上一次的尺寸
+    class Coordinator {
+        var lastWidth: CGFloat = -1
+        var lastHeight: CGFloat = -1
+        var lastTextHash: Int = 0
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     // 公开静态资源，供 prepareContent() 在后台线程复用
     static let paragraphFont: UIFont = {
         if let font = UIFont(name: "NewYork-Regular", size: 25) {
@@ -641,6 +662,12 @@ struct NativeParagraphView: UIViewRepresentable {
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
+        // 优先比引用，再比长度，最后才比内容
+        if tv.attributedText !== attributedText 
+        && tv.attributedText.length != attributedText.length {
+            tv.attributedText = attributedText
+            return
+        }
         // 直接赋值预建好的 NSAttributedString，主线程零开销
         // 仅当内容确实变化时才重新赋值
         if tv.attributedText != attributedText {
@@ -657,8 +684,21 @@ struct NativeParagraphView: UIViewRepresentable {
     ) -> CGSize? {
         // 【修改】增加 width > 10 的判断，防止由于非预期的极小宽度触发无限布局循环
         guard let width = proposal.width, width > 10, width < .infinity else { return nil }
+        
+        let textHash = attributedText.hashValue
+        // 宽度和文本都没变 → 直接返回缓存，避免 UITextView 重新排版
+        if abs(context.coordinator.lastWidth - width) < 0.5 
+           && context.coordinator.lastTextHash == textHash 
+           && context.coordinator.lastHeight > 0 {
+            return CGSize(width: width, height: context.coordinator.lastHeight)
+        }
+        
         let size = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        return CGSize(width: width, height: ceil(size.height))
+        let h = ceil(size.height)
+        context.coordinator.lastWidth = width
+        context.coordinator.lastHeight = h
+        context.coordinator.lastTextHash = textHash
+        return CGSize(width: width, height: h)
     }
 }
 

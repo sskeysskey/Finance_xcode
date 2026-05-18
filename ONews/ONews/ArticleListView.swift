@@ -46,6 +46,8 @@ struct ArticleListContent: View {
     // 【新增】
     let showEnglish: Bool 
     let onToggleTimestamp: (String) -> Void
+    // 【新增】播放回调
+    let onPlayTimestamp: (String) -> Void 
     let onArticleTap: (ArticleItem) async -> Void
     
     var groupedArticles: [String: [ArticleItem]] {
@@ -89,7 +91,9 @@ struct ArticleListContent: View {
                     count: groupedArticles[timestamp]?.count ?? 0,
                     isExpanded: expandedTimestamps.contains(timestamp),
                     isLocked: isLocked, // 传递锁定状态
-                    onToggle: { onToggleTimestamp(timestamp) }
+                    onToggle: { onToggleTimestamp(timestamp) },
+                    // 【新增】传递播放回调
+                    onPlay: { onPlayTimestamp(timestamp) }
                 )
             }
         }
@@ -291,6 +295,8 @@ struct TimestampHeader: View {
     let isExpanded: Bool
     let isLocked: Bool
     let onToggle: () -> Void
+    // 【新增】播放回调
+    let onPlay: () -> Void
 
     // 定义一个渐变色，让日期看起来更有质感（蓝紫色系）
     private let dateGradient = LinearGradient(
@@ -316,7 +322,7 @@ struct TimestampHeader: View {
     
     var body: some View {
         Button(action: {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) { // 更Q弹的动画
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
                 onToggle()
             }
         }) {
@@ -329,12 +335,28 @@ struct TimestampHeader: View {
 
                 // 2. 日期文字 (带渐变效果)
                 Text(formatTimestamp(timestamp))
-                    .font(.system(size: 18, weight: .heavy, design: .rounded)) // 更粗的字体
+                    .font(.system(size: 18, weight: .heavy, design: .rounded))
                     .foregroundStyle(isExpanded ? AnyShapeStyle(dateGradient) : AnyShapeStyle(Color.primary.opacity(0.8)))
                     .padding(.leading, 12)
                     .fixedSize(horizontal: true, vertical: false) // 保持你要求的不换行
 
                 Spacer()
+
+                // 【新增】播放按钮 (仅在有文章时显示)
+                if count > 0 {
+                    Button(action: {
+                        // 阻止事件冒泡到父级 Button
+                        onPlay()
+                    }) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.blue)
+                            .padding(8)
+                            .background(Circle().fill(Color.blue.opacity(0.1)))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .padding(.trailing, 28)
+                }
 
                 // 3. 右侧信息区 (数量 + 锁 + 箭头)
                 HStack(spacing: 8) {
@@ -536,8 +558,10 @@ struct ArticleListView: View {
                                     viewModel: viewModel,
                                     authManager: authManager, // 传递
                                     // 【新增】传递状态
-                            showEnglish: isGlobalEnglishMode, 
-                                    onArticleTap: handleArticleTap
+                                    showEnglish: isGlobalEnglishMode, 
+                                    onArticleTap: { item in 
+                                        await handleArticleTap(item, autoPlay: false) 
+                                    }
                                 )
                             } else {
                                 ArticleListContent(
@@ -550,7 +574,17 @@ struct ArticleListView: View {
                                     onToggleTimestamp: { timestamp in
                                         viewModel.toggleTimestampExpansion(for: sourceName, timestamp: timestamp)
                                     },
-                                    onArticleTap: handleArticleTap
+                                    // 【新增】播放逻辑
+                                    onPlayTimestamp: { timestamp in
+                                        // 找到该组的第一篇文章
+                                        if let firstItem = baseFilteredArticles.first(where: { $0.article.timestamp == timestamp }) {
+                                            // 【修改】这里传入 true
+                                            Task { await handleArticleTap(firstItem, autoPlay: true) } 
+                                        }
+                                    },
+                                    onArticleTap: { item in 
+                                        await handleArticleTap(item, autoPlay: false) 
+                                    }
                                 )
                             }
                         }
@@ -736,7 +770,7 @@ struct ArticleListView: View {
         }
     }
     
-    private func handleArticleTap(_ item: ArticleItem) async {
+    private func handleArticleTap(_ item: ArticleItem, autoPlay: Bool = false) async {
         let article = item.article
         
         // 1. 订阅检查
@@ -748,7 +782,7 @@ struct ArticleListView: View {
         // 【修改】使用全局 navPath 进行跳转
         let proceedToArticle = {
             await MainActor.run {
-                appNavPath?.wrappedValue.append(NavigationTarget.articleDetail(article, self.sourceName, "source", false))
+                appNavPath?.wrappedValue.append(NavigationTarget.articleDetail(article, self.sourceName, "source", autoPlay))
             }
         }
         
@@ -978,7 +1012,9 @@ struct AllArticlesListView: View {
                             authManager: authManager, // 传递
                             // 【新增】传递状态
                             showEnglish: isGlobalEnglishMode,
-                            onArticleTap: handleArticleTap
+                            onArticleTap: { item in 
+                                await handleArticleTap(item, autoPlay: false) 
+                            }
                         )
                     } else {
                         ArticleListContent(
@@ -992,7 +1028,17 @@ struct AllArticlesListView: View {
                             onToggleTimestamp: { timestamp in
                                 viewModel.toggleTimestampExpansion(for: viewModel.allArticlesKey, timestamp: timestamp)
                             },
-                            onArticleTap: handleArticleTap
+                            // 【新增】播放逻辑
+                            onPlayTimestamp: { timestamp in
+                                // 找到该组的第一篇文章
+                                if let firstItem = baseFilteredArticles.first(where: { $0.article.timestamp == timestamp }) {
+                                    // 【修改】这里传入 true
+                                    Task { await handleArticleTap(firstItem, autoPlay: true) }
+                                }
+                            },
+                            onArticleTap: { item in 
+                                await handleArticleTap(item, autoPlay: false) 
+                            }
                         )
                     }
                 }
@@ -1173,7 +1219,7 @@ struct AllArticlesListView: View {
         }
     }
     
-    private func handleArticleTap(_ item: ArticleItem) async {
+    private func handleArticleTap(_ item: ArticleItem, autoPlay: Bool = false) async {
         let article = item.article
         guard let sourceName = item.sourceName else { return }
         
@@ -1186,7 +1232,7 @@ struct AllArticlesListView: View {
         // 【修改】使用全局 navPath 进行跳转
         let proceedToArticle = {
             await MainActor.run {
-                appNavPath?.wrappedValue.append(NavigationTarget.articleDetail(article, sourceName, "all", false))
+                appNavPath?.wrappedValue.append(NavigationTarget.articleDetail(article, sourceName, "all", autoPlay))
             }
         }
         

@@ -18,26 +18,25 @@ struct ShortcutConfig: Codable {
     let message: String?
 }
 
-@main
 class AppDelegate: NSObject, NSApplicationDelegate {
-
-    // 保持对 HotKey 对象的引用，否则它们会被释放导致快捷键失效
-    var hotKeys: [HotKey] = []
     
-    // --- 新增：状态栏图标对象 ---
     var statusItem: NSStatusItem?
+    var hotKeys: [HotKey] = []
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
-        print("MyHammerspoon Started")
+        // 1. 确保在最前面设置策略
+        NSApp.setActivationPolicy(.accessory)
         
-        // --- 新增：初始化状态栏图标 ---
+        // 2. 初始化菜单栏
         setupMenuBar()
+        
+        // 3. 加载配置
         loadHotKeysConfig()
     }
     
     // MARK: - 状态栏设置
     func setupMenuBar() {
-        // 创建一个定长的状态栏项目
+        // 使用 length: -1 (NSStatusItem.variableLength) 是正确的
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
         // 设置图标 (这里用了系统自带的闪电图标，你可以换成其他的)
