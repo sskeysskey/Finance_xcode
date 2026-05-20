@@ -14,7 +14,16 @@ extension Color {
 // 【新增】第 1 步：创建一个 AppDelegate 类
 // 这个类将负责处理所有 App 级别的一次性启动任务。
 class AppDelegate: NSObject, UIApplicationDelegate {
-    // 【修改】将所有共享的 Manager 移动到 AppDelegate 中，由它来“拥有”这些实例。
+    // 📺 【新增】视频旋转锁定变量（默认仅支持竖屏）
+    static var orientationLock: UIInterfaceOrientationMask = .portrait
+    
+    // 【修改】实现此方法，让系统根据 orientationLock 的值动态返回支持的方向
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        return Self.orientationLock
+    }
+
+    // --- 以下为你原有的业务管理器和初始化逻辑，保持不变 ---
     let newsViewModel = NewsViewModel()
     let resourceManager = ResourceManager()
     let badgeManager = AppBadgeManager()

@@ -3,19 +3,221 @@
 
 import SwiftUI
 import AVKit
+import UIKit
 
-// MARK: - 播放器封装
 struct VideoPlayerView: UIViewControllerRepresentable {
     let videoURL: URL
+    @Binding var isBuffering: Bool   // 新增：暴露缓冲状态
+    
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let controller = AVPlayerViewController()
         let player = AVPlayer(url: videoURL)
+        // 让流播放更稳:
+        player.automaticallyWaitsToMinimizeStalling = true
+        
         controller.player = player
         controller.allowsPictureInPicturePlayback = true
+        controller.delegate = context.coordinator
+        controller.videoGravity = .resizeAspect
+        
+        context.coordinator.attach(player: player)
         player.play()
         return controller
     }
+    
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
+    
+    static func dismantleUIViewController(_ uiViewController: AVPlayerViewController,
+                                          coordinator: Coordinator) {
+        coordinator.detach()
+    }
+    
+    // MARK: - Coordinator
+    class Coordinator: NSObject, AVPlayerViewControllerDelegate {
+        let parent: VideoPlayerView
+        private var timeControlObs: NSKeyValueObservation?
+        private var keepUpObs: NSKeyValueObservation?
+        
+        init(_ parent: VideoPlayerView) { self.parent = parent }
+        
+        func attach(player: AVPlayer) {
+            // 1) 监听 timeControlStatus:.waitingToPlayAtSpecifiedRate 即缓冲中
+            timeControlObs = player.observe(\.timeControlStatus,
+                                             options: [.new, .initial]) { [weak self] p, _ in
+                DispatchQueue.main.async {
+                    let buffering = (p.timeControlStatus == .waitingToPlayAtSpecifiedRate)
+                    self?.parent.isBuffering = buffering
+                }
+            }
+            // 2) 双保险:监听当前 item 的 isPlaybackLikelyToKeepUp
+            if let item = player.currentItem {
+                keepUpObs = item.observe(\.isPlaybackLikelyToKeepUp,
+                                         options: [.new, .initial]) { [weak self] it, _ in
+                    DispatchQueue.main.async {
+                        if it.isPlaybackLikelyToKeepUp {
+                            self?.parent.isBuffering = false
+                        }
+                    }
+                }
+            }
+        }
+        
+        func detach() {
+            timeControlObs?.invalidate()
+            keepUpObs?.invalidate()
+        }
+        
+        // MARK: 全屏 → 横屏
+        func playerViewController(_ playerViewController: AVPlayerViewController,
+                                  willBeginFullScreenPresentationWithAnimationCoordinator
+                                  coordinator: UIViewControllerTransitionCoordinator) {
+            AppDelegate.orientationLock = .landscape
+            forceOrientation(.landscapeRight)
+        }
+        
+        func playerViewController(_ playerViewController: AVPlayerViewController,
+                                  willEndFullScreenPresentationWithAnimationCoordinator
+                                  coordinator: UIViewControllerTransitionCoordinator) {
+            AppDelegate.orientationLock = .portrait
+            forceOrientation(.portrait)
+        }
+        
+        private func forceOrientation(_ orientation: UIInterfaceOrientation) {
+            if #available(iOS 16.0, *) {
+                guard let scene = UIApplication.shared.connectedScenes
+                        .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
+                else { return }
+                let mask: UIInterfaceOrientationMask =
+                    orientation.isLandscape ? .landscape : .portrait
+                scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
+                scene.keyWindow?.rootViewController?
+                    .setNeedsUpdateOfSupportedInterfaceOrientations()
+            } else {
+                UIDevice.current.setValue(orientation.rawValue, forKey: "orientation")
+                UIViewController.attemptRotationToDeviceOrientation()
+            }
+        }
+    }
+}
+
+struct PlayerLoadingIndicator: View {
+    @State private var rotate = false
+    
+    var body: some View {
+        ZStack {
+            // 半透明黑色蒙层,提升对比度
+            Color.black.opacity(0.35).ignoresSafeArea()
+            
+            VStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.18), lineWidth: 3)
+                        .frame(width: 46, height: 46)
+                    
+                    Circle()
+                        .trim(from: 0, to: 0.28)
+                        .stroke(
+                            AngularGradient(
+                                gradient: Gradient(colors: [.white.opacity(0.0), .white]),
+                                center: .center
+                            ),
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                        )
+                        .frame(width: 46, height: 46)
+                        .rotationEffect(.degrees(rotate ? 360 : 0))
+                        .animation(.linear(duration: 0.9).repeatForever(autoreverses: false),
+                                   value: rotate)
+                }
+                Text("缓冲中…")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white.opacity(0.85))
+                    .shadow(radius: 2)
+            }
+        }
+        .onAppear { rotate = true }
+        .transition(.opacity)
+    }
+}
+
+struct CustomProgressBar: View {
+    @Binding var current: Double      // 0...1
+    let buffered: Double              // 0...1
+    let totalDuration: Double         // 秒
+    let onSeek: (Double) -> Void      // 0...1
+    
+    @State private var isDragging = false
+    @State private var dragValue: Double = 0
+    
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let display = isDragging ? dragValue : current
+            let trackH: CGFloat = isDragging ? 5 : 3
+            let thumbSize: CGFloat = isDragging ? 16 : 12
+            
+            ZStack(alignment: .leading) {
+                // 整体可点区域(高,易点中)
+                Color.clear.frame(height: 32)
+                
+                // Track 背景 - 起点也可见
+                Capsule()
+                    .fill(Color.white.opacity(0.25))
+                    .frame(width: w, height: trackH)
+                
+                // 缓冲层
+                Capsule()
+                    .fill(Color.white.opacity(0.45))
+                    .frame(width: w * CGFloat(buffered), height: trackH)
+                
+                // 已播放
+                Capsule()
+                    .fill(Color.accentColor)
+                    .frame(width: w * CGFloat(display), height: trackH)
+                
+                // Thumb
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: thumbSize, height: thumbSize)
+                    .shadow(color: .black.opacity(0.35), radius: 3, y: 1)
+                    .offset(x: w * CGFloat(display) - thumbSize / 2)
+                
+                // 时间气泡
+                if isDragging {
+                    Text(formatTime(dragValue * totalDuration))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Capsule().fill(Color.black.opacity(0.7)))
+                        .offset(x: max(0, min(w - 50, w * CGFloat(display) - 25)), y: -28)
+                }
+            }
+            .animation(.easeOut(duration: 0.18), value: isDragging)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        if !isDragging { isDragging = true; dragValue = current }
+                        let p = max(0, min(1, Double(v.location.x / w)))
+                        dragValue = p
+                    }
+                    .onEnded { _ in
+                        onSeek(dragValue)
+                        isDragging = false
+                    }
+            )
+        }
+        .frame(height: 32)
+    }
+    
+    private func formatTime(_ s: Double) -> String {
+        guard s.isFinite, s >= 0 else { return "00:00" }
+        let total = Int(s)
+        let h = total / 3600, m = (total % 3600) / 60, sec = total % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec)
+                     : String(format: "%02d:%02d", m, sec)
+    }
 }
 
 // MARK: - 视频详情页
@@ -29,10 +231,10 @@ struct VideoDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 headerSection
                 
-                // 需求1：将播放列表整块放到图片下方原来'主演'的位置
+                // 播放列表
                 playlistSection
                 
-                // 需求2：其他演员（如果超过3个）
+                // 其他演员
                 if !item.otherCast.isEmpty {
                     sectionBlock(title: isGlobalEnglishMode ? "Other Cast" : "其他演员",
                                  content: item.otherCast.joined(separator: " / "))
@@ -123,18 +325,6 @@ struct VideoDetailView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16).padding(.top, 12)
-    }
-    
-    private var auxInfoSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let date = item.date, !date.isEmpty {
-                Text(date).font(.system(size: 12)).foregroundColor(.secondary)
-            }
-            if let alias = item.alias, !alias.isEmpty {
-                Text(alias).font(.system(size: 12)).foregroundColor(.secondary)
-            }
-        }
-        .padding(.horizontal, 16)
     }
     
     private var playlistSection: some View {
@@ -231,6 +421,7 @@ struct VideoPlayerPageView: View {
     @State private var realURL: String? = nil
     @State private var isResolving = true
     @State private var resolveError: String? = nil
+    @State private var isBuffering = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -257,7 +448,10 @@ struct VideoPlayerPageView: View {
                     }
                 } else if let real = realURL {
                     let playURL = downloadManager.getLocalURL(for: real) ?? URL(string: real)!
-                    VideoPlayerView(videoURL: playURL)
+                    VideoPlayerView(videoURL: playURL, isBuffering: $isBuffering)
+                    if isBuffering {
+                        PlayerLoadingIndicator()
+                    }
                 }
             }
             .aspectRatio(16.0/9.0, contentMode: .fit)
@@ -510,9 +704,9 @@ struct CachedVideoPlayerView: View {
             ZStack {
                 Color.black
                 if let local = downloadManager.getLocalURL(for: realURL) {
-                    VideoPlayerView(videoURL: local)
+                    VideoPlayerView(videoURL: local, isBuffering: .constant(false))
                 } else if let url = URL(string: realURL) {
-                    VideoPlayerView(videoURL: url)
+                    VideoPlayerView(videoURL: url, isBuffering: .constant(false))
                 } else {
                     Text(isGlobalEnglishMode ? "Unable to play" : "无法播放")
                         .foregroundColor(.white)
