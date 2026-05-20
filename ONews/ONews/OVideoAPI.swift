@@ -249,27 +249,27 @@ extension OVideoItem {
 
 // 【修改】增加 update 选项，并修改 date 的显示文本
 enum VideoSortOption: String, CaseIterable {
-    case update, date, rating
+    case date, update, rating
     
     func displayName(_ en: Bool) -> String {
         switch self {
-        case .update: return en ? "By Last Updated" : "按更新日期"
         case .date:   return en ? "By Release Date" : "按上映日期"
+        case .update: return en ? "By Last Updated" : "按更新日期"
         case .rating: return en ? "By Rating" : "按评分"
         }
     }
     /// 简短名，用于 Toolbar 上的状态指示
     func shortName(_ en: Bool) -> String {
         switch self {
-        case .update: return en ? "Updated" : "更新"
         case .date:   return en ? "Release" : "上映"
+        case .update: return en ? "Updated" : "更新"
         case .rating: return en ? "Rating" : "评分"
         }
     }
     var icon: String {
         switch self {
-        case .update: return "clock"
         case .date:   return "calendar"
+        case .update: return "clock"
         case .rating: return "star.fill"
         }
     }

@@ -231,7 +231,7 @@ struct VideoModuleView: View {
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
     // ⭐ 持久化排序状态
-    @AppStorage("OVideo_SortOption") private var sortOptionRaw: String = VideoSortOption.update.rawValue
+    @AppStorage("OVideo_SortOption") private var sortOptionRaw: String = VideoSortOption.date.rawValue
     @AppStorage("OVideo_SelectedCategoryIndex") private var selectedCategoryIndex: Int = 0
     
     // ⭐ 新增：持久化记录用户是否已经看过滑动引导
