@@ -429,7 +429,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ONews/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "国外消息";
+				INFOPLIST_KEY_CFBundleDisplayName = Onews;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.news";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "需要将图片保存到相册";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -463,7 +463,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ONews/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "国外消息";
+				INFOPLIST_KEY_CFBundleDisplayName = Onews;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.news";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "需要将图片保存到相册";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
