@@ -349,18 +349,21 @@ class OVideoDataManager: ObservableObject {
         guard !kw.isEmpty else { return [] }
         
         // 1. 先筛选出所有匹配项，并计算得分
-        let scoredItems = allItems.compactMap { item -> (item: OVideoItem, score: Int)? in
-            var score = 0
+        let scoredItems = allItems.compactMap { item -> (item: OVideoItem, score: Double)? in
+            var score: Double = 0 // 将 score 改为 Double 类型以支持 2.5 权重
             
             // 名字匹配权重最高 (3分)
-            if item.name.lowercased().contains(kw) { score += 3 }
+            if item.name.lowercased().contains(kw) { score += 3.0 }
+            
+            // 【新增】别名匹配权重 (2.5分)
+            if let alias = item.alias, alias.lowercased().contains(kw) { score += 2.5 }
             
             // 导演或演员匹配 (2分)
-            if (item.director?.lowercased().contains(kw) ?? false) { score += 2 }
-            if (item.cast?.contains(where: { $0.lowercased().contains(kw) }) ?? false) { score += 2 }
+            if (item.director?.lowercased().contains(kw) ?? false) { score += 2.0 }
+            if (item.cast?.contains(where: { $0.lowercased().contains(kw) }) ?? false) { score += 2.0 }
             
             // 简介匹配权重最低 (1分)
-            if (item.intro?.lowercased().contains(kw) ?? false) { score += 1 }
+            if (item.intro?.lowercased().contains(kw) ?? false) { score += 1.0 }
             
             return score > 0 ? (item, score) : nil
         }
