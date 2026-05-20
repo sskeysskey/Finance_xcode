@@ -103,7 +103,20 @@ struct OVideoItem: Codable, Identifiable, Hashable {
 
 struct OVideoChannel: Codable, Hashable {
     let name: String
-    let episodes: [String]
+    // 【修改】从 [String] 改为 [String: String] 字典
+    let episodes: [String: String]
+    
+    // 【新增】辅助属性：对字典进行智能排序，返回有序的 (集数名, 播放URL) 数组
+    var sortedEpisodes: [(name: String, url: String)] {
+        episodes.sorted { (kv1, kv2) -> Bool in
+            // 尝试将 Key 转为数字进行升序排序（例如 "1", "2", "10"）
+            if let num1 = Int(kv1.key), let num2 = Int(kv2.key) {
+                return num1 < num2
+            }
+            // 如果不是纯数字，则按标准字典序排序（例如 "第1集" < "第2集" 或 "高清" < "超清"）
+            return kv1.key.localizedStandardCompare(kv2.key) == .orderedAscending
+        }.map { (name: $0.key, url: $0.value) }
+    }
 }
 
 struct OVideoResolveResponse: Codable {

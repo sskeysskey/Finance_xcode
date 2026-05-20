@@ -144,7 +144,7 @@ struct VideoDetailView: View {
                     .foregroundColor(.secondary).padding(.horizontal, 16)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    Divider().padding(.horizontal, 16) // 添加分割线增加层次感
+                    Divider().padding(.horizontal, 16)
                     Text(isGlobalEnglishMode ? "Sources" : "播放列表")
                         .font(.system(size: 16, weight: .bold))
                         .padding(.horizontal, 16)
@@ -172,17 +172,20 @@ struct VideoDetailView: View {
                     
                     if selectedChannelIndex < item.playlist.count {
                         let channel = item.playlist[selectedChannelIndex]
+                        // 【修改】改用排序后的有序 episodes 数组进行渲染
+                        let sortedEps = channel.sortedEpisodes
+                        
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 70), spacing: 10)],
                                   spacing: 10) {
-                            ForEach(Array(channel.episodes.enumerated()), id: \.offset) { epIdx, epURL in
+                            ForEach(sortedEps, id: \.url) { episode in
                                 NavigationLink(destination:
                                     VideoPlayerPageView(
-                                        episodeURL: epURL,
-                                        videoTitle: "\(item.name) · \(episodeLabel(index: epIdx, channel: channel))",
+                                        episodeURL: episode.url,
+                                        videoTitle: "\(item.name) · \(episode.name)", // 直接使用字典里的 Key 作为集数名
                                         coverImage: item.image
                                     )
                                 ) {
-                                    Text(episodeLabel(index: epIdx, channel: channel))
+                                    Text(episode.name) // 直接显示 "高清" 或 "第1集"
                                         .font(.system(size: 13, weight: .medium))
                                         .foregroundColor(.primary)
                                         .frame(maxWidth: .infinity)
@@ -213,11 +216,6 @@ struct VideoDetailView: View {
             Text(content).font(.system(size: 13)).foregroundColor(.primary).lineSpacing(2)
         }
         .padding(.horizontal, 16)
-    }
-    
-    private func episodeLabel(index: Int, channel: OVideoChannel) -> String {
-        if channel.episodes.count == 1 { return item.info ?? "HD" }
-        return isGlobalEnglishMode ? "EP \(index + 1)" : "第\(index + 1)集"
     }
 }
 
