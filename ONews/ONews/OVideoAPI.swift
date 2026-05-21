@@ -3,7 +3,6 @@
 // OVideoDataManager + HLSDownloadManager
 // 业务逻辑管理器
 
-import Foundation
 import SwiftUI
 
 // MARK: - 服务器地址
@@ -356,6 +355,12 @@ class OVideoDataManager: ObservableObject {
             
             // 【新增】别名匹配权重 (2.5分)
             if let alias = item.alias, alias.lowercased().contains(kw) { score += 2.5 }
+
+            // 【新增】类型匹配权重 (2.5分)
+            // 检查 types 数组中是否有任何一个元素包含关键词
+            if let types = item.types, types.contains(where: { $0.lowercased().contains(kw) }) { 
+                score += 2.5 
+            }
             
             // 导演或演员匹配 (2分)
             if (item.director?.lowercased().contains(kw) ?? false) { score += 2.0 }
