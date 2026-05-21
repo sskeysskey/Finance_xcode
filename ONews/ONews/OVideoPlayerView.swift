@@ -7,36 +7,39 @@ import UIKit
 import AVFoundation
 import Combine
 
-// MARK: - HLS 下载管理器
 final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDelegate {
     static let shared = HLSDownloadManager()
     private var downloadSession: AVAssetDownloadURLSession!
 
-    // 真实进度 (0...1)
     @Published var downloadProgress: [String: Double] = [:]
-    // 下载速度 (bytes / sec)
-    @Published var downloadSpeed: [String: Double] = [:]
-    // 暂停状态
-    @Published var isPaused: [String: Bool] = [:]
-    // 已完成后的本地书签
-    @Published var localBookmarks: [String: Data] = [:]
-    // 元数据
-    @Published var cacheMetadata: [String: VideoCacheMetadata] = [:]
+    @Published var downloadSpeed:    [String: Double] = [:]
+    @Published var isPaused:         [String: Bool]   = [:]
+    @Published var localBookmarks:   [String: Data]   = [:]
+    @Published var cacheMetadata:    [String: VideoCacheMetadata] = [:]
 
-    // 仅 Wi-Fi 下载（开关）
+    // ✨ 保留 a.swift 的速度兜底
+    private var lastNonZeroSpeed: [String: Double] = [:]
+    private var fakeSpeedCache:   [String: Double] = [:]
+
+    // ✨ 保留 a.swift 被取消的 URL 集合，避免 didFinishDownloadingTo 误存书签
+    private var cancelledUrls: Set<String> = []
+
     @Published var wifiOnly: Bool = UserDefaults.standard.object(forKey: "ONews_WiFiOnly") as? Bool ?? true {
         didSet { UserDefaults.standard.set(wifiOnly, forKey: "ONews_WiFiOnly") }
     }
 
-    private var activeTasks: [String: AVAssetDownloadTask] = [:]
-    private var lastBytes: [String: Int64] = [:]
-    private var lastSampleTime: [String: Date] = [:]
-    private var taskStartedAt: [String: Date] = [:]   // 用于"假快"启动判定
+    private var activeTasks:     [String: AVAssetDownloadTask] = [:]
+    private var lastBytes:       [String: Int64] = [:]
+    private var lastSampleTime:  [String: Date]  = [:]
+    private var taskStartedAt:   [String: Date]  = [:] // ✨ 移植 b.swift 假进度所需的启动时间
 
-    private let bookmarksKey = "ONews_SavedHLSBookmarks"
-    private let metadataKey  = "ONews_VideoCacheMetadata"
+    private let bookmarksKey         = "ONews_SavedHLSBookmarks"
+    private let metadataKey          = "ONews_VideoCacheMetadata"
+    private let progressKey          = "ONews_DownloadProgress"
+    private let pausedKey            = "ONews_DownloadPaused"
 
-    private var speedTimer: Timer?
+    private var speedTimer:   Timer?
+    private var lastPersistTime = Date.distantPast
 
     override init() {
         super.init()
@@ -48,24 +51,13 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         )
         loadBookmarks()
         loadMetadata()
-        attachOldTasks()      // 冷启动后接管未完成任务（断点续传）
+        loadPersistedProgress()      // 杀进程后恢复进度
+        attachOldTasks()
         startSpeedTimer()
         observeNetwork()
     }
 
-    // MARK: 网络监听
-    private func observeNetwork() {
-        NetworkMonitor.shared.onSwitchedToCellular = { [weak self] in
-            guard let self = self, self.wifiOnly else { return }
-            // 全部暂停
-            for url in self.activeTasks.keys {
-                self.pauseDownload(urlString: url)
-            }
-            print("⚠️ 检测到 Wi-Fi → 蜂窝，已暂停所有下载")
-        }
-    }
-
-    // MARK: 接管旧任务（断点续传）
+    // MARK: 接管旧任务
     private func attachOldTasks() {
         downloadSession.getAllTasks { [weak self] tasks in
             guard let self = self else { return }
@@ -74,10 +66,15 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                       let urlString = dlTask.taskDescription else { continue }
                 DispatchQueue.main.async {
                     self.activeTasks[urlString] = dlTask
-                    self.isPaused[urlString] = (dlTask.state == .suspended)
+                    // 系统状态优先，但若我们持久化里有暂停标记则尊重之
+                    if self.isPaused[urlString] == nil {
+                        self.isPaused[urlString] = (dlTask.state == .suspended)
+                    }
                     if self.downloadProgress[urlString] == nil {
                         self.downloadProgress[urlString] = 0.0
                     }
+                    // 重新启动后，以“现在”作为时间起点，防止 displayedProgress 计算 bootFloor 时越界
+                    self.taskStartedAt[urlString] = Date()
                 }
             }
         }
@@ -85,11 +82,10 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 
     // MARK: 启动下载
     func startDownload(urlString: String, title: String, coverImage: String? = nil) {
-        // Wi-Fi only 校验
         if wifiOnly && !NetworkMonitor.shared.isWiFi {
-            print("⚠️ 当前不是 Wi-Fi，已阻止下载")
-            return
+            print("⚠️ 当前不是 Wi-Fi,已阻止下载"); return
         }
+        cancelledUrls.remove(urlString)
 
         guard let url = URL(string: urlString) else { return }
         let asset = AVURLAsset(url: url)
@@ -100,56 +96,61 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         task.resume()
 
         DispatchQueue.main.async {
-            self.activeTasks[urlString] = task
-            self.downloadProgress[urlString] = 0.0
-            self.downloadSpeed[urlString] = 0
-            self.isPaused[urlString] = false
-            self.taskStartedAt[urlString] = Date()
+            self.activeTasks[urlString]          = task
+            self.downloadProgress[urlString]     = 0.0
+            self.downloadSpeed[urlString]        = 0
+            self.isPaused[urlString]             = false
+            self.taskStartedAt[urlString]        = Date() // 记录启动时间
+            // 一开始就生成一个稳定的"伪"速度(500KB/s ~ 2MB/s)
+            self.fakeSpeedCache[urlString] = Double.random(in: 500_000...2_000_000)
             self.cacheMetadata[urlString] = VideoCacheMetadata(
                 title: title, coverImage: coverImage, savedAt: Date()
             )
             self.saveMetadata()
+            self.savePersistedProgress()
         }
     }
 
-    // MARK: 暂停 / 继续
     func pauseDownload(urlString: String) {
         guard let task = activeTasks[urlString] else { return }
         task.suspend()
         DispatchQueue.main.async {
-            self.isPaused[urlString] = true
+            self.isPaused[urlString]      = true
             self.downloadSpeed[urlString] = 0
+            self.savePersistedProgress()         // 保存暂停状态
         }
     }
 
     func resumeDownload(urlString: String) {
-        if wifiOnly && !NetworkMonitor.shared.isWiFi {
-            print("⚠️ 当前不是 Wi-Fi，无法继续下载")
-            return
-        }
+        if wifiOnly && !NetworkMonitor.shared.isWiFi { return }
         guard let task = activeTasks[urlString] else { return }
         task.resume()
         DispatchQueue.main.async {
-            self.isPaused[urlString] = false
+            self.isPaused[urlString]       = false
             self.lastSampleTime[urlString] = Date()
-            self.lastBytes[urlString] = task.countOfBytesReceived
+            self.lastBytes[urlString]      = task.countOfBytesReceived
+            self.savePersistedProgress()
         }
     }
 
     func cancelDownload(urlString: String) {
-        if let task = activeTasks[urlString] {
-            task.cancel()
-        }
+        cancelledUrls.insert(urlString)
+        if let task = activeTasks[urlString] { task.cancel() }
         cleanupTransient(urlString)
     }
 
+    // MARK: 删除/取消(彻底清除)
     func deleteDownload(urlString: String) {
+        cancelledUrls.insert(urlString)
+
         if let localURL = getLocalURL(for: urlString) {
             try? FileManager.default.removeItem(at: localURL)
         }
         if let task = activeTasks[urlString] { task.cancel() }
         localBookmarks.removeValue(forKey: urlString)
         cacheMetadata.removeValue(forKey: urlString)
+        lastNonZeroSpeed.removeValue(forKey: urlString)
+        fakeSpeedCache.removeValue(forKey: urlString)
         cleanupTransient(urlString)
         saveBookmarks()
         saveMetadata()
@@ -164,6 +165,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             self.lastBytes.removeValue(forKey: urlString)
             self.lastSampleTime.removeValue(forKey: urlString)
             self.taskStartedAt.removeValue(forKey: urlString)
+            self.savePersistedProgress()
         }
     }
 
@@ -173,19 +175,32 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         return try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &isStale)
     }
 
-    // MARK: 显示用 "假快" 进度
-    /// 真实 < 1/3 用 sqrt 曲线放大；≥ 1/3 直接返回真实值
+    // MARK: ✨ 移植自 b.swift 的优雅假进度算法（无 Timer，纯计算，体验极佳）
     func displayedProgress(for urlString: String) -> Double {
         let real = downloadProgress[urlString] ?? 0
         let align = 1.0 / 3.0
         if real >= align { return real }
-        // 启动后至少给一个最小目标值，让用户立刻看到 5%~8%
+        
+        // 启动后给一个最小目标值，让用户立刻看到大约 3% 的进度
         let started = taskStartedAt[urlString] ?? Date()
         let elapsed = Date().timeIntervalSince(started)
-        // 启动 1 秒内最多显示到 0.08；2 秒内最多 0.15
-        let bootFloor = min(0.15, elapsed * 0.08)
-        let curved = pow(real / align, 0.5) * align     // sqrt 加速曲线
+        // 启动 1 秒内最多显示到 0.03
+        let bootFloor = min(0.03, elapsed * 0.03)
+        
+        // 使用 0.75 的指数，让曲线比 sqrt 更平滑，避免一开始冲得太快
+        let curved = pow(real / align, 0.75) * align
         return min(align, max(curved, bootFloor))
+    }
+
+    // MARK: ✨ 保留 a.swift 的显示速度——永远不返回 0
+    func displaySpeed(for urlString: String) -> Double {
+        let real = downloadSpeed[urlString] ?? 0
+        if real > 0 { return real }
+        if let last = lastNonZeroSpeed[urlString], last > 0 { return last }
+        if let fake = fakeSpeedCache[urlString] { return fake }
+        let fake = Double.random(in: 500_000...1_500_000)
+        fakeSpeedCache[urlString] = fake
+        return fake
     }
 
     // MARK: 速度采样
@@ -204,15 +219,23 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                 continue
             }
             let bytesNow = task.countOfBytesReceived
-            let last = lastBytes[urlString] ?? bytesNow
+            let last     = lastBytes[urlString] ?? bytesNow
             let lastTime = lastSampleTime[urlString] ?? now
             let dt = now.timeIntervalSince(lastTime)
             if dt > 0 {
                 let speed = max(0, Double(bytesNow - last) / dt)
                 downloadSpeed[urlString] = speed
+                if speed > 0 { lastNonZeroSpeed[urlString] = speed }   // 粘住最近一次有效速度
             }
-            lastBytes[urlString] = bytesNow
+            lastBytes[urlString]      = bytesNow
             lastSampleTime[urlString] = now
+        }
+    }
+
+    private func savePersistedProgressIfNeeded() {
+        if Date().timeIntervalSince(lastPersistTime) > 1.5 {
+            savePersistedProgress()
+            lastPersistTime = Date()
         }
     }
 
@@ -230,12 +253,27 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         DispatchQueue.main.async {
             let cur = self.downloadProgress[urlString] ?? 0
             self.downloadProgress[urlString] = min(1.0, max(cur, percent))
+            self.savePersistedProgressIfNeeded()
         }
     }
 
     func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask,
                     didFinishDownloadingTo location: URL) {
         guard let urlString = assetDownloadTask.taskDescription else { return }
+
+        // 关键:已被取消的下载,清除残留文件且不写 bookmark
+        if cancelledUrls.contains(urlString) {
+            try? FileManager.default.removeItem(at: location)
+            DispatchQueue.main.async {
+                self.cancelledUrls.remove(urlString)
+                self.localBookmarks.removeValue(forKey: urlString)
+                self.cacheMetadata.removeValue(forKey: urlString)
+                self.saveBookmarks()
+                self.saveMetadata()
+            }
+            return
+        }
+
         do {
             let bookmark = try location.bookmarkData(
                 options: .minimalBookmark,
@@ -253,12 +291,16 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         guard let urlString = task.taskDescription else { return }
         DispatchQueue.main.async {
             self.activeTasks.removeValue(forKey: urlString)
-            self.downloadProgress.removeValue(forKey: urlString)
             self.downloadSpeed.removeValue(forKey: urlString)
-            self.isPaused.removeValue(forKey: urlString)
             self.lastBytes.removeValue(forKey: urlString)
             self.lastSampleTime.removeValue(forKey: urlString)
             self.taskStartedAt.removeValue(forKey: urlString)
+            // 任务真正结束后,如果未被取消,认为完成 → 清掉中间态进度
+            if self.cancelledUrls.contains(urlString) == false {
+                self.downloadProgress.removeValue(forKey: urlString)
+                self.isPaused.removeValue(forKey: urlString)
+            }
+            self.savePersistedProgress()
         }
     }
 
@@ -280,6 +322,28 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         if let data = UserDefaults.standard.data(forKey: metadataKey),
            let decoded = try? JSONDecoder().decode([String: VideoCacheMetadata].self, from: data) {
             cacheMetadata = decoded
+        }
+    }
+
+    // 进度持久化
+    private func savePersistedProgress() {
+        UserDefaults.standard.set(downloadProgress,     forKey: progressKey)
+        UserDefaults.standard.set(isPaused,             forKey: pausedKey)
+    }
+    private func loadPersistedProgress() {
+        if let p = UserDefaults.standard.dictionary(forKey: progressKey) as? [String: Double] {
+            downloadProgress = p
+        }
+        if let pa = UserDefaults.standard.dictionary(forKey: pausedKey) as? [String: Bool] {
+            isPaused = pa
+        }
+    }
+
+    private func observeNetwork() {
+        NetworkMonitor.shared.onSwitchedToCellular = { [weak self] in
+            guard let self = self, self.wifiOnly else { return }
+            for url in self.activeTasks.keys { self.pauseDownload(urlString: url) }
+            print("⚠️ 检测到 Wi-Fi → 蜂窝,已暂停所有下载")
         }
     }
 }
@@ -555,7 +619,7 @@ struct VideoPlayerPageView: View {
     }
 }
 
-// MARK: - 缓存卡片（重做）
+// MARK: - 缓存卡片
 struct CacheCard: View {
     let realURL: String
     let videoTitle: String
@@ -565,13 +629,15 @@ struct CacheCard: View {
     @ObservedObject private var network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @State private var showWiFiOnlyToggle = false
+    
+    // 控制取消下载的弹窗
+    @State private var showCancelAlert = false
 
     var body: some View {
         let isDownloaded = downloadManager.localBookmarks[realURL] != nil
         let isDownloading = downloadManager.activeTasksContains(realURL)
         let isPaused = downloadManager.isPaused[realURL] ?? false
         let displayProgress = downloadManager.displayedProgress(for: realURL)
-        let speed = downloadManager.downloadSpeed[realURL] ?? 0
 
         VStack(alignment: .leading, spacing: 14) {
             // 头部
@@ -612,7 +678,7 @@ struct CacheCard: View {
             if isDownloaded {
                 downloadedRow
             } else if isDownloading {
-                downloadingRow(progress: displayProgress, speed: speed, isPaused: isPaused)
+                downloadingRow(progress: displayProgress, isPaused: isPaused)
             } else {
                 idleRow
             }
@@ -652,7 +718,7 @@ struct CacheCard: View {
     }
 
     // 下载中
-    private func downloadingRow(progress: Double, speed: Double, isPaused: Bool) -> some View {
+    private func downloadingRow(progress: Double, isPaused: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             // 进度条
             GeometryReader { geo in
@@ -673,7 +739,7 @@ struct CacheCard: View {
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundColor(.primary)
                 if !isPaused {
-                    Text("· \(formatSpeed(speed))")
+                    Text("· \(formatSpeed(downloadManager.displaySpeed(for: realURL)))")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundColor(.secondary)
                 } else {
@@ -708,13 +774,21 @@ struct CacheCard: View {
 
                 // 取消
                 Button {
-                    downloadManager.cancelDownload(urlString: realURL)
+                    showCancelAlert = true
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(.red)
                         .frame(width: 36, height: 36)
                         .background(Circle().fill(Color.red.opacity(0.12)))
+                }
+                .alert(isGlobalEnglishMode ? "Cancel Download" : "取消下载", isPresented: $showCancelAlert) {
+                    Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
+                    Button(isGlobalEnglishMode ? "Confirm" : "确定", role: .destructive) {
+                        downloadManager.deleteDownload(urlString: realURL)
+                    }
+                } message: {
+                    Text(isGlobalEnglishMode ? "Are you sure you want to cancel and clear all downloaded data?" : "确定要取消下载并清除所有已下载的数据吗？")
                 }
             }
 
@@ -786,7 +860,7 @@ struct NetworkBadge: View {
     }
 }
 
-// MARK: - 缓存管理（重做 UI）
+// MARK: - 缓存管理
 struct VideoCacheView: View {
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @StateObject private var network = NetworkMonitor.shared
@@ -933,10 +1007,12 @@ struct DownloadingCard: View {
     let title: String
     @ObservedObject private var dm = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    
+    // 控制取消下载的弹窗
+    @State private var showCancelAlert = false
 
     var body: some View {
         let progress = dm.displayedProgress(for: realURL)
-        let speed = dm.downloadSpeed[realURL] ?? 0
         let paused = dm.isPaused[realURL] ?? false
 
         VStack(alignment: .leading, spacing: 10) {
@@ -961,7 +1037,7 @@ struct DownloadingCard: View {
                             Text(isGlobalEnglishMode ? "Paused" : "已暂停")
                                 .font(.system(size: 12)).foregroundColor(.orange)
                         } else {
-                            Text(formatSpeed(speed))
+                            Text(formatSpeed(dm.displaySpeed(for: realURL)))
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
@@ -1007,7 +1083,7 @@ struct DownloadingCard: View {
                 }
 
                 Button {
-                    dm.cancelDownload(urlString: realURL)
+                    showCancelAlert = true
                 } label: {
                     Label(isGlobalEnglishMode ? "Cancel" : "取消",
                           systemImage: "xmark")
@@ -1016,6 +1092,15 @@ struct DownloadingCard: View {
                         .padding(.horizontal, 14).padding(.vertical, 8)
                         .background(Capsule().fill(Color.red.opacity(0.12)))
                 }
+                .alert(isGlobalEnglishMode ? "Cancel Download" : "取消下载", isPresented: $showCancelAlert) {
+                    Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
+                    Button(isGlobalEnglishMode ? "Confirm" : "确定", role: .destructive) {
+                        dm.deleteDownload(urlString: realURL)
+                    }
+                } message: {
+                    Text(isGlobalEnglishMode ? "Are you sure you want to cancel and clear all downloaded data?" : "确定要取消下载并清除所有已下载的数据吗？")
+                }
+                
                 Spacer()
             }
         }
@@ -1116,12 +1201,14 @@ struct CachedItemCard: View {
     }
 }
 
-// MARK: - 离线缓存播放器（小幅美化）
+// MARK: - 离线缓存播放器
 struct CachedVideoPlayerView: View {
     let realURL: String
     let title: String
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         ZStack {
@@ -1163,6 +1250,7 @@ struct CachedVideoPlayerView: View {
 
                         Button(role: .destructive) {
                             downloadManager.deleteDownload(urlString: realURL)
+                            dismiss()
                         } label: {
                             Label(isGlobalEnglishMode ? "Delete Cache" : "删除缓存",
                                   systemImage: "trash")
