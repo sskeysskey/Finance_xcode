@@ -5,7 +5,6 @@
 
 import Foundation
 import SwiftUI
-import AVFoundation
 
 // MARK: - 服务器地址
 enum OVideoAPI {
@@ -370,116 +369,6 @@ class OVideoDataManager: ObservableObject {
         
         // 2. 按得分从高到低排序
         return scoredItems.sorted { $0.score > $1.score }.map { $0.item }
-    }
-}
-
-// MARK: - HLS 下载管理器
-class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDelegate {
-    static let shared = HLSDownloadManager()
-    private var downloadSession: AVAssetDownloadURLSession!
-    @Published var downloadProgress: [String: Double] = [:]
-    @Published var localBookmarks: [String: Data] = [:]
-    @Published var cacheMetadata: [String: VideoCacheMetadata] = [:]
-    
-    private let bookmarksKey = "ONews_SavedHLSBookmarks"
-    private let metadataKey  = "ONews_VideoCacheMetadata"
-    
-    override init() {
-        super.init()
-        let config = URLSessionConfiguration.background(withIdentifier: "com.miniplayer.hlsdownload")
-        downloadSession = AVAssetDownloadURLSession(configuration: config,
-                                                    assetDownloadDelegate: self,
-                                                    delegateQueue: .main)
-        loadBookmarks()
-        loadMetadata()
-    }
-    
-    func startDownload(urlString: String, title: String, coverImage: String? = nil) {
-        guard let url = URL(string: urlString) else { return }
-        let asset = AVURLAsset(url: url)
-        guard let task = downloadSession.makeAssetDownloadTask(
-            asset: asset, assetTitle: title, assetArtworkData: nil, options: nil
-        ) else { return }
-        task.taskDescription = urlString
-        task.resume()
-        DispatchQueue.main.async {
-            self.downloadProgress[urlString] = 0.0
-            self.cacheMetadata[urlString] = VideoCacheMetadata(title: title,
-                                                               coverImage: coverImage,
-                                                               savedAt: Date())
-            self.saveMetadata()
-        }
-    }
-    
-    func deleteDownload(urlString: String) {
-        if let localURL = getLocalURL(for: urlString) {
-            try? FileManager.default.removeItem(at: localURL)
-        }
-        localBookmarks.removeValue(forKey: urlString)
-        cacheMetadata.removeValue(forKey: urlString)
-        saveBookmarks()
-        saveMetadata()
-    }
-    
-    func getLocalURL(for urlString: String) -> URL? {
-        guard let bookmark = localBookmarks[urlString] else { return nil }
-        var isStale = false
-        return try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &isStale)
-    }
-    
-    func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask,
-                    didLoad timeRange: CMTimeRange,
-                    totalTimeRangesLoaded loadedTimeRanges: [NSValue],
-                    timeRangeExpectedToLoad: CMTimeRange) {
-        guard let urlString = assetDownloadTask.taskDescription else { return }
-        var percent = 0.0
-        for value in loadedTimeRanges {
-            let r = value.timeRangeValue
-            percent += r.duration.seconds / timeRangeExpectedToLoad.duration.seconds
-        }
-        DispatchQueue.main.async {
-            let current = self.downloadProgress[urlString] ?? 0.0
-            self.downloadProgress[urlString] = min(1.0, max(current, percent))
-        }
-    }
-    
-    func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask,
-                    didFinishDownloadingTo location: URL) {
-        guard let urlString = assetDownloadTask.taskDescription else { return }
-        do {
-            let bookmark = try location.bookmarkData(options: .minimalBookmark,
-                                                     includingResourceValuesForKeys: nil,
-                                                     relativeTo: nil)
-            DispatchQueue.main.async {
-                self.localBookmarks[urlString] = bookmark
-                self.saveBookmarks()
-            }
-        } catch { print("保存书签失败: \(error)") }
-    }
-    
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let urlString = task.taskDescription else { return }
-        DispatchQueue.main.async { self.downloadProgress.removeValue(forKey: urlString) }
-    }
-    
-    private func saveBookmarks() {
-        UserDefaults.standard.set(localBookmarks, forKey: bookmarksKey)
-    }
-    private func loadBookmarks() {
-        if let saved = UserDefaults.standard.dictionary(forKey: bookmarksKey) as? [String: Data] {
-            localBookmarks = saved
-        }
-    }
-    private func saveMetadata() {
-        if let data = try? JSONEncoder().encode(cacheMetadata) {
-            UserDefaults.standard.set(data, forKey: metadataKey)
-        }
-    }
-    private func loadMetadata() {
-        if let data = UserDefaults.standard.data(forKey: metadataKey),
-           let decoded = try? JSONDecoder().decode([String: VideoCacheMetadata].self, from: data) {
-            cacheMetadata = decoded
-        }
     }
 }
 
