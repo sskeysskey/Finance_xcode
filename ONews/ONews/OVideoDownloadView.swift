@@ -3,6 +3,7 @@
 
 import SwiftUI
 import AVKit
+import UIKit
 
 final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDelegate {
     static let shared = HLSDownloadManager()
@@ -14,29 +15,29 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
     @Published var localBookmarks:   [String: Data]   = [:]
     @Published var cacheMetadata:    [String: VideoCacheMetadata] = [:]
 
-    // ✨ 保留 a.swift 的速度兜底
     private var lastNonZeroSpeed: [String: Double] = [:]
-    private var fakeSpeedCache:   [String: Double] = [:]
+    private var cancelledUrls:    Set<String>      = []
 
-    // ✨ 保留 a.swift 被取消的 URL 集合，避免 didFinishDownloadingTo 误存书签
-    private var cancelledUrls: Set<String> = []
+    // ✨ 关键新增:暂存 didFinishDownloadingTo 的 bookmark,等真正完成才提升到 localBookmarks
+    private var pendingBookmarks: [String: Data] = [:]
 
     @Published var wifiOnly: Bool = UserDefaults.standard.object(forKey: "ONews_WiFiOnly") as? Bool ?? true {
         didSet { UserDefaults.standard.set(wifiOnly, forKey: "ONews_WiFiOnly") }
     }
 
-    private var activeTasks:     [String: AVAssetDownloadTask] = [:]
-    private var lastBytes:       [String: Int64] = [:]
-    private var lastSampleTime:  [String: Date]  = [:]
-    private var taskStartedAt:   [String: Date]  = [:] // ✨ 移植 b.swift 假进度所需的启动时间
+    private var activeTasks:    [String: AVAssetDownloadTask] = [:]
+    private var lastBytes:      [String: Int64] = [:]
+    private var lastSampleTime: [String: Date]  = [:]
 
-    private let bookmarksKey         = "ONews_SavedHLSBookmarks"
-    private let metadataKey          = "ONews_VideoCacheMetadata"
-    private let progressKey          = "ONews_DownloadProgress"
-    private let pausedKey            = "ONews_DownloadPaused"
+    private let bookmarksKey = "ONews_SavedHLSBookmarks"
+    private let metadataKey  = "ONews_VideoCacheMetadata"
+    private let progressKey  = "ONews_DownloadProgress"
+    private let pausedKey    = "ONews_DownloadPaused"
 
-    private var speedTimer:   Timer?
+    private var speedTimer: Timer?
     private var lastPersistTime = Date.distantPast
+
+    var backgroundCompletionHandler: (() -> Void)?
 
     override init() {
         super.init()
@@ -48,30 +49,40 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         )
         loadBookmarks()
         loadMetadata()
-        loadPersistedProgress()      // 杀进程后恢复进度
-        attachOldTasks()
+        loadPersistedProgress()
+        handleColdLaunchRecovery()
         startSpeedTimer()
         observeNetwork()
+        observeAppLifecycle()
     }
 
-    // MARK: 接管旧任务
-    private func attachOldTasks() {
+    // MARK: 冷启动恢复
+    private func handleColdLaunchRecovery() {
+        // 所有未拿到 bookmark 的下载,都先打成"已暂停"
+        for urlString in downloadProgress.keys where localBookmarks[urlString] == nil {
+            isPaused[urlString]      = true
+            downloadSpeed[urlString] = 0
+        }
+        savePersistedProgress()
+
         downloadSession.getAllTasks { [weak self] tasks in
             guard let self = self else { return }
-            for task in tasks {
-                guard let dlTask = task as? AVAssetDownloadTask,
-                      let urlString = dlTask.taskDescription else { continue }
-                DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                for task in tasks {
+                    guard let dlTask = task as? AVAssetDownloadTask,
+                          let urlString = dlTask.taskDescription else {
+                        task.cancel()
+                        continue
+                    }
+                    if self.downloadProgress[urlString] == nil &&
+                       self.localBookmarks[urlString]   == nil {
+                        dlTask.cancel()
+                        continue
+                    }
+                    if dlTask.state == .completed || dlTask.state == .canceling { continue }
+
                     self.activeTasks[urlString] = dlTask
-                    // 系统状态优先，但若我们持久化里有暂停标记则尊重之
-                    if self.isPaused[urlString] == nil {
-                        self.isPaused[urlString] = (dlTask.state == .suspended)
-                    }
-                    if self.downloadProgress[urlString] == nil {
-                        self.downloadProgress[urlString] = 0.0
-                    }
-                    // 重新启动后，以“现在”作为时间起点，防止 displayedProgress 计算 bootFloor 时越界
-                    self.taskStartedAt[urlString] = Date()
+                    if dlTask.state == .running { dlTask.suspend() }
                 }
             }
         }
@@ -93,61 +104,86 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         task.resume()
 
         DispatchQueue.main.async {
-            self.activeTasks[urlString]          = task
-            self.downloadProgress[urlString]     = 0.0
-            self.downloadSpeed[urlString]        = 0
-            self.isPaused[urlString]             = false
-            self.taskStartedAt[urlString]        = Date() // 记录启动时间
-            // 一开始就生成一个稳定的"伪"速度(500KB/s ~ 2MB/s)
-            self.fakeSpeedCache[urlString] = Double.random(in: 500_000...2_000_000)
-            self.cacheMetadata[urlString] = VideoCacheMetadata(
-                title: title, coverImage: coverImage, savedAt: Date()
-            )
+            self.activeTasks[urlString] = task
+            if self.downloadProgress[urlString] == nil {
+                self.downloadProgress[urlString] = 0.0
+            }
+            self.downloadSpeed[urlString] = 0
+            self.isPaused[urlString]      = false
+            if self.cacheMetadata[urlString] == nil {
+                self.cacheMetadata[urlString] = VideoCacheMetadata(
+                    title: title, coverImage: coverImage, savedAt: Date()
+                )
+            }
             self.saveMetadata()
             self.savePersistedProgress()
         }
     }
 
+    // MARK: 暂停
     func pauseDownload(urlString: String) {
-        guard let task = activeTasks[urlString] else { return }
-        task.suspend()
+        if let task = activeTasks[urlString] { task.suspend() }
         DispatchQueue.main.async {
             self.isPaused[urlString]      = true
             self.downloadSpeed[urlString] = 0
-            self.savePersistedProgress()         // 保存暂停状态
-        }
-    }
-
-    func resumeDownload(urlString: String) {
-        if wifiOnly && !NetworkMonitor.shared.isWiFi { return }
-        guard let task = activeTasks[urlString] else { return }
-        task.resume()
-        DispatchQueue.main.async {
-            self.isPaused[urlString]       = false
-            self.lastSampleTime[urlString] = Date()
-            self.lastBytes[urlString]      = task.countOfBytesReceived
             self.savePersistedProgress()
         }
     }
 
+    // MARK: 继续
+    func resumeDownload(urlString: String) {
+        if wifiOnly && !NetworkMonitor.shared.isWiFi { return }
+
+        if let task = activeTasks[urlString],
+           task.state != .completed,
+           task.state != .canceling {
+            task.resume()
+            DispatchQueue.main.async {
+                self.isPaused[urlString]       = false
+                self.lastSampleTime[urlString] = Date()
+                self.lastBytes[urlString]      = task.countOfBytesReceived
+                self.savePersistedProgress()
+            }
+        } else {
+            recreateAndResume(urlString: urlString)
+        }
+    }
+
+    private func recreateAndResume(urlString: String) {
+        guard let url = URL(string: urlString) else { return }
+        let title = cacheMetadata[urlString]?.title ?? urlString
+        let asset = AVURLAsset(url: url)
+        guard let task = downloadSession.makeAssetDownloadTask(
+            asset: asset, assetTitle: title, assetArtworkData: nil, options: nil
+        ) else { return }
+        task.taskDescription = urlString
+        task.resume()
+        DispatchQueue.main.async {
+            self.activeTasks[urlString]    = task
+            self.isPaused[urlString]       = false
+            self.lastBytes[urlString]      = 0
+            self.lastSampleTime[urlString] = Date()
+            self.savePersistedProgress()
+        }
+    }
+
+    // MARK: 取消/删除
     func cancelDownload(urlString: String) {
         cancelledUrls.insert(urlString)
         if let task = activeTasks[urlString] { task.cancel() }
         cleanupTransient(urlString)
     }
 
-    // MARK: 删除/取消(彻底清除)
     func deleteDownload(urlString: String) {
         cancelledUrls.insert(urlString)
-
         if let localURL = getLocalURL(for: urlString) {
             try? FileManager.default.removeItem(at: localURL)
         }
         if let task = activeTasks[urlString] { task.cancel() }
         localBookmarks.removeValue(forKey: urlString)
+        pendingBookmarks.removeValue(forKey: urlString)
         cacheMetadata.removeValue(forKey: urlString)
         lastNonZeroSpeed.removeValue(forKey: urlString)
-        fakeSpeedCache.removeValue(forKey: urlString)
         cleanupTransient(urlString)
         saveBookmarks()
         saveMetadata()
@@ -161,7 +197,6 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             self.isPaused.removeValue(forKey: urlString)
             self.lastBytes.removeValue(forKey: urlString)
             self.lastSampleTime.removeValue(forKey: urlString)
-            self.taskStartedAt.removeValue(forKey: urlString)
             self.savePersistedProgress()
         }
     }
@@ -172,32 +207,15 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         return try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &isStale)
     }
 
-    // MARK: ✨ 移植自 b.swift 的优雅假进度算法（无 Timer，纯计算，体验极佳）
     func displayedProgress(for urlString: String) -> Double {
-        let real = downloadProgress[urlString] ?? 0
-        let align = 1.0 / 3.0
-        if real >= align { return real }
-        
-        // 启动后给一个最小目标值，让用户立刻看到大约 3% 的进度
-        let started = taskStartedAt[urlString] ?? Date()
-        let elapsed = Date().timeIntervalSince(started)
-        // 启动 1 秒内最多显示到 0.03
-        let bootFloor = min(0.03, elapsed * 0.03)
-        
-        // 使用 0.75 的指数，让曲线比 sqrt 更平滑，避免一开始冲得太快
-        let curved = pow(real / align, 0.75) * align
-        return min(align, max(curved, bootFloor))
+        return downloadProgress[urlString] ?? 0
     }
 
-    // MARK: ✨ 保留 a.swift 的显示速度——永远不返回 0
     func displaySpeed(for urlString: String) -> Double {
         let real = downloadSpeed[urlString] ?? 0
         if real > 0 { return real }
         if let last = lastNonZeroSpeed[urlString], last > 0 { return last }
-        if let fake = fakeSpeedCache[urlString] { return fake }
-        let fake = Double.random(in: 500_000...1_500_000)
-        fakeSpeedCache[urlString] = fake
-        return fake
+        return 0
     }
 
     // MARK: 速度采样
@@ -222,7 +240,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             if dt > 0 {
                 let speed = max(0, Double(bytesNow - last) / dt)
                 downloadSpeed[urlString] = speed
-                if speed > 0 { lastNonZeroSpeed[urlString] = speed }   // 粘住最近一次有效速度
+                if speed > 0 { lastNonZeroSpeed[urlString] = speed }
             }
             lastBytes[urlString]      = bytesNow
             lastSampleTime[urlString] = now
@@ -254,16 +272,18 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         }
     }
 
+    // ✨ 关键修复 1:不再立即写 localBookmarks!先暂存到 pendingBookmarks
     func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask,
                     didFinishDownloadingTo location: URL) {
         guard let urlString = assetDownloadTask.taskDescription else { return }
 
-        // 关键:已被取消的下载,清除残留文件且不写 bookmark
+        // 用户主动取消的:直接清残留,不入 pendingBookmarks
         if cancelledUrls.contains(urlString) {
             try? FileManager.default.removeItem(at: location)
             DispatchQueue.main.async {
                 self.cancelledUrls.remove(urlString)
                 self.localBookmarks.removeValue(forKey: urlString)
+                self.pendingBookmarks.removeValue(forKey: urlString)
                 self.cacheMetadata.removeValue(forKey: urlString)
                 self.saveBookmarks()
                 self.saveMetadata()
@@ -271,6 +291,8 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             return
         }
 
+        // ⚠️ 这里的 location 可能只是部分包(杀进程/网络中断都会触发本回调)
+        // 不能直接写 localBookmarks,否则 UI 会把它当成"已缓存",哪怕只下了 16%
         do {
             let bookmark = try location.bookmarkData(
                 options: .minimalBookmark,
@@ -278,26 +300,61 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                 relativeTo: nil
             )
             DispatchQueue.main.async {
-                self.localBookmarks[urlString] = bookmark
-                self.saveBookmarks()
+                self.pendingBookmarks[urlString] = bookmark
             }
-        } catch { print("保存书签失败: \(error)") }
+        } catch { print("生成临时书签失败: \(error)") }
     }
 
+    // ✨ 关键修复 2:用 error + 进度双重判断,确认是否真正完成
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let urlString = task.taskDescription else { return }
         DispatchQueue.main.async {
             self.activeTasks.removeValue(forKey: urlString)
-            self.downloadSpeed.removeValue(forKey: urlString)
             self.lastBytes.removeValue(forKey: urlString)
             self.lastSampleTime.removeValue(forKey: urlString)
-            self.taskStartedAt.removeValue(forKey: urlString)
-            // 任务真正结束后,如果未被取消,认为完成 → 清掉中间态进度
-            if self.cancelledUrls.contains(urlString) == false {
+
+            let wasCancelled  = self.cancelledUrls.contains(urlString)
+            let progress      = self.downloadProgress[urlString] ?? 0
+            // 真正完成:无错误 且 进度接近 1.0
+            let didTrulyFinish = (error == nil) && (progress >= 0.999)
+
+            if wasCancelled {
+                // 用户取消 → 全部清理
+                self.cancelledUrls.remove(urlString)
+                self.pendingBookmarks.removeValue(forKey: urlString)
                 self.downloadProgress.removeValue(forKey: urlString)
                 self.isPaused.removeValue(forKey: urlString)
+                self.downloadSpeed.removeValue(forKey: urlString)
+            } else if didTrulyFinish {
+                // 真正完成 → pendingBookmarks 提升到 localBookmarks
+                if let bookmark = self.pendingBookmarks[urlString] {
+                    self.localBookmarks[urlString] = bookmark
+                    self.saveBookmarks()
+                }
+                self.pendingBookmarks.removeValue(forKey: urlString)
+                self.downloadProgress.removeValue(forKey: urlString)
+                self.isPaused.removeValue(forKey: urlString)
+                self.downloadSpeed.removeValue(forKey: urlString)
+            } else {
+                // 中断(杀进程/网络/系统投递的 cancel)
+                // 保留进度,标记暂停。pendingBookmarks 也保留:本进程内续传可能用得上
+                // 但绝对不进 localBookmarks → 不会被错误地归到"已缓存"
+                self.isPaused[urlString]      = true
+                self.downloadSpeed[urlString] = 0
+                if let nsErr = error as NSError? {
+                    print("⚠️ 下载中断 [\(urlString)]: domain=\(nsErr.domain) code=\(nsErr.code)")
+                }
             }
             self.savePersistedProgress()
+        }
+    }
+
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        DispatchQueue.main.async {
+            let handler = self.backgroundCompletionHandler
+            self.backgroundCompletionHandler = nil
+            handler?()
+            print("✨ 后台 Session 事件全部处理完毕")
         }
     }
 
@@ -321,11 +378,9 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             cacheMetadata = decoded
         }
     }
-
-    // 进度持久化
     private func savePersistedProgress() {
-        UserDefaults.standard.set(downloadProgress,     forKey: progressKey)
-        UserDefaults.standard.set(isPaused,             forKey: pausedKey)
+        UserDefaults.standard.set(downloadProgress, forKey: progressKey)
+        UserDefaults.standard.set(isPaused,         forKey: pausedKey)
     }
     private func loadPersistedProgress() {
         if let p = UserDefaults.standard.dictionary(forKey: progressKey) as? [String: Double] {
@@ -342,6 +397,24 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             for url in self.activeTasks.keys { self.pauseDownload(urlString: url) }
             print("⚠️ 检测到 Wi-Fi → 蜂窝,已暂停所有下载")
         }
+    }
+
+    private func observeAppLifecycle() {
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willTerminateNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in self?.savePersistedProgress() }
+
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in self?.savePersistedProgress() }
+    }
+}
+
+extension HLSDownloadManager {
+    func activeTasksContains(_ url: String) -> Bool {
+        downloadProgress[url] != nil
     }
 }
 
@@ -563,13 +636,6 @@ struct CacheCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .shadow(color: Color.accentColor.opacity(0.35), radius: 8, y: 3)
         }
-    }
-}
-
-// 给 HLSDownloadManager 增加便捷判定
-extension HLSDownloadManager {
-    func activeTasksContains(_ url: String) -> Bool {
-        downloadProgress[url] != nil
     }
 }
 

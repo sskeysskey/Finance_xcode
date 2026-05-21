@@ -11,8 +11,7 @@ extension Color {
     static let cardBackground = Color(UIColor.secondarySystemGroupedBackground)
 }
 
-// 【新增】第 1 步：创建一个 AppDelegate 类
-// 这个类将负责处理所有 App 级别的一次性启动任务。
+// 【修改】AppDelegate 类：增加后台下载 Session 回调支持
 class AppDelegate: NSObject, UIApplicationDelegate {
     // 📺 【新增】视频旋转锁定变量（默认仅支持竖屏）
     static var orientationLock: UIInterfaceOrientationMask = .portrait
@@ -21,6 +20,15 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         return Self.orientationLock
+    }
+
+    // --- ✨ 关键新增：接管系统后台下载任务回调 ---
+    func application(_ application: UIApplication,
+                     handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        print("✨ [AppDelegate] 收到后台下载 URLSession 事件，Identifier: \(identifier)")
+        // 将回调事件传递给 HLS 下载管理器，让其在事件处理完毕后回调系统
+        HLSDownloadManager.shared.backgroundCompletionHandler = completionHandler
     }
 
     // --- 以下为你原有的业务管理器和初始化逻辑，保持不变 ---
