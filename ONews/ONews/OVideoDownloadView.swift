@@ -434,7 +434,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         NetworkMonitor.shared.onSwitchedToCellular = { [weak self] in
             guard let self = self, self.wifiOnly else { return }
             for url in self.activeTasks.keys { self.pauseDownload(urlString: url) }
-            print("⚠️ 检测到 Wi-Fi → 蜂窝,已暂停所有下载")
+            print("⚠️ 检测到 Wi-Fi → 5G蜂窝,已暂停所有下载")
         }
     }
 
@@ -509,14 +509,6 @@ struct CacheCard: View {
                         .foregroundColor(.secondary)
                 }
                 Spacer()
-                // Wi-Fi only 切换
-                Toggle("", isOn: Binding(
-                    get: { downloadManager.wifiOnly },
-                    set: { downloadManager.wifiOnly = $0 }
-                ))
-                .labelsHidden()
-                .scaleEffect(0.8)
-                .tint(.accentColor)
             }
 
             Divider().opacity(0.5)
@@ -656,7 +648,7 @@ struct CacheCard: View {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
                     Text(isGlobalEnglishMode
                          ? "Switched to cellular, paused to save data"
-                         : "已切到蜂窝网络，已暂停以节省流量")
+                         : "发现网络已切换到5G，已暂停缓存，以节省流量")
                         .font(.system(size: 11))
                         .foregroundColor(.orange)
                 }
@@ -743,7 +735,7 @@ struct NetworkBadge: View {
         let color: Color = !network.isConnected ? .red
                          : network.isWiFi ? .green : .orange
         let text: String = !network.isConnected ? (isGlobalEnglishMode ? "Offline" : "无网络")
-                         : network.isWiFi ? "Wi-Fi" : (isGlobalEnglishMode ? "Cellular" : "蜂窝")
+                         : network.isWiFi ? "Wi-Fi" : (isGlobalEnglishMode ? "Cellular" : "蜂窝/5G")
         let icon: String = !network.isConnected ? "wifi.slash"
                          : network.isWiFi ? "wifi" : "antenna.radiowaves.left.and.right"
         return HStack(spacing: 4) {

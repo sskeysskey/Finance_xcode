@@ -288,11 +288,21 @@ struct VideoPlayerPageView: View {
                 .foregroundColor(.primary)
                 .lineLimit(3)
 
+            // ✨ 修改此处：使用 HStack + Spacer 实现右对齐
             HStack(spacing: 10) {
                 NetworkBadge()
-                if downloadManager.wifiOnly {
-                    badge(text: isGlobalEnglishMode ? "Wi-Fi only" : "仅 Wi-Fi 下载",
-                          systemImage: "wifi", color: .blue)
+                
+                Spacer() // 将开关推到最右侧
+                
+                HStack(spacing: 6) {
+                    Text(isGlobalEnglishMode ? "Wi-Fi only" : "仅 Wi-Fi 下缓存")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.secondary)
+                    
+                    Toggle("", isOn: $downloadManager.wifiOnly)
+                        .labelsHidden()
+                        .scaleEffect(0.8)
+                        .tint(.accentColor)
                 }
             }
         }
@@ -304,7 +314,7 @@ struct VideoPlayerPageView: View {
             Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
             Text(isGlobalEnglishMode
                  ? "Playing from local cache"
-                 : "正在使用本地缓存播放")
+                 : "正在使用本地缓存播放，此时不消耗流量。")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.secondary)
         }
