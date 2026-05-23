@@ -53,6 +53,17 @@ enum OVideoAPI {
     }
 }
 
+// MARK: - 搜索索引条目（预处理小写）
+struct SearchIndexEntry {
+    let item: OVideoItem
+    let nameLower: String
+    let aliasLower: String
+    let typesLower: String
+    let directorLower: String
+    let castLower: String
+    let introLower: String
+}
+
 // MARK: - 数据模型
 struct OVideoResponse: Codable {
     let categories: [OVideoCategory]
@@ -291,6 +302,9 @@ class OVideoDataManager: ObservableObject {
     // ⭐ 新增：排序结果缓存。key = "categoryName|sortOption"
     private var sortCache: [String: [OVideoItem]] = [:]
     
+    // ⭐ 新增：搜索索引
+    private var searchIndex: [SearchIndexEntry] = []
+    
     func loadVideosIfNeeded() async {
         if hasLoaded { return }
         await loadVideos()
@@ -301,11 +315,34 @@ class OVideoDataManager: ObservableObject {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            self.categories = try await OVideoAPI.fetchVideos()
-            self.sortCache.removeAll()    // ⭐ 数据刷新时清缓存
+            let cats = try await OVideoAPI.fetchVideos()
+            self.categories = cats
+            self.sortCache.removeAll()
+            
+            // ⭐ 数据加载完后，在后台线程构建索引
+            let items = cats.flatMap { $0.items }
+            let index = await Task.detached(priority: .utility) {
+                Self.buildIndex(from: items)
+            }.value
+            self.searchIndex = index
+            
             self.hasLoaded = true
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+    
+    nonisolated private static func buildIndex(from items: [OVideoItem]) -> [SearchIndexEntry] {
+        items.map { item in
+            SearchIndexEntry(
+                item: item,
+                nameLower: item.name.lowercased(),
+                aliasLower: item.alias?.lowercased() ?? "",
+                typesLower: (item.types ?? []).joined(separator: "\u{1F}").lowercased(),
+                directorLower: item.director?.lowercased() ?? "",
+                castLower: (item.cast ?? []).joined(separator: "\u{1F}").lowercased(),
+                introLower: item.intro?.lowercased() ?? ""
+            )
         }
     }
     
@@ -342,41 +379,46 @@ class OVideoDataManager: ObservableObject {
         }
     }
     
-    func search(keyword: String) -> [OVideoItem] {
+    // ⭐ 新版异步搜索：跑在后台线程，支持取消
+    func searchAsync(keyword: String, limit: Int = 200) async -> [OVideoItem] {
         let kw = keyword.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !kw.isEmpty else { return [] }
         
-        // 1. 先筛选出所有匹配项，并计算得分
-        let scoredItems = allItems.compactMap { item -> (item: OVideoItem, score: Double)? in
-            var score: Double = 0 // 将 score 改为 Double 类型以支持 2.5 权重
+        let index = self.searchIndex   // 值类型数组，捕获即拷贝引用
+        
+        return await Task.detached(priority: .userInitiated) {
+            var scored: [(item: OVideoItem, score: Double)] = []
+            scored.reserveCapacity(128)
             
-            // 名字匹配权重最高 (3分)
-            if item.name.lowercased().contains(kw) { score += 3.0 }
-            
-            // 【新增】别名匹配权重 (2.5分)
-            if let alias = item.alias, alias.lowercased().contains(kw) { score += 2.5 }
-
-            // 【新增】类型匹配权重 (2.5分)
-            // 检查 types 数组中是否有任何一个元素包含关键词
-            if let types = item.types, types.contains(where: { $0.lowercased().contains(kw) }) { 
-                score += 2.5 
+            for entry in index {
+                // 周期性检查取消，输入快时旧任务能尽早退出
+                if Task.isCancelled { return [] }
+                
+                var score: Double = 0
+                if entry.nameLower.contains(kw)     { score += 3.0 }
+                if entry.aliasLower.contains(kw)    { score += 2.5 }
+                if entry.typesLower.contains(kw)    { score += 2.5 }
+                if entry.directorLower.contains(kw) { score += 2.0 }
+                if entry.castLower.contains(kw)     { score += 2.0 }
+                if entry.introLower.contains(kw)    { score += 1.0 }
+                
+                if score > 0 {
+                    scored.append((entry.item, score))
+                }
             }
             
-            // 导演或演员匹配 (2分)
-            if (item.director?.lowercased().contains(kw) ?? false) { score += 2.0 }
-            if (item.cast?.contains(where: { $0.lowercased().contains(kw) }) ?? false) { score += 2.0 }
+            if Task.isCancelled { return [] }
             
-            // 简介匹配权重最低 (1分)
-            if (item.intro?.lowercased().contains(kw) ?? false) { score += 1.0 }
-            
-            return score > 0 ? (item, score) : nil
-        }
-        
-        // 2. 按得分从高到低排序
-        return scoredItems.sorted { $0.score > $1.score }.map { $0.item }
+            // 排序后截断，避免渲染上千条
+            return scored
+                .sorted { $0.score > $1.score }
+                .prefix(limit)
+                .map { $0.item }
+        }.value
     }
 }
 
+// 旧的 search(keyword:) 可以保留作为兜底，但不再被搜索 UI 使用
 // MARK: - 搜索历史管理器
 @MainActor
 final class SearchHistoryManager: ObservableObject {

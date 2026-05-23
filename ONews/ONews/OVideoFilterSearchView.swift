@@ -197,11 +197,14 @@ struct VideoSearchTabView: View {
     @State private var keyword: String = ""
     @FocusState private var focused: Bool
     
+    // ⭐ 改为 State
+    @State private var results: [OVideoItem] = []
+    @State private var isSearching = false
+    @State private var searchTask: Task<Void, Never>? = nil
+    
     private var trimmedKeyword: String {
         keyword.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    
-    private var results: [OVideoItem] { dataManager.search(keyword: keyword) }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -237,6 +240,8 @@ struct VideoSearchTabView: View {
                 } else {
                     historyView
                 }
+            } else if isSearching && results.isEmpty {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if results.isEmpty {
                 hintView(icon: "tray",
                          text: isGlobalEnglishMode ? "No results" : "暂无搜索结果")
@@ -258,9 +263,37 @@ struct VideoSearchTabView: View {
         .navigationTitle(isGlobalEnglishMode ? "Search" : "搜索")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { focused = true }
+        // ⭐ 关键：监听 keyword，防抖 + 取消旧任务
+        .onChange(of: keyword) { newValue in
+            scheduleSearch(newValue)
+        }
     }
     
-    // MARK: - Actions
+    // ⭐ 防抖调度
+    private func scheduleSearch(_ raw: String) {
+        searchTask?.cancel()
+        let kw = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !kw.isEmpty else {
+            results = []
+            isSearching = false
+            return
+        }
+        isSearching = true
+        searchTask = Task {
+            // 防抖 300ms
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            if Task.isCancelled { return }
+            
+            let res = await dataManager.searchAsync(keyword: kw)
+            if Task.isCancelled { return }
+            
+            await MainActor.run {
+                self.results = res
+                self.isSearching = false
+            }
+        }
+    }
+    
     private func commitSearch() {
         historyManager.add(trimmedKeyword)
         focused = false

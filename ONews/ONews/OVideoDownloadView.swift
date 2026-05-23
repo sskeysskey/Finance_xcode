@@ -36,6 +36,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 
     private var speedTimer: Timer?
     private var lastPersistTime = Date.distantPast
+    private let pendingKey = "ONews_PendingHLSBookmarks"
 
     var backgroundCompletionHandler: (() -> Void)?
 
@@ -49,11 +50,21 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         )
         loadBookmarks()
         loadMetadata()
+        loadPendingBookmarks() 
         loadPersistedProgress()
         handleColdLaunchRecovery()
         startSpeedTimer()
         observeNetwork()
         observeAppLifecycle()
+    }
+
+    private func savePendingBookmarks() {
+        UserDefaults.standard.set(pendingBookmarks, forKey: pendingKey)
+    }
+    private func loadPendingBookmarks() {
+        if let saved = UserDefaults.standard.dictionary(forKey: pendingKey) as? [String: Data] {
+            pendingBookmarks = saved
+        }
     }
 
     // MARK: 冷启动恢复
@@ -150,14 +161,37 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
     }
 
     private func recreateAndResume(urlString: String) {
-        guard let url = URL(string: urlString) else { return }
+        guard let remoteURL = URL(string: urlString) else { return }
         let title = cacheMetadata[urlString]?.title ?? urlString
-        let asset = AVURLAsset(url: url)
+
+        // ✨ 优先用上次中断时拿到的局部包来续传
+        var assetURL: URL = remoteURL
+        if let bookmark = pendingBookmarks[urlString] {
+            var isStale = false
+            if let localURL = try? URL(resolvingBookmarkData: bookmark,
+                                    bookmarkDataIsStale: &isStale),
+            FileManager.default.fileExists(atPath: localURL.path) {
+                assetURL = localURL
+                print("✅ 从局部包续传: \(localURL.lastPathComponent)")
+            } else {
+                // bookmark 失效或文件被系统清掉 → 进度也该清零
+                print("⚠️ 局部包丢失,进度归零重新下载")
+                pendingBookmarks.removeValue(forKey: urlString)
+                savePendingBookmarks()
+                DispatchQueue.main.async {
+                    self.downloadProgress[urlString] = 0
+                    self.savePersistedProgress()
+                }
+            }
+        }
+
+        let asset = AVURLAsset(url: assetURL)
         guard let task = downloadSession.makeAssetDownloadTask(
             asset: asset, assetTitle: title, assetArtworkData: nil, options: nil
         ) else { return }
         task.taskDescription = urlString
         task.resume()
+
         DispatchQueue.main.async {
             self.activeTasks[urlString]    = task
             self.isPaused[urlString]       = false
@@ -186,6 +220,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         lastNonZeroSpeed.removeValue(forKey: urlString)
         cleanupTransient(urlString)
         saveBookmarks()
+        savePendingBookmarks()
         saveMetadata()
     }
 
@@ -301,6 +336,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             )
             DispatchQueue.main.async {
                 self.pendingBookmarks[urlString] = bookmark
+                self.savePendingBookmarks()
             }
         } catch { print("生成临时书签失败: \(error)") }
     }
@@ -322,6 +358,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                 // 用户取消 → 全部清理
                 self.cancelledUrls.remove(urlString)
                 self.pendingBookmarks.removeValue(forKey: urlString)
+                self.savePendingBookmarks()
                 self.downloadProgress.removeValue(forKey: urlString)
                 self.isPaused.removeValue(forKey: urlString)
                 self.downloadSpeed.removeValue(forKey: urlString)
@@ -332,6 +369,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                     self.saveBookmarks()
                 }
                 self.pendingBookmarks.removeValue(forKey: urlString)
+                self.savePendingBookmarks()
                 self.downloadProgress.removeValue(forKey: urlString)
                 self.isPaused.removeValue(forKey: urlString)
                 self.downloadSpeed.removeValue(forKey: urlString)
@@ -341,6 +379,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                 // 但绝对不进 localBookmarks → 不会被错误地归到"已缓存"
                 self.isPaused[urlString]      = true
                 self.downloadSpeed[urlString] = 0
+                self.savePendingBookmarks()
                 if let nsErr = error as NSError? {
                     print("⚠️ 下载中断 [\(urlString)]: domain=\(nsErr.domain) code=\(nsErr.code)")
                 }
@@ -547,9 +586,16 @@ struct CacheCard: View {
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundColor(.primary)
                 if !isPaused {
-                    Text("· \(formatSpeed(downloadManager.displaySpeed(for: realURL)))")
+                    let speed = downloadManager.displaySpeed(for: realURL)
+                if speed > 0 {
+                    Text("· \(formatSpeed(speed))")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundColor(.secondary)
+                } else {
+                    Text(isGlobalEnglishMode ? "· Caching..." : "· 数据加载中...")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
                 } else {
                     Text(isGlobalEnglishMode ? "· Paused" : "· 已暂停")
                         .font(.system(size: 12, weight: .medium))
@@ -835,12 +881,19 @@ struct DownloadingCard: View {
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                         Text("·").foregroundColor(.secondary)
                         if paused {
-                            Text(isGlobalEnglishMode ? "Paused" : "已暂停")
+                            Text(isGlobalEnglishMode ? "已暂停" : "Paused")
                                 .font(.system(size: 12)).foregroundColor(.orange)
                         } else {
-                            Text(formatSpeed(dm.displaySpeed(for: realURL)))
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundColor(.secondary)
+                            let speed = dm.displaySpeed(for: realURL)
+                            if speed > 0 {
+                                Text(formatSpeed(speed))
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Text(isGlobalEnglishMode ? "Caching..." : "数据加载中...")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                 }
