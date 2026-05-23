@@ -30,39 +30,108 @@ struct VideoPlayerView: UIViewControllerRepresentable {
 
     class Coordinator: NSObject, AVPlayerViewControllerDelegate {
         let parent: VideoPlayerView
+        private weak var player: AVPlayer?
         private var timeControlObs: NSKeyValueObservation?
         private var keepUpObs: NSKeyValueObservation?
+        private var bufferEmptyObs: NSKeyValueObservation?
+        private var bufferFullObs: NSKeyValueObservation?
+        private var rateObs: NSKeyValueObservation?
+        private var currentItemObs: NSKeyValueObservation?
+        private var bufferingResetWork: DispatchWorkItem?
 
         init(_ parent: VideoPlayerView) { self.parent = parent }
 
         func attach(player: AVPlayer) {
+            self.player = player
+
             timeControlObs = player.observe(\.timeControlStatus,
-                                             options: [.new, .initial]) { [weak self] p, _ in
+                                            options: [.new, .initial]) { [weak self] p, _ in
+                self?.updateBuffering(from: p)
+            }
+            rateObs = player.observe(\.rate, options: [.new]) { [weak self] p, _ in
+                // 用户 seek 后 rate 一般会回到 1.0,可借此校正
+                self?.updateBuffering(from: p)
+            }
+            // currentItem 可能在某些场景下被替换,要重新绑定 item 级 KVO
+            currentItemObs = player.observe(\.currentItem,
+                                            options: [.new, .initial]) { [weak self] p, _ in
+                self?.attachItemObservers(item: p.currentItem)
+            }
+        }
+
+        private func attachItemObservers(item: AVPlayerItem?) {
+            keepUpObs?.invalidate(); keepUpObs = nil
+            bufferEmptyObs?.invalidate(); bufferEmptyObs = nil
+            bufferFullObs?.invalidate(); bufferFullObs = nil
+            guard let item = item else { return }
+
+            keepUpObs = item.observe(\.isPlaybackLikelyToKeepUp,
+                                    options: [.new, .initial]) { [weak self] it, _ in
                 DispatchQueue.main.async {
-                    let buffering = (p.timeControlStatus == .waitingToPlayAtSpecifiedRate)
-                    self?.parent.isBuffering = buffering
+                    if it.isPlaybackLikelyToKeepUp { self?.setBuffering(false) }
                 }
             }
-            if let item = player.currentItem {
-                keepUpObs = item.observe(\.isPlaybackLikelyToKeepUp,
-                                         options: [.new, .initial]) { [weak self] it, _ in
-                    DispatchQueue.main.async {
-                        if it.isPlaybackLikelyToKeepUp { self?.parent.isBuffering = false }
-                    }
+            bufferEmptyObs = item.observe(\.isPlaybackBufferEmpty,
+                                        options: [.new]) { [weak self] it, _ in
+                DispatchQueue.main.async {
+                    if it.isPlaybackBufferEmpty { self?.setBuffering(true) }
+                }
+            }
+            bufferFullObs = item.observe(\.isPlaybackBufferFull,
+                                        options: [.new]) { [weak self] it, _ in
+                DispatchQueue.main.async {
+                    if it.isPlaybackBufferFull { self?.setBuffering(false) }
                 }
             }
         }
-        func detach() { timeControlObs?.invalidate(); keepUpObs?.invalidate() }
 
+        private func updateBuffering(from player: AVPlayer) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                let waiting = (player.timeControlStatus == .waitingToPlayAtSpecifiedRate)
+                self.setBuffering(waiting)
+            }
+        }
+
+        private func setBuffering(_ value: Bool) {
+            if parent.isBuffering != value {
+                parent.isBuffering = value
+            }
+            // 兜底:即使 KVO 漏掉,8 秒后强制复位一次
+            bufferingResetWork?.cancel()
+            if value {
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self = self,
+                        let p = self.player else { return }
+                    if p.timeControlStatus != .waitingToPlayAtSpecifiedRate {
+                        self.parent.isBuffering = false
+                    }
+                }
+                bufferingResetWork = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: work)
+            }
+        }
+
+        func detach() {
+            timeControlObs?.invalidate()
+            keepUpObs?.invalidate()
+            bufferEmptyObs?.invalidate()
+            bufferFullObs?.invalidate()
+            rateObs?.invalidate()
+            currentItemObs?.invalidate()
+            bufferingResetWork?.cancel()
+        }
+
+        // 横竖屏代理保持不变 ...
         func playerViewController(_ playerViewController: AVPlayerViewController,
-                                  willBeginFullScreenPresentationWithAnimationCoordinator
-                                  coordinator: UIViewControllerTransitionCoordinator) {
+                                willBeginFullScreenPresentationWithAnimationCoordinator
+                                coordinator: UIViewControllerTransitionCoordinator) {
             AppDelegate.orientationLock = .landscape
             forceOrientation(.landscapeRight)
         }
         func playerViewController(_ playerViewController: AVPlayerViewController,
-                                  willEndFullScreenPresentationWithAnimationCoordinator
-                                  coordinator: UIViewControllerTransitionCoordinator) {
+                                willEndFullScreenPresentationWithAnimationCoordinator
+                                coordinator: UIViewControllerTransitionCoordinator) {
             AppDelegate.orientationLock = .portrait
             forceOrientation(.portrait)
         }
@@ -114,6 +183,7 @@ struct PlayerLoadingIndicator: View {
                     .shadow(radius: 2)
             }
         }
+        .allowsHitTesting(false)   // ⭐ 关键：整个蒙层不接收点击
         .onAppear { rotate = true }
         .transition(.opacity)
     }
@@ -202,7 +272,10 @@ struct VideoPlayerPageView: View {
             } else if let real = realURL {
                 let playURL = downloadManager.getLocalURL(for: real) ?? URL(string: real)!
                 VideoPlayerView(videoURL: playURL, isBuffering: $isBuffering)
-                if isBuffering { PlayerLoadingIndicator() }
+                if isBuffering {
+                    PlayerLoadingIndicator()
+                        .animation(.easeInOut(duration: 0.2), value: isBuffering)
+                }
             }
         }
     }

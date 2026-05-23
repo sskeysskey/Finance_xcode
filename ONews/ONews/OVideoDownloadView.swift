@@ -466,7 +466,7 @@ func formatSpeed(_ bytesPerSec: Double) -> String {
     return String(format: "%.2f MB/s", mb)
 }
 
-// MARK: - 缓存卡片
+// MARK: - 缓存卡片 (已集成高级缓存管理入口)
 struct CacheCard: View {
     let realURL: String
     let videoTitle: String
@@ -529,6 +529,10 @@ struct CacheCard: View {
             } else {
                 idleRow
             }
+            
+            // ⭐ 新增：高级感“查看全部缓存”入口
+            Divider().opacity(0.3)
+            cacheListNavigationRow
         }
         .padding(16)
         .background(
@@ -587,15 +591,15 @@ struct CacheCard: View {
                     .foregroundColor(.primary)
                 if !isPaused {
                     let speed = downloadManager.displaySpeed(for: realURL)
-                if speed > 0 {
-                    Text("· \(formatSpeed(speed))")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundColor(.secondary)
-                } else {
-                    Text(isGlobalEnglishMode ? "· Caching..." : "· 数据加载中...")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.secondary)
-                }
+                    if speed > 0 {
+                        Text("· \(formatSpeed(speed))")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text(isGlobalEnglishMode ? "· Caching..." : "· 数据加载中...")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
                 } else {
                     Text(isGlobalEnglishMode ? "· Paused" : "· 已暂停")
                         .font(.system(size: 12, weight: .medium))
@@ -682,6 +686,52 @@ struct CacheCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .shadow(color: Color.accentColor.opacity(0.35), radius: 8, y: 3)
         }
+    }
+    
+    // ⭐ 新增：现代高级感跳转入口
+    private var cacheListNavigationRow: some View {
+        NavigationLink(destination: VideoCacheView()) {
+            HStack {
+                // 左侧图标与文本
+                HStack(spacing: 8) {
+                    Image(systemName: "folder.badge.gearshape")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.accentColor)
+                    Text(isGlobalEnglishMode ? "Manage Offline Cache" : "查看与管理离线缓存")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.primary)
+                }
+                
+                Spacer()
+                
+                // 右侧动态状态指示器
+                HStack(spacing: 6) {
+                    let downloadingCount = downloadManager.downloadProgress.keys.count
+                    let cachedCount = downloadManager.localBookmarks.keys.count
+                    
+                    if downloadingCount > 0 {
+                        // 呼吸灯/闪烁点，提示有下载任务进行中
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 6, height: 6)
+                        Text(isGlobalEnglishMode ? "\(downloadingCount) downloading" : "\(downloadingCount)个任务下载中")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    } else if cachedCount > 0 {
+                        Text(isGlobalEnglishMode ? "\(cachedCount) cached" : "已缓存\(cachedCount)个视频")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.secondary.opacity(0.5))
+                }
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
