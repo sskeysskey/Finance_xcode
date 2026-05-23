@@ -12,7 +12,7 @@ struct VideoFilterView: View {
     @State private var selectedYear: Int? = nil
     @State private var selectedRegion: String? = nil
     // --- 新增：排序状态，默认按时间 ---
-    @State private var selectedSort: VideoSortOption = .update
+    @State private var selectedSort: VideoSortOption = .date
     
     // --- 定义自定义排序规则 ---
     private let typeOrder = ["综艺", "动漫", "剧情", "动作", "科幻", "喜剧", "爱情", "恐怖", "犯罪", "惊悚", "悬疑", "西部", "古装", "纪录"]
@@ -201,6 +201,7 @@ struct VideoSearchTabView: View {
     @State private var results: [OVideoItem] = []
     @State private var isSearching = false
     @State private var searchTask: Task<Void, Never>? = nil
+    @State private var isFirstAppear = true
     
     private var trimmedKeyword: String {
         keyword.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -219,8 +220,13 @@ struct VideoSearchTabView: View {
                     .submitLabel(.search)
                     .autocorrectionDisabled()
                     .onSubmit { commitSearch() }
+                
                 if !keyword.isEmpty {
-                    Button { keyword = "" } label: {
+                    // ⭐ 修改：点击清除按钮时，不仅清空内容，还强制重新聚焦（focused = true）
+                    Button {
+                        keyword = ""
+                        focused = true
+                    } label: {
                         Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
                     }
                 }
@@ -246,23 +252,31 @@ struct VideoSearchTabView: View {
                 hintView(icon: "tray",
                          text: isGlobalEnglishMode ? "No results" : "暂无搜索结果")
             } else {
+                // ⭐ 修改：使用 scrollDismissesKeyboard 使得用户在滑动结果列表时，键盘自动收起
                 ScrollView {
                     WaterfallGridView(items: results)
                         .padding(.top, 10)
                         .padding(.bottom, 20)
                 }
+                .scrollDismissesKeyboard(.immediately) // iOS 16+ 滚动时立即收起键盘
                 .background(Color(UIColor.systemGroupedBackground))
                 .simultaneousGesture(
                     TapGesture().onEnded {
-                        // 用户在结果区域里点了某一项 → 记录当前关键词
+                        // 用户在结果区域里点了某一项 → 记录当前关键词并收起键盘
                         historyManager.add(trimmedKeyword)
+                        focused = false // ⭐ 修改：点击结果项时，主动收起键盘
                     }
                 )
             }
         }
         .navigationTitle(isGlobalEnglishMode ? "Search" : "搜索")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { focused = true }
+        .onAppear {
+            if isFirstAppear {
+                focused = true
+                isFirstAppear = false // 标记为已进入过
+            }
+        }
         // ⭐ 关键：监听 keyword，防抖 + 取消旧任务
         .onChange(of: keyword) { newValue in
             scheduleSearch(newValue)

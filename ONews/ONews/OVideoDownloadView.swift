@@ -1,4 +1,4 @@
-// OVideoPlayerView.swift
+// /Users/yanzhang/Coding/Xcode/ONews/ONews/OVideoDownloadView.swift
 // VideoPlayerView / VideoPlayerPageView / VideoCacheView / CachedVideoPlayerView
 
 import SwiftUI
@@ -476,9 +476,8 @@ struct CacheCard: View {
     @ObservedObject private var network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @State private var showWiFiOnlyToggle = false
-    
-    // 控制取消下载的弹窗
-    @State private var showCancelAlert = false
+    @State private var showCellularAlert = false // 控制蜂窝网络下载提示弹窗
+    @State private var showCancelAlert = false // 控制取消下载的弹窗
 
     var body: some View {
         let isDownloaded = downloadManager.localBookmarks[realURL] != nil
@@ -537,6 +536,19 @@ struct CacheCard: View {
         )
         .shadow(color: Color.black.opacity(0.05), radius: 12, y: 4)
         .padding(.horizontal, 16)
+        // 蜂窝网络下拦截下载的 Alert 提示
+        .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示", isPresented: $showCellularAlert) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
+            Button(isGlobalEnglishMode ? "Download Anyway" : "允许并下载") {
+                // 允许使用蜂窝网络下载：关闭 wifiOnly 限制并开始下载
+                downloadManager.wifiOnly = false
+                downloadManager.startDownload(urlString: realURL, title: videoTitle, coverImage: coverImage)
+            }
+        } message: {
+            Text(isGlobalEnglishMode 
+                 ? "You are currently on a cellular network and 'Wi-Fi Only' is enabled. Do you want to disable 'Wi-Fi Only' and start downloading?" 
+                 : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 缓存”。是否关闭该限制并继续下载？")
+        }
     }
 
     // 已缓存
@@ -602,7 +614,12 @@ struct CacheCard: View {
                 // 暂停 / 继续
                 Button {
                     if isPaused {
-                        downloadManager.resumeDownload(urlString: realURL)
+                        // 如果是暂停状态且处于蜂窝网络+仅Wi-Fi，则弹窗拦截
+                        if downloadManager.wifiOnly && !network.isWiFi {
+                            showCellularAlert = true
+                        } else {
+                            downloadManager.resumeDownload(urlString: realURL)
+                        }
                     } else {
                         downloadManager.pauseDownload(urlString: realURL)
                     }
@@ -659,9 +676,14 @@ struct CacheCard: View {
     // 未下载
     private var idleRow: some View {
         Button {
-            downloadManager.startDownload(urlString: realURL,
-                                          title: videoTitle,
-                                          coverImage: coverImage)
+            // 如果处于蜂窝网络且开启了“仅 Wi-Fi”，则弹窗提示
+            if downloadManager.wifiOnly && !network.isWiFi {
+                showCellularAlert = true
+            } else {
+                downloadManager.startDownload(urlString: realURL,
+                                              title: videoTitle,
+                                              coverImage: coverImage)
+            }
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.down.circle.fill")
@@ -895,10 +917,11 @@ struct DownloadingCard: View {
     let realURL: String
     let title: String
     @ObservedObject private var dm = HLSDownloadManager.shared
+    @ObservedObject private var network = NetworkMonitor.shared // 新增：引入网络监听
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
-    // 控制取消下载的弹窗
-    @State private var showCancelAlert = false
+    @State private var showCancelAlert = false // 控制取消下载的弹窗
+    @State private var showCellularAlert = false // 控制蜂窝网络下载提示弹窗
 
     var body: some View {
         let progress = dm.displayedProgress(for: realURL)
@@ -923,7 +946,7 @@ struct DownloadingCard: View {
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                         Text("·").foregroundColor(.secondary)
                         if paused {
-                            Text(isGlobalEnglishMode ? "已暂停" : "Paused")
+                            Text(isGlobalEnglishMode ? "Paused" : "已暂停")
                                 .font(.system(size: 12)).foregroundColor(.orange)
                         } else {
                             let speed = dm.displaySpeed(for: realURL)
@@ -960,7 +983,14 @@ struct DownloadingCard: View {
             // 操作按钮
             HStack(spacing: 10) {
                 Button {
-                    if paused { dm.resumeDownload(urlString: realURL) }
+                    if paused { 
+                        // 如果处于蜂窝网络且开启了“仅 Wi-Fi”，则弹窗提示
+                        if dm.wifiOnly && !network.isWiFi {
+                            showCellularAlert = true
+                        } else {
+                            dm.resumeDownload(urlString: realURL) 
+                        }
+                    }
                     else { dm.pauseDownload(urlString: realURL) }
                 } label: {
                     Label(paused ? (isGlobalEnglishMode ? "Resume" : "继续")
@@ -1010,6 +1040,18 @@ struct DownloadingCard: View {
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.04), radius: 8, y: 2)
+        // 蜂窝网络下拦截继续下载的 Alert 提示
+        .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示", isPresented: $showCellularAlert) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
+            Button(isGlobalEnglishMode ? "Resume Anyway" : "允许并继续") {
+                dm.wifiOnly = false
+                dm.resumeDownload(urlString: realURL)
+            }
+        } message: {
+            Text(isGlobalEnglishMode 
+                 ? "You are currently on a cellular network and 'Wi-Fi Only' is enabled. Do you want to disable 'Wi-Fi Only' and resume downloading?" 
+                 : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 缓存”。是否关闭该限制并继续下载？")
+        }
     }
 }
 

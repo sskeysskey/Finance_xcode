@@ -252,13 +252,15 @@ struct VideoModuleView: View {
     }
     
     var body: some View {
-        ZStack(alignment: .bottom) {
+        // ⭐ 改动 1：放弃 ZStack(alignment:.bottom) + padding(.bottom,60)
+        //    改为 safeAreaInset，由系统统一管理底部区域，旋转时不会错位
+        ZStack {
             VideoBrowseView(dataManager: dataManager,
                             selectedCategoryIndex: categoryIndexBinding,
                             sortOption: sortBinding)
-                .padding(.bottom, 60)
-            
-            VideoBottomBar(dataManager: dataManager)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VideoBottomBar(dataManager: dataManager)
+                }
             
             // ⭐ 新增：如果还没看过引导，则显示新手引导遮罩
             if !hasSeenVideoSwipeGuide {
@@ -277,59 +279,159 @@ struct VideoBottomBar: View {
     @ObservedObject var dataManager: OVideoDataManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
+    /// 当前选中项（首页默认选中）。这里仅做高亮指示，真正的页面切换仍走 NavigationLink
+    @State private var activeTab: Tab = .home
+    enum Tab: Hashable { case home, filter, search, cache }
+    
     var body: some View {
-        HStack(spacing: 0) {
-            barButton(icon: "square.grid.2x2.fill",
-                      zh: "首页", en: "Home",
-                      isActive: true) { }
+        HStack(spacing: 4) {
+            // 首页（直接是当前页，不需要 NavigationLink）
+            Button {
+                activeTab = .home
+            } label: {
+                BarItemView(
+                    icon: "square.grid.2x2.fill",
+                    activeIcon: "square.grid.2x2.fill",
+                    zh: "首页", en: "Home",
+                    isActive: activeTab == .home,
+                    isEnglish: isGlobalEnglishMode
+                )
+            }
+            .buttonStyle(.plain)
             
             NavigationLink {
                 VideoFilterView(dataManager: dataManager)
             } label: {
-                barLabel(icon: "line.3.horizontal.decrease.circle",
-                         zh: "分类", en: "Filter", isActive: false)
+                BarItemView(
+                    icon: "line.3.horizontal.decrease",
+                    activeIcon: "line.3.horizontal.decrease.circle.fill",
+                    zh: "分类", en: "Filter",
+                    isActive: false,
+                    isEnglish: isGlobalEnglishMode
+                )
             }
+            .buttonStyle(.plain)
             
             NavigationLink {
                 VideoSearchTabView(dataManager: dataManager)
             } label: {
-                barLabel(icon: "magnifyingglass",
-                         zh: "搜索", en: "Search", isActive: false)
+                BarItemView(
+                    icon: "magnifyingglass",
+                    activeIcon: "magnifyingglass.circle.fill",
+                    zh: "搜索", en: "Search",
+                    isActive: false,
+                    isEnglish: isGlobalEnglishMode
+                )
             }
+            .buttonStyle(.plain)
             
             NavigationLink {
                 VideoCacheView()
             } label: {
-                barLabel(icon: "arrow.down.circle",
-                         zh: "缓存", en: "Cache", isActive: false)
+                BarItemView(
+                    icon: "arrow.down.to.line",
+                    activeIcon: "arrow.down.circle.fill",
+                    zh: "缓存", en: "Cache",
+                    isActive: false,
+                    isEnglish: isGlobalEnglishMode
+                )
             }
+            .buttonStyle(.plain)
         }
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+        .padding(.horizontal, 8)
+        .padding(.top, 4) // ⭐ 减小顶部 Padding
+        .padding(.bottom, 2) // ⭐ 减小底部 Padding
+        // ⭐ 现代化背景：毛玻璃 + 顶部细分隔线 + 极淡渐变
         .background(
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .overlay(Rectangle().frame(height: 0.5)
-                    .foregroundColor(.secondary.opacity(0.2)), alignment: .top)
-                .ignoresSafeArea(edges: .bottom)
+            ZStack {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                
+                LinearGradient(
+                    colors: [
+                        Color.primary.opacity(0.04),
+                        Color.clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+            .overlay(alignment: .top) {
+                // 顶部 hairline 分隔线
+                LinearGradient(
+                    colors: [
+                        Color.primary.opacity(0.0),
+                        Color.primary.opacity(0.18),
+                        Color.primary.opacity(0.0)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(height: 0.5)
+            }
+            .ignoresSafeArea(edges: .bottom) // <--- 关键点：让背景忽略底部安全区
         )
+        // ⭐ 让背景自然延伸到底部安全区
+        .background(.ultraThinMaterial.opacity(0.001)) // 占位，避免 ignoresSafeArea 影响布局
     }
+}
+
+// MARK: - 底部栏单个按钮（现代风格、有点击放大反馈）
+private struct BarItemView: View {
+    let icon: String
+    let activeIcon: String
+    let zh: String
+    let en: String
+    let isActive: Bool
+    let isEnglish: Bool
     
-    private func barButton(icon: String, zh: String, en: String,
-                           isActive: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            barLabel(icon: icon, zh: zh, en: en, isActive: isActive)
+    var body: some View {
+        VStack(spacing: 2) {
+            // 选中态：图标外裹一个柔光胶囊背景
+            ZStack {
+                if isActive {
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.accentColor.opacity(0.22),
+                                    Color.accentColor.opacity(0.12)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 50, height: 24)
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(
+                                    Color.accentColor.opacity(0.35),
+                                    lineWidth: 0.5
+                                )
+                        )
+                        .shadow(
+                            color: Color.accentColor.opacity(0.25),
+                            radius: 4, x: 0, y: 1
+                        )
+                        .transition(.scale.combined(with: .opacity))
+                }
+                
+                Image(systemName: isActive ? activeIcon : icon)
+                    .font(.system(size: 25, weight: isActive ? .semibold : .regular))
+                    .foregroundStyle(
+                        isActive ? Color.accentColor : Color.secondary
+                    )
+                    .symbolRenderingMode(.hierarchical)
+                    .scaleEffect(isActive ? 1.0 : 0.96)
+            }
+            .frame(height: 30)
+            .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isActive)
+            
+            Text(isEnglish ? en : zh)
+                .font(.system(size: 14, weight: isActive ? .semibold : .medium))
+                .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+                .animation(.easeInOut(duration: 0.2), value: isActive)
         }
-    }
-    
-    private func barLabel(icon: String, zh: String, en: String, isActive: Bool) -> some View {
-        VStack(spacing: 3) {
-            Image(systemName: icon)
-                .font(.system(size: 20, weight: .medium))
-            Text(isGlobalEnglishMode ? en : zh)
-                .font(.system(size: 10, weight: .semibold))
-        }
-        .foregroundColor(isActive ? .accentColor : .secondary)
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
     }
@@ -347,10 +449,23 @@ struct CategoryVideoListView: View {
                                                 by: sortOption,
                                                 cacheKey: category.name)
         
-        ScrollView {
-            WaterfallGridView(items: sortedItems)
-                .padding(.top, 10)
-                .padding(.bottom, 20)
+        ScrollViewReader { proxy in
+            ScrollView {
+                // 1. 在最顶部放置一个高度为 0 的隐形锚点
+                Color.clear
+                    .frame(height: 0)
+                    .id("top_anchor")
+                
+                WaterfallGridView(items: sortedItems)
+                    .padding(.top, 10)
+                    .padding(.bottom, 20)
+            }
+            // 2. 监听排序选项的变化，一旦变化，平滑滚动回顶部
+            .onChange(of: sortOption) { _ in
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    proxy.scrollTo("top_anchor", anchor: .top)
+                }
+            }
         }
         .background(Color(UIColor.systemGroupedBackground))
     }
