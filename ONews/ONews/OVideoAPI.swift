@@ -92,8 +92,6 @@ struct OVideoItem: Codable, Identifiable, Hashable {
     let intro: String?
     let ratings: [String: String]?
     let playlist: [OVideoChannel]
-    
-    // 【新增】添加 update 字段
     let update: String?
     
     enum CodingKeys: String, CodingKey {
