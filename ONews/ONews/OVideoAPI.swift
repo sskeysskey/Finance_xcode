@@ -26,6 +26,11 @@ enum OVideoAPI {
     }
     
     static func resolveRealURL(episodeURL: String) async throws -> String {
+        // 【核心修改】：如果本身就是 m3u8 链接，直接返回，跳过网络请求
+        if episodeURL.lowercased().contains(".m3u8") {
+            return episodeURL
+        }
+        
         guard let url = URL(string: "\(baseURL)/resolve") else { throw URLError(.badURL) }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -95,7 +100,7 @@ struct OVideoItem: Codable, Identifiable, Hashable {
     let update: String?
     
     enum CodingKeys: String, CodingKey {
-        case time, name, url, info, image, date, alias, intro, playlist, update // 【新增】添加 update
+        case time, name, url, info, image, date, alias, intro, playlist, update 
         case director = "导演"
         case writers  = "编剧"
         case cast     = "主演"

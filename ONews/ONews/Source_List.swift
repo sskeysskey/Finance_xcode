@@ -1043,7 +1043,8 @@ struct SourceListView: View {
                                 // 注意：handleArticleTap 的参数是一个 3 元素的元组，这里 item 是 4 元素
                                 // 我们需要重新构建一下参数传给它
                                 let tapItem = (article: item.article, sourceName: item.sourceName, isContentMatch: item.isContentMatch)
-                                Task { await handleArticleTap(tapItem) }
+                                // 【修改】传入 isFromAll: true，确保搜索结果中阅读/播放时在混合列表中轮询
+                                Task { await handleArticleTap(tapItem, autoPlay: false, isFromAll: true) }
                             }) {
                                 let isLocked = !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: item.article.timestamp)
                                 
@@ -1407,7 +1408,6 @@ struct SourceListView: View {
             !viewModel.isArticleEffectivelyRead(item.article)
         }
         
-        // 【修改】移除 ?? allItems.first，如果没有未读，直接返回
         guard let targetItem = unreadItems.first else {
             print("没有未读文章，无需播放。")
             return
@@ -1416,8 +1416,8 @@ struct SourceListView: View {
         // 6. 构造数据结构并跳转
         let itemToPlay = (article: targetItem.article, sourceName: targetItem.sourceName, isContentMatch: false)
         
-        // 开启自动播放导航
-        await handleArticleTap(itemToPlay, autoPlay: true)
+        // 【修改】开启自动播放导航，并明确指定 isFromAll: true
+        await handleArticleTap(itemToPlay, autoPlay: true, isFromAll: true)
     }
     
     // 【新增】处理点击单个新闻源的“播放”按钮逻辑
@@ -1427,25 +1427,23 @@ struct SourceListView: View {
         // 筛选出该新闻源下所有未读的文章
         let unreadItems = source.articles.filter { !viewModel.isArticleEffectivelyRead($0) }
         
-        // 【核心修改】如果没有未读文章，直接跳转到该源的列表页，不要返回
         guard let targetArticle = unreadItems.first else { 
             print("该新闻源没有未读文章，跳转到空状态页。")
             await MainActor.run {
-                // 使用全局导航路径跳转到该源的详情页，由于没有未读文章，它会自动显示 EmptyStateView
                 navPath.append(NavigationTarget.source(sourceName))
             }
             return 
         }
         
-        // 构造数据结构并跳转，开启自动播放
+        // 构造数据结构并跳转，开启自动播放 (分源播放，isFromAll 保持默认值 false)
         let itemToPlay = (article: targetArticle, sourceName: sourceName, isContentMatch: false)
-        await handleArticleTap(itemToPlay, autoPlay: true)
+        await handleArticleTap(itemToPlay, autoPlay: true, isFromAll: false)
     }
 
-    // 【修改】更新函数签名，增加 autoPlay 参数
-    private func handleArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool), autoPlay: Bool = false) async {
+    // 【修改】更新函数签名，增加 isFromAll 参数来区分播放/阅读上下文
+    private func handleArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool), autoPlay: Bool = false, isFromAll: Bool = false) async {
         let article = item.article
-        let sourceName = item.sourceName // 这是当前源的名称
+        let sourceName = item.sourceName // 这是当前文章所属的源名称
         
         // ⚠️ 修复 Bug：将 showSubscriptionSheet 替换为 authManager.showSubscriptionSheet
         if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
@@ -1453,10 +1451,12 @@ struct SourceListView: View {
             return
         }
         
-        // 【修改】使用全局 navPath 进行跳转
+        // 【修改】根据 isFromAll 决定传递给详情页的上下文标识 contextStr
+        let contextStr = isFromAll ? "all" : sourceName
+        
         let prepareNavigation = {
             await MainActor.run {
-                self.navPath.append(NavigationTarget.articleDetail(article, sourceName, sourceName, autoPlay))
+                self.navPath.append(NavigationTarget.articleDetail(article, sourceName, contextStr, autoPlay))
             }
         }
 
