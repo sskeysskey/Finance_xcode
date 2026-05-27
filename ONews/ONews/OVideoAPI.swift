@@ -61,6 +61,7 @@ enum OVideoAPI {
 // MARK: - 搜索索引条目（预处理小写）
 struct SearchIndexEntry {
     let item: OVideoItem
+    let categoryName: String
     let nameLower: String
     let aliasLower: String
     let typesLower: String
@@ -322,10 +323,9 @@ class OVideoDataManager: ObservableObject {
             self.categories = cats
             self.sortCache.removeAll()
             
-            // ⭐ 数据加载完后，在后台线程构建索引
-            let items = cats.flatMap { $0.items }
+            // ⭐ 数据加载完后，在后台线程构建索引（传入 category.name）
             let index = await Task.detached(priority: .utility) {
-                Self.buildIndex(from: items)
+                Self.buildIndex(from: cats)
             }.value
             self.searchIndex = index
             
@@ -335,18 +335,26 @@ class OVideoDataManager: ObservableObject {
         }
     }
     
-    nonisolated private static func buildIndex(from items: [OVideoItem]) -> [SearchIndexEntry] {
-        items.map { item in
-            SearchIndexEntry(
-                item: item,
-                nameLower: item.name.lowercased(),
-                aliasLower: item.alias?.lowercased() ?? "",
-                typesLower: (item.types ?? []).joined(separator: "\u{1F}").lowercased(),
-                directorLower: item.director?.lowercased() ?? "",
-                castLower: (item.cast ?? []).joined(separator: "\u{1F}").lowercased(),
-                introLower: item.intro?.lowercased() ?? ""
-            )
+    // ⭐ 修改：构建索引时捕获 categoryName
+    nonisolated private static func buildIndex(from categories: [OVideoCategory]) -> [SearchIndexEntry] {
+        var entries: [SearchIndexEntry] = []
+        for category in categories {
+            for item in category.items {
+                entries.append(
+                    SearchIndexEntry(
+                        item: item,
+                        categoryName: category.name, // 捕获分类名
+                        nameLower: item.name.lowercased(),
+                        aliasLower: item.alias?.lowercased() ?? "",
+                        typesLower: (item.types ?? []).joined(separator: "\u{1F}").lowercased(),
+                        directorLower: item.director?.lowercased() ?? "",
+                        castLower: (item.cast ?? []).joined(separator: "\u{1F}").lowercased(),
+                        introLower: item.intro?.lowercased() ?? ""
+                    )
+                )
+            }
         }
+        return entries
     }
     
     var allItems: [OVideoItem] { categories.flatMap { $0.items } }
@@ -382,7 +390,7 @@ class OVideoDataManager: ObservableObject {
         }
     }
     
-    // ⭐ 新版异步搜索：跑在后台线程，支持取消
+    // ⭐ 核心修改：多级严格分层搜索算法
     func searchAsync(keyword: String, limit: Int = 200) async -> [OVideoItem] {
         let kw = keyword.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !kw.isEmpty else { return [] }
@@ -390,33 +398,57 @@ class OVideoDataManager: ObservableObject {
         let index = self.searchIndex   // 值类型数组，捕获即拷贝引用
         
         return await Task.detached(priority: .userInitiated) {
-            var scored: [(item: OVideoItem, score: Double)] = []
-            scored.reserveCapacity(128)
+            // 定义分类的原本顺序权重（越小越靠前）
+            let categoryOrder = ["Movie": 0, "Drama": 1, "Show": 2, "Anime": 3]
+            
+            // 临时存储匹配到的条目及其排序权重
+            // matchPriority: 0=名字匹配, 1=别名/类型匹配, 2=导演/演员匹配, 3=简介匹配
+            // categoryPriority: 0=Movie, 1=Drama, 2=Show, 3=Anime, 4=其它
+            var matchedResults: [(item: OVideoItem, matchPriority: Int, categoryPriority: Int)] = []
+            matchedResults.reserveCapacity(128)
             
             for entry in index {
-                // 周期性检查取消，输入快时旧任务能尽早退出
+                // 周期性检查取消
                 if Task.isCancelled { return [] }
                 
-                var score: Double = 0
-                if entry.nameLower.contains(kw)     { score += 3.0 }
-                if entry.aliasLower.contains(kw)    { score += 2.5 }
-                if entry.typesLower.contains(kw)    { score += 2.5 }
-                if entry.directorLower.contains(kw) { score += 2.0 }
-                if entry.castLower.contains(kw)     { score += 2.0 }
-                if entry.introLower.contains(kw)    { score += 1.0 }
+                var matchPriority: Int? = nil
                 
-                if score > 0 {
-                    scored.append((entry.item, score))
+                // 1. 严格按优先级判断匹配字段
+                if entry.nameLower.contains(kw) {
+                    matchPriority = 0
+                } else if entry.aliasLower.contains(kw) || entry.typesLower.contains(kw) {
+                    matchPriority = 1
+                } else if entry.directorLower.contains(kw) || entry.castLower.contains(kw) {
+                    matchPriority = 2
+                } else if entry.introLower.contains(kw) {
+                    matchPriority = 3
+                }
+                
+                // 2. 如果匹配成功，计算分类优先级并加入结果集
+                if let priority = matchPriority {
+                    let catPriority = categoryOrder[entry.categoryName] ?? 4
+                    matchedResults.append((entry.item, priority, catPriority))
                 }
             }
             
             if Task.isCancelled { return [] }
             
-            // 排序后截断，避免渲染上千条
-            return scored
-                .sorted { $0.score > $1.score }
-                .prefix(limit)
-                .map { $0.item }
+            // 3. 执行双重维度排序
+            let sorted = matchedResults.sorted { a, b in
+                // 首先比较匹配优先级（名字匹配 > 别名类型 > 导演演员 > 简介）
+                if a.matchPriority != b.matchPriority {
+                    return a.matchPriority < b.matchPriority
+                }
+                // 匹配优先级相同时，比较分类原本顺序（Movie > Drama > Show > Anime）
+                if a.categoryPriority != b.categoryPriority {
+                    return a.categoryPriority < b.categoryPriority
+                }
+                // 如果前两者都相同，则按更新时间降序（最新的排在前面）
+                return a.item.updateSortKey > b.item.updateSortKey
+            }
+            
+            // 4. 截断并返回
+            return Array(sorted.prefix(limit).map { $0.item })
         }.value
     }
 }

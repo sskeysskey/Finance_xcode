@@ -208,17 +208,43 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         cleanupTransient(urlString)
     }
 
+    // 🛠️ 修改后：彻底清除本地缓存（包含已完成的和未完成的局部包）
     func deleteDownload(urlString: String) {
         cancelledUrls.insert(urlString)
+        
+        // 1. 尝试取消 activeTasks 中的任务
+        if let task = activeTasks[urlString] {
+            task.cancel()
+        }
+        
+        // 2. 额外保险：遍历 session 中所有可能处于恢复状态、但未被 activeTasks 记录的后台任务并取消
+        downloadSession.getAllTasks { tasks in
+            for task in tasks {
+                if let dlTask = task as? AVAssetDownloadTask, dlTask.taskDescription == urlString {
+                    dlTask.cancel()
+                }
+            }
+        }
+
+        // 3. 彻底删除本地文件：同时尝试删除 localBookmarks 和 pendingBookmarks（局部包）对应的路径
         if let localURL = getLocalURL(for: urlString) {
             try? FileManager.default.removeItem(at: localURL)
+            print("🗑️ 已删除已完成的本地包: \(localURL.path)")
         }
-        if let task = activeTasks[urlString] { task.cancel() }
+        
+        if let pendingURL = getPendingLocalURL(for: urlString) {
+            try? FileManager.default.removeItem(at: pendingURL)
+            print("🗑️ 已删除未完成的局部包: \(pendingURL.path)")
+        }
+
+        // 4. 清理内存和持久化数据
         localBookmarks.removeValue(forKey: urlString)
         pendingBookmarks.removeValue(forKey: urlString)
         cacheMetadata.removeValue(forKey: urlString)
         lastNonZeroSpeed.removeValue(forKey: urlString)
+        
         cleanupTransient(urlString)
+        
         saveBookmarks()
         savePendingBookmarks()
         saveMetadata()
@@ -238,6 +264,13 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 
     func getLocalURL(for urlString: String) -> URL? {
         guard let bookmark = localBookmarks[urlString] else { return nil }
+        var isStale = false
+        return try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &isStale)
+    }
+
+    // 🛠️ 新增：获取临时局部包的本地 URL
+    func getPendingLocalURL(for urlString: String) -> URL? {
+        guard let bookmark = pendingBookmarks[urlString] else { return nil }
         var isStale = false
         return try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &isStale)
     }
@@ -955,7 +988,7 @@ struct DownloadingCard: View {
                                     .font(.system(size: 12, design: .monospaced))
                                     .foregroundColor(.secondary)
                             } else {
-                                Text(isGlobalEnglishMode ? "Caching..." : "数据加载中...")
+                                Text(isGlobalEnglishMode ? "Caching..." : "数据下载中...")
                                     .font(.system(size: 12))
                                     .foregroundColor(.secondary)
                             }
