@@ -433,17 +433,26 @@ class OVideoDataManager: ObservableObject {
             
             if Task.isCancelled { return [] }
             
-            // 3. 执行双重维度排序
+            // 3. 执行多级维度排序
             let sorted = matchedResults.sorted { a, b in
-                // 首先比较匹配优先级（名字匹配 > 别名类型 > 导演演员 > 简介）
+                // 第一层：首先比较匹配优先级（名字匹配 > 别名类型 > 导演演员 > 简介）
                 if a.matchPriority != b.matchPriority {
                     return a.matchPriority < b.matchPriority
                 }
-                // 匹配优先级相同时，比较分类原本顺序（Movie > Drama > Show > Anime）
+                
+                // 第二层：匹配优先级相同时，优先按照上映日期（releaseSortKey）降序排列（越新越靠前）
+                let releaseA = a.item.releaseSortKey
+                let releaseB = b.item.releaseSortKey
+                if releaseA != releaseB {
+                    return releaseA > releaseB // 降序：晚的（大值）在前面
+                }
+                
+                // 第三层：上映日期也一致时，按照分类原本顺序（Movie > Drama > Show > Anime）
                 if a.categoryPriority != b.categoryPriority {
                     return a.categoryPriority < b.categoryPriority
                 }
-                // 如果前两者都相同，则按更新时间降序（最新的排在前面）
+                
+                // 第四层：前三者都相同时，按照更新时间（updateSortKey）降序
                 return a.item.updateSortKey > b.item.updateSortKey
             }
             

@@ -6,6 +6,82 @@ struct VideoDetailView: View {
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @State private var selectedChannelIndex = 0
     
+    // 【新增】对 playlist 进行排序的计算属性
+    private var sortedPlaylist: [OVideoChannel] {
+        // 1. 获取当前下载/映射管理器中的所有有效 URL 集合 (请根据你项目实际的单例和属性名修改)
+        // 假设你的 HLSDownloadManager 存在，且里面有 url_mapping 字典
+        // 如果你的 url_mapping 结构不同，请将此处替换为获取有效 URL 集合的逻辑
+        // 比如：let validURLs = Set(HLSDownloadManager.shared.urlMapping.keys)
+        // 这里做一个安全的兜底：如果获取不到，则不进行过滤，全部视为有效
+        let validURLs: Set<String> = {
+            // TODO: 请在此处替换为你的 url_mapping 数据源
+            // 例如：return Set(HLSDownloadManager.shared.urlMapping.keys)
+            // 下面是示意代码（如果你的 HLSDownloadManager 叫别的名字，请对应修改）：
+            // return Set(HLSDownloadManager.shared.url_mapping.keys)
+            return Set<String>() 
+        }()
+        
+        // 2. 将 playlist 转换为带排序权重的元组
+        let indexedChannels = item.playlist.enumerated().map { (index, channel) -> (index: Int, channel: OVideoChannel, validCount: Int, qualityScore: Int) in
+            
+            // A. 计算当前 channel 中有效 url 的数量
+            let validCount = channel.episodes.values.filter { url in
+                // 判断 url 是否在有效映射中
+                // 如果 validURLs 为空（比如还没加载完），我们默认所有 url 都有效，或者你可以根据业务调整
+                validURLs.isEmpty ? true : validURLs.contains(url)
+            }.count
+            
+            // B. 计算画质/版本权重分数 (qualityScore)
+            // 规则：
+            // - 包含 "HD" 或 "正片" -> 记为 2 分 (优先显示)
+            // - 包含 "TC", "TS", "抢先", "HC" -> 记为 0 分 (靠后显示)
+            // - 其他情况 -> 记为 1 分 (默认)
+            var qualityScore = 1 
+            
+            let episodeKeys = channel.episodes.keys
+            
+            // 判断是否包含降级关键字
+            let hasLowQuality = episodeKeys.contains { key in
+                let k = key.uppercased()
+                return k.contains("TC") || k.contains("TS") || k.contains("HC") || k.contains("抢先")
+            }
+            
+            // 判断是否包含升级关键字
+            let hasHighQuality = episodeKeys.contains { key in
+                let k = key.uppercased()
+                return k.contains("HD") || k.contains("正片")
+            }
+            
+            if hasLowQuality {
+                qualityScore = 0 // 包含抢先、TC等，降级
+            } else if hasHighQuality {
+                qualityScore = 2 // 不含低画质，且含有HD、正片等，升级
+            }
+            
+            return (index, channel, validCount, qualityScore)
+        }
+        
+        // 3. 综合排序规则：
+        //   - 优先按有效数量（validCount）降序排列
+        //   - 其次按画质分数（qualityScore）降序排列（HD/正片在前，TC/抢先在后）
+        //   - 如果前两者都相同，按原始索引（index）升序排列（即保持默认顺序）
+        let sortedIndexed = indexedChannels.sorted { a, b in
+            // 1. 比较有效 URL 数量
+            if a.validCount != b.validCount {
+                return a.validCount > b.validCount
+            }
+            // 2. 比较画质分数
+            if a.qualityScore != b.qualityScore {
+                return a.qualityScore > b.qualityScore
+            }
+            // 3. 保持原序
+            return a.index < b.index
+        }
+        
+        // 4. 还原为 [OVideoChannel] 数组
+        return sortedIndexed.map { $0.channel }
+    }
+    
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -54,6 +130,11 @@ struct VideoDetailView: View {
             .frame(width: 120, height: 170).clipped().cornerRadius(10)
             
             VStack(alignment: .leading, spacing: 6) {                
+                // 【新增】别名显示逻辑
+                if let alias = item.alias, !alias.isEmpty {
+                    infoRow(label: isGlobalEnglishMode ? "Alias" : "又名", value: alias)
+                }
+
                 // 导演
                 if let director = item.director, !director.isEmpty {
                     infoRow(label: isGlobalEnglishMode ? "Director" : "导演", value: director)
@@ -109,7 +190,8 @@ struct VideoDetailView: View {
     
     private var playlistSection: some View {
         Group {
-            if item.playlist.isEmpty {
+            // 【修改】这里使用排序后的 sortedPlaylist 判断是否为空
+            if sortedPlaylist.isEmpty {
                 Text(isGlobalEnglishMode ? "No sources" : "暂无可用资源")
                     .foregroundColor(.secondary).padding(.horizontal, 16)
             } else {
@@ -121,7 +203,8 @@ struct VideoDetailView: View {
                     
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
-                            ForEach(Array(item.playlist.enumerated()), id: \.offset) { idx, ch in
+                            // 【修改】这里遍历已排序的 sortedPlaylist
+                            ForEach(Array(sortedPlaylist.enumerated()), id: \.offset) { idx, ch in
                                 Button {
                                     withAnimation { selectedChannelIndex = idx }
                                 } label: {
@@ -140,9 +223,9 @@ struct VideoDetailView: View {
                         .padding(.horizontal, 16)
                     }
                     
-                    if selectedChannelIndex < item.playlist.count {
-                        let channel = item.playlist[selectedChannelIndex]
-                        // 【修改】改用排序后的有序 episodes 数组进行渲染
+                    // 【修改】这里使用 sortedPlaylist 获取选中的 channel
+                    if selectedChannelIndex < sortedPlaylist.count {
+                        let channel = sortedPlaylist[selectedChannelIndex]
                         let sortedEps = channel.sortedEpisodes
                         
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 70), spacing: 10)],
@@ -151,7 +234,7 @@ struct VideoDetailView: View {
                                 NavigationLink(destination:
                                     VideoPlayerPageView(
                                         episodeURL: episode.url,
-                                        videoTitle: "\(item.name) · \(episode.name)", // 直接使用字典里的 Key 作为集数名
+                                        videoTitle: "\(item.name) · \(episode.name)",
                                         coverImage: item.image
                                     )
                                 ) {

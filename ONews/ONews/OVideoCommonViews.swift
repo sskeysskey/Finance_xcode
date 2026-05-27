@@ -629,7 +629,14 @@ struct VideoBrowseView: View {
     var body: some View {
         Group {
             if dataManager.isLoading && dataManager.categories.isEmpty {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .scaleEffect(1.2) // 稍微放大一点点，视觉更舒适
+                    Text(isGlobalEnglishMode ? "Loading, please wait..." : "图片加载中，请稍候...")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let err = dataManager.errorMessage, dataManager.categories.isEmpty {
                 errorView(err)
             } else if dataManager.categories.isEmpty {
