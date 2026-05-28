@@ -17,12 +17,11 @@ final class TrackingManager {
         case downloadComplete  = "download_complete"
     }
     
-    /// 通用上报。失败不抛错，不影响主流程
+    /// 通用上报。失败不抛错，不影响主流程 (移除了 category 字段)
     func track(event: EventType,
                userId: String?,
                videoURL: String,
-               videoTitle: String,
-               category: String? = nil) {
+               videoTitle: String) {
         guard let userId = userId, !userId.isEmpty else { return }
         let key = "\(userId)|\(videoURL)|\(event.rawValue)"
         
@@ -41,25 +40,24 @@ final class TrackingManager {
                 userId: userId,
                 videoURL: videoURL,
                 videoTitle: videoTitle,
-                category: category ?? "",
                 eventType: event.rawValue
             )
         }
     }
     
     private static func send(userId: String, videoURL: String,
-                             videoTitle: String, category: String,
-                             eventType: String) async {
+                             videoTitle: String, eventType: String) async {
         guard let url = URL(string: "http://106.15.183.158:5001/api/OVideo/track") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 10
+        
+        // 移除了 "category" 键值对
         let body: [String: Any] = [
             "user_id": userId,
             "video_url": videoURL,
             "video_title": videoTitle,
-            "category": category,
             "event_type": eventType
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
