@@ -73,6 +73,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                 self.userIdentifier = userId
                 self.isLoggedIn = true
                 print("AuthManager: 本地已登录，User ID: \(userId)")
+                // 🚀 【新增】同步备份到 UserDefaults 供后台下载线程使用
+                UserDefaults.standard.set(userId, forKey: "current_user_id")
                 
                 // 【核心修复 1】启动时，先加载本地缓存的订阅状态
                 // 这样即使网络请求失败，用户也能看到之前的订阅状态
@@ -123,6 +125,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             self.isSubscribed = false // 登出后取消订阅状态
             self.subscriptionExpiryDate = nil
             clearSubscriptionCache() // 清理缓存
+            // 🚀 【新增】清除 UserDefaults 备份
+            UserDefaults.standard.removeObject(forKey: "current_user_id")
             print("AuthManager: 用户已成功登出。")
         } catch {
             // 即使删除失败，也在 UI 上表现为登出
@@ -130,6 +134,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             self.isLoggedIn = false
             self.isSubscribed = false
             clearSubscriptionCache()
+            // 🚀 【新增】清除 UserDefaults 备份
+            UserDefaults.standard.removeObject(forKey: "current_user_id")
             print("AuthManager: 登出错误: \(error.localizedDescription)")
         }
     }
@@ -322,6 +328,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                     try await sendTokenToServer(token: identityToken, userId: userId)
                     // 服务器验证成功后，在本地保存用户凭证
                     try saveUserIdentifierToKeychain(userId)
+                    // 🚀 【新增】同步备份到 UserDefaults 供后台下载线程使用
+                    UserDefaults.standard.set(userId, forKey: "current_user_id")
                     
                     // 登录成功后，也立即检查一下本地 Apple 权限，双重保险
                     await updateSubscriptionStatus()

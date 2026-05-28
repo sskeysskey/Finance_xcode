@@ -408,8 +408,7 @@ struct VideoPlayerPageView: View {
                 event: .play,
                 userId: authManager.userIdentifier,
                 videoURL: episodeURL,            // 用源 URL 作为唯一键
-                videoTitle: videoTitle,
-                category: nil                    // 这里如果能透传分类更好
+                videoTitle: videoTitle
             )
         } catch {
             self.resolveError = error.localizedDescription

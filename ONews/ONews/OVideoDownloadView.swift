@@ -374,7 +374,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         } catch { print("生成临时书签失败: \(error)") }
     }
 
-    // ✨ 关键修复 2:用 error + 进度双重判断,确认是否真正完成
+    // ✨ 关键修复 2:用 error + 进度双重判断,确认是否真正完成，并在完成后上报后台
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let urlString = task.taskDescription else { return }
         DispatchQueue.main.async {
@@ -401,6 +401,18 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                     self.localBookmarks[urlString] = bookmark
                     self.saveBookmarks()
                 }
+                
+                // 🚀 从 UserDefaults 中读取刚才 AuthManager 备份的正确用户 ID
+                let currentUserId = UserDefaults.standard.string(forKey: "current_user_id")
+                let title = self.cacheMetadata[urlString]?.title ?? "Unknown Video"
+                
+                TrackingManager.shared.track(
+                    event: .downloadComplete,
+                    userId: currentUserId ?? "guest_user", // 兜底防空
+                    videoURL: urlString,
+                    videoTitle: title
+                )
+                
                 self.pendingBookmarks.removeValue(forKey: urlString)
                 self.savePendingBookmarks()
                 self.downloadProgress.removeValue(forKey: urlString)

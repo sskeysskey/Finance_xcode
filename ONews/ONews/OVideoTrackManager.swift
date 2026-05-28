@@ -1,10 +1,11 @@
 import Foundation
 
-@MainActor
 final class TrackingManager {
     static let shared = TrackingManager()
     private let baseURL = "http://106.15.183.158:5001/api/OVideo/track"
     
+    // 引入锁，保证多线程访问内存缓存时的线程安全
+    private let lock = NSRecursiveLock()
     // 内存缓存：一次启动内不重复发同一事件，减少网络请求
     private var sentInSession: Set<String> = []
     
@@ -24,10 +25,18 @@ final class TrackingManager {
                category: String? = nil) {
         guard let userId = userId, !userId.isEmpty else { return }
         let key = "\(userId)|\(videoURL)|\(event.rawValue)"
-        if sentInSession.contains(key) { return }
-        sentInSession.insert(key)
         
-        Task.detached(priority: .background) {
+        // 线程安全地检查并写入内存缓存
+        lock.lock()
+        if sentInSession.contains(key) {
+            lock.unlock()
+            return
+        }
+        sentInSession.insert(key)
+        lock.unlock()
+        
+        // 使用 Task 异步发送，不阻塞当前线程
+        Task {
             await Self.send(
                 userId: userId,
                 videoURL: videoURL,
