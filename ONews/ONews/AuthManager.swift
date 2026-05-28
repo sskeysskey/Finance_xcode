@@ -815,3 +815,29 @@ struct LoginView: View {
         }
     }
 }
+
+// MARK: - 订阅守卫修饰符
+struct SubscriptionGateModifier: ViewModifier {
+    @Binding var isPresented: Bool
+    
+    func body(content: Content) -> some View {
+        content.sheet(isPresented: $isPresented) {
+            SubscriptionView()
+        }
+    }
+}
+
+extension View {
+    func subscriptionGate(isPresented: Binding<Bool>) -> some View {
+        self.modifier(SubscriptionGateModifier(isPresented: isPresented))
+    }
+}
+
+// 一个统一的鉴权辅助函数（可以放在 AuthManager 里）
+extension AuthManager {
+    /// 检查是否有访问视频内容的权限
+    /// - Returns: true 表示已订阅可访问；false 表示需要弹订阅页
+    func canAccessVideoContent() -> Bool {
+        return isSubscribed
+    }
+}

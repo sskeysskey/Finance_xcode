@@ -200,6 +200,10 @@ struct VideoPlayerPageView: View {
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @StateObject private var network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    
+    // 【新增】
+    @EnvironmentObject var authManager: AuthManager
+    @State private var showSubscriptionSheet = false
 
     @State private var realURL: String? = nil
     @State private var isResolving = true
@@ -208,43 +212,101 @@ struct VideoPlayerPageView: View {
 
     var body: some View {
         ZStack {
-            // 背景渐变
-            LinearGradient(
-                colors: [Color(.systemBackground),
-                         Color.accentColor.opacity(0.06),
-                         Color(.systemBackground)],
-                startPoint: .top, endPoint: .bottom
-            ).ignoresSafeArea()
+            // 【新增】未订阅时显示锁屏，不解析、不播放
+            if !authManager.isSubscribed {
+                lockedOverlay
+            } else {
+                // 背景渐变
+                LinearGradient(
+                    colors: [Color(.systemBackground),
+                            Color.accentColor.opacity(0.06),
+                            Color(.systemBackground)],
+                    startPoint: .top, endPoint: .bottom
+                ).ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                playerArea
-                    .aspectRatio(16.0/9.0, contentMode: .fit)
-                    .frame(maxWidth: .infinity)
-                    .background(Color.black)
+                VStack(spacing: 0) {
+                    playerArea
+                        .aspectRatio(16.0/9.0, contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.black)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        titleCard
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            titleCard
 
-                        if let real = realURL {
-                            CacheCard(realURL: real,
-                                      videoTitle: videoTitle,
-                                      coverImage: coverImage)
+                            if let real = realURL {
+                                CacheCard(realURL: real,
+                                        videoTitle: videoTitle,
+                                        coverImage: coverImage)
+                            }
+
+                            if let real = realURL, downloadManager.localBookmarks[real] != nil {
+                                offlineBadge
+                            }
+
+                            Spacer(minLength: 30)
                         }
-
-                        if let real = realURL, downloadManager.localBookmarks[real] != nil {
-                            offlineBadge
-                        }
-
-                        Spacer(minLength: 30)
+                        .padding(.top, 16)
                     }
-                    .padding(.top, 16)
                 }
             }
         }
         .navigationTitle(isGlobalEnglishMode ? "Player" : "播放")
         .navigationBarTitleDisplayMode(.inline)
-        .task { if realURL == nil { await resolve() } }
+        .task {
+            // 【修改】只有已订阅才解析
+            if authManager.isSubscribed && realURL == nil {
+                await resolve()
+            }
+        }
+        // 【新增】
+        .sheet(isPresented: $showSubscriptionSheet) {
+            SubscriptionView()
+        }
+        // 【新增】订阅成功后自动开始解析
+        .onChange(of: authManager.isSubscribed) { newValue in
+            if newValue && realURL == nil {
+                Task { await resolve() }
+            }
+        }
+    }
+    
+    // 【新增】未订阅锁屏视图
+    private var lockedOverlay: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            Image(systemName: "lock.fill")
+                .font(.system(size: 60))
+                .foregroundColor(.orange)
+            Text(isGlobalEnglishMode ? "Subscription Required" : "需要订阅")
+                .font(.title2.bold())
+            Text(isGlobalEnglishMode 
+                 ? "Subscribe to unlock video playback and offline caching."
+                 : "订阅后即可在线播放并使用离线缓存功能")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+            
+            Button {
+                showSubscriptionSheet = true
+            } label: {
+                Text(isGlobalEnglishMode ? "Subscribe Now" : "立即订阅")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 40).padding(.vertical, 12)
+                    .background(Capsule().fill(Color.orange))
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.viewBackground.ignoresSafeArea())
+        .onAppear {
+            // 进来就直接弹订阅页
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                showSubscriptionSheet = true
+            }
+        }
     }
 
     // 播放器主区
@@ -341,6 +403,14 @@ struct VideoPlayerPageView: View {
         do {
             let url = try await OVideoAPI.resolveRealURL(episodeURL: episodeURL)
             self.realURL = url
+            // 🔥 新增：上报"播放"事件
+            TrackingManager.shared.track(
+                event: .play,
+                userId: authManager.userIdentifier,
+                videoURL: episodeURL,            // 用源 URL 作为唯一键
+                videoTitle: videoTitle,
+                category: nil                    // 这里如果能透传分类更好
+            )
         } catch {
             self.resolveError = error.localizedDescription
         }
@@ -356,68 +426,116 @@ struct CachedVideoPlayerView: View {
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var authManager: AuthManager
+    @State private var showSubscriptionSheet = false
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: [Color(.systemBackground),
-                                    Color.accentColor.opacity(0.05)],
-                           startPoint: .top, endPoint: .bottom).ignoresSafeArea()
+            if !authManager.isSubscribed {
+                lockedOverlay   // 1. 修复：已在下方补充 lockedOverlay 属性
+            } else {
+                LinearGradient(colors: [Color(.systemBackground),
+                                        Color.accentColor.opacity(0.05)],
+                            startPoint: .top, endPoint: .bottom).ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                ZStack {
-                    Color.black
-                    if let local = downloadManager.getLocalURL(for: realURL) {
-                        VideoPlayerView(videoURL: local, isBuffering: .constant(false))
-                    } else if let url = URL(string: realURL) {
-                        VideoPlayerView(videoURL: url, isBuffering: .constant(false))
-                    } else {
-                        Text(isGlobalEnglishMode ? "Unable to play" : "无法播放")
-                            .foregroundColor(.white)
+                VStack(spacing: 0) {
+                    ZStack {
+                        Color.black
+                        if let local = downloadManager.getLocalURL(for: realURL) {
+                            VideoPlayerView(videoURL: local, isBuffering: .constant(false))
+                        } else if let url = URL(string: realURL) {
+                            VideoPlayerView(videoURL: url, isBuffering: .constant(false))
+                        } else {
+                            Text(isGlobalEnglishMode ? "Unable to play" : "无法播放")
+                                .foregroundColor(.white)
+                        }
                     }
-                }
-                .aspectRatio(16.0/9.0, contentMode: .fit)
-                .frame(maxWidth: .infinity)
+                    .aspectRatio(16.0/9.0, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text(title)
-                            .font(.system(size: 17, weight: .bold))
-                            .padding(.horizontal, 16).padding(.top, 16)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text(title)
+                                .font(.system(size: 17, weight: .bold))
+                                .padding(.horizontal, 16).padding(.top, 16)
 
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
-                            Text(isGlobalEnglishMode
-                                 ? "Playing from local cache"
-                                 : "正在使用本地缓存播放")
-                                .font(.caption).foregroundColor(.secondary)
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
+                                Text(isGlobalEnglishMode
+                                    ? "Playing from local cache"
+                                    : "正在使用本地缓存播放")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(Capsule().fill(Color.green.opacity(0.10)))
+                            .padding(.horizontal, 16)
+
+                            Button(role: .destructive) {
+                                downloadManager.deleteDownload(urlString: realURL)
+                                dismiss()
+                            } label: {
+                                Label(isGlobalEnglishMode ? "Delete Cache" : "删除缓存",
+                                    systemImage: "trash")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.red)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(Color.red.opacity(0.12))
+                                    )
+                            }
+                            .padding(.horizontal, 16)
+
+                            Spacer(minLength: 30)
                         }
-                        .padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(Capsule().fill(Color.green.opacity(0.10)))
-                        .padding(.horizontal, 16)
-
-                        Button(role: .destructive) {
-                            downloadManager.deleteDownload(urlString: realURL)
-                            dismiss()
-                        } label: {
-                            Label(isGlobalEnglishMode ? "Delete Cache" : "删除缓存",
-                                  systemImage: "trash")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(.red)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.red.opacity(0.12))
-                                )
-                        }
-                        .padding(.horizontal, 16)
-
-                        Spacer(minLength: 30)
                     }
                 }
             }
         }
         .navigationTitle(isGlobalEnglishMode ? "Player" : "播放")
         .navigationBarTitleDisplayMode(.inline)
+        // 2. 修复：移除了多余的 .task 和 .onChange(of: authManager.isSubscribed) 里的 resolve()，因为缓存播放器不需要解析 URL
+        .sheet(isPresented: $showSubscriptionSheet) {
+            SubscriptionView()
+        }
+    }
+    
+    // 【新增】未订阅锁屏视图 (供 CachedVideoPlayerView 内部使用)
+    private var lockedOverlay: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            Image(systemName: "lock.fill")
+                .font(.system(size: 60))
+                .foregroundColor(.orange)
+            Text(isGlobalEnglishMode ? "Subscription Required" : "需要订阅")
+                .font(.title2.bold())
+            Text(isGlobalEnglishMode 
+                 ? "Subscribe to unlock video playback and offline caching."
+                 : "订阅后即可在线播放并使用离线缓存功能")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+            
+            Button {
+                showSubscriptionSheet = true
+            } label: {
+                Text(isGlobalEnglishMode ? "Subscribe Now" : "立即订阅")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 40).padding(.vertical, 12)
+                    .background(Capsule().fill(Color.orange))
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.viewBackground.ignoresSafeArea())
+        .onAppear {
+            // 进来就直接弹订阅页
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                showSubscriptionSheet = true
+            }
+        }
     }
 }

@@ -508,6 +508,11 @@ struct CacheCard: View {
     @ObservedObject private var downloadManager = HLSDownloadManager.shared
     @ObservedObject private var network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    
+    // 【新增】
+    @EnvironmentObject var authManager: AuthManager
+    @State private var showSubscriptionSheet = false
+    
     @State private var showWiFiOnlyToggle = false
     @State private var showCellularAlert = false // 控制蜂窝网络下载提示弹窗
     @State private var showCancelAlert = false // 控制取消下载的弹窗
@@ -582,6 +587,10 @@ struct CacheCard: View {
                  ? "You are currently on a cellular network and 'Wi-Fi Only' is enabled. Do you want to disable 'Wi-Fi Only' and start downloading?" 
                  : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 缓存”。是否关闭该限制并继续下载？")
         }
+        // 【新增】
+        .sheet(isPresented: $showSubscriptionSheet) {
+            SubscriptionView()
+        }
     }
 
     // 已缓存
@@ -647,14 +656,18 @@ struct CacheCard: View {
                 // 暂停 / 继续
                 Button {
                     if isPaused {
-                        // 如果是暂停状态且处于蜂窝网络+仅Wi-Fi，则弹窗拦截
+                        // 【新增】继续下载也需要订阅
+                        guard authManager.canAccessVideoContent() else {
+                            showSubscriptionSheet = true
+                            return
+                        }
                         if downloadManager.wifiOnly && !network.isWiFi {
                             showCellularAlert = true
                         } else {
                             downloadManager.resumeDownload(urlString: realURL)
                         }
                     } else {
-                        downloadManager.pauseDownload(urlString: realURL)
+                        downloadManager.pauseDownload(urlString: realURL)  // 暂停不需要订阅
                     }
                 } label: {
                     Image(systemName: isPaused ? "play.fill" : "pause.fill")
@@ -709,7 +722,12 @@ struct CacheCard: View {
     // 未下载
     private var idleRow: some View {
         Button {
-            // 如果处于蜂窝网络且开启了“仅 Wi-Fi”，则弹窗提示
+            // 【新增】先检查订阅
+            guard authManager.canAccessVideoContent() else {
+                showSubscriptionSheet = true
+                return
+            }
+            // 原有逻辑
             if downloadManager.wifiOnly && !network.isWiFi {
                 showCellularAlert = true
             } else {
@@ -955,6 +973,8 @@ struct DownloadingCard: View {
     
     @State private var showCancelAlert = false // 控制取消下载的弹窗
     @State private var showCellularAlert = false // 控制蜂窝网络下载提示弹窗
+    @EnvironmentObject var authManager: AuthManager
+    @State private var showSubscriptionSheet = false
 
     var body: some View {
         let progress = dm.displayedProgress(for: realURL)
@@ -1016,15 +1036,19 @@ struct DownloadingCard: View {
             // 操作按钮
             HStack(spacing: 10) {
                 Button {
-                    if paused { 
-                        // 如果处于蜂窝网络且开启了“仅 Wi-Fi”，则弹窗提示
+                    if paused {
+                        guard authManager.canAccessVideoContent() else {
+                            showSubscriptionSheet = true
+                            return
+                        }
                         if dm.wifiOnly && !network.isWiFi {
                             showCellularAlert = true
                         } else {
-                            dm.resumeDownload(urlString: realURL) 
+                            dm.resumeDownload(urlString: realURL)
                         }
+                    } else {
+                        dm.pauseDownload(urlString: realURL)
                     }
-                    else { dm.pauseDownload(urlString: realURL) }
                 } label: {
                     Label(paused ? (isGlobalEnglishMode ? "Resume" : "继续")
                                  : (isGlobalEnglishMode ? "Pause" : "暂停"),
@@ -1085,6 +1109,7 @@ struct DownloadingCard: View {
                  ? "You are currently on a cellular network and 'Wi-Fi Only' is enabled. Do you want to disable 'Wi-Fi Only' and resume downloading?" 
                  : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 缓存”。是否关闭该限制并继续下载？")
         }
+        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
     }
 }
 
