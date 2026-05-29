@@ -14,6 +14,9 @@ enum KeychainError: Error {
 @MainActor
 class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
     
+    // ✨ 新增：定义全局单例，解决 "has no member 'shared'" 报错
+    static let shared = AuthManager()
+    
     @Published var isLoggedIn: Bool = false
     @Published var isLoggingIn: Bool = false
     // 【新增】订阅状态

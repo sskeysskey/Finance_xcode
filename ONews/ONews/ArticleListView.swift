@@ -466,7 +466,7 @@ struct ArticleListView: View {
     // 1. 【新增】辅助函数：专门用于获取数量，减轻 View 的负担
     private func getCount(for mode: ArticleFilterMode) -> Int {
         return mode == .unread ? unreadCount : readCount
-    } // ✅ 修正：这里补上了丢失的大括号 "}"
+    }
     
     private var baseFilteredArticles: [ArticleItem] {
         guard let source = source else { return [] }
@@ -526,7 +526,7 @@ struct ArticleListView: View {
                         if isSearching {
                             SearchBarInline(
                                 text: $searchText,
-                                placeholder: Localized.searchPlaceholder, // 【修改】
+                                placeholder: Localized.searchPlaceholder,
                                 onCommit: {
                                     isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 },
@@ -1259,7 +1259,6 @@ struct AllArticlesListView: View {
             downloadProgress = 0.0
             downloadProgressText = Localized.imagePrepare
         }
-        
         do {
             try await resourceManager.downloadImagesForArticle(
                 timestamp: article.timestamp,

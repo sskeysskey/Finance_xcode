@@ -61,6 +61,7 @@ struct ArticleContainerView: View {
                 viewModel: viewModel,
                 audioPlayerManager: audioPlayerManager,
                 requestNextArticle: {
+                    // 【修改】点击“阅读下一篇”切换，并触发曝光(view)埋点
                     await self.switchToNextArticleAndStopAudio()
                 },
                 // 【修改】传递 onAudioToggle 闭包
@@ -94,7 +95,8 @@ struct ArticleContainerView: View {
                     playerManager: audioPlayerManager,
                     playNextAndStart: {
                         Task {
-                            await switchToNextArticle(shouldAutoplayNext: true)
+                            // 【修改】点击播放器“下一个”触发朗读(listen)埋点
+                            await switchToNextArticle(shouldAutoplayNext: true, triggerListenTrack: true)
                         }
                     },
                     toggleCollapse: {
@@ -134,6 +136,13 @@ struct ArticleContainerView: View {
         .onAppear {
             didCommitOnDisappear = false
             updateUnreadCounts()
+
+            // 🔥 新增：曝光埋点
+            NewsTrackingManager.shared.track(
+                event: .view,
+                article: currentArticle,
+                sourceId: currentArticle.source_id
+            )
             
             Task {
                 await preDownloadNextArticleImages()
@@ -141,7 +150,8 @@ struct ArticleContainerView: View {
             
             audioPlayerManager.onNextRequested = {
                 Task {
-                    await self.switchToNextArticle(shouldAutoplayNext: true)
+                    // 【修改】自动播放下一篇，触发朗读(listen)埋点
+                    await self.switchToNextArticle(shouldAutoplayNext: true, triggerListenTrack: true)
                 }
             }
             audioPlayerManager.onPlaybackFinished = { }
@@ -159,12 +169,10 @@ struct ArticleContainerView: View {
         .onDisappear {
             guard !didCommitOnDisappear else { return }
             didCommitOnDisappear = true
-            
             audioPlayerManager.stop()
             _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
             viewModel.commitPendingReads()
         }
-        // --- 修改这里 ---
         .onChange(of: currentArticle) { newArticle in
             updateUnreadCounts()
             Task {
@@ -236,6 +244,13 @@ struct ArticleContainerView: View {
         
         // 传入 language 参数
         audioPlayerManager.startPlayback(text: fullText, title: title, language: language)
+        
+        // 🔥 新增：朗读埋点
+        NewsTrackingManager.shared.track(
+            event: .listen,
+            article: currentArticle,
+            sourceId: currentArticle.source_id
+        )
     }
 
     private func updateUnreadCounts() {
@@ -257,10 +272,12 @@ struct ArticleContainerView: View {
 
     private func switchToNextArticleAndStopAudio() async {
         audioPlayerManager.stop()
-        await switchToNextArticle(shouldAutoplayNext: false)
+        // 【修改】点击“阅读下一篇”触发的是曝光(view)埋点
+        await switchToNextArticle(shouldAutoplayNext: false, triggerViewTrack: true)
     }
 
-    private func switchToNextArticle(shouldAutoplayNext: Bool) async {
+    // 【修改】新增 triggerViewTrack 和 triggerListenTrack 参数，用于在切换到下一篇时进行排重打点
+    private func switchToNextArticle(shouldAutoplayNext: Bool, triggerViewTrack: Bool = false, triggerListenTrack: Bool = false) async {
         
         // 【新增】在这里调用 ReviewManager
         // 逻辑：用户决定看下一篇，说明刚刚这就这篇看完了/听完了，记录一次有效交互
@@ -346,6 +363,22 @@ struct ArticleContainerView: View {
             withAnimation(.easeInOut(duration: 0.4)) {
                 self.currentArticle = next.article
                 self.currentSourceName = next.sourceName
+            }
+            
+            // 【新增】切换成功后，根据触发源进行排重打点
+            if triggerViewTrack {
+                NewsTrackingManager.shared.track(
+                    event: .view,
+                    article: next.article,
+                    sourceId: next.article.source_id
+                )
+            }
+            if triggerListenTrack {
+                NewsTrackingManager.shared.track(
+                    event: .listen,
+                    article: next.article,
+                    sourceId: next.article.source_id
+                )
             }
         }
         

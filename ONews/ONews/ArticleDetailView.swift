@@ -571,7 +571,6 @@ struct ArticleDetailView: View {
     private func openApp(scheme: String, appId: String) {
         let appUrl = URL(string: scheme)
         let storeUrl = URL(string: "https://apps.apple.com/cn/app/id\(appId)")
-        
         if let appUrl = appUrl, UIApplication.shared.canOpenURL(appUrl) {
             UIApplication.shared.open(appUrl)
         } else if let storeUrl = storeUrl {
@@ -724,7 +723,6 @@ struct ArticleImageView: View {
     init(imageName: String, timestamp: String) {
         self.imageName = imageName
         self.timestamp = timestamp
-        
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let path = documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
         
@@ -785,7 +783,6 @@ struct ArticleImageView: View {
         .onAppear {
             // 【修改】如果在 init 阶段就已经命中内存缓存，直接 return，啥也不用做！
             if imageLoader.image != nil { return }
-            
             Task {
                 // 1. 尝试从本地加载
                 let success = await imageLoader.load(from: imagePath)
@@ -876,11 +873,9 @@ struct ZoomableImageView: View {
         guard let uiImage = UIImage(contentsOfFile: imagePath) else {
             saveAlertMessage = Localized.imageLoadError; showSaveAlert = true; return
         }
-        
         guard let imageData = uiImage.jpegData(compressionQuality: 1.0) else {
             saveAlertMessage = "图片转换失败"; showSaveAlert = true; return
         }
-        
         let requestAuth: (@escaping (PHAuthorizationStatus) -> Void) -> Void = { callback in
             if #available(iOS 14, *) { PHPhotoLibrary.requestAuthorization(for: .addOnly, handler: callback) }
             else { PHPhotoLibrary.requestAuthorization(callback) }
@@ -926,7 +921,7 @@ struct ZoomableScrollView: UIViewRepresentable {
         
         NSLayoutConstraint.activate([
             imageView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-            imageView.heightAnchor.constraint(equalTo:scrollView.heightAnchor),
+            imageView.heightAnchor.constraint(equalTo: scrollView.heightAnchor),
             imageView.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
             imageView.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor)
         ])

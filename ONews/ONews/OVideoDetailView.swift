@@ -90,23 +90,15 @@ struct VideoDetailView: View {
         )
         .navigationBarTitleDisplayMode(.inline)
         // 【核心修复】：在后台放置一个隐藏的 NavigationLink，用来响应 navigateToPlayer 状态进行跳转
-        .background(
-            Group {
-                if let episode = selectedEpisode {
-                    NavigationLink(
-                        destination: VideoPlayerPageView(
-                            episodeURL: episode.url,
-                            videoTitle: "\(item.name) · \(episode.name)",
-                            coverImage: item.image
-                        ),
-                        isActive: $navigateToPlayer
-                    ) {
-                        EmptyView()
-                    }
-                    .hidden()
-                }
+        .navigationDestination(isPresented: $navigateToPlayer) {
+            if let episode = selectedEpisode {
+                VideoPlayerPageView(
+                    episodeURL: episode.url,
+                    videoTitle: "\(item.name) · \(episode.name)",
+                    coverImage: item.image
+                )
             }
-        )
+        }
         // 【新增】订阅页弹窗
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
