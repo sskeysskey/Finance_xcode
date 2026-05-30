@@ -15,7 +15,6 @@ final class NewsTrackingManager {
     enum EventType: String {
         case view        = "view"
         case listen      = "listen"
-        case langSwitch  = "lang_switch"
     }
     
     /// 获取用户 ID：登录用 Apple ID，未登录用 IDFV
