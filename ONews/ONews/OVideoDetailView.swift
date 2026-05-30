@@ -95,7 +95,10 @@ struct VideoDetailView: View {
                 VideoPlayerPageView(
                     episodeURL: episode.url,
                     videoTitle: "\(item.name) · \(episode.name)",
-                    coverImage: item.image
+                    coverImage: item.image,
+                    channelName: sortedPlaylist[selectedChannelIndex].name, // 传入线路名（如 天堂）
+                    episodeName: episode.name,                             // 传入集数名（如 HD国语）
+                    sourceURL: item.url                                    // 传入影片详情页唯一键
                 )
             }
         }
