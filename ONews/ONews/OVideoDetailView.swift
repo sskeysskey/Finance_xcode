@@ -191,7 +191,9 @@ struct VideoDetailView: View {
                                 Button {
                                     withAnimation { selectedChannelIndex = idx }
                                 } label: {
-                                    Text(ch.name)
+                                    // 【核心修改】：将 ch.name（如 "天堂"）在 UI 上映射为 "线路 1" / "Line 1"
+                                    let displayName = isGlobalEnglishMode ? "Line \(idx + 1)" : "线路 \(idx + 1)"
+                                    Text(displayName)
                                         .font(.system(size: 13, weight: .semibold))
                                         .foregroundColor(selectedChannelIndex == idx ? .white : .primary)
                                         .padding(.horizontal, 14).padding(.vertical, 7)
@@ -214,7 +216,7 @@ struct VideoDetailView: View {
                                   spacing: 10) {
                             ForEach(sortedEps, id: \.url) { episode in
                                 Button {
-                                    // 【核心修复】：点击时先记录当前选中的剧集，再判断订阅状态
+                                    // 点击时先记录当前选中的剧集，再判断订阅状态
                                     selectedEpisode = episode
                                     
                                     if authManager.canAccessVideoContent() {

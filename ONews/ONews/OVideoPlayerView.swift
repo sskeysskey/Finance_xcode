@@ -196,6 +196,9 @@ struct VideoPlayerPageView: View {
     let episodeURL: String
     let videoTitle: String
     let coverImage: String?
+    var channelName: String? = nil   // 【新增】playlist 名,如「天堂」
+    var episodeName: String? = nil   // 【新增】集数 key,如「HD国语」
+    var sourceURL: String? = nil     // 【新增】影片页 url(唯一键)
 
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @StateObject private var network = NetworkMonitor.shared
@@ -242,6 +245,18 @@ struct VideoPlayerPageView: View {
 
                             if let real = realURL, downloadManager.localBookmarks[real] != nil {
                                 offlineBadge
+                            }
+
+                            // ⭐ 新增:错误链接举报入口
+                            if let real = realURL {
+                                ReportLinkCard(
+                                    videoTitle: videoTitle,
+                                    sourceURL: sourceURL ?? episodeURL,
+                                    episodeURL: episodeURL,
+                                    channelName: channelName,
+                                    episodeName: episodeName,
+                                    realURL: real
+                                )
                             }
 
                             Spacer(minLength: 30)
@@ -421,6 +436,8 @@ struct VideoPlayerPageView: View {
 struct CachedVideoPlayerView: View {
     let realURL: String
     let title: String
+    var channelName: String? = nil   // 【新增】
+    var episodeName: String? = nil   // 【新增】
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
@@ -468,6 +485,16 @@ struct CachedVideoPlayerView: View {
                             .padding(.horizontal, 12).padding(.vertical, 8)
                             .background(Capsule().fill(Color.green.opacity(0.10)))
                             .padding(.horizontal, 16)
+
+                            // ⭐ 新增:错误链接举报入口
+                            ReportLinkCard(
+                                videoTitle: title,
+                                sourceURL: realURL,
+                                episodeURL: realURL,
+                                channelName: channelName,
+                                episodeName: episodeName,
+                                realURL: nil
+                            )
 
                             Button(role: .destructive) {
                                 downloadManager.deleteDownload(urlString: realURL)
