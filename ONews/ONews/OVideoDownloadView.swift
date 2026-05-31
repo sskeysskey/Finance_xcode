@@ -1168,6 +1168,7 @@ struct DownloadingCard: View {
                                 startPoint: .leading, endPoint: .trailing))
                         )
                 }
+                .buttonStyle(BorderlessButtonStyle())   // ✅ 关键修复：让按钮独立响应点击
 
                 Button {
                     showCancelAlert = true
@@ -1179,6 +1180,7 @@ struct DownloadingCard: View {
                         .padding(.horizontal, 14).padding(.vertical, 8)
                         .background(Capsule().fill(Color.red.opacity(0.12)))
                 }
+                .buttonStyle(BorderlessButtonStyle())   // ✅ 关键修复：让按钮独立响应点击
                 .alert(isGlobalEnglishMode ? "Cancel Download" : "取消下载", isPresented: $showCancelAlert) {
                     Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
                     Button(isGlobalEnglishMode ? "Confirm" : "确定", role: .destructive) {
