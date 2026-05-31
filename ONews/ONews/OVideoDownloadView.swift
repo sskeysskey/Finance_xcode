@@ -750,34 +750,31 @@ struct CacheCard: View {
     // 未下载
     private var idleRow: some View {
         Button {
-            // 【新增】先检查订阅
             guard authManager.canAccessVideoContent() else {
                 showSubscriptionSheet = true
                 return
             }
-            // 原有逻辑
             if downloadManager.wifiOnly && !network.isWiFi {
                 showCellularAlert = true
             } else {
                 downloadManager.startDownload(urlString: realURL,
-                                              title: videoTitle,
-                                              coverImage: coverImage)
+                                            title: videoTitle,
+                                            coverImage: coverImage)
             }
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.down.circle.fill")
-                Text(isGlobalEnglishMode ? "Download for offline" : "缓存到本地")
-                    .font(.system(size: 14, weight: .semibold))
+            HStack(spacing: 6) { // 减小间距
+                Image(systemName: "arrow.down.circle") // 换成线条图标，更轻量
+                    .font(.system(size: 14, weight: .medium))
+                Text(isGlobalEnglishMode ? "Download" : "缓存到本地")
+                    .font(.system(size: 13, weight: .medium))
             }
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
+            .foregroundColor(.accentColor) // 文字颜色改为主题色
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8) // 减小高度
             .background(
-                LinearGradient(colors: [Color.accentColor, Color.accentColor.opacity(0.75)],
-                               startPoint: .leading, endPoint: .trailing)
+                Capsule()
+                    .stroke(Color.accentColor.opacity(0.5), lineWidth: 1) // 使用边框代替重背景
             )
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .shadow(color: Color.accentColor.opacity(0.35), radius: 8, y: 3)
         }
     }
     
@@ -785,10 +782,9 @@ struct CacheCard: View {
     private var cacheListNavigationRow: some View {
         NavigationLink(destination: VideoCacheView()) {
             HStack(spacing: 12) {
-                // 1. 图标增加背景，提升视觉权重
                 ZStack {
                     Circle()
-                        .fill(Color.accentColor.opacity(0.15))
+                        .fill(Color.accentColor.opacity(0.1)) // 更浅的图标背景
                         .frame(width: 36, height: 36)
                     Image(systemName: "folder.badge.gearshape")
                         .font(.system(size: 16, weight: .medium))
@@ -800,7 +796,6 @@ struct CacheCard: View {
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.primary)
                     
-                    // 2. 动态状态提示更明显
                     let downloadingCount = downloadManager.downloadProgress.keys.count
                     let cachedCount = downloadManager.localBookmarks.keys.count
                     
@@ -826,16 +821,16 @@ struct CacheCard: View {
                     .foregroundColor(.secondary.opacity(0.5))
             }
             .padding(12)
-            // 3. 增加背景色和边框，使其看起来像一个“按钮”
-            .background(Color.primary.opacity(0.03))
-            .cornerRadius(12)
+            // --- 关键修改：添加更明显的背景色 ---
+            .background(Color.accentColor.opacity(0.06)) // 浅色填充
+            .cornerRadius(14)
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.accentColor.opacity(0.1), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color.accentColor.opacity(0.15), lineWidth: 1) // 明显的边框
             )
         }
         .buttonStyle(PlainButtonStyle())
-        .padding(.top, 4) // 给上方留出一点呼吸空间
+        .padding(.top, 4)
     }
 }
 
