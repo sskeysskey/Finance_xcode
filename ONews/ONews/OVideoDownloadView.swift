@@ -79,22 +79,40 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         downloadSession.getAllTasks { [weak self] tasks in
             guard let self = self else { return }
             DispatchQueue.main.async {
+                // 1) 先收集 session 中仍然存活的任务对应的 URL
+                var aliveUrls = Set<String>()
                 for task in tasks {
                     guard let dlTask = task as? AVAssetDownloadTask,
-                          let urlString = dlTask.taskDescription else {
+                        let urlString = dlTask.taskDescription else {
                         task.cancel()
                         continue
                     }
                     if self.downloadProgress[urlString] == nil &&
-                       self.localBookmarks[urlString]   == nil {
+                    self.localBookmarks[urlString]   == nil {
                         dlTask.cancel()
                         continue
                     }
                     if dlTask.state == .completed || dlTask.state == .canceling { continue }
 
                     self.activeTasks[urlString] = dlTask
+                    aliveUrls.insert(urlString)
                     if dlTask.state == .running { dlTask.suspend() }
                 }
+
+                // 2) 🛠️ 副防线:对那些"有 pendingBookmark 但 session 已经没有对应任务"
+                //    的 URL,它们的局部包永远不可能再续传了 → 立刻清磁盘 + 进度归零,
+                //    防止用户从不点继续/不点删除时残留僵尸文件。
+                let orphanUrls = self.pendingBookmarks.keys.filter { !aliveUrls.contains($0) }
+                for urlString in orphanUrls {
+                    // 已经下载完成的不要动(localBookmarks 才是终态)
+                    if self.localBookmarks[urlString] != nil { continue }
+
+                    self.purgeStalePartial(for: urlString)
+                    if self.downloadProgress[urlString] != nil {
+                        self.downloadProgress[urlString] = 0
+                    }
+                }
+                self.savePersistedProgress()
             }
         }
     }
@@ -168,15 +186,22 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         guard let remoteURL = URL(string: urlString) else { return }
         let title = cacheMetadata[urlString]?.title ?? urlString
 
-        // ✅ 核心修复:AVAssetDownloadTask 只能以「远程 HLS 地址」作为下载源。
-        //    绝不能拿本地局部包(.movpkg)路径去创建任务,否则一 resume 就立刻
-        //    didComplete(带 error)→ 被判为"中断"→ 自动暂停,表现为"永远续不上"。
+        // 🛠️ 关键修复 1：在创建新下载任务前，先把旧的局部包从磁盘删掉，
+        //    否则 AVFoundation 会另起一个新的 .movpkg,导致旧包成为永久僵尸文件。
+        purgeStalePartial(for: urlString)
+
+        // 🛠️ 关键修复 2：既然是真正重下,进度也要诚实归零,不再骗用户。
+        DispatchQueue.main.async {
+            self.downloadProgress[urlString] = 0
+            self.savePersistedProgress()
+        }
+
         let asset = AVURLAsset(url: remoteURL)
         guard let task = downloadSession.makeAssetDownloadTask(
             asset: asset, assetTitle: title, assetArtworkData: nil, options: nil
         ) else {
             DispatchQueue.main.async {
-                self.isPaused[urlString] = true   // 避免假死,保持可见的暂停态
+                self.isPaused[urlString] = true
                 self.savePersistedProgress()
             }
             return
@@ -191,6 +216,31 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             self.lastSampleTime[urlString] = Date()
             self.savePersistedProgress()
         }
+    }
+
+    /// 把 urlString 关联的本地局部包（已无法用于真续传）从磁盘干净抹掉
+    private func purgeStalePartial(for urlString: String) {
+        if let bookmark = pendingBookmarks[urlString] {
+            var isStale = false
+            if let oldPartialURL = try? URL(
+                resolvingBookmarkData: bookmark,
+                bookmarkDataIsStale: &isStale
+            ) {
+                do {
+                    try FileManager.default.removeItem(at: oldPartialURL)
+                    print("🗑️ 已清理旧局部包(防僵尸): \(oldPartialURL.lastPathComponent)")
+                } catch {
+                    let nsErr = error as NSError
+                    // 文件本来就不存在 → 视为成功
+                    if !(nsErr.domain == NSCocoaErrorDomain &&
+                        nsErr.code == NSFileNoSuchFileError) {
+                        print("⚠️ 清理旧局部包失败: \(error)")
+                    }
+                }
+            }
+        }
+        pendingBookmarks.removeValue(forKey: urlString)
+        savePendingBookmarks()
     }
 
     // MARK: 取消/删除
