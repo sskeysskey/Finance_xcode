@@ -832,6 +832,11 @@ struct VideoCacheView: View {
     @StateObject private var network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
+    // 【新增】订阅 / 蜂窝拦截
+    @EnvironmentObject var authManager: AuthManager
+    @State private var showSubscriptionSheet = false
+    @State private var showCellularAlert = false
+
     private var cachedItems: [(url: String, meta: VideoCacheMetadata)] {
         downloadManager.localBookmarks.keys.compactMap { url in
             if let m = downloadManager.cacheMetadata[url] {
@@ -846,6 +851,11 @@ struct VideoCacheView: View {
         downloadManager.downloadProgress.keys.map {
             ($0, downloadManager.cacheMetadata[$0]?.title ?? $0)
         }.sorted { $0.title < $1.title }
+    }
+
+    // 【新增】当前处于暂停状态的任务数量
+    private var pausedCount: Int {
+        downloadingItems.filter { downloadManager.isPaused[$0.url] ?? false }.count
     }
 
     var body: some View {
@@ -864,10 +874,8 @@ struct VideoCacheView: View {
                         topInfoBar
 
                         if !downloadingItems.isEmpty {
-                            sectionHeader(isGlobalEnglishMode ? "Downloading" : "下载中",
-                                          count: downloadingItems.count,
-                                          icon: "arrow.down.circle.fill",
-                                          color: .blue)
+                            // 【改动】使用带“一键继续”按钮的自定义标题栏
+                            downloadingHeader
                             VStack(spacing: 12) {
                                 ForEach(downloadingItems, id: \.url) { row in
                                     DownloadingCard(realURL: row.url, title: row.title)
@@ -903,6 +911,78 @@ struct VideoCacheView: View {
         }
         .navigationTitle(isGlobalEnglishMode ? "Offline Cache" : "离线缓存")
         .navigationBarTitleDisplayMode(.inline)
+        // 【新增】订阅弹窗
+        .sheet(isPresented: $showSubscriptionSheet) {
+            SubscriptionView()
+        }
+        // 【新增】一键继续时的蜂窝拦截
+        .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示",
+               isPresented: $showCellularAlert) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
+            Button(isGlobalEnglishMode ? "Resume Anyway" : "允许并继续") {
+                downloadManager.wifiOnly = false
+                downloadManager.resumeAllPausedDownloads()
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                 ? "You are currently on a cellular network and 'Wi-Fi Only' is enabled. Do you want to disable 'Wi-Fi Only' and resume downloading?"
+                 : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 缓存”。是否关闭该限制并继续下载？")
+        }
+    }
+
+    // 【新增】一键继续的处理逻辑
+    private func resumeAllAction() {
+        // 1. 订阅校验
+        guard authManager.canAccessVideoContent() else {
+            showSubscriptionSheet = true
+            return
+        }
+        // 2. 蜂窝网络拦截
+        if downloadManager.wifiOnly && !network.isWiFi {
+            showCellularAlert = true
+            return
+        }
+        // 3. 一键全部继续
+        downloadManager.resumeAllPausedDownloads()
+    }
+
+    // 【新增】带一键继续按钮的“下载中”标题栏
+    private var downloadingHeader: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down.circle.fill").foregroundColor(.blue)
+            Text(isGlobalEnglishMode ? "Downloading" : "下载中")
+                .font(.system(size: 16, weight: .bold))
+            Text("\(downloadingItems.count)")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .padding(.horizontal, 8).padding(.vertical, 2)
+                .background(Capsule().fill(Color.blue))
+
+            Spacer()
+
+            // 只有存在暂停任务时才出现（想至少 2 个才显示可改成 pausedCount >= 2）
+            if pausedCount >= 1 {
+                Button {
+                    resumeAllAction()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(isGlobalEnglishMode ? "Resume All" : "一键继续")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(
+                        Capsule().fill(LinearGradient(
+                            colors: [Color.green, Color.green.opacity(0.7)],
+                            startPoint: .leading, endPoint: .trailing))
+                    )
+                    .shadow(color: Color.green.opacity(0.35), radius: 5, y: 2)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
     }
 
     // 顶部信息条
@@ -1198,5 +1278,15 @@ struct CachedItemCard: View {
         let f = DateFormatter()
         f.dateStyle = .medium; f.timeStyle = .short
         return f.string(from: d)
+    }
+}
+
+extension HLSDownloadManager {
+    /// 一键继续所有处于暂停状态的下载
+    func resumeAllPausedDownloads() {
+        let pausedUrls = downloadProgress.keys.filter { isPaused[$0] == true }
+        for url in pausedUrls {
+            resumeDownload(urlString: url)
+        }
     }
 }
