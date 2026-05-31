@@ -578,32 +578,6 @@ struct CacheCard: View {
         let displayProgress = downloadManager.displayedProgress(for: realURL)
 
         VStack(alignment: .leading, spacing: 14) {
-            // 头部
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(LinearGradient(
-                            colors: [Color.accentColor.opacity(0.9), Color.accentColor.opacity(0.6)],
-                            startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 32, height: 32)
-                    Image(systemName: "icloud.and.arrow.down.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.white)
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(isGlobalEnglishMode ? "Offline Cache" : "离线缓存")
-                        .font(.system(size: 15, weight: .bold))
-                    Text(isGlobalEnglishMode
-                         ? "Save it for offline playback"
-                         : "缓存到本地，随时离线观看")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-            }
-
-            Divider().opacity(0.5)
-
             // 状态行
             if isDownloaded {
                 downloadedRow
@@ -807,50 +781,61 @@ struct CacheCard: View {
         }
     }
     
-    // ⭐ 新增：现代高级感跳转入口
+    // ⭐ 优化：将入口改为“功能块”样式，使其更显眼
     private var cacheListNavigationRow: some View {
         NavigationLink(destination: VideoCacheView()) {
-            HStack {
-                // 左侧图标与文本
-                HStack(spacing: 8) {
+            HStack(spacing: 12) {
+                // 1. 图标增加背景，提升视觉权重
+                ZStack {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.15))
+                        .frame(width: 36, height: 36)
                     Image(systemName: "folder.badge.gearshape")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundColor(.accentColor)
-                    Text(isGlobalEnglishMode ? "Manage Offline Cache" : "查看与管理离线缓存")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.primary)
                 }
                 
-                Spacer()
-                
-                // 右侧动态状态指示器
-                HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isGlobalEnglishMode ? "Manage Offline Cache" : "查看与管理离线缓存")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.primary)
+                    
+                    // 2. 动态状态提示更明显
                     let downloadingCount = downloadManager.downloadProgress.keys.count
                     let cachedCount = downloadManager.localBookmarks.keys.count
                     
                     if downloadingCount > 0 {
-                        // 呼吸灯/闪烁点，提示有下载任务进行中
-                        Circle()
-                            .fill(Color.blue)
-                            .frame(width: 6, height: 6)
-                        Text(isGlobalEnglishMode ? "\(downloadingCount) downloading" : "\(downloadingCount)个任务下载中")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                        Text(isGlobalEnglishMode ? "\(downloadingCount) tasks downloading" : "\(downloadingCount)个任务下载中")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.blue)
                     } else if cachedCount > 0 {
-                        Text(isGlobalEnglishMode ? "\(cachedCount) cached" : "已缓存\(cachedCount)个视频")
+                        Text(isGlobalEnglishMode ? "\(cachedCount) videos cached" : "已缓存 \(cachedCount) 个视频")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text(isGlobalEnglishMode ? "View all cached content" : "查看所有已缓存内容")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
-                    
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.secondary.opacity(0.5))
                 }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.secondary.opacity(0.5))
             }
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
+            .padding(12)
+            // 3. 增加背景色和边框，使其看起来像一个“按钮”
+            .background(Color.primary.opacity(0.03))
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.accentColor.opacity(0.1), lineWidth: 1)
+            )
         }
         .buttonStyle(PlainButtonStyle())
+        .padding(.top, 4) // 给上方留出一点呼吸空间
     }
 }
 
