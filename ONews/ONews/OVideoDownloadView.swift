@@ -948,17 +948,21 @@ struct VideoCacheView: View {
                                                       icon: "checkmark.seal.fill",
                                                       color: .green)) {
                             ForEach(cachedItems, id: \.url) { row in
-                                NavigationLink(destination:
-                                    CachedVideoPlayerView(realURL: row.url,
-                                                          title: row.meta.title)
-                                ) {
+                                // 方案：使用 ZStack 隐藏 NavigationLink 的默认箭头，或者使用 .buttonStyle(PlainButtonStyle())
+                                ZStack {
+                                    // 1. 放置卡片
                                     CachedItemCard(meta: row.meta, url: row.url)
+                                    
+                                    // 2. 放置一个透明的 NavigationLink，覆盖整个区域，但不显示箭头
+                                    NavigationLink(destination: CachedVideoPlayerView(realURL: row.url, title: row.meta.title)) {
+                                        EmptyView()
+                                    }
+                                    .opacity(0) // 隐藏链接本身，但保留跳转功能
                                 }
-                                .buttonStyle(PlainButtonStyle())
                                 .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
-                                // 🛠️【核心新增】左滑删除功能：用力左滑直接删除，较轻左滑出现删除按钮
+                                // 保持你的左滑删除功能
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button(role: .destructive) {
                                         withAnimation {
