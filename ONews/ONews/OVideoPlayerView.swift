@@ -247,7 +247,7 @@ struct VideoPlayerPageView: View {
                                 offlineBadge
                             }
 
-                            // ⭐ 新增:错误链接举报入口
+                            // ⭐ 在线播放页：保留错误链接举报入口
                             if let real = realURL {
                                 ReportLinkCard(
                                     videoTitle: videoTitle,
@@ -486,15 +486,7 @@ struct CachedVideoPlayerView: View {
                             .background(Capsule().fill(Color.green.opacity(0.10)))
                             .padding(.horizontal, 16)
 
-                            // ⭐ 新增:错误链接举报入口
-                            ReportLinkCard(
-                                videoTitle: title,
-                                sourceURL: realURL,
-                                episodeURL: realURL,
-                                channelName: channelName,
-                                episodeName: episodeName,
-                                realURL: nil
-                            )
+                            // 🛠️ 已移除：ReportLinkCard（离线缓存播放无需举报功能）
 
                             Button(role: .destructive) {
                                 downloadManager.deleteDownload(urlString: realURL)

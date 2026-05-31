@@ -869,44 +869,62 @@ struct VideoCacheView: View {
             if cachedItems.isEmpty && downloadingItems.isEmpty {
                 emptyState
             } else {
-                ScrollView {
-                    VStack(spacing: 18) {
+                // 🛠️ 修改：将 ScrollView 替换为 List，以支持左滑删除
+                List {
+                    // 顶部状态与配置
+                    Section {
                         topInfoBar
-
-                        if !downloadingItems.isEmpty {
-                            // 【改动】使用带“一键继续”按钮的自定义标题栏
-                            downloadingHeader
-                            VStack(spacing: 12) {
-                                ForEach(downloadingItems, id: \.url) { row in
-                                    DownloadingCard(realURL: row.url, title: row.title)
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                        }
-
-                        if !cachedItems.isEmpty {
-                            sectionHeader(isGlobalEnglishMode ? "Cached" : "已缓存",
-                                          count: cachedItems.count,
-                                          icon: "checkmark.seal.fill",
-                                          color: .green)
-                            VStack(spacing: 12) {
-                                ForEach(cachedItems, id: \.url) { row in
-                                    NavigationLink(destination:
-                                        CachedVideoPlayerView(realURL: row.url,
-                                                              title: row.meta.title)
-                                    ) {
-                                        CachedItemCard(meta: row.meta, url: row.url)
-                                    }
-                                    .buttonStyle(PlainButtonStyle())
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                        }
-
-                        Spacer(minLength: 40)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                     }
-                    .padding(.top, 12)
+                    
+                    // 下载中列表
+                    if !downloadingItems.isEmpty {
+                        Section(header: downloadingHeader) {
+                            ForEach(downloadingItems, id: \.url) { row in
+                                DownloadingCard(realURL: row.url, title: row.title)
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .listRowBackground(Color.clear)
+                                    .listRowSeparator(.hidden)
+                            }
+                        }
+                    }
+
+                    // 已缓存列表
+                    if !cachedItems.isEmpty {
+                        Section(header: sectionHeader(isGlobalEnglishMode ? "Cached" : "已缓存",
+                                                      count: cachedItems.count,
+                                                      icon: "checkmark.seal.fill",
+                                                      color: .green)) {
+                            ForEach(cachedItems, id: \.url) { row in
+                                NavigationLink(destination:
+                                    CachedVideoPlayerView(realURL: row.url,
+                                                          title: row.meta.title)
+                                ) {
+                                    CachedItemCard(meta: row.meta, url: row.url)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                // 🛠️【核心新增】左滑删除功能：用力左滑直接删除，较轻左滑出现删除按钮
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) {
+                                        withAnimation {
+                                            downloadManager.deleteDownload(urlString: row.url)
+                                        }
+                                    } label: {
+                                        Label(isGlobalEnglishMode ? "Delete" : "删除", systemImage: "trash")
+                                    }
+                                    .tint(.red)
+                                }
+                            }
+                        }
+                    }
                 }
+                .listStyle(PlainListStyle())
+                .background(Color.clear)
             }
         }
         .navigationTitle(isGlobalEnglishMode ? "Offline Cache" : "离线缓存")
@@ -983,6 +1001,7 @@ struct VideoCacheView: View {
             }
         }
         .padding(.horizontal, 16)
+        .textCase(nil) // 避免 List Header 默认大写
     }
 
     // 顶部信息条
@@ -1021,6 +1040,7 @@ struct VideoCacheView: View {
             Spacer()
         }
         .padding(.horizontal, 16)
+        .textCase(nil)
     }
 
     private var emptyState: some View {
