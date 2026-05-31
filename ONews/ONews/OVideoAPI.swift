@@ -1,7 +1,5 @@
 // API 接口、数据模型、排序枚举、缓存元数据
 // 纯数据层，所有模块都依赖
-// OVideoDataManager + HLSDownloadManager
-// 业务逻辑管理器
 
 import SwiftUI
 

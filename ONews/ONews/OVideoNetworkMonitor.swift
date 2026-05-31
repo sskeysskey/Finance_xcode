@@ -13,6 +13,7 @@ final class NetworkMonitor: ObservableObject {
     @Published var isConnected: Bool = true
     @Published var isWiFi: Bool = true
     @Published var isCellular: Bool = false
+    @Published var hasResolvedPath: Bool = false
 
     /// 上一次状态，用来识别"切换"事件
     private var lastIsWiFi: Bool = true
@@ -30,6 +31,7 @@ final class NetworkMonitor: ObservableObject {
                 self.isConnected = connected
                 self.isWiFi = wifi
                 self.isCellular = cellular
+                self.hasResolvedPath = true
 
                 // Wi-Fi → 蜂窝
                 if self.lastIsWiFi && !wifi && cellular {

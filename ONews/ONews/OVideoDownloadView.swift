@@ -143,7 +143,11 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 
     // MARK: 继续
     func resumeDownload(urlString: String) {
-        if wifiOnly && !NetworkMonitor.shared.isWiFi { return }
+        if wifiOnly,
+            NetworkMonitor.shared.hasResolvedPath,
+            !NetworkMonitor.shared.isWiFi {
+            return
+        }
 
         if let task = activeTasks[urlString],
            task.state != .completed,
@@ -164,31 +168,19 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         guard let remoteURL = URL(string: urlString) else { return }
         let title = cacheMetadata[urlString]?.title ?? urlString
 
-        // ✨ 优先用上次中断时拿到的局部包来续传
-        var assetURL: URL = remoteURL
-        if let bookmark = pendingBookmarks[urlString] {
-            var isStale = false
-            if let localURL = try? URL(resolvingBookmarkData: bookmark,
-                                    bookmarkDataIsStale: &isStale),
-            FileManager.default.fileExists(atPath: localURL.path) {
-                assetURL = localURL
-                print("✅ 从局部包续传: \(localURL.lastPathComponent)")
-            } else {
-                // bookmark 失效或文件被系统清掉 → 进度也该清零
-                print("⚠️ 局部包丢失,进度归零重新下载")
-                pendingBookmarks.removeValue(forKey: urlString)
-                savePendingBookmarks()
-                DispatchQueue.main.async {
-                    self.downloadProgress[urlString] = 0
-                    self.savePersistedProgress()
-                }
-            }
-        }
-
-        let asset = AVURLAsset(url: assetURL)
+        // ✅ 核心修复:AVAssetDownloadTask 只能以「远程 HLS 地址」作为下载源。
+        //    绝不能拿本地局部包(.movpkg)路径去创建任务,否则一 resume 就立刻
+        //    didComplete(带 error)→ 被判为"中断"→ 自动暂停,表现为"永远续不上"。
+        let asset = AVURLAsset(url: remoteURL)
         guard let task = downloadSession.makeAssetDownloadTask(
             asset: asset, assetTitle: title, assetArtworkData: nil, options: nil
-        ) else { return }
+        ) else {
+            DispatchQueue.main.async {
+                self.isPaused[urlString] = true   // 避免假死,保持可见的暂停态
+                self.savePersistedProgress()
+            }
+            return
+        }
         task.taskDescription = urlString
         task.resume()
 
