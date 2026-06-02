@@ -431,13 +431,23 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                     self.saveBookmarks()
                 }
                 
-                // 🚀 从 UserDefaults 中读取刚才 AuthManager 备份的正确用户 ID
-                let currentUserId = UserDefaults.standard.string(forKey: "current_user_id")
+                // 🚀 解析用户身份，与播放/新闻打点统一
+                let storedUserId = UserDefaults.standard.string(forKey: "current_user_id")
+                let (finalUserId, finalUserType): (String, String) = {
+                    if let uid = storedUserId, !uid.isEmpty {
+                        return (uid, uid.hasPrefix("dev_") ? "device" : "apple")
+                    } else if let idfv = UIDevice.current.identifierForVendor?.uuidString {
+                        return ("dev_" + idfv, "device")
+                    } else {
+                        return ("guest_user", "device")
+                    }
+                }()
                 let title = self.cacheMetadata[urlString]?.title ?? "Unknown Video"
-                
+
                 TrackingManager.shared.track(
                     event: .downloadComplete,
-                    userId: currentUserId ?? "guest_user", // 兜底防空
+                    userId: finalUserId,
+                    userType: finalUserType,
                     videoURL: urlString,
                     videoTitle: title
                 )

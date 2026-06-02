@@ -387,14 +387,24 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     
     // MARK: - Server Communication
     private func sendTokenToServer(token: String, userId: String) async throws {
-        // 1. 向 ONews 后端认证（原有逻辑）
+        // 【新增】获取当前的设备 ID (逻辑与打点统计保持一致)
+        let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? ""
+        let formattedDeviceId = deviceId.isEmpty ? "" : "dev_" + deviceId
+
+        // 1. 向 ONews 后端认证
         let url = URL(string: "\(serverBaseURL)/auth/apple")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        let body = ["identity_token": token, "user_id": userId]
-        request.httpBody = try JSONEncoder().encode(body)
+        // 【修改】在 body 中加入 device_id
+        let body: [String: Any] = [
+            "identity_token": token, 
+            "user_id": userId,
+            "device_id": formattedDeviceId
+        ]
+        // ✅ 修复：使用标准的 JSONSerialization.data 方法
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body, options: []) 
         
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
@@ -413,13 +423,13 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             self.saveSubscriptionCache(isSubscribed: authResponse.is_subscribed, expiryDate: authResponse.subscription_expires_at)
         }
         
-        // 2. 【新增】同时向 Prediction 后端注册（静默，失败不影响主流程）
+        // 2. 同时向 Prediction 后端注册（静默，在 body 中也带上 device_id）
         Task {
             guard let predURL = URL(string: "\(predictionServerBaseURL)/auth/apple") else { return }
             var predRequest = URLRequest(url: predURL)
             predRequest.httpMethod = "POST"
             predRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            predRequest.httpBody = try? JSONEncoder().encode(body)
+            predRequest.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [])
             _ = try? await URLSession.shared.data(for: predRequest)
             print("AuthManager: 已同步注册到 Prediction 后端")
         }

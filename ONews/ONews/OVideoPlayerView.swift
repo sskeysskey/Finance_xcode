@@ -406,11 +406,23 @@ struct VideoPlayerPageView: View {
         do {
             let url = try await OVideoAPI.resolveRealURL(episodeURL: episodeURL)
             self.realURL = url
-            // 🔥 新增：上报"播放"事件
+            
+            // 解析用户身份：登录用 Apple ID，未登录用设备 IDFV
+            let (trackUserId, trackUserType): (String, String) = {
+                if let appleId = authManager.userIdentifier, !appleId.isEmpty {
+                    return (appleId, "apple")
+                } else if let idfv = UIDevice.current.identifierForVendor?.uuidString {
+                    return ("dev_" + idfv, "device")
+                } else {
+                    return ("guest_user", "device")
+                }
+            }()
+
             TrackingManager.shared.track(
                 event: .play,
-                userId: authManager.userIdentifier,
-                videoURL: episodeURL,            // 用源 URL 作为唯一键
+                userId: trackUserId,
+                userType: trackUserType,
+                videoURL: episodeURL,
                 videoTitle: videoTitle
             )
         } catch {
