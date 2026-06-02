@@ -5,20 +5,36 @@ class ReviewManager {
     // 单例模式
     static let shared = ReviewManager()
     
-    // 持久化存储阅读计数
+    // 持久化存储新闻阅读计数
     @AppStorage("userReadArticleCount") private var readCount: Int = 0
     
-    // 触发弹窗的阈值：第 5, 20, 50, 100, 200 篇
+    // 【新增】持久化存储视频交互计数（包括播放返回、详情页返回等）
+    @AppStorage("userVideoInteractionCount") private var videoInteractionCount: Int = 0
+    
+    // 新闻触发弹窗的阈值：第 5, 20, 50, 100, 200 篇
     private let reviewThresholds: Set<Int> = [5, 20, 50, 100, 200]
+    
+    // 【新增】视频触发弹窗的阈值：第 3, 10, 30, 80 次交互（考虑到视频消费频次低于新闻，阈值设得稍低且有节制）
+    private let videoThresholds: Set<Int> = [3, 10, 30, 80]
     
     private init() {}
     
     /// 记录一次“有效的阅读行为”
     func recordInteraction() {
         readCount += 1
-        print("ReviewManager: 当前阅读计数为 \(readCount)")
+        print("ReviewManager: 当前新闻阅读计数为 \(readCount)")
         
         if reviewThresholds.contains(readCount) {
+            requestReview()
+        }
+    }
+    
+    /// 【新增】记录一次“有效的视频交互行为”（如播放完毕返回、退出详情页等）
+    func recordVideoInteraction() {
+        videoInteractionCount += 1
+        print("ReviewManager: 当前视频交互计数为 \(videoInteractionCount)")
+        
+        if videoThresholds.contains(videoInteractionCount) {
             requestReview()
         }
     }
@@ -34,7 +50,7 @@ class ReviewManager {
                 return
             }
             
-            // 【修复核心】：根据系统版本调用不同的 API
+            // 根据系统版本调用不同的 API
             if #available(iOS 16.0, *) {
                 // iOS 16+ / iOS 18+ 使用新的 AppStore API
                 AppStore.requestReview(in: scene)

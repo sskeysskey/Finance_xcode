@@ -284,6 +284,10 @@ struct VideoPlayerPageView: View {
                 Task { await resolve() }
             }
         }
+        // 【新增】当用户退出播放器（返回详情页）时，记录一次视频模块的有效交互
+        .onDisappear {
+            ReviewManager.shared.recordVideoInteraction()
+        }
     }
     
     // 【新增】未订阅锁屏视图
@@ -361,29 +365,13 @@ struct VideoPlayerPageView: View {
 
     // 标题卡片
     private var titleCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 10) {
             Text(videoTitle)
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(.primary)
                 .lineLimit(3)
-
-            // ✨ 修改此处：使用 HStack + Spacer 实现右对齐
-            HStack(spacing: 10) {
-                NetworkBadge()
-                
-                Spacer() // 将开关推到最右侧
-                
-                HStack(spacing: 6) {
-                    Text(isGlobalEnglishMode ? "Wi-Fi only" : "仅 Wi-Fi 下缓存")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.secondary)
-                    
-                    Toggle("", isOn: $downloadManager.wifiOnly)
-                        .labelsHidden()
-                        .scaleEffect(0.8)
-                        .tint(.accentColor)
-                }
-            }
+            Spacer() // 将开关推到最右侧
+            NetworkBadge()
         }
         .padding(.horizontal, 16)
     }

@@ -21,10 +21,6 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
     // ✨ 关键新增:暂存 didFinishDownloadingTo 的 bookmark,等真正完成才提升到 localBookmarks
     private var pendingBookmarks: [String: Data] = [:]
 
-    @Published var wifiOnly: Bool = UserDefaults.standard.object(forKey: "ONews_WiFiOnly") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(wifiOnly, forKey: "ONews_WiFiOnly") }
-    }
-
     private var activeTasks:    [String: AVAssetDownloadTask] = [:]
     private var lastBytes:      [String: Int64] = [:]
     private var lastSampleTime: [String: Date]  = [:]
@@ -119,9 +115,6 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 
     // MARK: 启动下载
     func startDownload(urlString: String, title: String, coverImage: String? = nil) {
-        if wifiOnly && !NetworkMonitor.shared.isWiFi {
-            print("⚠️ 当前不是 Wi-Fi,已阻止下载"); return
-        }
         cancelledUrls.remove(urlString)
 
         guard let url = URL(string: urlString) else { return }
@@ -161,12 +154,6 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 
     // MARK: 继续
     func resumeDownload(urlString: String) {
-        if wifiOnly,
-            NetworkMonitor.shared.hasResolvedPath,
-            !NetworkMonitor.shared.isWiFi {
-            return
-        }
-
         if let task = activeTasks[urlString],
            task.state != .completed,
            task.state != .canceling {
@@ -519,7 +506,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 
     private func observeNetwork() {
         NetworkMonitor.shared.onSwitchedToCellular = { [weak self] in
-            guard let self = self, self.wifiOnly else { return }
+            guard let self = self else { return }                 // ← 去掉 self.wifiOnly 判断
             for url in self.activeTasks.keys { self.pauseDownload(urlString: url) }
             print("⚠️ 检测到 Wi-Fi → 5G蜂窝,已暂停所有下载")
         }
@@ -567,7 +554,6 @@ struct CacheCard: View {
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
     
-    @State private var showWiFiOnlyToggle = false
     @State private var showCellularAlert = false // 控制蜂窝网络下载提示弹窗
     @State private var showCancelAlert = false // 控制取消下载的弹窗
 
@@ -606,8 +592,6 @@ struct CacheCard: View {
         .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示", isPresented: $showCellularAlert) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
             Button(isGlobalEnglishMode ? "Download Anyway" : "允许并下载") {
-                // 允许使用蜂窝网络下载：关闭 wifiOnly 限制并开始下载
-                downloadManager.wifiOnly = false
                 downloadManager.startDownload(urlString: realURL, title: videoTitle, coverImage: coverImage)
             }
         } message: {
@@ -689,7 +673,7 @@ struct CacheCard: View {
                             showSubscriptionSheet = true
                             return
                         }
-                        if downloadManager.wifiOnly && !network.isWiFi {
+                        if !network.isWiFi {
                             showCellularAlert = true
                         } else {
                             downloadManager.resumeDownload(urlString: realURL)
@@ -734,12 +718,12 @@ struct CacheCard: View {
             }
 
             // 网络提示
-            if downloadManager.wifiOnly && !network.isWiFi {
+            if !network.isWiFi {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
                     Text(isGlobalEnglishMode
                          ? "Switched to cellular, paused to save data"
-                         : "发现网络已切换到5G，已暂停缓存，以节省流量")
+                         : "已切换到5G，下载请关注流量")
                         .font(.system(size: 11))
                         .foregroundColor(.orange)
                 }
@@ -754,7 +738,7 @@ struct CacheCard: View {
                 showSubscriptionSheet = true
                 return
             }
-            if downloadManager.wifiOnly && !network.isWiFi {
+            if !network.isWiFi {
                 showCellularAlert = true
             } else {
                 downloadManager.startDownload(urlString: realURL,
@@ -762,20 +746,26 @@ struct CacheCard: View {
                                             coverImage: coverImage)
             }
         } label: {
-            HStack(spacing: 6) { // 减小间距
-                Image(systemName: "arrow.down.circle") // 换成线条图标，更轻量
-                    .font(.system(size: 14, weight: .medium))
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 15, weight: .semibold))
                 Text(isGlobalEnglishMode ? "Download" : "缓存到本地")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 13, weight: .semibold))
             }
-            .foregroundColor(.accentColor) // 文字颜色改为主题色
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8) // 减小高度
+            .foregroundColor(.white)
+            // 移除 .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 20) // 添加水平内边距，让按钮宽度根据内容自适应
             .background(
                 Capsule()
-                    .stroke(Color.accentColor.opacity(0.5), lineWidth: 1) // 使用边框代替重背景
+                    .fill(LinearGradient(
+                        colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                        startPoint: .leading, endPoint: .trailing))
             )
+            .shadow(color: Color.accentColor.opacity(0.3), radius: 6, y: 2)
         }
+        .buttonStyle(PlainButtonStyle())
+        .frame(maxWidth: .infinity, alignment: .center)
     }
     
     // ⭐ 优化：将入口改为“功能块”样式，使其更显眼
@@ -791,10 +781,12 @@ struct CacheCard: View {
                         .foregroundColor(.accentColor)
                 }
                 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(isGlobalEnglishMode ? "Manage Offline Cache" : "查看与管理离线缓存")
+                HStack(spacing: 2) {
+                    Text(isGlobalEnglishMode ? "Manage Offline Cache" : "缓存下载管理")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.primary)
+                    
+                    Spacer()
                     
                     let downloadingCount = downloadManager.downloadProgress.keys.count
                     let cachedCount = downloadManager.localBookmarks.keys.count
@@ -820,14 +812,9 @@ struct CacheCard: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(.secondary.opacity(0.5))
             }
-            .padding(12)
-            // --- 关键修改：添加更明显的背景色 ---
-            .background(Color.accentColor.opacity(0.06)) // 浅色填充
-            .cornerRadius(14)
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.accentColor.opacity(0.15), lineWidth: 1) // 明显的边框
-            )
+            .padding(.vertical, 8)
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())   // 保证整行可点
         }
         .buttonStyle(PlainButtonStyle())
         .padding(.top, 4)
@@ -901,14 +888,6 @@ struct VideoCacheView: View {
             } else {
                 // 🛠️ 修改：将 ScrollView 替换为 List，以支持左滑删除
                 List {
-                    // 顶部状态与配置
-                    Section {
-                        topInfoBar
-                            .listRowInsets(EdgeInsets())
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                    }
-                    
                     // 下载中列表
                     if !downloadingItems.isEmpty {
                         Section(header: downloadingHeader) {
@@ -963,6 +942,11 @@ struct VideoCacheView: View {
         }
         .navigationTitle(isGlobalEnglishMode ? "Offline Cache" : "离线缓存")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                NetworkBadge()
+            }
+        }
         // 【新增】订阅弹窗
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
@@ -972,7 +956,6 @@ struct VideoCacheView: View {
                isPresented: $showCellularAlert) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
             Button(isGlobalEnglishMode ? "Resume Anyway" : "允许并继续") {
-                downloadManager.wifiOnly = false
                 downloadManager.resumeAllPausedDownloads()
             }
         } message: {
@@ -984,17 +967,14 @@ struct VideoCacheView: View {
 
     // 【新增】一键继续的处理逻辑
     private func resumeAllAction() {
-        // 1. 订阅校验
         guard authManager.canAccessVideoContent() else {
             showSubscriptionSheet = true
             return
         }
-        // 2. 蜂窝网络拦截
-        if downloadManager.wifiOnly && !network.isWiFi {
+        if !network.isWiFi {            // ← 去掉 downloadManager.wifiOnly &&
             showCellularAlert = true
             return
         }
-        // 3. 一键全部继续
         downloadManager.resumeAllPausedDownloads()
     }
 
@@ -1036,29 +1016,6 @@ struct VideoCacheView: View {
         }
         .padding(.horizontal, 16)
         .textCase(nil) // 避免 List Header 默认大写
-    }
-
-    // 顶部信息条
-    private var topInfoBar: some View {
-        HStack(spacing: 10) {
-            NetworkBadge()
-            HStack(spacing: 6) {
-                Image(systemName: "wifi")
-                Text(isGlobalEnglishMode ? "Wi-Fi only" : "仅 Wi-Fi 下载")
-                    .font(.system(size: 12, weight: .medium))
-                Toggle("", isOn: Binding(
-                    get: { downloadManager.wifiOnly },
-                    set: { downloadManager.wifiOnly = $0 }
-                ))
-                .labelsHidden()
-                .scaleEffect(0.75)
-                .tint(.accentColor)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 4)
-            .background(Capsule().fill(Color.primary.opacity(0.06)))
-            Spacer()
-        }
-        .padding(.horizontal, 16)
     }
 
     private func sectionHeader(_ title: String, count: Int,
@@ -1179,7 +1136,7 @@ struct DownloadingCard: View {
                             showSubscriptionSheet = true
                             return
                         }
-                        if dm.wifiOnly && !network.isWiFi {
+                        if !network.isWiFi {
                             showCellularAlert = true
                         } else {
                             dm.resumeDownload(urlString: realURL)
@@ -1241,7 +1198,6 @@ struct DownloadingCard: View {
         .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示", isPresented: $showCellularAlert) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
             Button(isGlobalEnglishMode ? "Resume Anyway" : "允许并继续") {
-                dm.wifiOnly = false
                 dm.resumeDownload(urlString: realURL)
             }
         } message: {

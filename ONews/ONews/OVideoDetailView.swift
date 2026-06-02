@@ -4,6 +4,10 @@ import SwiftUI
 struct VideoDetailView: View {
     let item: OVideoItem
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    
+    // ⭐ 新增：使用 AppStorage 记忆用户的正序/倒序偏好，默认正序 (true)
+    @AppStorage("OVideo_IsEpisodeAscending") private var isEpisodeAscending = true
+    
     @State private var selectedChannelIndex = 0
 
     @EnvironmentObject var authManager: AuthManager
@@ -60,6 +64,15 @@ struct VideoDetailView: View {
         return sortedIndexed.map { $0.channel }
     }
     
+    // ⭐ 辅助计算属性：判断当前影片是否是多集类型（Drama, Show, Anime）
+    // 如果影片只有 1 集，或者分类属于 Movie，通常不需要显示排序按钮
+    private var isMultiEpisodeVideo: Bool {
+        if let firstChannel = item.playlist.first {
+            return firstChannel.episodes.count > 1
+        }
+        return false
+    }
+    
     var body: some View {
         ZStack {
             // 影院级沉浸式背景：使用海报图的超大高斯模糊作为底色
@@ -102,6 +115,10 @@ struct VideoDetailView: View {
         // 订阅页弹窗
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
+        }
+        // 【新增】当用户离开详情页（返回首页）时，记录一次视频模块的有效交互
+        .onDisappear {
+            ReviewManager.shared.recordVideoInteraction()
         }
     }
     
@@ -267,36 +284,65 @@ struct VideoDetailView: View {
                 .padding(.horizontal, 16)
                 
             } else {
-                // 线路选择 Tab
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(Array(sortedPlaylist.enumerated()), id: \.offset) { idx, ch in
-                            Button {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                    selectedChannelIndex = idx
+                // 线路选择 Tab 与 排序按钮
+                HStack(spacing: 0) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(Array(sortedPlaylist.enumerated()), id: \.offset) { idx, ch in
+                                Button {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                        selectedChannelIndex = idx
+                                    }
+                                } label: {
+                                    let displayName = isGlobalEnglishMode ? "Line \(idx + 1)" : "线路 \(idx + 1)"
+                                    Text(displayName)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(selectedChannelIndex == idx ? .white : .primary)
+                                        .padding(.horizontal, 16).padding(.vertical, 8)
+                                        .background(
+                                            Capsule()
+                                                .fill(selectedChannelIndex == idx
+                                                      ? Color.accentColor
+                                                      : Color.secondary.opacity(0.12))
+                                        )
                                 }
-                            } label: {
-                                let displayName = isGlobalEnglishMode ? "Line \(idx + 1)" : "线路 \(idx + 1)"
-                                Text(displayName)
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(selectedChannelIndex == idx ? .white : .primary)
-                                    .padding(.horizontal, 16).padding(.vertical, 8)
-                                    .background(
-                                        Capsule()
-                                            .fill(selectedChannelIndex == idx
-                                                  ? Color.accentColor
-                                                  : Color.secondary.opacity(0.12))
-                                    )
                             }
                         }
+                        .padding(.horizontal, 16)
                     }
-                    .padding(.horizontal, 16)
+                    
+                    // ⭐【新增】正序/倒序切换按钮（仅在多集视频时显示）
+                    if isMultiEpisodeVideo {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isEpisodeAscending.toggle()
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: isEpisodeAscending ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+                                    .font(.system(size: 16))
+                                Text(isEpisodeAscending 
+                                     ? (isGlobalEnglishMode ? "Asc" : "正序") 
+                                     : (isGlobalEnglishMode ? "Desc" : "倒序"))
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundColor(.accentColor)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(Color.accentColor.opacity(0.1))
+                            )
+                        }
+                        .padding(.trailing, 16)
+                    }
                 }
                 
                 // 剧集网格
                 if selectedChannelIndex < sortedPlaylist.count {
                     let channel = sortedPlaylist[selectedChannelIndex]
-                    let sortedEps = channel.sortedEpisodes
+                    // ⭐【修改】根据用户的排序偏好获取排序后的剧集
+                    let sortedEps = channel.sortedEpisodes(ascending: isEpisodeAscending)
                     
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 10)], spacing: 10) {
                         ForEach(sortedEps, id: \.url) { episode in
