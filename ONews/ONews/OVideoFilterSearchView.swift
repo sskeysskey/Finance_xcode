@@ -15,8 +15,8 @@ struct VideoFilterView: View {
     @State private var selectedSort: VideoSortOption = .date
     
     // --- 定义自定义排序规则 ---
-    private let typeOrder = ["综艺", "动漫", "剧情", "动作", "科幻", "喜剧", "爱情", "恐怖", "犯罪", "惊悚", "悬疑", "西部", "古装", "纪录"]
-    private let regionOrder = ["美国", "韩国", "中国", "日本", "中国香港", "中国台湾", "欧洲", "亚洲", "中东", "北美洲/南美洲"]
+    private let typeOrder = ["纪录片", "动漫", "综艺", "科幻", "喜剧", "爱情", "恐怖", "惊悚", "古装", "剧情"]
+    private let regionOrder = ["美国", "韩国", "中国", "欧洲", "日本", "亚洲", "香港澳门", "中国台湾", "印度", "中东", "北美洲/南美洲", "非洲"]
     
     // --- 使用自定义排序逻辑 ---
     private var allTypes: [String] {

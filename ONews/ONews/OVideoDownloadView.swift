@@ -1328,8 +1328,8 @@ struct VideoPlayHistoryView: View {
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
     // 用于控制在历史记录中点击后，跳转到播放页
-    @State private var selectedRecord: VideoPlayRecord? = nil
-    @State private var navigateToPlayer = false
+    // @State private var selectedRecord: VideoPlayRecord? = nil
+    // @State private var navigateToPlayer = false
 
     var body: some View {
         ZStack {

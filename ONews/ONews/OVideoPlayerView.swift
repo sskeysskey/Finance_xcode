@@ -455,6 +455,7 @@ struct CachedVideoPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
+    @State private var hasTracked = false
 
     var body: some View {
         ZStack {
@@ -528,6 +529,48 @@ struct CachedVideoPlayerView: View {
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
+        .task {
+            trackCachedPlayIfNeeded()
+        }
+        .onChange(of: authManager.isSubscribed) { newValue in
+            if newValue { trackCachedPlayIfNeeded() }
+        }
+    }
+
+    private func trackCachedPlayIfNeeded() {
+        // 必须已订阅，且本次进入只打一次
+        guard authManager.isSubscribed, !hasTracked else { return }
+        hasTracked = true
+
+        // 与在线播放、下载完成统一的用户身份解析
+        let (trackUserId, trackUserType): (String, String) = {
+            if let appleId = authManager.userIdentifier, !appleId.isEmpty {
+                return (appleId, "apple")
+            } else if let idfv = UIDevice.current.identifierForVendor?.uuidString {
+                return ("dev_" + idfv, "device")
+            } else {
+                return ("guest_user", "device")
+            }
+        }()
+
+        // 1) 上报后台统计（event = play）
+        TrackingManager.shared.track(
+            event: .play,
+            userId: trackUserId,
+            userType: trackUserType,
+            videoURL: realURL,
+            videoTitle: title
+        )
+
+        // 2) 同步写入本地观看记录
+        VideoPlayRecordManager.shared.addRecord(
+            videoTitle: title.components(separatedBy: " · ").first ?? title,
+            episodeName: episodeName ?? (isGlobalEnglishMode ? "Offline" : "离线播放"),
+            videoURL: realURL,
+            coverImage: downloadManager.cacheMetadata[realURL]?.coverImage,
+            channelName: channelName,
+            sourceURL: nil
+        )
     }
     
     // 【新增】未订阅锁屏视图 (供 CachedVideoPlayerView 内部使用)
