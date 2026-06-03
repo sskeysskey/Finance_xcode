@@ -917,7 +917,7 @@ struct VideoCacheView: View {
                                                       icon: "checkmark.seal.fill",
                                                       color: .green)) {
                             ForEach(cachedItems, id: \.url) { row in
-                                // 方案：使用 ZStack 隐藏 NavigationLink 的默认箭头，或者使用 .buttonStyle(PlainButtonStyle())
+                                // 方案：使用 ZStack 隐藏 NavigationLink 的默认箭头
                                 ZStack {
                                     // 1. 放置卡片
                                     CachedItemCard(meta: row.meta, url: row.url)
@@ -953,7 +953,16 @@ struct VideoCacheView: View {
         .navigationTitle(isGlobalEnglishMode ? "Offline Cache" : "离线缓存")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            // 📺 【核心修改】：在右侧增加“观看记录”文本和时钟图标，并改用 NavigationLink 进行全屏推入
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                NavigationLink(destination: VideoPlayHistoryView()) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock.arrow.circlepath")
+                        Text(isGlobalEnglishMode ? "History" : "观看记录")
+                    }
+                    .font(.system(size: 13, weight: .medium))
+                }
+                
                 NetworkBadge()
             }
         }
@@ -1002,7 +1011,7 @@ struct VideoCacheView: View {
 
             Spacer()
 
-            // 只有存在暂停任务时才出现（想至少 2 个才显示可改成 pausedCount >= 2）
+            // 只有存在暂停任务时才出现
             if pausedCount >= 1 {
                 Button {
                     resumeAllAction()
@@ -1073,7 +1082,7 @@ struct DownloadingCard: View {
     let realURL: String
     let title: String
     @ObservedObject private var dm = HLSDownloadManager.shared
-    @ObservedObject private var network = NetworkMonitor.shared // 新增：引入网络监听
+    @ObservedObject private var network = NetworkMonitor.shared // 新增：引入 network
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
     @State private var showCancelAlert = false // 控制取消下载的弹窗
@@ -1310,5 +1319,174 @@ extension HLSDownloadManager {
         for url in pausedUrls {
             resumeDownload(urlString: url)
         }
+    }
+}
+
+// MARK: - 观看记录全屏界面（支持左滑删除单个、隐藏线路名）
+struct VideoPlayHistoryView: View {
+    @StateObject private var recordManager = VideoPlayRecordManager.shared
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    
+    // 用于控制在历史记录中点击后，跳转到播放页
+    @State private var selectedRecord: VideoPlayRecord? = nil
+    @State private var navigateToPlayer = false
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(.systemGroupedBackground), Color.accentColor.opacity(0.02)],
+                startPoint: .top, endPoint: .bottom
+            ).ignoresSafeArea()
+
+            if recordManager.records.isEmpty {
+                emptyState
+            } else {
+                List {
+                    ForEach(recordManager.records) { record in
+                        ZStack {
+                            // 1. 放置卡片
+                            recordRow(record)
+                            
+                            // 2. 放置透明 NavigationLink 覆盖整行以跳转
+                            NavigationLink(destination: VideoPlayerPageView(
+                                episodeURL: record.videoURL,
+                                videoTitle: "\(record.videoTitle) · \(record.episodeName)",
+                                coverImage: record.coverImage,
+                                channelName: record.channelName,
+                                episodeName: record.episodeName,
+                                sourceURL: record.sourceURL
+                            )) {
+                                EmptyView()
+                            }
+                            .opacity(0)
+                        }
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        // 🛠️ 调整 1：完美支持单个滑动删除
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                withAnimation {
+                                    recordManager.removeRecord(record)
+                                }
+                            } label: {
+                                Label(isGlobalEnglishMode ? "Delete" : "删除", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+                .listStyle(PlainListStyle())
+                .background(Color.clear)
+            }
+        }
+        .navigationTitle(isGlobalEnglishMode ? "Watch History" : "观看记录")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !recordManager.records.isEmpty {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(role: .destructive) {
+                        withAnimation {
+                            recordManager.clearAll()
+                        }
+                    } label: {
+                        Text(isGlobalEnglishMode ? "Clear All" : "清空")
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            ZStack {
+                Circle().fill(Color.secondary.opacity(0.08))
+                    .frame(width: 90, height: 90)
+                Image(systemName: "clock.badge.questionmark")
+                    .font(.system(size: 38, weight: .light))
+                    .foregroundColor(.secondary)
+            }
+            Text(isGlobalEnglishMode ? "No history records" : "暂无观看记录")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private func recordRow(_ record: VideoPlayRecord) -> some View {
+        HStack(spacing: 12) {
+            // 缩略图
+            coverThumb(name: record.coverImage)
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text(record.videoTitle)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                
+                HStack(spacing: 6) {
+                    Text(record.episodeName)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.1))
+                        .cornerRadius(4)
+                    
+                    // 🛠️ 调整 3：已移除 channelName (线路名) 的显示，不让用户看到
+                }
+                
+                HStack(spacing: 4) {
+                    Image(systemName: "clock")
+                    Text(formattedDate(record.playTime))
+                }
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            Image(systemName: "play.circle.fill")
+                .font(.system(size: 24))
+                .foregroundColor(.accentColor.opacity(0.8))
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.04), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.02), radius: 6, y: 2)
+    }
+
+    @ViewBuilder
+    private func coverThumb(name: String?) -> some View {
+        if let name = name, !name.isEmpty, let coverURL = OVideoAPI.coverURL(for: name) {
+            CachedAsyncImage(url: coverURL) { phase in
+                switch phase {
+                case .success(let img): img.resizable().scaledToFill()
+                default: Rectangle().fill(Color.secondary.opacity(0.15))
+                }
+            }
+            .frame(width: 45, height: 63)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.accentColor.opacity(0.15))
+                Image(systemName: "film").foregroundColor(.accentColor).font(.caption)
+            }
+            .frame(width: 45, height: 63)
+        }
+    }
+
+    private func formattedDate(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .short
+        f.doesRelativeDateFormatting = true
+        return f.string(from: d)
     }
 }

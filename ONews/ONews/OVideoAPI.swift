@@ -507,3 +507,79 @@ final class SearchHistoryManager: ObservableObject {
         histories = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
     }
 }
+
+// MARK: - 视频播放/浏览记录模型
+struct VideoPlayRecord: Codable, Identifiable, Hashable {
+    var id: String { "\(videoURL)_\(playTime.timeIntervalSince1970)" }
+    let videoTitle: String      // 影片主标题，如 "肖申克的救赎"
+    let episodeName: String     // 剧集/线路名，如 "HD国语" 或 "第1集"
+    let videoURL: String        // 原始播放/解析 URL (episodeURL)
+    let coverImage: String?     // 封面图片名
+    let playTime: Date          // 播放时间
+    let channelName: String?    // 线路名，如 "线路 1"
+    let sourceURL: String?      // 影片详情页唯一键，用于重新进入详情
+}
+
+// MARK: - 视频播放/浏览记录管理器
+@MainActor
+final class VideoPlayRecordManager: ObservableObject {
+    static let shared = VideoPlayRecordManager()
+    
+    @Published private(set) var records: [VideoPlayRecord] = []
+    
+    private let storageKey = "ONews_VideoPlayRecords"
+    private let maxCount = 20
+    
+    private init() {
+        load()
+    }
+    
+    /// 添加一条播放记录（如果已存在相同视频相同集数，则更新时间并置顶）
+    func addRecord(videoTitle: String, episodeName: String, videoURL: String, coverImage: String?, channelName: String?, sourceURL: String?) {
+        let newRecord = VideoPlayRecord(
+            videoTitle: videoTitle,
+            episodeName: episodeName,
+            videoURL: videoURL,
+            coverImage: coverImage,
+            playTime: Date(),
+            channelName: channelName,
+            sourceURL: sourceURL
+        )
+        
+        // 过滤掉相同视频和相同集数的旧记录
+        records.removeAll { $0.videoTitle == videoTitle && $0.episodeName == episodeName }
+        
+        // 插入到最前面
+        records.insert(newRecord, at: 0)
+        
+        // 限制最多 20 条
+        if records.count > maxCount {
+            records = Array(records.prefix(maxCount))
+        }
+        
+        save()
+    }
+    
+    func removeRecord(_ record: VideoPlayRecord) {
+        records.removeAll { $0.id == record.id }
+        save()
+    }
+    
+    func clearAll() {
+        records.removeAll()
+        save()
+    }
+    
+    private func save() {
+        if let data = try? JSONEncoder().encode(records) {
+            UserDefaults.standard.set(data, forKey: storageKey)
+        }
+    }
+    
+    private func load() {
+        if let data = UserDefaults.standard.data(forKey: storageKey),
+           let decoded = try? JSONDecoder().decode([VideoPlayRecord].self, from: data) {
+            self.records = decoded
+        }
+    }
+}

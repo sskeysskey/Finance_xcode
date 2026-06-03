@@ -425,6 +425,17 @@ struct VideoPlayerPageView: View {
                 videoURL: episodeURL,
                 videoTitle: videoTitle
             )
+            
+            // 📺 【核心新增】：保存到本地播放/浏览记录
+            VideoPlayRecordManager.shared.addRecord(
+                videoTitle: videoTitle.components(separatedBy: " · ").first ?? videoTitle, // 提取纯影片名
+                episodeName: episodeName ?? (isGlobalEnglishMode ? "Play" : "播放"),
+                videoURL: episodeURL,
+                coverImage: coverImage,
+                channelName: channelName,
+                sourceURL: sourceURL
+            )
+            
         } catch {
             self.resolveError = error.localizedDescription
         }
