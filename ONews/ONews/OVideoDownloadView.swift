@@ -912,10 +912,14 @@ struct VideoCacheView: View {
 
                     // 已缓存列表
                     if !cachedItems.isEmpty {
-                        Section(header: sectionHeader(isGlobalEnglishMode ? "Cached" : "已缓存",
-                                                      count: cachedItems.count,
-                                                      icon: "checkmark.seal.fill",
-                                                      color: .green)) {
+                        // 🛠️ 【修改】：右侧增加“已缓存视频也需订阅才能播放”的提示文案
+                        Section(header: sectionHeader(
+                            isGlobalEnglishMode ? "Cached" : "已缓存",
+                            count: cachedItems.count,
+                            icon: "checkmark.seal.fill",
+                            color: .green,
+                            subtitle: isGlobalEnglishMode ? "Subscription required for playback" : "已缓存视频也需订阅才能播放"
+                        )) {
                             ForEach(cachedItems, id: \.url) { row in
                                 // 方案：使用 ZStack 隐藏 NavigationLink 的默认箭头
                                 ZStack {
@@ -1037,9 +1041,11 @@ struct VideoCacheView: View {
         .textCase(nil) // 避免 List Header 默认大写
     }
 
+    // 🛠️ 【修改】：支持传入 subtitle 副标题，用于显示“已缓存视频也需订阅才能播放”
     private func sectionHeader(_ title: String, count: Int,
-                               icon: String, color: Color) -> some View {
-        HStack(spacing: 8) {
+                               icon: String, color: Color,
+                               subtitle: String? = nil) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
             Image(systemName: icon).foregroundColor(color)
             Text(title).font(.system(size: 16, weight: .bold))
             Text("\(count)")
@@ -1047,7 +1053,15 @@ struct VideoCacheView: View {
                 .foregroundColor(.white)
                 .padding(.horizontal, 8).padding(.vertical, 2)
                 .background(Capsule().fill(color))
-            Spacer()
+            
+            if let sub = subtitle {
+                Spacer()
+                Text(sub)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundColor(.secondary)
+            } else {
+                Spacer()
+            }
         }
         .padding(.horizontal, 16)
         .textCase(nil)
