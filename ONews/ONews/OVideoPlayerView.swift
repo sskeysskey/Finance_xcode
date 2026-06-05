@@ -3,6 +3,16 @@
 import SwiftUI
 import AVKit
 
+// MARK: - 生命周期可感知的播放控制器
+final class LifecycleAVPlayerViewController: AVPlayerViewController {
+    var onWillDisappear: (() -> Void)?
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        onWillDisappear?()
+    }
+}
+
 // MARK: - VideoPlayerView (UIKit 包装)
 struct VideoPlayerView: UIViewControllerRepresentable {
     let videoURL: URL
@@ -11,13 +21,23 @@ struct VideoPlayerView: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController()
+        let controller = LifecycleAVPlayerViewController()
         let player = AVPlayer(url: videoURL)
         player.automaticallyWaitsToMinimizeStalling = true
         controller.player = player
         controller.allowsPictureInPicturePlayback = true
         controller.delegate = context.coordinator
         controller.videoGravity = .resizeAspect
+
+        // ⭐ 关键修复:当该播放器被导航推走(进入缓存管理页 / 其它页面)而不可见时,
+        //    自动暂停,避免与新打开的缓存播放器同时出声。
+        //    但「进入全屏」「进入画中画」也会触发 viewWillDisappear,这两种情况要排除。
+        controller.onWillDisappear = { [weak coordinator = context.coordinator] in
+            guard let coordinator = coordinator else { return }
+            if coordinator.isFullScreen || coordinator.isPiP { return }
+            coordinator.pause()
+        }
+
         context.coordinator.attach(player: player)
         player.play()
         return controller
@@ -41,7 +61,16 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private var currentItemObs: NSKeyValueObservation?
         private var bufferingResetWork: DispatchWorkItem?
 
+        // ⭐ 新增:标记全屏 / 画中画状态,用于在 viewWillDisappear 时判断是否应暂停
+        var isFullScreen = false
+        var isPiP = false
+
         init(_ parent: VideoPlayerView) { self.parent = parent }
+
+        // ⭐ 新增:供外部(viewWillDisappear)调用的暂停
+        func pause() {
+            player?.pause()
+        }
 
         func attach(player: AVPlayer) {
             self.player = player
@@ -124,19 +153,30 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             bufferingResetWork?.cancel()
         }
 
-        // 横竖屏代理保持不变 ...
+        // MARK: 全屏代理(同时维护 isFullScreen 标记)
         func playerViewController(_ playerViewController: AVPlayerViewController,
                                 willBeginFullScreenPresentationWithAnimationCoordinator
                                 coordinator: UIViewControllerTransitionCoordinator) {
+            isFullScreen = true
             AppDelegate.orientationLock = .landscape
             forceOrientation(.landscapeRight)
         }
         func playerViewController(_ playerViewController: AVPlayerViewController,
                                 willEndFullScreenPresentationWithAnimationCoordinator
                                 coordinator: UIViewControllerTransitionCoordinator) {
+            isFullScreen = false
             AppDelegate.orientationLock = .portrait
             forceOrientation(.portrait)
         }
+
+        // MARK: 画中画代理(维护 isPiP 标记)
+        func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
+            isPiP = true
+        }
+        func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
+            isPiP = false
+        }
+
         private func forceOrientation(_ orientation: UIInterfaceOrientation) {
             if #available(iOS 16.0, *) {
                 guard let scene = UIApplication.shared.connectedScenes

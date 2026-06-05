@@ -243,30 +243,6 @@ struct UserProfileView: View {
                             }
                         }
                     }
-
-                    // --- 新增：缓存管理入口 ---
-                    Section(header: Text(isGlobalEnglishMode ? "Storage" : "存储空间")) {
-                        NavigationLink(destination: VideoCacheView()) {
-                            HStack(spacing: 12) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(LinearGradient(colors: [.purple, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                        .frame(width: 28, height: 28)
-                                    Image(systemName: "archivebox.fill")
-                                        .font(.system(size: 14))
-                                        .foregroundColor(.white)
-                                }
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(isGlobalEnglishMode ? "Cache Management" : "缓存管理")
-                                        .font(.body)
-                                    Text(isGlobalEnglishMode ? "Manage offline videos" : "管理已缓存的视频文件")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
-                    }
                     
                     // 退出与删除账号部分
                     if authManager.isLoggedIn {
@@ -770,8 +746,8 @@ struct SourceListView: View {
         .sheet(isPresented: $showLoginSheet) { LoginView() }
         // ⚠️ 修复 Bug：直接绑定 authManager.showSubscriptionSheet，确保状态双向同步
         .sheet(isPresented: $authManager.showSubscriptionSheet) { SubscriptionView() }
-        // 【新增】个人中心 Sheet
-        .sheet(isPresented: $showProfileSheet) { UserProfileView() }
+        // 【新增】个人中心
+        .fullScreenCover(isPresented: $showProfileSheet) { UserProfileView() }
         // 【新增】未登录底部菜单 Sheet (仿 Finance)
         .sheet(isPresented: $showGuestMenu) {
             // MARK: - Guest Menu (Bottom Sheet)

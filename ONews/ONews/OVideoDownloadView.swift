@@ -918,7 +918,7 @@ struct VideoCacheView: View {
                             count: cachedItems.count,
                             icon: "checkmark.seal.fill",
                             color: .green,
-                            subtitle: isGlobalEnglishMode ? "Subscription required for playback" : "已缓存视频也需订阅才能播放"
+                            subtitle: isGlobalEnglishMode ? "Subscription required for playback" : "订阅后即可无限畅享离线缓存视频"
                         )) {
                             ForEach(cachedItems, id: \.url) { row in
                                 // 方案：使用 ZStack 隐藏 NavigationLink 的默认箭头
