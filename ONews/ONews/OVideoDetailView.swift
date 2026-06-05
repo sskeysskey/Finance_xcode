@@ -370,20 +370,19 @@ struct VideoDetailView: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "square.and.arrow.down.on.square.fill")
-                                    .font(.system(size: 14))
+                                    .font(.system(size: 16))
                                 Text(isGlobalEnglishMode ? "Batch" : "批量下载")
                                     .font(.system(size: 12, weight: .semibold))
                             }
-                            .foregroundColor(.white)
+                            .foregroundColor(.accentColor)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(
-                                Capsule().fill(LinearGradient(
-                                    colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
-                                    startPoint: .leading, endPoint: .trailing))
+                                Capsule()
+                                    .fill(Color.accentColor.opacity(0.1))
                             )
                         }
-                        .padding(.trailing, 16)
+                        .padding(.trailing, 16) // 右侧留白，和线路Tab左右边距统一
                     }
                 }
 
