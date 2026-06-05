@@ -4,32 +4,36 @@ import SwiftUI
 struct VideoDetailView: View {
     let item: OVideoItem
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    
-    // ⭐ 新增：使用 AppStorage 记忆用户的正序/倒序偏好，默认正序 (true)
+
+    // 记忆用户的正序/倒序偏好，默认正序 (true)
     @AppStorage("OVideo_IsEpisodeAscending") private var isEpisodeAscending = true
-    
+
     @State private var selectedChannelIndex = 0
 
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
-    @State private var navigateToPlayer = false                // 触发跳转
-    
+    @State private var navigateToPlayer = false
+
+    // ⭐ 新增：批量下载相关状态
+    @State private var showBatchDownloadSheet = false
+    @State private var navigateToCacheView = false
+
     // 用于记录当前点击并准备播放的剧集
     @State private var selectedEpisode: (name: String, url: String)? = nil
-    
+
     // 对 playlist 进行过滤和排序的计算属性
     private var sortedPlaylist: [OVideoChannel] {
         // 这里的有效 URL 集合逻辑保持你原有的映射过滤
         let validURLs: Set<String> = {
-            return Set<String>() 
+            return Set<String>()
         }()
-        
+
         let indexedChannels = item.playlist.enumerated().map { (index, channel) -> (index: Int, channel: OVideoChannel, validCount: Int, qualityScore: Int) in
             let validCount = channel.episodes.values.filter { url in
                 validURLs.isEmpty ? true : validURLs.contains(url)
             }.count
-            
-            var qualityScore = 1 
+
+            var qualityScore = 1
             let episodeKeys = channel.episodes.keys
             
             let hasLowQuality = episodeKeys.contains { key in
@@ -106,17 +110,40 @@ struct VideoDetailView: View {
                     episodeURL: episode.url,
                     videoTitle: "\(item.name) · \(episode.name)",
                     coverImage: item.image,
-                    channelName: sortedPlaylist[selectedChannelIndex].name, // 传入线路名
-                    episodeName: episode.name,                             // 传入集数名
-                    sourceURL: item.url                                    // 传入影片详情页唯一键
+                    channelName: sortedPlaylist[selectedChannelIndex].name,
+                    episodeName: episode.name,
+                    sourceURL: item.url
                 )
             }
+        }
+        // ⭐ 新增：批量下载完成后推入缓存管理页（返回即回到详情页）
+        .navigationDestination(isPresented: $navigateToCacheView) {
+            VideoCacheView()
         }
         // 订阅页弹窗
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
-        // 【新增】当用户离开详情页（返回首页）时，记录一次视频模块的有效交互
+        // ⭐ 新增：批量下载选择页
+        .sheet(isPresented: $showBatchDownloadSheet) {
+            if selectedChannelIndex < sortedPlaylist.count {
+                BatchDownloadView(
+                    item: item,
+                    channel: sortedPlaylist[selectedChannelIndex],
+                    channelDisplayName: isGlobalEnglishMode
+                        ? "Line \(selectedChannelIndex + 1)"
+                        : "线路 \(selectedChannelIndex + 1)",
+                    isAscending: isEpisodeAscending,
+                    onStartDownloads: {
+                        // 等 sheet 关闭动画结束后再跳转，避免时序冲突
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                            navigateToCacheView = true
+                        }
+                    }
+                )
+                .environmentObject(authManager)
+            }
+        }
         .onDisappear {
             ReviewManager.shared.recordVideoInteraction()
         }
@@ -284,8 +311,8 @@ struct VideoDetailView: View {
                 .padding(.horizontal, 16)
                 
             } else {
-                // 线路选择 Tab 与 排序按钮
-                HStack(spacing: 0) {
+                // 线路选择 Tab + 排序按钮 + ⭐批量下载按钮
+                HStack(spacing: 8) {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
                             ForEach(Array(sortedPlaylist.enumerated()), id: \.offset) { idx, ch in
@@ -310,8 +337,8 @@ struct VideoDetailView: View {
                         }
                         .padding(.horizontal, 16)
                     }
-                    
-                    // ⭐【新增】正序/倒序切换按钮（仅在多集视频时显示）
+
+                    // 正序/倒序切换按钮（仅多集视频时显示）
                     if isMultiEpisodeVideo {
                         Button {
                             withAnimation(.easeInOut(duration: 0.2)) {
@@ -321,8 +348,8 @@ struct VideoDetailView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: isEpisodeAscending ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
                                     .font(.system(size: 16))
-                                Text(isEpisodeAscending 
-                                     ? (isGlobalEnglishMode ? "Asc" : "正序") 
+                                Text(isEpisodeAscending
+                                     ? (isGlobalEnglishMode ? "Asc" : "正序")
                                      : (isGlobalEnglishMode ? "Desc" : "倒序"))
                                     .font(.system(size: 12, weight: .semibold))
                             }
@@ -334,16 +361,38 @@ struct VideoDetailView: View {
                                     .fill(Color.accentColor.opacity(0.1))
                             )
                         }
+                    }
+
+                    // ⭐【新增】批量下载按钮（仅多集视频时显示）
+                    if isMultiEpisodeVideo {
+                        Button {
+                            showBatchDownloadSheet = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "square.and.arrow.down.on.square.fill")
+                                    .font(.system(size: 14))
+                                Text(isGlobalEnglishMode ? "Batch" : "批量下载")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule().fill(LinearGradient(
+                                    colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                                    startPoint: .leading, endPoint: .trailing))
+                            )
+                        }
                         .padding(.trailing, 16)
                     }
                 }
-                
+
                 // 剧集网格
                 if selectedChannelIndex < sortedPlaylist.count {
                     let channel = sortedPlaylist[selectedChannelIndex]
                     // ⭐【修改】根据用户的排序偏好获取排序后的剧集
                     let sortedEps = channel.sortedEpisodes(ascending: isEpisodeAscending)
-                    
+
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 10)], spacing: 10) {
                         ForEach(sortedEps, id: \.url) { episode in
                             Button {
@@ -408,7 +457,7 @@ struct VideoDetailView: View {
             }
         }
     }
-    
+
     // MARK: - 5. 辅助视图组件
     private func infoRow(label: String, value: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
@@ -449,5 +498,296 @@ struct VideoDetailView: View {
         if k.contains("豆瓣") { return .green }
         if k.contains("imdb") { return .orange }
         return .accentColor // 默认颜色
+    }
+}
+
+struct BatchDownloadView: View {
+    let item: OVideoItem
+    let channel: OVideoChannel
+    let channelDisplayName: String
+    let isAscending: Bool
+    /// 下载成功发起后回调（用于父级跳转到缓存管理页）
+    let onStartDownloads: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var authManager: AuthManager
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    @ObservedObject private var downloadManager = HLSDownloadManager.shared
+
+    @State private var selectedURLs: Set<String> = []
+    @State private var isProcessing = false
+    @State private var processedCount = 0
+    @State private var showSubscriptionSheet = false
+
+    private var episodes: [(name: String, url: String)] {
+        channel.sortedEpisodes(ascending: isAscending)
+    }
+
+    private var allSelected: Bool {
+        !episodes.isEmpty && selectedURLs.count == episodes.count
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LinearGradient(
+                    colors: [Color(.systemGroupedBackground),
+                             Color.accentColor.opacity(0.05)],
+                    startPoint: .top, endPoint: .bottom
+                ).ignoresSafeArea()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        headerCard
+                        episodeGrid
+                        Spacer(minLength: 120) // 给底部悬浮栏留空间
+                    }
+                    .padding(.top, 12)
+                }
+
+                // 底部悬浮下载栏
+                VStack {
+                    Spacer()
+                    bottomBar
+                }
+
+                if isProcessing {
+                    processingOverlay
+                }
+            }
+            .navigationTitle(isGlobalEnglishMode ? "Batch Download" : "批量下载")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(isGlobalEnglishMode ? "Cancel" : "取消") { dismiss() }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            if allSelected {
+                                selectedURLs.removeAll()
+                            } else {
+                                selectedURLs = Set(episodes.map { $0.url })
+                            }
+                        }
+                    } label: {
+                        Text(allSelected
+                             ? (isGlobalEnglishMode ? "Deselect All" : "取消全选")
+                             : (isGlobalEnglishMode ? "Select All" : "全选"))
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                }
+            }
+            .sheet(isPresented: $showSubscriptionSheet) {
+                SubscriptionView()
+            }
+        }
+    }
+
+    // MARK: - 头部信息卡
+    private var headerCard: some View {
+        HStack(spacing: 14) {
+            coverThumb
+            VStack(alignment: .leading, spacing: 6) {
+                Text(item.name)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.primary)
+                    .lineLimit(2)
+                Text(channelDisplayName)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.accentColor)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+                Text(isGlobalEnglishMode
+                     ? "\(episodes.count) episodes available"
+                     : "共 \(episodes.count) 集可缓存")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+        .padding(.horizontal, 16)
+    }
+
+    private var coverThumb: some View {
+        Group {
+            if let name = item.image, !name.isEmpty,
+               let url = OVideoAPI.coverURL(for: name) {
+                CachedAsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let img): img.resizable().scaledToFill()
+                    default: Rectangle().fill(Color.secondary.opacity(0.15))
+                    }
+                }
+            } else {
+                ZStack {
+                    Rectangle().fill(Color.secondary.opacity(0.15))
+                    Image(systemName: "film").foregroundColor(.secondary)
+                }
+            }
+        }
+        .frame(width: 56, height: 78)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    // MARK: - 剧集网格
+    private var episodeGrid: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 10)], spacing: 10) {
+            ForEach(episodes, id: \.url) { ep in
+                episodeCell(ep)
+            }
+        }
+        .padding(.horizontal, 16)
+    }
+
+    private func episodeCell(_ ep: (name: String, url: String)) -> some View {
+        let isSelected = selectedURLs.contains(ep.url)
+        return Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                if isSelected { selectedURLs.remove(ep.url) }
+                else { selectedURLs.insert(ep.url) }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18))
+                    .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.5))
+                Text(ep.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.10)
+                                     : Color.secondary.opacity(0.06))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.5)
+                                       : Color.secondary.opacity(0.12),
+                            lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    // MARK: - 底部下载栏
+    private var bottomBar: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isGlobalEnglishMode ? "Selected" : "已选择")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Text("\(selectedURLs.count)")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundColor(.accentColor)
+            }
+            Spacer()
+            Button {
+                startBatchDownload()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text(isGlobalEnglishMode ? "Download Selected" : "下载所选")
+                        .font(.system(size: 15, weight: .bold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 24).padding(.vertical, 14)
+                .background(
+                    Capsule().fill(LinearGradient(
+                        colors: selectedURLs.isEmpty
+                            ? [Color.secondary.opacity(0.4), Color.secondary.opacity(0.4)]
+                            : [Color.accentColor, Color.accentColor.opacity(0.8)],
+                        startPoint: .leading, endPoint: .trailing))
+                )
+                .shadow(color: Color.accentColor.opacity(selectedURLs.isEmpty ? 0 : 0.3),
+                        radius: 8, y: 3)
+            }
+            .disabled(selectedURLs.isEmpty || isProcessing)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(
+            .ultraThinMaterial,
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+    }
+
+    // MARK: - 处理中遮罩
+    private var processingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.35).ignoresSafeArea()
+            VStack(spacing: 14) {
+                ProgressView().tint(.white).scaleEffect(1.3)
+                Text(isGlobalEnglishMode
+                     ? "Preparing downloads... \(processedCount)/\(selectedURLs.count)"
+                     : "正在准备下载… \(processedCount)/\(selectedURLs.count)")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white)
+            }
+            .padding(28)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.black.opacity(0.55))
+            )
+        }
+    }
+
+    // MARK: - 下载逻辑
+    private func startBatchDownload() {
+        guard authManager.canAccessVideoContent() else {
+            showSubscriptionSheet = true
+            return
+        }
+        let selected = episodes.filter { selectedURLs.contains($0.url) }
+        guard !selected.isEmpty else { return }
+
+        isProcessing = true
+        processedCount = 0
+
+        Task {
+            for ep in selected {
+                do {
+                    // 与单集播放一致：先解析出真实可下载地址
+                    let realURL = try await OVideoAPI.resolveRealURL(episodeURL: ep.url)
+                    await MainActor.run {
+                        downloadManager.startDownload(
+                            urlString: realURL,
+                            title: "\(item.name) · \(ep.name)",
+                            coverImage: item.image
+                        )
+                        processedCount += 1
+                    }
+                } catch {
+                    // 单集解析失败不阻断其它集
+                    await MainActor.run { processedCount += 1 }
+                }
+            }
+            await MainActor.run {
+                isProcessing = false
+                dismiss()            // 先关闭批量选择页
+                onStartDownloads()   // 通知父级跳转到缓存管理页
+            }
+        }
     }
 }
