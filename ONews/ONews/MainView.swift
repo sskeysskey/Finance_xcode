@@ -77,7 +77,8 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             try? await Task.sleep(nanoseconds: 10_000_000) // 等新闻先加载完
             guard let self = self else { return }
             print("📺 [预加载] 开始后台预加载视频模块数据...")
-            await self.videoDataManager.loadVideosIfNeeded()
+            // 【修改】传入 userId（若此刻还未登录则为 nil，进入页面后会按上面的逻辑自动重新拉取）
+            await self.videoDataManager.loadVideosIfNeeded(userId: self.authManager.userIdentifier)
             print("📺 [预加载] 视频模块数据预加载完成。")
         }
         

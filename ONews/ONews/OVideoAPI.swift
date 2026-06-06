@@ -14,8 +14,14 @@ enum OVideoAPI {
         return URL(string: "\(baseURL)/cover/\(encoded)")
     }
     
-    static func fetchVideos() async throws -> [OVideoCategory] {
-        guard let url = URL(string: "\(baseURL)/videos") else { throw URLError(.badURL) }
+    // 【修改】增加 userId 参数
+    static func fetchVideos(userId: String? = nil) async throws -> [OVideoCategory] {
+        var urlString = "\(baseURL)/videos"
+        if let uid = userId, !uid.isEmpty,
+           let encoded = uid.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            urlString += "?user_id=\(encoded)"
+        }
+        guard let url = URL(string: urlString) else { throw URLError(.badURL) }
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         let (data, _) = try await URLSession.shared.data(for: request)
@@ -328,33 +334,40 @@ class OVideoDataManager: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String? = nil
     private var hasLoaded = false
-
+    
+    // 【新增】记录上一次加载所用的 userId，用于判断是否需要重新加载
+    private var loadedUserId: String? = nil
     // ⭐ 新增：排序结果缓存。key = "categoryName|sortOption"
     private var sortCache: [String: [OVideoItem]] = [:]
-    
     // ⭐ 新增：搜索索引
     private var searchIndex: [SearchIndexEntry] = []
     
-    func loadVideosIfNeeded() async {
-        if hasLoaded { return }
-        await loadVideos()
+    func loadVideosIfNeeded(userId: String? = nil) async {
+        // 【修改】已加载，且用户身份与上次一致，才跳过；
+        // 否则（例如预加载时是 nil，进入页面时变成真实 userId）需要重新拉取，
+        // 这样邀请码用户才能拿到未过滤的数据
+        if hasLoaded && loadedUserId == userId { return }
+        await loadVideos(userId: userId)
     }
     
-    func loadVideos() async {
+    // 【修改】增加 userId 参数
+    func loadVideos(userId: String? = nil) async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
         do {
-            let cats = try await OVideoAPI.fetchVideos()
+            // 【修改】传入 userId
+            let cats = try await OVideoAPI.fetchVideos(userId: userId)
             self.categories = cats
             self.sortCache.removeAll()
             
-            // ⭐ 数据加载完后，在后台线程构建索引（传入 category.name）
+            // 构建搜索索引
             let index = await Task.detached(priority: .utility) {
                 Self.buildIndex(from: cats)
             }.value
             self.searchIndex = index
             
+            self.loadedUserId = userId   // 【新增】
             self.hasLoaded = true
         } catch {
             errorMessage = error.localizedDescription

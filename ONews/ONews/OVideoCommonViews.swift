@@ -237,6 +237,9 @@ struct VideoModuleView: View {
     // ⭐ 新增：持久化记录用户是否已经看过滑动引导
     @AppStorage("hasSeenVideoSwipeGuide") private var hasSeenVideoSwipeGuide = false
     
+    // 【新增】获取 AuthManager 以读取 userId
+    @EnvironmentObject var authManager: AuthManager
+    
     private var sortBinding: Binding<VideoSortOption> {
         Binding(
             get: { VideoSortOption(rawValue: sortOptionRaw) ?? .date },
@@ -270,7 +273,10 @@ struct VideoModuleView: View {
             }
         }
         // 【说明】这里仍然保留 task，作为兜底。如果预加载已完成，loadVideosIfNeeded 内部应该会立即返回不重复加载
-        .task { await dataManager.loadVideosIfNeeded() }
+        // 【修改】传入 userId
+        .task {
+            await dataManager.loadVideosIfNeeded(userId: authManager.userIdentifier)
+        }
     }
 }
 
@@ -607,6 +613,9 @@ struct VideoBrowseView: View {
     
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
+    // 【新增】
+    @EnvironmentObject var authManager: AuthManager
+    
     private var currentCategoryKey: String {
         guard selectedCategoryIndex < dataManager.categories.count else { return "" }
         return dataManager.categories[selectedCategoryIndex].name
@@ -741,7 +750,10 @@ struct VideoBrowseView: View {
                 .font(.system(size: 40)).foregroundColor(.orange)
             Text(msg).foregroundColor(.secondary).multilineTextAlignment(.center).padding(.horizontal)
             Button(isGlobalEnglishMode ? "Retry" : "重试") {
-                Task { await dataManager.loadVideos() }
+                Task {
+                    // 【修改】传入 userId
+                    await dataManager.loadVideos(userId: authManager.userIdentifier)
+                }
             }
             .padding(.horizontal, 20).padding(.vertical, 8)
             .background(Color.blue).foregroundColor(.white).cornerRadius(16)
