@@ -22,6 +22,9 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     // 【新增】订阅状态
     @Published var isSubscribed: Bool = false
     @Published var subscriptionExpiryDate: String?
+
+    // 【新增】视频模块黑名单状态（服务端按 user_id 下发）
+    @Published var isVideoModuleBlocked: Bool = false
     
     @Published var errorMessage: String?
     @Published var showSubscriptionSheet: Bool = false // 控制是否显示订阅页
@@ -43,6 +46,8 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     // 【新增】缓存 Key
     private let cacheIsSubscribedKey = "AuthCache_IsSubscribed"
     private let cacheExpiryDateKey = "AuthCache_ExpiryDate"
+    // 【新增】视频黑名单缓存 Key
+    private let cacheVideoBlockedKey = "AuthCache_VideoBlocked"
     
     // 【新增】用于监听交易更新的任务
     private var updateListenerTask: Task<Void, Error>?
@@ -127,6 +132,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             self.isLoggedIn = false
             self.isSubscribed = false // 登出后取消订阅状态
             self.subscriptionExpiryDate = nil
+            self.isVideoModuleBlocked = false
             clearSubscriptionCache() // 清理缓存
             // 🚀 【新增】清除 UserDefaults 备份
             UserDefaults.standard.removeObject(forKey: "current_user_id")
@@ -136,6 +142,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             self.userIdentifier = nil
             self.isLoggedIn = false
             self.isSubscribed = false
+            self.isVideoModuleBlocked = false
             clearSubscriptionCache()
             // 🚀 【新增】清除 UserDefaults 备份
             UserDefaults.standard.removeObject(forKey: "current_user_id")
@@ -414,6 +421,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         struct AuthResponse: Codable {
             let is_subscribed: Bool
             let subscription_expires_at: String?
+            let video_module_blocked: Bool?   // 【新增】
         }
         let authResponse = try JSONDecoder().decode(AuthResponse.self, from: data)
         
@@ -421,6 +429,10 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             self.isSubscribed = authResponse.is_subscribed
             self.subscriptionExpiryDate = authResponse.subscription_expires_at
             self.saveSubscriptionCache(isSubscribed: authResponse.is_subscribed, expiryDate: authResponse.subscription_expires_at)
+
+            // 【新增】更新视频黑名单状态并缓存
+            self.isVideoModuleBlocked = authResponse.video_module_blocked ?? false
+            UserDefaults.standard.set(self.isVideoModuleBlocked, forKey: self.cacheVideoBlockedKey)
         }
         
         // 2. 同时向 Prediction 后端注册（静默，在 body 中也带上 device_id）
@@ -548,6 +560,14 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             url: "\(serverBaseURL)/user/status?user_id=\(userId)"
         )
         
+        // 【新增】视频黑名单状态与订阅状态独立，拿到就更新并缓存
+        if let blocked = onewsResult.videoBlocked {
+            await MainActor.run {
+                self.isVideoModuleBlocked = blocked
+                UserDefaults.standard.set(blocked, forKey: self.cacheVideoBlockedKey)
+            }
+        }
+        
         if onewsResult.isSubscribed {
             await MainActor.run {
                 self.isSubscribed = true
@@ -587,18 +607,19 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     }
 
     // 【新增】抽取的端点状态查询
-    private func checkEndpointStatus(url urlString: String) async -> (isSubscribed: Bool, expiryDate: String?) {
-        guard let url = URL(string: urlString) else { return (false, nil) }
+    private func checkEndpointStatus(url urlString: String) async -> (isSubscribed: Bool, expiryDate: String?, videoBlocked: Bool?) {
+        guard let url = URL(string: urlString) else { return (false, nil, nil) }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             struct StatusResponse: Codable {
                 let is_subscribed: Bool
                 let subscription_expires_at: String?
+                let video_module_blocked: Bool?   // 【新增】
             }
             let status = try JSONDecoder().decode(StatusResponse.self, from: data)
-            return (status.is_subscribed, status.subscription_expires_at)
+            return (status.is_subscribed, status.subscription_expires_at, status.video_module_blocked)
         } catch {
-            return (false, nil)
+            return (false, nil, nil)
         }
     }
     
@@ -643,6 +664,9 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     }
     
     private func loadSubscriptionCache() {
+        // 【新增】先恢复视频黑名单缓存（避免黑名单用户启动瞬间看到入口）
+        self.isVideoModuleBlocked = UserDefaults.standard.bool(forKey: cacheVideoBlockedKey)
+        
         let cachedStatus = UserDefaults.standard.bool(forKey: cacheIsSubscribedKey)
         let cachedExpiry = UserDefaults.standard.string(forKey: cacheExpiryDateKey)
         
@@ -691,6 +715,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     private func clearSubscriptionCache() {
         UserDefaults.standard.removeObject(forKey: cacheIsSubscribedKey)
         UserDefaults.standard.removeObject(forKey: cacheExpiryDateKey)
+        UserDefaults.standard.removeObject(forKey: cacheVideoBlockedKey) // 【新增】
     }
 
     

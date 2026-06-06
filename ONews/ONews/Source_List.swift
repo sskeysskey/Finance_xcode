@@ -1082,19 +1082,14 @@ struct SourceListView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 16) {
-                        
-                        // ========================================
                         // 【已修改】将视频模块入口移至最上方
-                        // ========================================
-                        if resourceManager.showVideoModule || authManager.isPermanentVIP {
+                        if (resourceManager.showVideoModule || authManager.isPermanentVIP) && !authManager.isVideoModuleBlocked {
                             videoModuleCard
                                 .padding(.horizontal, 16)
-                                .padding(.top, 1) // 顶部留一点间距
+                                .padding(.top, 1)
                         }
 
-                        // ========================================
                         // 双卡片布局：ONews + Prediction
-                        // ========================================
                         HStack(spacing: 12) {
                             // --- 右侧：Prediction 卡片 ---
                             predictionCard
