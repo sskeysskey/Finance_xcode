@@ -518,12 +518,54 @@ struct BatchDownloadView: View {
     @State private var processedCount = 0
     @State private var showSubscriptionSheet = false
 
+    // ⭐ 剧集状态枚举
+    private enum EpisodeStatus {
+        case available    // 可下载
+        case downloading  // 已在下载队列（含暂停）
+        case cached       // 已缓存完成
+    }
+
     private var episodes: [(name: String, url: String)] {
         channel.sortedEpisodes(ascending: isAscending)
     }
 
+    // ⭐ 核心：根据 cacheMetadata.title 反查「已占用」的标题集合
+    // key = 标题（"片名 · 集名"），value = 状态
+    private var occupiedStatusByTitle: [String: EpisodeStatus] {
+        var map: [String: EpisodeStatus] = [:]
+        // 1) 下载队列中（含进行中/暂停）
+        for url in downloadManager.downloadProgress.keys {
+            if let t = downloadManager.cacheMetadata[url]?.title {
+                map[t] = .downloading
+            }
+        }
+        // 2) 已缓存完成（优先级更高，覆盖 downloading）
+        for url in downloadManager.localBookmarks.keys {
+            if let t = downloadManager.cacheMetadata[url]?.title {
+                map[t] = .cached
+            }
+        }
+        return map
+    }
+
+    // ⭐ 某一集的预期标题（与单集/批量下载写入的标题格式保持一致）
+    private func expectedTitle(for ep: (name: String, url: String)) -> String {
+        "\(item.name) · \(ep.name)"
+    }
+
+    // ⭐ 查询某一集的状态
+    private func status(for ep: (name: String, url: String)) -> EpisodeStatus {
+        occupiedStatusByTitle[expectedTitle(for: ep)] ?? .available
+    }
+
+    // ⭐ 仅「可下载」的剧集
+    private var selectableEpisodes: [(name: String, url: String)] {
+        episodes.filter { status(for: $0) == .available }
+    }
+
+    // ⭐ 全选判断只针对可下载剧集
     private var allSelected: Bool {
-        !episodes.isEmpty && selectedURLs.count == episodes.count
+        !selectableEpisodes.isEmpty && selectedURLs.count == selectableEpisodes.count
     }
 
     var body: some View {
@@ -566,7 +608,8 @@ struct BatchDownloadView: View {
                             if allSelected {
                                 selectedURLs.removeAll()
                             } else {
-                                selectedURLs = Set(episodes.map { $0.url })
+                                // ⭐ 只全选「可下载」的剧集
+                                selectedURLs = Set(selectableEpisodes.map { $0.url })
                             }
                         }
                     } label: {
@@ -575,6 +618,8 @@ struct BatchDownloadView: View {
                              : (isGlobalEnglishMode ? "Select All" : "全选"))
                             .font(.system(size: 14, weight: .medium))
                     }
+                    // ⭐ 没有任何可下载剧集时禁用全选
+                    .disabled(selectableEpisodes.isEmpty)
                 }
             }
             .sheet(isPresented: $showSubscriptionSheet) {
@@ -597,11 +642,22 @@ struct BatchDownloadView: View {
                     .foregroundColor(.accentColor)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.accentColor.opacity(0.12)))
-                Text(isGlobalEnglishMode
-                     ? "\(episodes.count) episodes available"
-                     : "共 \(episodes.count) 集可缓存")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+
+                // ⭐ 文案区分「可缓存」和「已被占用」
+                let occupiedCount = episodes.count - selectableEpisodes.count
+                if occupiedCount > 0 {
+                    Text(isGlobalEnglishMode
+                         ? "\(selectableEpisodes.count) selectable · \(occupiedCount) in cache/queue"
+                         : "可缓存 \(selectableEpisodes.count) 集 · \(occupiedCount) 集已在缓存/队列")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                } else {
+                    Text(isGlobalEnglishMode
+                         ? "\(episodes.count) episodes available"
+                         : "共 \(episodes.count) 集可缓存")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
             }
             Spacer()
         }
@@ -649,22 +705,52 @@ struct BatchDownloadView: View {
     }
 
     private func episodeCell(_ ep: (name: String, url: String)) -> some View {
+        let st = status(for: ep)
+        let isOccupied = (st != .available)
         let isSelected = selectedURLs.contains(ep.url)
+
         return Button {
+            // ⭐ 已缓存 / 队列中的剧集禁止点击
+            guard !isOccupied else { return }
             withAnimation(.easeInOut(duration: 0.15)) {
                 if isSelected { selectedURLs.remove(ep.url) }
                 else { selectedURLs.insert(ep.url) }
             }
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 18))
-                    .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.5))
+                // ⭐ 左侧图标随状态变化
+                Group {
+                    switch st {
+                    case .cached:
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    case .downloading:
+                        Image(systemName: "arrow.down.circle.fill")
+                            .foregroundColor(.orange)
+                    case .available:
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.5))
+                    }
+                }
+                .font(.system(size: 18))
+
                 Text(ep.name)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.primary)
+                    .foregroundColor(isOccupied ? .secondary : .primary)
                     .lineLimit(1)
+
                 Spacer(minLength: 0)
+
+                // ⭐ 右侧状态小标签
+                if st == .cached {
+                    Text(isGlobalEnglishMode ? "Cached" : "已缓存")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.green)
+                } else if st == .downloading {
+                    Text(isGlobalEnglishMode ? "In queue" : "队列中")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.orange)
+                }
             }
             .padding(.vertical, 12)
             .padding(.horizontal, 12)
@@ -679,8 +765,11 @@ struct BatchDownloadView: View {
                                        : Color.secondary.opacity(0.12),
                             lineWidth: 1)
             )
+            // ⭐ 占用态整体置灰
+            .opacity(isOccupied ? 0.5 : 1.0)
         }
         .buttonStyle(PlainButtonStyle())
+        .disabled(isOccupied)   // ⭐ 彻底禁用交互
     }
 
     // MARK: - 底部下载栏
@@ -758,7 +847,10 @@ struct BatchDownloadView: View {
             showSubscriptionSheet = true
             return
         }
-        let selected = episodes.filter { selectedURLs.contains($0.url) }
+        // ⭐ 双保险：即便 selectedURLs 因某些时序意外包含了已占用集，这里也再过滤一次
+        let selected = episodes.filter {
+            selectedURLs.contains($0.url) && status(for: $0) == .available
+        }
         guard !selected.isEmpty else { return }
 
         isProcessing = true
