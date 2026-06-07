@@ -369,18 +369,18 @@ struct VideoDetailView: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: isEpisodeAscending ? "arrow.up.circle" : "arrow.down.circle")
-                                    .font(.system(size: 14))
+                                    .font(.system(size: 13))
                                 Text(isEpisodeAscending
                                      ? (isGlobalEnglishMode ? "Asc" : "正序")
                                      : (isGlobalEnglishMode ? "Desc" : "倒序"))
-                                    .font(.system(size: 11, weight: .medium))
+                                    .font(.system(size: 12, weight: .semibold))
                             }
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.accentColor) // ⭐ 调整为蓝色，增强可点击感知
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(
                                 Capsule()
-                                    .fill(Color.secondary.opacity(0.05))
+                                    .fill(Color.accentColor.opacity(0.08)) // ⭐ 调整为淡蓝色背景
                             )
                         }
                     }
@@ -392,16 +392,16 @@ struct VideoDetailView: View {
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "square.and.arrow.down")
-                                    .font(.system(size: 14))
-                                Text(isGlobalEnglishMode ? "Batch" : "批量")
-                                    .font(.system(size: 11, weight: .medium))
+                                    .font(.system(size: 13))
+                                Text(isGlobalEnglishMode ? "Batch" : "批量缓存")
+                                    .font(.system(size: 12, weight: .semibold))
                             }
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.accentColor) // ⭐ 调整为蓝色，增强可点击感知
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(
                                 Capsule()
-                                    .fill(Color.secondary.opacity(0.05))
+                                    .fill(Color.accentColor.opacity(0.08)) // ⭐ 调整为淡蓝色背景
                             )
                         }
                         .padding(.trailing, 16)
@@ -414,7 +414,8 @@ struct VideoDetailView: View {
                     // ⭐【修改】根据用户的排序偏好获取排序后的剧集
                     let sortedEps = channel.sortedEpisodes(ascending: isEpisodeAscending)
 
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 85), spacing: 12)], spacing: 12) {
+                    // ⭐ 调整最小宽度为 75，让网格排布更紧凑，按钮视觉上自然变小
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 75), spacing: 10)], spacing: 10) {
                         ForEach(sortedEps, id: \.url) { episode in
                             Button {
                                 selectedEpisode = episode
@@ -425,37 +426,39 @@ struct VideoDetailView: View {
                                 }
                             } label: {
                                 ZStack(alignment: .topTrailing) {
-                                    // ⭐ 重塑后的剧集按钮：使用渐变背景、高亮边框和阴影，使其极其醒目且漂亮
+                                    // ⭐ 重塑后的剧集按钮：
+                                    // 1. 尺寸变小：字体降为 13，垂直 padding 降为 10
+                                    // 2. 更加醒目漂亮的霓虹渐变色：从 Indigo (靛蓝) 渐变到 Violet (紫罗兰)，极具现代高级感
                                     Text(episode.name)
-                                        .font(.system(size: 14, weight: .semibold))
+                                        .font(.system(size: 13, weight: .bold))
                                         .foregroundColor(.white)
                                         .lineLimit(1)
                                         .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 14)
+                                        .padding(.vertical, 10)
                                         .background(
                                             LinearGradient(
                                                 colors: [
-                                                    Color.accentColor,
-                                                    Color.accentColor.opacity(0.85)
+                                                    Color(.systemIndigo),
+                                                    Color(.systemPurple)
                                                 ],
                                                 startPoint: .topLeading,
                                                 endPoint: .bottomTrailing
                                             )
                                         )
-                                        .cornerRadius(12)
-                                        .shadow(color: Color.accentColor.opacity(0.3), radius: 6, x: 0, y: 3)
+                                        .cornerRadius(10)
+                                        .shadow(color: Color(.systemPurple).opacity(0.35), radius: 5, x: 0, y: 2)
                                         .overlay(
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .stroke(Color.white.opacity(0.2), lineWidth: 1.5)
+                                            RoundedRectangle(cornerRadius: 10)
+                                                .stroke(Color.white.opacity(0.25), lineWidth: 1)
                                         )
                                     
                                     if !authManager.isSubscribed {
                                         Image(systemName: "lock.fill")
                                             .font(.system(size: 8))
                                             .foregroundColor(.white)
-                                            .padding(4)
+                                            .padding(3)
                                             .background(Circle().fill(Color.orange))
-                                            .offset(x: 4, y: -4)
+                                            .offset(x: 3, y: -3)
                                     }
                                 }
                             }
@@ -509,13 +512,13 @@ struct VideoDetailView: View {
                         navigateToSearch = true
                     } label: {
                         Text(cleaned)
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary) // ⭐ 改为次要颜色，弱化视觉
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.accentColor) // ⭐ 调整为蓝色，增强可点击感知
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(
                                 RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.secondary.opacity(0.08)) // ⭐ 使用温和的灰色背景
+                                    .fill(Color.accentColor.opacity(0.08)) // ⭐ 调整为淡蓝色背景
                             )
                     }
                     .buttonStyle(.plain) // 确保按钮样式不影响布局
@@ -590,13 +593,13 @@ struct VideoDetailView: View {
                         navigateToSearch = true
                     } label: {
                         Text(cleaned)
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary) // ⭐ 改为次要颜色，弱化视觉
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.accentColor) // ⭐ 调整为蓝色，增强可点击感知
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
                                 RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color.secondary.opacity(0.08))
+                                    .fill(Color.accentColor.opacity(0.08)) // ⭐ 调整为淡蓝色背景
                             )
                     }
                     .buttonStyle(.plain)
