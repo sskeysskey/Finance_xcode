@@ -484,11 +484,13 @@ struct VideoDetailView: View {
             // 使用 FlowLayout 来容纳多个标签，允许换行
             FlowLayout(spacing: 6) {
                 ForEach(names, id: \.self) { name in
+                    // ⭐ 修改：对名字进行中英文清洗，提取出最核心的中文或英文
+                   x let cleaned = cleanName(name)
                     Button {
-                        searchKeyword = name
+                        searchKeyword = cleaned
                         navigateToSearch = true
                     } label: {
-                        Text(name)
+                        Text(cleaned)
                             .font(.system(size: 12))
                             .foregroundColor(.accentColor)
                             .padding(.horizontal, 8) // 调整内边距
@@ -563,11 +565,13 @@ struct VideoDetailView: View {
             
             FlowLayout(spacing: 6) {
                 ForEach(names, id: \.self) { name in
+                    // ⭐ 修改：对名字进行中英文清洗，提取出最核心的中文或英文
+                    let cleaned = cleanName(name)
                     Button {
-                        searchKeyword = name
+                        searchKeyword = cleaned
                         navigateToSearch = true
                     } label: {
-                        Text(name)
+                        Text(cleaned)
                             .font(.system(size: 12))
                             .foregroundColor(.accentColor)
                             .padding(.horizontal, 6)

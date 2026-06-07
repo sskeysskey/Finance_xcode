@@ -86,6 +86,23 @@ private func normalizeSearchText(_ text: String) -> String {
         .replacingOccurrences(of: " ", with: "")
 }
 
+// ⭐ 新增：中英文混合人名清洗提取函数（文件顶层全局函数）
+// 如果包含中文，则只提取中文部分；如果只有英文，则保留英文。
+func cleanName(_ rawName: String) -> String {
+    let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "" }
+    
+    // 正则表达式匹配中文字符
+    let chineseRegex = "[\u{4e00}-\u{9fa5}·]+"
+    if let range = trimmed.range(of: chineseRegex, options: .regularExpression) {
+        // 提取匹配到的中文部分（例如 "安东尼·麦凯"）并去除首尾空格
+        return String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    // 如果没有中文，则返回原始去除首尾空格的名字（如纯英文 "Omar Al-Atawi"）
+    return trimmed
+}
+
 // MARK: - 数据模型
 struct OVideoResponse: Codable {
     let categories: [OVideoCategory]
@@ -386,7 +403,7 @@ class OVideoDataManager: ObservableObject {
         }
     }
     
-    // ⭐ 修改：构建索引时捕获 categoryName
+    // ⭐ 修改：构建索引时捕获 categoryName，并对导演、演员进行中英文清洗
     nonisolated private static func buildIndex(from categories: [OVideoCategory]) -> [SearchIndexEntry] {
         var entries: [SearchIndexEntry] = []
         for category in categories {
@@ -394,8 +411,13 @@ class OVideoDataManager: ObservableObject {
                 let nameLower = item.name.lowercased()
                 let aliasLower = item.alias?.lowercased() ?? ""
                 let typesLower = (item.types ?? []).joined(separator: "\u{1F}").lowercased()
-                let directorLower = item.director?.lowercased() ?? ""
-                let castLower = (item.cast ?? []).joined(separator: "\u{1F}").lowercased()
+                
+                // ⭐ 对导演和演员先进行中英文清洗提取
+                let cleanedDirector = item.director.map { cleanName($0) } ?? ""
+                let cleanedCast = (item.cast ?? []).map { cleanName($0) }
+                
+                let directorLower = cleanedDirector.lowercased()
+                let castLower = cleanedCast.joined(separator: "\u{1F}").lowercased()
                 let introLower = item.intro?.lowercased() ?? ""
                 
                 entries.append(
@@ -410,8 +432,8 @@ class OVideoDataManager: ObservableObject {
                         introLower: introLower,
                         nameNormalized: normalizeSearchText(item.name),
                         aliasNormalized: normalizeSearchText(item.alias ?? ""),
-                        directorNormalized: normalizeSearchText(item.director ?? ""),
-                        castNormalized: normalizeSearchText((item.cast ?? []).joined(separator: "\u{1F}"))
+                        directorNormalized: normalizeSearchText(cleanedDirector),
+                        castNormalized: normalizeSearchText(cleanedCast.joined(separator: "\u{1F}"))
                     )
                 )
             }
