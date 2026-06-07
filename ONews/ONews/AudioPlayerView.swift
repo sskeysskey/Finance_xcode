@@ -197,6 +197,15 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             return .success
         }
 
+        // 新增：锁屏快进 15 秒
+        commandCenter.skipForwardCommand.preferredIntervals = [15]
+        commandCenter.skipForwardCommand.isEnabled = true
+        commandCenter.skipForwardCommand.addTarget { [weak self] _ in
+            guard let self = self else { return .commandFailed }
+            self.seekBy(seconds: 15)
+            return .success
+        }
+
         remoteCommandsRegistered = true
     }
 
@@ -206,6 +215,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         cc.pauseCommand.removeTarget(nil)
         cc.stopCommand.removeTarget(nil)
         cc.nextTrackCommand.removeTarget(nil)
+        cc.skipForwardCommand.removeTarget(nil)
         remoteCommandsRegistered = false
     }
 
@@ -706,10 +716,10 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     // ▶ 修改：跨块 seek
-    func seek(to value: Double) {
+    // MARK: - ▶ 修改：跨块 seek（内部统一入口）
+    private func seekToTime(_ targetTime: TimeInterval) {
         let totalDur = totalEstimatedDuration
         guard totalDur > 0 else { return }
-        let targetTime = totalDur * value
 
         // 找到目标块
         var cumulative: TimeInterval = 0
@@ -747,6 +757,25 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             audioPlayer?.currentTime = timeWithinChunk
             updateProgress()
         }
+    }
+
+    // 原有 Slider 调用的接口（保持不变）
+    func seek(to value: Double) {
+        let totalDur = totalEstimatedDuration
+        guard totalDur > 0 else { return }
+        let targetTime = totalDur * value
+        seekToTime(targetTime)
+    }
+
+    // ▶ 新增：快进/快退固定秒数（应用内按钮 + 锁屏遥控共用）
+    func seekBy(seconds: TimeInterval) {
+        guard let player = audioPlayer else { return }
+        let totalDur = totalEstimatedDuration
+        guard totalDur > 0 else { return }
+
+        let currentOverallTime = elapsedTimeBeforeCurrentChunk + player.currentTime
+        let targetTime = max(0, min(totalDur, currentOverallTime + seconds))
+        seekToTime(targetTime)
     }
 
     // ▶ 修改：块合成完毕后的文件清理
@@ -795,6 +824,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         commandCenter.pauseCommand.isEnabled = true
         commandCenter.stopCommand.isEnabled = true
         commandCenter.nextTrackCommand.isEnabled = true
+        commandCenter.skipForwardCommand.isEnabled = true
     }
 
     // ▶ 修改：播放完当前块 → 衔接下一块 / 全部完成
@@ -1466,13 +1496,30 @@ struct AudioPlayerView: View {
                         .foregroundColor(.secondary)
                 }
             } else {
-                ZStack {
+                HStack(spacing: 40) {
+                    // 快退 15 秒
+                    Button(action: { playerManager.seekBy(seconds: -15) }) {
+                        Image(systemName: "gobackward.15")
+                            .font(.system(size: 32, weight: .regular))
+                    }
+                    .disabled(!playerManager.isPlaybackActive || playerManager.isSynthesizing)
+                    .opacity(!playerManager.isPlaybackActive || playerManager.isSynthesizing ? 0.6 : 1.0)
+
+                    // 播放 / 暂停
                     Button(action: { playerManager.playPause() }) {
                         Image(systemName: playPauseIconName)
                             .font(.system(size: 52, weight: .regular))
                     }
                     .disabled(playerManager.isSynthesizing || !playerManager.isPlaybackActive)
                     .opacity(playerManager.isSynthesizing || !playerManager.isPlaybackActive ? 0.6 : 1.0)
+
+                    // 快进 15 秒
+                    Button(action: { playerManager.seekBy(seconds: 15) }) {
+                        Image(systemName: "goforward.15")
+                            .font(.system(size: 32, weight: .regular))
+                    }
+                    .disabled(!playerManager.isPlaybackActive || playerManager.isSynthesizing)
+                    .opacity(!playerManager.isPlaybackActive || playerManager.isSynthesizing ? 0.6 : 1.0)
                 }
                 .frame(height: 66)
 
