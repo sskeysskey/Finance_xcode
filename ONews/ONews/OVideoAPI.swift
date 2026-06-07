@@ -354,6 +354,18 @@ struct VideoCacheMetadata: Codable {
     let title: String
     let coverImage: String?
     let savedAt: Date
+    // 【新增】剧集归类用字段（可选，旧缓存数据缺失时自动为 nil）
+    var seriesTitle: String?   // 剧名（去掉集数），如「权力的游戏」
+    var episodeName: String?   // 集数名，如「第3集」「HD国语」
+}
+
+// 【新增】统一的分组 key 计算逻辑
+extension VideoCacheMetadata {
+    var groupKey: String {
+        if let s = seriesTitle, !s.isEmpty { return "title:" + s }
+        if let c = coverImage, !c.isEmpty { return "cover:" + c } // 兜底：同剧封面一致
+        return "single:" + title
+    }
 }
 
 // MARK: - 数据管理器

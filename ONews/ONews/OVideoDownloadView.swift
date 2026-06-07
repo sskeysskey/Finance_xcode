@@ -114,7 +114,8 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
     }
 
     // MARK: 启动下载
-    func startDownload(urlString: String, title: String, coverImage: String? = nil) {
+    func startDownload(urlString: String, title: String, coverImage: String? = nil,
+                       seriesTitle: String? = nil, episodeName: String? = nil) {
         cancelledUrls.remove(urlString)
 
         guard let url = URL(string: urlString) else { return }
@@ -134,7 +135,8 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             self.isPaused[urlString]      = false
             if self.cacheMetadata[urlString] == nil {
                 self.cacheMetadata[urlString] = VideoCacheMetadata(
-                    title: title, coverImage: coverImage, savedAt: Date()
+                    title: title, coverImage: coverImage, savedAt: Date(),
+                    seriesTitle: seriesTitle, episodeName: episodeName   // 【新增】
                 )
             }
             self.saveMetadata()
@@ -555,6 +557,8 @@ struct CacheCard: View {
     let realURL: String
     let videoTitle: String
     let coverImage: String?
+    var seriesTitle: String? = nil   // 【新增】
+    var episodeName: String? = nil   // 【新增】
 
     @ObservedObject private var downloadManager = HLSDownloadManager.shared
     @ObservedObject private var network = NetworkMonitor.shared
@@ -602,7 +606,10 @@ struct CacheCard: View {
         .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示", isPresented: $showCellularAlert) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
             Button(isGlobalEnglishMode ? "Download Anyway" : "允许并下载") {
-                downloadManager.startDownload(urlString: realURL, title: videoTitle, coverImage: coverImage)
+                downloadManager.startDownload(urlString: realURL,
+                                            title: videoTitle,
+                                            coverImage: coverImage,
+                                            seriesTitle: seriesTitle, episodeName: episodeName)
             }
         } message: {
             Text(isGlobalEnglishMode 
@@ -853,6 +860,15 @@ struct NetworkBadge: View {
     }
 }
 
+// MARK: - 已缓存剧集分组模型
+struct CachedSeriesGroup: Identifiable {
+    let id: String                                       // = groupKey
+    let seriesTitle: String
+    let coverImage: String?
+    let episodes: [(url: String, meta: VideoCacheMetadata)]
+    let latestSavedAt: Date
+}
+
 // MARK: - 缓存管理
 struct VideoCacheView: View {
     @StateObject private var downloadManager = HLSDownloadManager.shared
@@ -864,15 +880,30 @@ struct VideoCacheView: View {
     @State private var showSubscriptionSheet = false
     @State private var showCellularAlert = false
 
-    private var cachedItems: [(url: String, meta: VideoCacheMetadata)] {
-        downloadManager.localBookmarks.keys.compactMap { url in
-            if let m = downloadManager.cacheMetadata[url] {
-                return (url, m)
-            } else {
-                return (url, VideoCacheMetadata(title: url, coverImage: nil, savedAt: Date()))
+    // 【替换】把原来的 cachedItems 改为按剧分组
+    private var groupedCachedItems: [CachedSeriesGroup] {
+        var dict: [String: [(url: String, meta: VideoCacheMetadata)]] = [:]
+        for url in downloadManager.localBookmarks.keys {
+            let meta = downloadManager.cacheMetadata[url]
+                ?? VideoCacheMetadata(title: url, coverImage: nil, savedAt: Date(),
+                                      seriesTitle: nil, episodeName: nil)
+            dict[meta.groupKey, default: []].append((url, meta))
+        }
+        return dict.map { key, items in
+            let sorted = items.sorted {
+                ($0.meta.episodeName ?? "").localizedStandardCompare($1.meta.episodeName ?? "") == .orderedAscending
             }
-        }.sorted { $0.meta.savedAt > $1.meta.savedAt }
+            let latest = items.map { $0.meta.savedAt }.max() ?? Date()
+            let title  = items.first?.meta.seriesTitle?.isEmpty == false
+                ? items.first!.meta.seriesTitle!
+                : (items.first?.meta.title ?? key)
+            let cover  = items.compactMap { $0.meta.coverImage }.first
+            return CachedSeriesGroup(id: key, seriesTitle: title,
+                                     coverImage: cover, episodes: sorted, latestSavedAt: latest)
+        }.sorted { $0.latestSavedAt > $1.latestSavedAt }
     }
+
+    private var cachedCount: Int { downloadManager.localBookmarks.count }
 
     private var downloadingItems: [(url: String, title: String)] {
         downloadManager.downloadProgress.keys.map {
@@ -893,7 +924,7 @@ struct VideoCacheView: View {
                 startPoint: .top, endPoint: .bottom
             ).ignoresSafeArea()
 
-            if cachedItems.isEmpty && downloadingItems.isEmpty {
+            if groupedCachedItems.isEmpty && downloadingItems.isEmpty {
                 emptyState
             } else {
                 // 🛠️ 修改：将 ScrollView 替换为 List，以支持左滑删除
@@ -910,41 +941,66 @@ struct VideoCacheView: View {
                         }
                     }
 
-                    // 已缓存列表
-                    if !cachedItems.isEmpty {
-                        // 🛠️ 【修改】：右侧增加“已缓存视频也需订阅才能播放”的提示文案
+                    // 已缓存列表（按剧集分组）
+                    if !groupedCachedItems.isEmpty {
                         Section(header: sectionHeader(
                             isGlobalEnglishMode ? "Cached" : "已缓存",
-                            count: cachedItems.count,
+                            count: cachedCount,
                             icon: "checkmark.seal.fill",
                             color: .green,
                             subtitle: isGlobalEnglishMode ? "Subscription required for playback" : "订阅后即可无限畅享离线缓存视频"
                         )) {
-                            ForEach(cachedItems, id: \.url) { row in
-                                // 方案：使用 ZStack 隐藏 NavigationLink 的默认箭头
-                                ZStack {
-                                    // 1. 放置卡片
-                                    CachedItemCard(meta: row.meta, url: row.url)
-                                    
-                                    // 2. 放置一个透明的 NavigationLink，覆盖整个区域，但不显示箭头
-                                    NavigationLink(destination: CachedVideoPlayerView(realURL: row.url, title: row.meta.title)) {
-                                        EmptyView()
-                                    }
-                                    .opacity(0) // 隐藏链接本身，但保留跳转功能
-                                }
-                                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                                // 保持你的左滑删除功能
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) {
-                                        withAnimation {
-                                            downloadManager.deleteDownload(urlString: row.url)
+                            ForEach(groupedCachedItems) { group in
+                                if group.episodes.count == 1 {
+                                    // 单集 / 电影：直接卡片 + 跳转播放
+                                    let row = group.episodes[0]
+                                    ZStack {
+                                        CachedItemCard(meta: row.meta, url: row.url)
+                                        NavigationLink(destination: CachedVideoPlayerView(
+                                            realURL: row.url, title: row.meta.title,
+                                            episodeName: row.meta.episodeName)) {
+                                            EmptyView()
                                         }
-                                    } label: {
-                                        Label(isGlobalEnglishMode ? "Delete" : "删除", systemImage: "trash")
+                                        .opacity(0)
                                     }
-                                    .tint(.red)
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .listRowBackground(Color.clear)
+                                    .listRowSeparator(.hidden)
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) {
+                                            withAnimation { downloadManager.deleteDownload(urlString: row.url) }
+                                        } label: {
+                                            Label(isGlobalEnglishMode ? "Delete" : "删除", systemImage: "trash")
+                                        }
+                                        .tint(.red)
+                                    }
+                                } else {
+                                    // 多集剧集：折叠成一个分组卡片 + 跳转详情列表
+                                    ZStack {
+                                        CachedSeriesCard(group: group)
+                                        NavigationLink(destination: CachedSeriesDetailView(
+                                            groupKey: group.id,
+                                            seriesTitle: group.seriesTitle,
+                                            coverImage: group.coverImage)) {
+                                            EmptyView()
+                                        }
+                                        .opacity(0)
+                                    }
+                                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                                    .listRowBackground(Color.clear)
+                                    .listRowSeparator(.hidden)
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) {
+                                            withAnimation {
+                                                for ep in group.episodes {
+                                                    downloadManager.deleteDownload(urlString: ep.url)
+                                                }
+                                            }
+                                        } label: {
+                                            Label(isGlobalEnglishMode ? "Delete All" : "删除整部", systemImage: "trash")
+                                        }
+                                        .tint(.red)
+                                    }
                                 }
                             }
                         }
@@ -1502,5 +1558,164 @@ struct VideoPlayHistoryView: View {
         f.timeStyle = .short
         f.doesRelativeDateFormatting = true
         return f.string(from: d)
+    }
+}
+
+// MARK: - 已缓存剧集分组卡片
+struct CachedSeriesCard: View {
+    let group: CachedSeriesGroup
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            coverThumb(name: group.coverImage)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(group.seriesTitle)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(2)
+                HStack(spacing: 6) {
+                    Image(systemName: "square.stack.3d.up.fill").foregroundColor(.accentColor)
+                    Text(isGlobalEnglishMode ? "\(group.episodes.count) episodes cached"
+                                             : "已缓存 \(group.episodes.count) 集")
+                        .foregroundColor(.accentColor)
+                }
+                .font(.system(size: 11, weight: .medium))
+                HStack(spacing: 6) {
+                    Image(systemName: "clock").foregroundColor(.secondary)
+                    Text(formattedDate(group.latestSavedAt)).foregroundColor(.secondary)
+                }
+                .font(.system(size: 11))
+            }
+            Spacer()
+            Text("\(group.episodes.count)")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Capsule().fill(Color.accentColor))
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(.secondary.opacity(0.6))
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.ultraThinMaterial))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.primary.opacity(0.06), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.04), radius: 8, y: 2)
+    }
+
+    @ViewBuilder
+    private func coverThumb(name: String?) -> some View {
+        if let name = name, !name.isEmpty, let coverURL = OVideoAPI.coverURL(for: name) {
+            CachedAsyncImage(url: coverURL) { phase in
+                switch phase {
+                case .success(let img): img.resizable().scaledToFill()
+                default: Rectangle().fill(Color.secondary.opacity(0.15))
+                }
+            }
+            .frame(width: 60, height: 84)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(LinearGradient(colors: [.accentColor.opacity(0.5), .blue.opacity(0.3)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                Image(systemName: "rectangle.stack.fill").foregroundColor(.white)
+            }
+            .frame(width: 60, height: 84)
+        }
+    }
+
+    private func formattedDate(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short
+        return f.string(from: d)
+    }
+}
+
+// MARK: - 已缓存剧集详情（列出该剧所有已缓存集数）
+struct CachedSeriesDetailView: View {
+    let groupKey: String
+    let seriesTitle: String
+    let coverImage: String?
+    @ObservedObject private var dm = HLSDownloadManager.shared
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+
+    // 实时从 downloadManager 重新计算，保证删除某一集后列表即时刷新
+    private var episodes: [(url: String, meta: VideoCacheMetadata)] {
+        dm.localBookmarks.keys.compactMap { url -> (String, VideoCacheMetadata)? in
+            let meta = dm.cacheMetadata[url]
+                ?? VideoCacheMetadata(title: url, coverImage: nil, savedAt: Date(),
+                                      seriesTitle: nil, episodeName: nil)
+            guard meta.groupKey == groupKey else { return nil }
+            return (url, meta)
+        }
+        .sorted {
+            ($0.meta.episodeName ?? "").localizedStandardCompare($1.meta.episodeName ?? "") == .orderedAscending
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            LinearGradient(colors: [Color(.systemGroupedBackground), Color.accentColor.opacity(0.05)],
+                           startPoint: .top, endPoint: .bottom).ignoresSafeArea()
+
+            List {
+                ForEach(Array(episodes.enumerated()), id: \.element.url) { index, row in
+                    ZStack {
+                        episodeRow(index: index, meta: row.meta)
+                        NavigationLink(destination: CachedVideoPlayerView(
+                            realURL: row.url, title: seriesTitle,
+                            episodeName: row.meta.episodeName)) {
+                            EmptyView()
+                        }
+                        .opacity(0)
+                    }
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            withAnimation { dm.deleteDownload(urlString: row.url) }
+                        } label: {
+                            Label(isGlobalEnglishMode ? "Delete" : "删除", systemImage: "trash")
+                        }
+                        .tint(.red)
+                    }
+                }
+            }
+            .listStyle(PlainListStyle())
+            .background(Color.clear)
+        }
+        .navigationTitle(seriesTitle)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func episodeRow(index: Int, meta: VideoCacheMetadata) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.accentColor.opacity(0.12))
+                    .frame(width: 40, height: 40)
+                Image(systemName: "play.fill").foregroundColor(.accentColor)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(meta.episodeName ?? (isGlobalEnglishMode ? "Episode \(index + 1)" : "第 \(index + 1) 项"))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.primary).lineLimit(1)
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
+                    Text(isGlobalEnglishMode ? "Available offline" : "可离线播放").foregroundColor(.green)
+                }
+                .font(.system(size: 11, weight: .medium))
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(.secondary.opacity(0.6))
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.ultraThinMaterial))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(0.06), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.04), radius: 8, y: 2)
     }
 }

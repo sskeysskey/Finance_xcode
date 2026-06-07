@@ -280,7 +280,9 @@ struct VideoPlayerPageView: View {
                             if let real = realURL {
                                 CacheCard(realURL: real,
                                         videoTitle: videoTitle,
-                                        coverImage: coverImage)
+                                        coverImage: coverImage,
+                                        seriesTitle: videoTitle.components(separatedBy: " · ").first ?? videoTitle,
+                                        episodeName: episodeName)   // 【新增】
                             }
 
                             if let real = realURL, downloadManager.localBookmarks[real] != nil {
