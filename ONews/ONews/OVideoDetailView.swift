@@ -415,7 +415,8 @@ struct VideoDetailView: View {
                     let sortedEps = channel.sortedEpisodes(ascending: isEpisodeAscending)
 
                     // ⭐ 调整最小宽度为 75，让网格排布更紧凑，按钮视觉上自然变小
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 75), spacing: 10)], spacing: 10) {
+                    // 找到这一段 LazyVGrid，并替换里面的 Button 视图：
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 10)], spacing: 10) { // ⭐ 最小宽度微调至 80，更适合双行
                         ForEach(sortedEps, id: \.url) { episode in
                             Button {
                                 selectedEpisode = episode
@@ -426,15 +427,16 @@ struct VideoDetailView: View {
                                 }
                             } label: {
                                 ZStack(alignment: .topTrailing) {
-                                    // ⭐ 重塑后的剧集按钮：
-                                    // 1. 尺寸变小：字体降为 13，垂直 padding 降为 10
-                                    // 2. 更加醒目漂亮的霓虹渐变色：从 Indigo (靛蓝) 渐变到 Violet (紫罗兰)，极具现代高级感
+                                    // ⭐ 重塑后的剧集按钮：支持两行、自动缩放字号
                                     Text(episode.name)
-                                        .font(.system(size: 13, weight: .bold))
+                                        .font(.system(size: 12, weight: .bold)) // ⭐ 基础字号微调至 12
+                                        .minimumScaleFactor(0.75)               // ⭐ 核心：字号不够时自动缩小，最高缩小至 9pt
+                                        .lineLimit(2)                           // ⭐ 核心：允许折行，最多两行
+                                        .multilineTextAlignment(.center)        // ⭐ 居中对齐
                                         .foregroundColor(.white)
-                                        .lineLimit(1)
                                         .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 10)
+                                        .frame(height: 46)                      // ⭐ 固定高度，保证单行和双行的按钮高度一致，视觉更整齐
+                                        .padding(.horizontal, 4)                // 左右留出微小边距防止贴边
                                         .background(
                                             LinearGradient(
                                                 colors: [
