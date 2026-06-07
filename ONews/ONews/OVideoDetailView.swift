@@ -253,7 +253,7 @@ struct VideoDetailView: View {
                     }
                 }
                 
-                // 【优化】评分标签显示逻辑
+                // 评分标签显示逻辑（弱化颜色纯度，改用更优雅的低饱和度配色）
                 if let ratings = item.ratings {
                     // 过滤掉 value 为空的数据
                     let validRatings = ratings.filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -264,16 +264,16 @@ struct VideoDetailView: View {
                                 let color = ratingColor(for: key)
                                 HStack(spacing: 4) {
                                     Text(key)
-                                        .font(.system(size: 10, weight: .medium))
+                                        .font(.system(size: 9, weight: .medium))
                                     Text(value)
-                                        .font(.system(size: 13, weight: .bold))
+                                        .font(.system(size: 11, weight: .bold))
                                 }
-                                .foregroundColor(color)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
+                                .foregroundColor(color.opacity(0.85)) // 稍微降低饱和度
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
                                 .background(
                                     RoundedRectangle(cornerRadius: 6)
-                                        .fill(color.opacity(0.12))
+                                        .fill(color.opacity(0.06)) // 减弱背景色
                                 )
                             }
                         }
@@ -326,10 +326,10 @@ struct VideoDetailView: View {
                 .padding(.horizontal, 16)
                 
             } else {
-                // 线路选择 Tab + 排序按钮 + ⭐批量下载按钮
+                // 线路选择 Tab + 排序按钮 + 批量下载按钮
                 HStack(spacing: 8) {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 8) {
                             ForEach(Array(sortedPlaylist.enumerated()), id: \.offset) { idx, ch in
                                 Button {
                                     withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
@@ -337,15 +337,22 @@ struct VideoDetailView: View {
                                     }
                                 } label: {
                                     let displayName = isGlobalEnglishMode ? "Line \(idx + 1)" : "线路 \(idx + 1)"
+                                    
+                                    // ⭐ 弱化线路效果：使用更柔和的灰色/浅蓝色，不再使用高饱和度纯色
                                     Text(displayName)
-                                        .font(.system(size: 13, weight: .semibold))
-                                        .foregroundColor(selectedChannelIndex == idx ? .white : .primary)
-                                        .padding(.horizontal, 16).padding(.vertical, 8)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(selectedChannelIndex == idx ? .accentColor : .secondary)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
                                         .background(
                                             Capsule()
                                                 .fill(selectedChannelIndex == idx
-                                                      ? Color.accentColor
-                                                      : Color.secondary.opacity(0.12))
+                                                      ? Color.accentColor.opacity(0.12)
+                                                      : Color.secondary.opacity(0.05))
+                                        )
+                                        .overlay(
+                                            Capsule()
+                                                .stroke(selectedChannelIndex == idx ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
                                         )
                                 }
                             }
@@ -361,43 +368,43 @@ struct VideoDetailView: View {
                             }
                         } label: {
                             HStack(spacing: 4) {
-                                Image(systemName: isEpisodeAscending ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
-                                    .font(.system(size: 16))
+                                Image(systemName: isEpisodeAscending ? "arrow.up.circle" : "arrow.down.circle")
+                                    .font(.system(size: 14))
                                 Text(isEpisodeAscending
                                      ? (isGlobalEnglishMode ? "Asc" : "正序")
                                      : (isGlobalEnglishMode ? "Desc" : "倒序"))
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.system(size: 11, weight: .medium))
                             }
-                            .foregroundColor(.accentColor)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
                             .background(
                                 Capsule()
-                                    .fill(Color.accentColor.opacity(0.1))
+                                    .fill(Color.secondary.opacity(0.05))
                             )
                         }
                     }
 
-                    // ⭐【新增】批量下载按钮（仅多集视频时显示）
+                    // 批量下载按钮（仅多集视频时显示）
                     if isMultiEpisodeVideo {
                         Button {
                             showBatchDownloadSheet = true
                         } label: {
                             HStack(spacing: 4) {
-                                Image(systemName: "square.and.arrow.down.on.square.fill")
-                                    .font(.system(size: 16))
-                                Text(isGlobalEnglishMode ? "Batch" : "批量下载")
-                                    .font(.system(size: 12, weight: .semibold))
+                                Image(systemName: "square.and.arrow.down")
+                                    .font(.system(size: 14))
+                                Text(isGlobalEnglishMode ? "Batch" : "批量")
+                                    .font(.system(size: 11, weight: .medium))
                             }
-                            .foregroundColor(.accentColor)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
                             .background(
                                 Capsule()
-                                    .fill(Color.accentColor.opacity(0.1))
+                                    .fill(Color.secondary.opacity(0.05))
                             )
                         }
-                        .padding(.trailing, 16) // 右侧留白，和线路Tab左右边距统一
+                        .padding(.trailing, 16)
                     }
                 }
 
@@ -407,7 +414,7 @@ struct VideoDetailView: View {
                     // ⭐【修改】根据用户的排序偏好获取排序后的剧集
                     let sortedEps = channel.sortedEpisodes(ascending: isEpisodeAscending)
 
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 10)], spacing: 10) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 85), spacing: 12)], spacing: 12) {
                         ForEach(sortedEps, id: \.url) { episode in
                             Button {
                                 selectedEpisode = episode
@@ -418,17 +425,28 @@ struct VideoDetailView: View {
                                 }
                             } label: {
                                 ZStack(alignment: .topTrailing) {
+                                    // ⭐ 重塑后的剧集按钮：使用渐变背景、高亮边框和阴影，使其极其醒目且漂亮
                                     Text(episode.name)
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundColor(.primary)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.white)
                                         .lineLimit(1)
                                         .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 12)
-                                        .background(Color.secondary.opacity(0.08))
-                                        .cornerRadius(10)
+                                        .padding(.vertical, 14)
+                                        .background(
+                                            LinearGradient(
+                                                colors: [
+                                                    Color.accentColor,
+                                                    Color.accentColor.opacity(0.85)
+                                                ],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                        .cornerRadius(12)
+                                        .shadow(color: Color.accentColor.opacity(0.3), radius: 6, x: 0, y: 3)
                                         .overlay(
-                                            RoundedRectangle(cornerRadius: 10)
-                                                .stroke(Color.secondary.opacity(0.1), lineWidth: 1)
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(Color.white.opacity(0.2), lineWidth: 1.5)
                                         )
                                     
                                     if !authManager.isSubscribed {
@@ -445,6 +463,7 @@ struct VideoDetailView: View {
                         }
                     }
                     .padding(.horizontal, 16)
+                    .padding(.top, 6)
                 }
             }
         }
@@ -474,43 +493,42 @@ struct VideoDetailView: View {
         }
     }
 
-    // MARK: - 可点击人名区块（适用于其他演员等）
+    // MARK: - 可点击人名区块（弱化背景与颜色，使其不喧宾夺主）
     private func clickableNamesBlock(title: String, names: [String]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 15, weight: .bold))
+                .font(.system(size: 14, weight: .bold))
                 .foregroundColor(.primary)
             
             // 使用 FlowLayout 来容纳多个标签，允许换行
             FlowLayout(spacing: 6) {
                 ForEach(names, id: \.self) { name in
-                    // ⭐ 修改：对名字进行中英文清洗，提取出最核心的中文或英文
-                   x let cleaned = cleanName(name)
+                    let cleaned = cleanName(name)
                     Button {
                         searchKeyword = cleaned
                         navigateToSearch = true
                     } label: {
                         Text(cleaned)
-                            .font(.system(size: 12))
-                            .foregroundColor(.accentColor)
-                            .padding(.horizontal, 8) // 调整内边距
-                            .padding(.vertical, 4)   // 调整内边距
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary) // ⭐ 改为次要颜色，弱化视觉
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
                             .background(
-                                RoundedRectangle(cornerRadius: 8) // 调整圆角
-                                    .fill(Color.accentColor.opacity(0.1))
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.secondary.opacity(0.08)) // ⭐ 使用温和的灰色背景
                             )
                     }
                     .buttonStyle(.plain) // 确保按钮样式不影响布局
                 }
             }
         }
-        .padding(.horizontal, 20) // 与 sectionBlock 保持一致
-        .padding(.vertical, 14)   // 与 sectionBlock 保持一致
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.secondary.opacity(0.04))
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.secondary.opacity(0.03))
         )
-        .padding(.horizontal, 16) // 与 sectionBlock 保持一致
+        .padding(.horizontal, 16)
     }
 
     // MARK: - 5. 辅助视图组件
@@ -530,7 +548,7 @@ struct VideoDetailView: View {
     private func sectionBlock(title: String, content: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 15, weight: .bold))
+                .font(.system(size: 14, weight: .bold))
                 .foregroundColor(.primary)
             
             Text(content)
@@ -538,11 +556,11 @@ struct VideoDetailView: View {
                 .foregroundColor(.secondary)
                 .lineSpacing(5)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.secondary.opacity(0.04))
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.secondary.opacity(0.03))
         )
         .padding(.horizontal, 16)
     }
@@ -552,10 +570,10 @@ struct VideoDetailView: View {
         let k = key.lowercased()
         if k.contains("豆瓣") { return .green }
         if k.contains("imdb") { return .orange }
-        return .accentColor // 默认颜色
+        return .secondary // 默认使用次要灰色
     }
     
-    // MARK: - 可点击人名行
+    // MARK: - 可点击人名行（弱化颜色）
     private func clickableNamesRow(label: String, names: [String]) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Text("\(label):")
@@ -572,13 +590,13 @@ struct VideoDetailView: View {
                         navigateToSearch = true
                     } label: {
                         Text(cleaned)
-                            .font(.system(size: 12))
-                            .foregroundColor(.accentColor)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary) // ⭐ 改为次要颜色，弱化视觉
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
                                 RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color.accentColor.opacity(0.1))
+                                    .fill(Color.secondary.opacity(0.08))
                             )
                     }
                     .buttonStyle(.plain)
