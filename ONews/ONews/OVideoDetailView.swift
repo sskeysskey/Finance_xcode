@@ -3,18 +3,22 @@ import SwiftUI
 // MARK: - 视频详情页
 struct VideoDetailView: View {
     let item: OVideoItem
+    @ObservedObject var dataManager: OVideoDataManager   // 新增：需要传入
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     // 记忆用户的正序/倒序偏好，默认正序 (true)
     @AppStorage("OVideo_IsEpisodeAscending") private var isEpisodeAscending = true
 
     @State private var selectedChannelIndex = 0
-
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
     @State private var navigateToPlayer = false
 
-    // ⭐ 新增：批量下载相关状态
+    // 新增：搜索跳转状态
+    @State private var navigateToSearch = false
+    @State private var searchKeyword = ""
+
+    // 批量下载相关状态（保留原有）
     @State private var showBatchDownloadSheet = false
     @State private var navigateToCacheView = false
 
@@ -96,6 +100,13 @@ struct VideoDetailView: View {
                     Spacer(minLength: 40)
                 }
             }
+        }
+        .navigationDestination(isPresented: $navigateToSearch) {
+            VideoSearchTabView(
+                dataManager: dataManager,
+                initialKeyword: searchKeyword,
+                autoFocus: false   // 从人名点进来，不需要再弹键盘
+            )
         }
         .navigationTitle(
             (item.info != nil && !item.info!.isEmpty) 
@@ -219,12 +230,16 @@ struct VideoDetailView: View {
                     if let alias = item.alias, !alias.isEmpty {
                         infoRow(label: isGlobalEnglishMode ? "Alias" : "又名", value: alias)
                     }
+                    // 导演（支持 "、" 分隔的多人）
                     if let director = item.director, !director.isEmpty {
-                        infoRow(label: isGlobalEnglishMode ? "Director" : "导演", value: director)
+                        let directors = director.split(separator: "、")
+                                                .map { $0.trimmingCharacters(in: .whitespaces) }
+                                                .filter { !$0.isEmpty }
+                        clickableNamesRow(label: isGlobalEnglishMode ? "Director" : "导演", names: directors)
                     }
+                    // 主演（前两位）
                     if !item.starringCast.isEmpty {
-                        infoRow(label: isGlobalEnglishMode ? "Starring" : "主演",
-                                value: item.starringCast.joined(separator: "、"))
+                        clickableNamesRow(label: isGlobalEnglishMode ? "Starring" : "主演", names: item.starringCast)
                     }
                     if let types = item.types, !types.isEmpty {
                         infoRow(label: isGlobalEnglishMode ? "Genre" : "类型",
@@ -446,8 +461,7 @@ struct VideoDetailView: View {
             
             // 其他演员
             if !item.otherCast.isEmpty {
-                sectionBlock(title: isGlobalEnglishMode ? "Other Cast" : "其他演员",
-                             content: item.otherCast.joined(separator: " / "))
+                clickableNamesRow(label: isGlobalEnglishMode ? "Other Cast" : "其他演员", names: item.otherCast)
             }
             
             // 剧情简介
@@ -497,6 +511,36 @@ struct VideoDetailView: View {
         if k.contains("豆瓣") { return .green }
         if k.contains("imdb") { return .orange }
         return .accentColor // 默认颜色
+    }
+    
+    // MARK: - 可点击人名行
+    private func clickableNamesRow(label: String, names: [String]) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text("\(label):")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .frame(width: isGlobalEnglishMode ? 55 : 50, alignment: .leading)
+            
+            FlowLayout(spacing: 6) {
+                ForEach(names, id: \.self) { name in
+                    Button {
+                        searchKeyword = name
+                        navigateToSearch = true
+                    } label: {
+                        Text(name)
+                            .font(.system(size: 12))
+                            .foregroundColor(.accentColor)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color.accentColor.opacity(0.1))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 }
 

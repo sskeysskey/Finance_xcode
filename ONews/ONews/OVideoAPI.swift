@@ -72,6 +72,18 @@ struct SearchIndexEntry {
     let directorLower: String
     let castLower: String
     let introLower: String
+    // 新增：归一化版本（移除 · 和空格，用于模糊匹配）
+    let nameNormalized: String
+    let aliasNormalized: String
+    let directorNormalized: String
+    let castNormalized: String
+}
+
+// 新增：搜索归一化辅助函数（文件顶层全局函数，不能加 static）
+private func normalizeSearchText(_ text: String) -> String {
+    text.lowercased()
+        .replacingOccurrences(of: "·", with: "")
+        .replacingOccurrences(of: " ", with: "")
 }
 
 // MARK: - 数据模型
@@ -379,16 +391,27 @@ class OVideoDataManager: ObservableObject {
         var entries: [SearchIndexEntry] = []
         for category in categories {
             for item in category.items {
+                let nameLower = item.name.lowercased()
+                let aliasLower = item.alias?.lowercased() ?? ""
+                let typesLower = (item.types ?? []).joined(separator: "\u{1F}").lowercased()
+                let directorLower = item.director?.lowercased() ?? ""
+                let castLower = (item.cast ?? []).joined(separator: "\u{1F}").lowercased()
+                let introLower = item.intro?.lowercased() ?? ""
+                
                 entries.append(
                     SearchIndexEntry(
                         item: item,
-                        categoryName: category.name, // 捕获分类名
-                        nameLower: item.name.lowercased(),
-                        aliasLower: item.alias?.lowercased() ?? "",
-                        typesLower: (item.types ?? []).joined(separator: "\u{1F}").lowercased(),
-                        directorLower: item.director?.lowercased() ?? "",
-                        castLower: (item.cast ?? []).joined(separator: "\u{1F}").lowercased(),
-                        introLower: item.intro?.lowercased() ?? ""
+                        categoryName: category.name,
+                        nameLower: nameLower,
+                        aliasLower: aliasLower,
+                        typesLower: typesLower,
+                        directorLower: directorLower,
+                        castLower: castLower,
+                        introLower: introLower,
+                        nameNormalized: normalizeSearchText(item.name),
+                        aliasNormalized: normalizeSearchText(item.alias ?? ""),
+                        directorNormalized: normalizeSearchText(item.director ?? ""),
+                        castNormalized: normalizeSearchText((item.cast ?? []).joined(separator: "\u{1F}"))
                     )
                 )
             }
@@ -434,7 +457,11 @@ class OVideoDataManager: ObservableObject {
         let kw = keyword.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !kw.isEmpty else { return [] }
         
-        let index = self.searchIndex   // 值类型数组，捕获即拷贝引用
+        // 新增：归一化关键词（移除 · 和空格）
+        let kwNormalized = kw.replacingOccurrences(of: "·", with: "")
+                             .replacingOccurrences(of: " ", with: "")
+        
+        let index = self.searchIndex
         
         return await Task.detached(priority: .userInitiated) {
             // 定义分类的原本顺序权重（越小越靠前）
@@ -452,12 +479,13 @@ class OVideoDataManager: ObservableObject {
                 
                 var matchPriority: Int? = nil
                 
-                // 1. 严格按优先级判断匹配字段
-                if entry.nameLower.contains(kw) {
+                // 修改：同时匹配原始 lowercase 和归一化版本
+                if entry.nameLower.contains(kw) || entry.nameNormalized.contains(kwNormalized) {
                     matchPriority = 0
-                } else if entry.aliasLower.contains(kw) || entry.typesLower.contains(kw) {
+                } else if entry.aliasLower.contains(kw) || entry.aliasNormalized.contains(kwNormalized) || entry.typesLower.contains(kw) {
                     matchPriority = 1
-                } else if entry.directorLower.contains(kw) || entry.castLower.contains(kw) {
+                } else if entry.directorLower.contains(kw) || entry.directorNormalized.contains(kwNormalized) ||
+                          entry.castLower.contains(kw) || entry.castNormalized.contains(kwNormalized) {
                     matchPriority = 2
                 } else if entry.introLower.contains(kw) {
                     matchPriority = 3

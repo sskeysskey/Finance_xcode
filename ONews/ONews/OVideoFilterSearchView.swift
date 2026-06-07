@@ -106,7 +106,7 @@ struct VideoFilterView: View {
                     }
                     .padding(.horizontal, 16)
                     
-                    WaterfallGridView(items: filteredItems)
+                    WaterfallGridView(items: filteredItems, dataManager: dataManager)
                         .padding(.top, 4)
                 }
                 .padding(.top, 12)
@@ -191,6 +191,8 @@ struct VideoFilterView: View {
 // MARK: - 搜索 Tab
 struct VideoSearchTabView: View {
     @ObservedObject var dataManager: OVideoDataManager
+    let initialKeyword: String?          // 新增：外部传入的初始关键词
+    let autoFocus: Bool                  // 新增：是否自动聚焦键盘
     @StateObject private var historyManager = SearchHistoryManager()
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
@@ -203,6 +205,13 @@ struct VideoSearchTabView: View {
     @State private var searchTask: Task<Void, Never>? = nil
     @State private var isFirstAppear = true
     
+    // 新增：init 方便默认调用
+    init(dataManager: OVideoDataManager, initialKeyword: String? = nil, autoFocus: Bool = true) {
+        self.dataManager = dataManager
+        self.initialKeyword = initialKeyword
+        self.autoFocus = autoFocus
+    }
+
     private var trimmedKeyword: String {
         keyword.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -254,7 +263,7 @@ struct VideoSearchTabView: View {
             } else {
                 // ⭐ 修改：使用 scrollDismissesKeyboard 使得用户在滑动结果列表时，键盘自动收起
                 ScrollView {
-                    WaterfallGridView(items: results)
+                    WaterfallGridView(items: results, dataManager: dataManager)
                         .padding(.top, 10)
                         .padding(.bottom, 20)
                 }
@@ -273,8 +282,16 @@ struct VideoSearchTabView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             if isFirstAppear {
-                focused = true
-                isFirstAppear = false // 标记为已进入过
+                if autoFocus {
+                    focused = true
+                }
+                isFirstAppear = false
+            }
+            // 新增：处理外部传入的初始关键词
+            if let initial = initialKeyword, !initial.isEmpty, keyword.isEmpty {
+                keyword = initial
+                scheduleSearch(initial)
+                historyManager.add(initial)
             }
         }
         // ⭐ 关键：监听 keyword，防抖 + 取消旧任务

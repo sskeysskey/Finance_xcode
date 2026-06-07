@@ -67,6 +67,7 @@ struct CachedAsyncImage<Content: View>: View {
 // MARK: - 瀑布流
 struct WaterfallGridView: View {
     let items: [OVideoItem]
+    @ObservedObject var dataManager: OVideoDataManager
     
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 10),
@@ -81,7 +82,7 @@ struct WaterfallGridView: View {
         } else {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(items) { item in
-                    NavigationLink(destination: VideoDetailView(item: item)) {
+                    NavigationLink(destination: VideoDetailView(item: item, dataManager: dataManager)) {
                         VideoCardView(item: item)
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -462,7 +463,7 @@ struct CategoryVideoListView: View {
                     .frame(height: 0)
                     .id("top_anchor")
                 
-                WaterfallGridView(items: sortedItems)
+                WaterfallGridView(items: sortedItems, dataManager: dataManager)
                     .padding(.top, 10)
                     .padding(.bottom, 20)
             }
