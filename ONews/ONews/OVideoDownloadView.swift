@@ -758,9 +758,13 @@ struct CacheCard: View {
             if !network.isWiFi {
                 showCellularAlert = true
             } else {
-                downloadManager.startDownload(urlString: realURL,
-                                            title: videoTitle,
-                                            coverImage: coverImage)
+                downloadManager.startDownload(
+                    urlString: realURL,
+                    title: videoTitle,
+                    coverImage: coverImage,
+                    seriesTitle: seriesTitle,   // ← 新增
+                    episodeName: episodeName    // ← 新增
+                )
             }
         } label: {
             HStack(spacing: 8) {
@@ -894,9 +898,14 @@ struct VideoCacheView: View {
                 ($0.meta.episodeName ?? "").localizedStandardCompare($1.meta.episodeName ?? "") == .orderedAscending
             }
             let latest = items.map { $0.meta.savedAt }.max() ?? Date()
-            let title  = items.first?.meta.seriesTitle?.isEmpty == false
-                ? items.first!.meta.seriesTitle!
-                : (items.first?.meta.title ?? key)
+            let title: String
+            if let st = items.first?.meta.seriesTitle, !st.isEmpty {
+                title = st
+            } else if let t = items.first?.meta.title {
+                title = t.components(separatedBy: " · ").first ?? t
+            } else {
+                title = key
+            }
             let cover  = items.compactMap { $0.meta.coverImage }.first
             return CachedSeriesGroup(id: key, seriesTitle: title,
                                      coverImage: cover, episodes: sorted, latestSavedAt: latest)
@@ -956,9 +965,15 @@ struct VideoCacheView: View {
                                     let row = group.episodes[0]
                                     ZStack {
                                         CachedItemCard(meta: row.meta, url: row.url)
+                                        let seriesTitle = row.meta.seriesTitle?.isEmpty == false
+                                            ? row.meta.seriesTitle!
+                                            : row.meta.title.components(separatedBy: " · ").first ?? row.meta.title
+
                                         NavigationLink(destination: CachedVideoPlayerView(
-                                            realURL: row.url, title: row.meta.title,
-                                            episodeName: row.meta.episodeName)) {
+                                            realURL: row.url,
+                                            title: seriesTitle,              // ← 改为剧名
+                                            episodeName: row.meta.episodeName
+                                        )) {
                                             EmptyView()
                                         }
                                         .opacity(0)
@@ -1699,7 +1714,7 @@ struct CachedSeriesDetailView: View {
                 Image(systemName: "play.fill").foregroundColor(.accentColor)
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(meta.episodeName ?? (isGlobalEnglishMode ? "Episode \(index + 1)" : "第 \(index + 1) 项"))
+                Text(meta.episodeName ?? meta.title)   // ← 改为优先显示 episodeName，为空则显示 title
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.primary).lineLimit(1)
                 HStack(spacing: 6) {

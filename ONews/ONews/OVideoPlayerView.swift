@@ -525,7 +525,9 @@ struct CachedVideoPlayerView: View {
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
-                            Text(title)
+                            let displayTitle = episodeName.map { "\(title) · \($0)" } ?? title
+
+                            Text(displayTitle)   // ← 改为组合标题
                                 .font(.system(size: 17, weight: .bold))
                                 .padding(.horizontal, 16).padding(.top, 16)
 
