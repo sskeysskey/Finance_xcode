@@ -459,9 +459,12 @@ struct VideoDetailView: View {
                     .padding(.horizontal, 16)
             }
             
-            // 其他演员
+            // 其他演员 - 使用新的区块样式
             if !item.otherCast.isEmpty {
-                clickableNamesRow(label: isGlobalEnglishMode ? "Other Cast" : "其他演员", names: item.otherCast)
+                clickableNamesBlock(
+                    title: isGlobalEnglishMode ? "Other Cast" : "其他演员", 
+                    names: item.otherCast
+                )
             }
             
             // 剧情简介
@@ -469,6 +472,43 @@ struct VideoDetailView: View {
                 sectionBlock(title: isGlobalEnglishMode ? "Synopsis" : "剧情简介", content: intro)
             }
         }
+    }
+
+    // MARK: - 可点击人名区块（适用于其他演员等）
+    private func clickableNamesBlock(title: String, names: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundColor(.primary)
+            
+            // 使用 FlowLayout 来容纳多个标签，允许换行
+            FlowLayout(spacing: 6) {
+                ForEach(names, id: \.self) { name in
+                    Button {
+                        searchKeyword = name
+                        navigateToSearch = true
+                    } label: {
+                        Text(name)
+                            .font(.system(size: 12))
+                            .foregroundColor(.accentColor)
+                            .padding(.horizontal, 8) // 调整内边距
+                            .padding(.vertical, 4)   // 调整内边距
+                            .background(
+                                RoundedRectangle(cornerRadius: 8) // 调整圆角
+                                    .fill(Color.accentColor.opacity(0.1))
+                            )
+                    }
+                    .buttonStyle(.plain) // 确保按钮样式不影响布局
+                }
+            }
+        }
+        .padding(.horizontal, 20) // 与 sectionBlock 保持一致
+        .padding(.vertical, 14)   // 与 sectionBlock 保持一致
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.secondary.opacity(0.04))
+        )
+        .padding(.horizontal, 16) // 与 sectionBlock 保持一致
     }
 
     // MARK: - 5. 辅助视图组件
