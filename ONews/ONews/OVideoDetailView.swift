@@ -821,15 +821,14 @@ struct BatchDownloadView: View {
         let isSelected = selectedURLs.contains(ep.url)
 
         return Button {
-            // ⭐ 已缓存 / 队列中的剧集禁止点击
             guard !isOccupied else { return }
             withAnimation(.easeInOut(duration: 0.15)) {
                 if isSelected { selectedURLs.remove(ep.url) }
                 else { selectedURLs.insert(ep.url) }
             }
         } label: {
-            HStack(spacing: 8) {
-                // ⭐ 左侧图标随状态变化
+            HStack(alignment: .top, spacing: 8) {   // ⭐ .top 保证图标与文本顶部对齐
+                // 左侧图标
                 Group {
                     switch st {
                     case .cached:
@@ -845,22 +844,31 @@ struct BatchDownloadView: View {
                 }
                 .font(.system(size: 18))
 
-                Text(ep.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(isOccupied ? .secondary : .primary)
-                    .lineLimit(1)
+                // ⭐ 垂直布局：标题 + 状态标签
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(ep.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(isOccupied ? .secondary : .primary)
+                        .lineLimit(2)                    // ⭐ 核心1：允许两行
+                        .minimumScaleFactor(0.8)         // ⭐ 核心2：空间不够时自动缩字
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                Spacer(minLength: 0)
-
-                // ⭐ 右侧状态小标签
-                if st == .cached {
-                    Text(isGlobalEnglishMode ? "Cached" : "已缓存")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(.green)
-                } else if st == .downloading {
-                    Text(isGlobalEnglishMode ? "In queue" : "队列中")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(.orange)
+                    // ⭐ 核心3：状态标签单独放一行，右对齐
+                    if st != .available {
+                        HStack {
+                            Spacer(minLength: 0)
+                            if st == .cached {
+                                Text(isGlobalEnglishMode ? "Cached" : "已缓存")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(.green)
+                            } else if st == .downloading {
+                                Text(isGlobalEnglishMode ? "In queue" : "队列中")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                    }
                 }
             }
             .padding(.vertical, 12)
@@ -868,19 +876,18 @@ struct BatchDownloadView: View {
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(isSelected ? Color.accentColor.opacity(0.10)
-                                     : Color.secondary.opacity(0.06))
+                                    : Color.secondary.opacity(0.06))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(isSelected ? Color.accentColor.opacity(0.5)
-                                       : Color.secondary.opacity(0.12),
+                                    : Color.secondary.opacity(0.12),
                             lineWidth: 1)
             )
-            // ⭐ 占用态整体置灰
             .opacity(isOccupied ? 0.5 : 1.0)
         }
         .buttonStyle(PlainButtonStyle())
-        .disabled(isOccupied)   // ⭐ 彻底禁用交互
+        .disabled(isOccupied)
     }
 
     // MARK: - 底部下载栏
