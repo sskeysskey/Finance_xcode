@@ -1706,7 +1706,24 @@ struct CachedSeriesDetailView: View {
     }
 
     private func episodeRow(index: Int, meta: VideoCacheMetadata) -> some View {
-        HStack(spacing: 12) {
+        // ✨ 核心修改：智能提取纯粹的集数名称，过滤掉项目/剧集大标题
+        let displayEpisodeName: String = {
+            // 1. 如果有 episodeName 且不为空，直接使用
+            if let epName = meta.episodeName, !epName.isEmpty {
+                return epName
+            }
+            // 2. 如果没有 epName，但 title 里含有 " · "，则切分并取最后一部分（即集数名）
+            if meta.title.contains(" · ") {
+                let components = meta.title.components(separatedBy: " · ")
+                if let lastComponent = components.last, !lastComponent.isEmpty {
+                    return lastComponent
+                }
+            }
+            // 3. 降级兜底：如果都拿不到，显示完整 title
+            return meta.title
+        }()
+
+        return HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.accentColor.opacity(0.12))
@@ -1714,9 +1731,10 @@ struct CachedSeriesDetailView: View {
                 Image(systemName: "play.fill").foregroundColor(.accentColor)
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(meta.episodeName ?? meta.title)   // ← 改为优先显示 episodeName，为空则显示 title
+                Text(displayEpisodeName)   // ← ✨ 使用过滤后的纯集数名称
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.primary).lineLimit(1)
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
                     Text(isGlobalEnglishMode ? "Available offline" : "可离线播放").foregroundColor(.green)
