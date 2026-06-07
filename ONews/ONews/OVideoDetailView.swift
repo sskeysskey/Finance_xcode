@@ -117,13 +117,15 @@ struct VideoDetailView: View {
         // 隐藏的 NavigationLink，响应播放跳转
         .navigationDestination(isPresented: $navigateToPlayer) {
             if let episode = selectedEpisode {
+                let channel = sortedPlaylist[selectedChannelIndex]   // 先取出当前线路
                 VideoPlayerPageView(
                     episodeURL: episode.url,
                     videoTitle: "\(item.name) · \(episode.name)",
                     coverImage: item.image,
-                    channelName: sortedPlaylist[selectedChannelIndex].name,
+                    channelName: channel.name,
                     episodeName: episode.name,
-                    sourceURL: item.url
+                    sourceURL: item.url,
+                    episodes: channel.episodeItems(ascending: isEpisodeAscending)  // ⭐ 新增这一行
                 )
             }
         }

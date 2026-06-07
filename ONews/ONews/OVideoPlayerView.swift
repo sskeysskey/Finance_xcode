@@ -3,6 +3,21 @@
 import SwiftUI
 import AVKit
 
+// MARK: - 倍速记忆
+enum PlaybackSpeedStore {
+    private static let key = "ONews_PlaybackSpeed"
+    static var rate: Float {
+        get {
+            let v = UserDefaults.standard.float(forKey: key)
+            return (v > 0 && v <= 2.0) ? v : 1.0
+        }
+        set {
+            let clamped = min(max(newValue, 0.5), 2.0)
+            UserDefaults.standard.set(clamped, forKey: key)
+        }
+    }
+}
+
 // MARK: - 生命周期可感知的播放控制器
 final class LifecycleAVPlayerViewController: AVPlayerViewController {
     var onWillDisappear: (() -> Void)?
@@ -24,14 +39,15 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         let controller = LifecycleAVPlayerViewController()
         let player = AVPlayer(url: videoURL)
         player.automaticallyWaitsToMinimizeStalling = true
+
+        // ⭐ 读取上次保存的倍速
+        let savedRate = PlaybackSpeedStore.rate
+
         controller.player = player
         controller.allowsPictureInPicturePlayback = true
         controller.delegate = context.coordinator
         controller.videoGravity = .resizeAspect
 
-        // ⭐ 关键修复:当该播放器被导航推走(进入缓存管理页 / 其它页面)而不可见时,
-        //    自动暂停,避免与新打开的缓存播放器同时出声。
-        //    但「进入全屏」「进入画中画」也会触发 viewWillDisappear,这两种情况要排除。
         controller.onWillDisappear = { [weak coordinator = context.coordinator] in
             guard let coordinator = coordinator else { return }
             if coordinator.isFullScreen || coordinator.isPiP { return }
@@ -39,7 +55,15 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         }
 
         context.coordinator.attach(player: player)
-        player.play()
+
+        // ⭐ 应用倍速并起播
+        if #available(iOS 16.0, *) {
+            player.defaultRate = savedRate
+            player.play()                       // 16+ 会按 defaultRate 起播
+        } else {
+            player.play()
+            if savedRate != 1.0 { player.rate = savedRate }
+        }
         return controller
     }
 
@@ -58,6 +82,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private var bufferEmptyObs: NSKeyValueObservation?
         private var bufferFullObs: NSKeyValueObservation?
         private var rateObs: NSKeyValueObservation?
+        private var defaultRateObs: NSKeyValueObservation?   // ⭐ 新增
         private var currentItemObs: NSKeyValueObservation?
         private var bufferingResetWork: DispatchWorkItem?
 
@@ -80,10 +105,20 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                 self?.updateBuffering(from: p)
             }
             rateObs = player.observe(\.rate, options: [.new]) { [weak self] p, _ in
-                // 用户 seek 后 rate 一般会回到 1.0,可借此校正
                 self?.updateBuffering(from: p)
+                // ⭐ 用户改速度（播放中）→ 记住它
+                let r = p.rate
+                if r > 0 && r <= 2.0 { PlaybackSpeedStore.rate = r }
             }
-            // currentItem 可能在某些场景下被替换,要重新绑定 item 级 KVO
+            // ⭐ iOS16+ 暂停时改速度走的是 defaultRate，单独监听一次
+            if #available(iOS 16.0, *) {
+                defaultRateObs = player.observe(\.defaultRate,
+                                                options: [.new]) { _, change in
+                    if let r = change.newValue, r > 0, r <= 2.0 {
+                        PlaybackSpeedStore.rate = r
+                    }
+                }
+            }
             currentItemObs = player.observe(\.currentItem,
                                             options: [.new, .initial]) { [weak self] p, _ in
                 self?.attachItemObservers(item: p.currentItem)
@@ -149,6 +184,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             bufferEmptyObs?.invalidate()
             bufferFullObs?.invalidate()
             rateObs?.invalidate()
+            defaultRateObs?.invalidate()        // ⭐ 新增
             currentItemObs?.invalidate()
             bufferingResetWork?.cancel()
         }
@@ -236,15 +272,15 @@ struct VideoPlayerPageView: View {
     let episodeURL: String
     let videoTitle: String
     let coverImage: String?
-    var channelName: String? = nil   // 【新增】playlist 名,如「天堂」
-    var episodeName: String? = nil   // 【新增】集数 key,如「HD国语」
-    var sourceURL: String? = nil     // 【新增】影片页 url(唯一键)
+    var channelName: String? = nil
+    var episodeName: String? = nil
+    var sourceURL: String? = nil
+    var episodes: [VideoEpisodeItem] = []   // ⭐ 新增：当前线路全部集数
 
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @StateObject private var network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    
-    // 【新增】
+
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
 
@@ -252,6 +288,27 @@ struct VideoPlayerPageView: View {
     @State private var isResolving = true
     @State private var resolveError: String? = nil
     @State private var isBuffering = false
+
+    // ⭐ 选集相关状态
+    @State private var showEpisodePicker = false
+    @State private var overrideEpisodeURL: String? = nil
+    @State private var overrideEpisodeName: String? = nil
+    @State private var pendingOnlineEpisode: VideoEpisodeItem? = nil
+    @State private var pendingOnlineResolvedURL: String? = nil
+    @State private var showEpisodeCellularAlert = false
+
+    // ⭐ 计算当前实际在播的集数（切集后用 override）
+    private var seriesBaseTitle: String {
+        videoTitle.components(separatedBy: " · ").first ?? videoTitle
+    }
+    private var activeEpisodeURL: String { overrideEpisodeURL ?? episodeURL }
+    private var activeEpisodeName: String? { overrideEpisodeName ?? episodeName }
+    private var displayTitle: String {
+        if let ep = activeEpisodeName, !ep.isEmpty {
+            return "\(seriesBaseTitle) · \(ep)"
+        }
+        return videoTitle
+    }
 
     var body: some View {
         ZStack {
@@ -279,10 +336,10 @@ struct VideoPlayerPageView: View {
 
                             if let real = realURL {
                                 CacheCard(realURL: real,
-                                        videoTitle: videoTitle,
+                                        videoTitle: displayTitle,
                                         coverImage: coverImage,
-                                        seriesTitle: videoTitle.components(separatedBy: " · ").first ?? videoTitle,
-                                        episodeName: episodeName)   // 【新增】
+                                        seriesTitle: seriesBaseTitle,
+                                        episodeName: activeEpisodeName)
                             }
 
                             if let real = realURL, downloadManager.localBookmarks[real] != nil {
@@ -292,11 +349,11 @@ struct VideoPlayerPageView: View {
                             // ⭐ 在线播放页：保留错误链接举报入口
                             if let real = realURL {
                                 ReportLinkCard(
-                                    videoTitle: videoTitle,
-                                    sourceURL: sourceURL ?? episodeURL,
-                                    episodeURL: episodeURL,
+                                    videoTitle: displayTitle,
+                                    sourceURL: sourceURL ?? activeEpisodeURL,
+                                    episodeURL: activeEpisodeURL,
                                     channelName: channelName,
-                                    episodeName: episodeName,
+                                    episodeName: activeEpisodeName,
                                     realURL: real
                                 )
                             }
@@ -330,9 +387,27 @@ struct VideoPlayerPageView: View {
         .onDisappear {
             ReviewManager.shared.recordVideoInteraction()
         }
+        // ⭐ 切集到「在线播放」且当前是蜂窝时的拦截
+        .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示",
+               isPresented: $showEpisodeCellularAlert) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
+                pendingOnlineEpisode = nil
+                pendingOnlineResolvedURL = nil
+            }
+            Button(isGlobalEnglishMode ? "Play Anyway" : "允许并播放") {
+                if let ep = pendingOnlineEpisode {
+                    switchToEpisode(ep, resolvedURL: pendingOnlineResolvedURL)
+                }
+                pendingOnlineEpisode = nil
+                pendingOnlineResolvedURL = nil
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                 ? "You are on a cellular network. Online playback will use mobile data. Continue?"
+                 : "当前处于蜂窝网络，在线播放将消耗流量，是否继续？")
+        }
     }
-    
-    // 【新增】未订阅锁屏视图
+
     private var lockedOverlay: some View {
         VStack(spacing: 20) {
             Spacer()
@@ -341,14 +416,14 @@ struct VideoPlayerPageView: View {
                 .foregroundColor(.orange)
             Text(isGlobalEnglishMode ? "Subscription Required" : "需要订阅")
                 .font(.title2.bold())
-            Text(isGlobalEnglishMode 
+            Text(isGlobalEnglishMode
                  ? "Subscribe to unlock video playback and offline caching."
                  : "订阅后即可在线播放并使用离线缓存功能")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
-            
+
             Button {
                 showSubscriptionSheet = true
             } label: {
@@ -397,6 +472,7 @@ struct VideoPlayerPageView: View {
             } else if let real = realURL {
                 let playURL = downloadManager.getLocalURL(for: real) ?? URL(string: real)!
                 VideoPlayerView(videoURL: playURL, isBuffering: $isBuffering)
+                    .id(playURL)   // ⭐ 切集时强制重建播放器，避免还放旧视频
                 if isBuffering {
                     PlayerLoadingIndicator()
                         .animation(.easeInOut(duration: 0.2), value: isBuffering)
@@ -408,14 +484,42 @@ struct VideoPlayerPageView: View {
     // 标题卡片
     private var titleCard: some View {
         HStack(spacing: 10) {
-            Text(videoTitle)
+            Text(displayTitle)
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(.primary)
                 .lineLimit(3)
-            Spacer() // 将开关推到最右侧
+            Spacer()
+            if episodes.count > 1 {            // ⭐ 仅多集才显示「选集」
+                episodeSelectorButton
+            }
             NetworkBadge()
         }
         .padding(.horizontal, 16)
+    }
+
+    // ⭐ 选集按钮（把弹窗 sheet 挂在按钮上，避免和订阅 sheet 冲突）
+    private var episodeSelectorButton: some View {
+        Button {
+            showEpisodePicker = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "square.grid.2x2.fill")
+                Text(isGlobalEnglishMode ? "Episodes" : "选集")
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.accentColor)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .sheet(isPresented: $showEpisodePicker) {
+            EpisodePickerView(
+                episodes: episodes,
+                currentURL: activeEpisodeURL,
+                onSelect: { ep in handleEpisodeSelection(ep) }
+            )
+            .presentationDetents([.medium, .large])   // iOS 16+
+        }
     }
 
     private var offlineBadge: some View {
@@ -443,45 +547,88 @@ struct VideoPlayerPageView: View {
         .background(Capsule().fill(color.opacity(0.12)))
     }
 
+    // ⭐ 选集核心逻辑：先解析→判断缓存→决定本地/在线（在线+蜂窝才提示）
+    private func handleEpisodeSelection(_ ep: VideoEpisodeItem) {
+        guard ep.url != activeEpisodeURL else { showEpisodePicker = false; return }
+        showEpisodePicker = false
+        Task {
+            // resolveRealURL 对 m3u8 会直接短路返回，不走网络；其它是一个很小的解析请求
+            let resolved = try? await OVideoAPI.resolveRealURL(episodeURL: ep.url)
+            await MainActor.run {
+                let realKey = resolved ?? ep.url
+                let cached = (resolved != nil) && (downloadManager.localBookmarks[realKey] != nil)
+
+                if cached {
+                    // 本地缓存：直接播，蜂窝也不提示
+                    switchToEpisode(ep, resolvedURL: realKey)
+                } else if !network.isWiFi {
+                    // 在线 + 蜂窝：先提示
+                    pendingOnlineEpisode = ep
+                    pendingOnlineResolvedURL = resolved
+                    showEpisodeCellularAlert = true
+                } else {
+                    // 在线 + Wi-Fi：直接播
+                    switchToEpisode(ep, resolvedURL: resolved)
+                }
+            }
+        }
+    }
+
+    // ⭐ 原地切到目标集；resolvedURL 有值就直接用，否则重新解析
+    private func switchToEpisode(_ ep: VideoEpisodeItem, resolvedURL: String?) {
+        overrideEpisodeURL = ep.url
+        overrideEpisodeName = ep.name
+        resolveError = nil
+        if let resolved = resolvedURL {
+            isResolving = false
+            realURL = resolved
+            recordPlayback(real: resolved)
+        } else {
+            realURL = nil
+            Task { await resolve() }
+        }
+    }
+
     private func resolve() async {
         isResolving = true; resolveError = nil
         do {
-            let url = try await OVideoAPI.resolveRealURL(episodeURL: episodeURL)
+            let url = try await OVideoAPI.resolveRealURL(episodeURL: activeEpisodeURL)
             self.realURL = url
-            
-            // 解析用户身份：登录用 Apple ID，未登录用设备 IDFV
-            let (trackUserId, trackUserType): (String, String) = {
-                if let appleId = authManager.userIdentifier, !appleId.isEmpty {
-                    return (appleId, "apple")
-                } else if let idfv = UIDevice.current.identifierForVendor?.uuidString {
-                    return ("dev_" + idfv, "device")
-                } else {
-                    return ("guest_user", "device")
-                }
-            }()
-
-            TrackingManager.shared.track(
-                event: .play,
-                userId: trackUserId,
-                userType: trackUserType,
-                videoURL: episodeURL,
-                videoTitle: videoTitle
-            )
-            
-            // 📺 【核心新增】：保存到本地播放/浏览记录
-            VideoPlayRecordManager.shared.addRecord(
-                videoTitle: videoTitle.components(separatedBy: " · ").first ?? videoTitle, // 提取纯影片名
-                episodeName: episodeName ?? (isGlobalEnglishMode ? "Play" : "播放"),
-                videoURL: episodeURL,
-                coverImage: coverImage,
-                channelName: channelName,
-                sourceURL: sourceURL
-            )
-            
+            recordPlayback(real: url)
         } catch {
             self.resolveError = error.localizedDescription
         }
         isResolving = false
+    }
+
+    // ⭐ 统一的「上报 + 写本地观看记录」，切集和首次播放共用
+    private func recordPlayback(real: String) {
+        let (trackUserId, trackUserType): (String, String) = {
+            if let appleId = authManager.userIdentifier, !appleId.isEmpty {
+                return (appleId, "apple")
+            } else if let idfv = UIDevice.current.identifierForVendor?.uuidString {
+                return ("dev_" + idfv, "device")
+            } else {
+                return ("guest_user", "device")
+            }
+        }()
+
+        TrackingManager.shared.track(
+            event: .play,
+            userId: trackUserId,
+            userType: trackUserType,
+            videoURL: activeEpisodeURL,
+            videoTitle: displayTitle
+        )
+
+        VideoPlayRecordManager.shared.addRecord(
+            videoTitle: seriesBaseTitle,
+            episodeName: activeEpisodeName ?? (isGlobalEnglishMode ? "Play" : "播放"),
+            videoURL: activeEpisodeURL,
+            coverImage: coverImage,
+            channelName: channelName,
+            sourceURL: sourceURL
+        )
     }
 }
 
@@ -652,6 +799,95 @@ struct CachedVideoPlayerView: View {
             // 进来就直接弹订阅页
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 showSubscriptionSheet = true
+            }
+        }
+    }
+}
+
+// MARK: - 选集数据模型
+struct VideoEpisodeItem: Identifiable, Hashable {
+    var id: String { url }
+    let number: String   // 网格里显示的简短编号，如 "1"、"2"
+    let name: String     // 原始集数名，如 "第5集"、"HD国语"
+    let url: String      // 原始 episodeURL（解析前）
+}
+
+extension OVideoChannel {
+    /// 把当前线路的所有集数转换为选集网格用的数组
+    func episodeItems(ascending: Bool = true) -> [VideoEpisodeItem] {
+        sortedEpisodes(ascending: ascending).enumerated().map { index, kv in
+            VideoEpisodeItem(
+                number: Self.shortNumber(from: kv.name, fallbackIndex: index),
+                name: kv.name,
+                url: kv.url
+            )
+        }
+    }
+
+    private static func shortNumber(from name: String, fallbackIndex: Int) -> String {
+        let digits = name.filter { $0.isNumber }
+        if !digits.isEmpty, digits.count <= 4, let n = Int(digits) {
+            return String(n)         // "第5集" → "5"
+        }
+        return String(fallbackIndex + 1)  // "HD国语" 等无数字 → 按位置编号
+    }
+}
+
+// MARK: - 选集弹窗
+struct EpisodePickerView: View {
+    let episodes: [VideoEpisodeItem]
+    let currentURL: String
+    let onSelect: (VideoEpisodeItem) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var dm = HLSDownloadManager.shared
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 5)
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 10) {
+                    ForEach(episodes) { ep in
+                        let isCurrent = ep.url == currentURL
+                        // 仅对 episodeURL 本身就是缓存 key 的情况（如 m3u8）能直接判断，
+                        // 判断不到也不影响功能，只是不显示下载角标
+                        let isCached = dm.localBookmarks[ep.url] != nil
+
+                        Button {
+                            onSelect(ep)
+                            dismiss()
+                        } label: {
+                            ZStack(alignment: .topTrailing) {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(isCurrent ? Color.accentColor
+                                                    : Color.secondary.opacity(0.15))
+                                    .frame(height: 44)
+                                    .overlay(
+                                        Text(ep.number)
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundColor(isCurrent ? .white : .primary)
+                                    )
+                                if isCached {
+                                    Image(systemName: "arrow.down.circle.fill")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.green)
+                                        .padding(3)
+                                }
+                            }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(16)
+            }
+            .navigationTitle(isGlobalEnglishMode ? "Episodes" : "选集")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(isGlobalEnglishMode ? "Done" : "完成") { dismiss() }
+                }
             }
         }
     }
