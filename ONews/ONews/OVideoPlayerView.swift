@@ -36,9 +36,18 @@ struct VideoPlayerView: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
+        // ⭐ 关键：配置音频会话为播放模式（影响 AirPlay 路由能否带视频）
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .moviePlayback)
+        try? session.setActive(true)
+
         let controller = LifecycleAVPlayerViewController()
         let player = AVPlayer(url: videoURL)
         player.automaticallyWaitsToMinimizeStalling = true
+
+        // ⭐⭐ 关键修复：允许把"画面+声音"整条流投到 AirPlay 接收端
+        player.allowsExternalPlayback = true
+        player.usesExternalPlaybackWhileExternalScreenIsActive = true
 
         // ⭐ 读取上次保存的倍速
         let savedRate = PlaybackSpeedStore.rate
@@ -56,10 +65,9 @@ struct VideoPlayerView: UIViewControllerRepresentable {
 
         context.coordinator.attach(player: player)
 
-        // ⭐ 应用倍速并起播
         if #available(iOS 16.0, *) {
             player.defaultRate = savedRate
-            player.play()                       // 16+ 会按 defaultRate 起播
+            player.play()
         } else {
             player.play()
             if savedRate != 1.0 { player.rate = savedRate }
