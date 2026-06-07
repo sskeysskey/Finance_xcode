@@ -971,8 +971,15 @@ struct VideoCacheView: View {
 
                                         NavigationLink(destination: CachedVideoPlayerView(
                                             realURL: row.url,
-                                            title: seriesTitle,              // ← 改为剧名
-                                            episodeName: row.meta.episodeName
+                                            title: seriesTitle,
+                                            episodeName: row.meta.episodeName,
+                                            episodes: group.episodes.enumerated().map { index, item in
+                                                let name = item.meta.episodeName ?? item.meta.title
+                                                let digits = name.filter { $0.isNumber }
+                                                let number = (!digits.isEmpty && digits.count <= 4 && Int(digits) != nil)
+                                                    ? digits : String(index + 1)
+                                                return VideoEpisodeItem(number: number, name: name, url: item.url)
+                                            }
                                         )) {
                                             EmptyView()
                                         }
@@ -1679,8 +1686,17 @@ struct CachedSeriesDetailView: View {
                     ZStack {
                         episodeRow(index: index, meta: row.meta)
                         NavigationLink(destination: CachedVideoPlayerView(
-                            realURL: row.url, title: seriesTitle,
-                            episodeName: row.meta.episodeName)) {
+                            realURL: row.url,
+                            title: seriesTitle,
+                            episodeName: row.meta.episodeName,
+                            episodes: episodes.enumerated().map { index, item in
+                                let name = item.meta.episodeName ?? item.meta.title
+                                let digits = name.filter { $0.isNumber }
+                                let number = (!digits.isEmpty && digits.count <= 4 && Int(digits) != nil)
+                                    ? digits : String(index + 1)
+                                return VideoEpisodeItem(number: number, name: name, url: item.url)
+                            }
+                        )) {
                             EmptyView()
                         }
                         .opacity(0)

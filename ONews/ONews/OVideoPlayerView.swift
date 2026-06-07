@@ -636,20 +636,42 @@ struct VideoPlayerPageView: View {
 struct CachedVideoPlayerView: View {
     let realURL: String
     let title: String
-    var channelName: String? = nil   // 【新增】
-    var episodeName: String? = nil   // 【新增】
+    var channelName: String? = nil
+    var episodeName: String? = nil
+    var episodes: [VideoEpisodeItem] = []   // ⭐ 新增：当前剧集全部集数
+
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
-    @State private var hasTracked = false
+
+    // ⭐ 新增：选集相关状态
+    @State private var showEpisodePicker = false
+    @State private var overrideEpisodeURL: String? = nil
+    @State private var overrideEpisodeName: String? = nil
+
+    // ⭐ 计算当前实际在播的集数
+    private var activeEpisodeURL: String { overrideEpisodeURL ?? realURL }
+    private var activeEpisodeName: String? { overrideEpisodeName ?? episodeName }
+    private var displayTitle: String {
+        let base = title.components(separatedBy: " · ").first ?? title
+        if let ep = activeEpisodeName, !ep.isEmpty {
+            return "\(base) · \(ep)"
+        }
+        return title
+    }
+    
+    // ⭐ 过滤出已缓存的集数（用于选集弹窗）
+    private var cachedEpisodes: [VideoEpisodeItem] {
+        episodes.filter { downloadManager.localBookmarks[$0.url] != nil }
+    }
 
     var body: some View {
         ZStack {
             if !authManager.isSubscribed {
-                lockedOverlay   // 1. 修复：已在下方补充 lockedOverlay 属性
+                lockedOverlay
             } else {
                 LinearGradient(colors: [Color(.systemBackground),
                                         Color.accentColor.opacity(0.05)],
@@ -658,10 +680,13 @@ struct CachedVideoPlayerView: View {
                 VStack(spacing: 0) {
                     ZStack {
                         Color.black
-                        if let local = downloadManager.getLocalURL(for: realURL) {
+                        // ⭐ 使用 activeEpisodeURL 查找本地缓存，并强制重建
+                        if let local = downloadManager.getLocalURL(for: activeEpisodeURL) {
                             VideoPlayerView(videoURL: local, isBuffering: .constant(false))
-                        } else if let url = URL(string: realURL) {
+                                .id(activeEpisodeURL)
+                        } else if let url = URL(string: activeEpisodeURL) {
                             VideoPlayerView(videoURL: url, isBuffering: .constant(false))
+                                .id(activeEpisodeURL)
                         } else {
                             Text(isGlobalEnglishMode ? "Unable to play" : "无法播放")
                                 .foregroundColor(.white)
@@ -672,11 +697,18 @@ struct CachedVideoPlayerView: View {
 
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
-                            let displayTitle = episodeName.map { "\(title) · \($0)" } ?? title
-
-                            Text(displayTitle)   // ← 改为组合标题
-                                .font(.system(size: 17, weight: .bold))
-                                .padding(.horizontal, 16).padding(.top, 16)
+                            // ⭐ 标题行：支持选集按钮
+                            HStack(spacing: 10) {
+                                Text(displayTitle)
+                                    .font(.system(size: 17, weight: .bold))
+                                    .foregroundColor(.primary)
+                                    .lineLimit(3)
+                                Spacer()
+                                if cachedEpisodes.count > 1 {
+                                    episodeSelectorButton
+                                }
+                            }
+                            .padding(.horizontal, 16).padding(.top, 16)
 
                             HStack(spacing: 6) {
                                 Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
@@ -689,10 +721,8 @@ struct CachedVideoPlayerView: View {
                             .background(Capsule().fill(Color.green.opacity(0.10)))
                             .padding(.horizontal, 16)
 
-                            // 🛠️ 已移除：ReportLinkCard（离线缓存播放无需举报功能）
-
                             Button(role: .destructive) {
-                                downloadManager.deleteDownload(urlString: realURL)
+                                downloadManager.deleteDownload(urlString: activeEpisodeURL)
                                 dismiss()
                             } label: {
                                 Label(isGlobalEnglishMode ? "Delete Cache" : "删除缓存",
@@ -716,24 +746,55 @@ struct CachedVideoPlayerView: View {
         }
         .navigationTitle(isGlobalEnglishMode ? "Player" : "播放")
         .navigationBarTitleDisplayMode(.inline)
-        // 2. 修复：移除了多余的 .task 和 .onChange(of: authManager.isSubscribed) 里的 resolve()，因为缓存播放器不需要解析 URL
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
+        // ⭐ 新增：选集弹窗
+        .sheet(isPresented: $showEpisodePicker) {
+            EpisodePickerView(
+                episodes: cachedEpisodes,
+                currentURL: activeEpisodeURL,
+                onSelect: { ep in switchToEpisode(ep) }
+            )
+            .presentationDetents([.medium, .large])
+        }
         .task {
-            trackCachedPlayIfNeeded()
+            recordPlayback()
         }
         .onChange(of: authManager.isSubscribed) { newValue in
-            if newValue { trackCachedPlayIfNeeded() }
+            if newValue { recordPlayback() }
         }
     }
 
-    private func trackCachedPlayIfNeeded() {
-        // 必须已订阅，且本次进入只打一次
-        guard authManager.isSubscribed, !hasTracked else { return }
-        hasTracked = true
+    // ⭐ 新增：选集按钮
+    private var episodeSelectorButton: some View {
+        Button {
+            showEpisodePicker = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "square.grid.2x2.fill")
+                Text(isGlobalEnglishMode ? "Episodes" : "选集")
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.accentColor)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
 
-        // 与在线播放、下载完成统一的用户身份解析
+    // ⭐ 新增：切集逻辑（离线播放器直接切换本地缓存，无需网络解析）
+    private func switchToEpisode(_ ep: VideoEpisodeItem) {
+        guard ep.url != activeEpisodeURL else { return }
+        overrideEpisodeURL = ep.url
+        overrideEpisodeName = ep.name
+        recordPlayback()
+    }
+
+    // ⭐ 修改：统一的上报 + 写本地观看记录（首次播放或切集都调用）
+    private func recordPlayback() {
+        guard authManager.isSubscribed else { return }
+
         let (trackUserId, trackUserType): (String, String) = {
             if let appleId = authManager.userIdentifier, !appleId.isEmpty {
                 return (appleId, "apple")
@@ -744,28 +805,28 @@ struct CachedVideoPlayerView: View {
             }
         }()
 
-        // 1) 上报后台统计（event = play）
-        let trackTitle = episodeName.map { "\(title) · \($0)" } ?? title
+        let baseTitle = title.components(separatedBy: " · ").first ?? title
+        let trackTitle = activeEpisodeName.map { "\(baseTitle) · \($0)" } ?? title
+        
         TrackingManager.shared.track(
             event: .play,
             userId: trackUserId,
             userType: trackUserType,
-            videoURL: realURL,
+            videoURL: activeEpisodeURL,
             videoTitle: trackTitle
         )
 
-        // 2) 同步写入本地观看记录
         VideoPlayRecordManager.shared.addRecord(
-            videoTitle: title.components(separatedBy: " · ").first ?? title,
-            episodeName: episodeName ?? "",  // 新数据一定有值，不需要 fallback
-            videoURL: realURL,
-            coverImage: downloadManager.cacheMetadata[realURL]?.coverImage,
+            videoTitle: baseTitle,
+            episodeName: activeEpisodeName ?? "",
+            videoURL: activeEpisodeURL,
+            coverImage: downloadManager.cacheMetadata[activeEpisodeURL]?.coverImage,
             channelName: channelName,
             sourceURL: nil
         )
     }
     
-    // 【新增】未订阅锁屏视图 (供 CachedVideoPlayerView 内部使用)
+    // 【保留】未订阅锁屏视图
     private var lockedOverlay: some View {
         VStack(spacing: 20) {
             Spacer()
@@ -796,7 +857,6 @@ struct CachedVideoPlayerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.viewBackground.ignoresSafeArea())
         .onAppear {
-            // 进来就直接弹订阅页
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 showSubscriptionSheet = true
             }
