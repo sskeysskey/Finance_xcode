@@ -598,18 +598,19 @@ struct CachedVideoPlayerView: View {
         }()
 
         // 1) 上报后台统计（event = play）
+        let trackTitle = episodeName.map { "\(title) · \($0)" } ?? title
         TrackingManager.shared.track(
             event: .play,
             userId: trackUserId,
             userType: trackUserType,
             videoURL: realURL,
-            videoTitle: title
+            videoTitle: trackTitle
         )
 
         // 2) 同步写入本地观看记录
         VideoPlayRecordManager.shared.addRecord(
             videoTitle: title.components(separatedBy: " · ").first ?? title,
-            episodeName: episodeName ?? (isGlobalEnglishMode ? "Offline" : "离线播放"),
+            episodeName: episodeName ?? "",  // 新数据一定有值，不需要 fallback
             videoURL: realURL,
             coverImage: downloadManager.cacheMetadata[realURL]?.coverImage,
             channelName: channelName,

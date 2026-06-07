@@ -983,7 +983,9 @@ struct BatchDownloadView: View {
                         downloadManager.startDownload(
                             urlString: realURL,
                             title: "\(item.name) · \(ep.name)",
-                            coverImage: item.image
+                            coverImage: item.image,
+                            seriesTitle: item.name,      // 新增
+                            episodeName: ep.name         // 新增
                         )
                         processedCount += 1
                     }
