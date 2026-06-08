@@ -1008,7 +1008,7 @@ struct EpisodePickerView: View {
     @ObservedObject private var dm = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 5)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
 
     var body: some View {
         NavigationView {
@@ -1028,11 +1028,15 @@ struct EpisodePickerView: View {
                                 RoundedRectangle(cornerRadius: 10)
                                     .fill(isCurrent ? Color.accentColor
                                                     : Color.secondary.opacity(0.15))
-                                    .frame(height: 44)
+                                    .frame(height: 50)   // 稍微增高，给两行文字留空间
                                     .overlay(
-                                        Text(ep.number)
-                                            .font(.system(size: 15, weight: .semibold))
+                                        Text(ep.name)
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .lineLimit(2)                    // 最多两行
+                                            .minimumScaleFactor(0.7)         // 空间不够时自动缩字
+                                            .multilineTextAlignment(.center) // 居中
                                             .foregroundColor(isCurrent ? .white : .primary)
+                                            .padding(.horizontal, 4)
                                     )
                                 if isCached {
                                     Image(systemName: "arrow.down.circle.fill")

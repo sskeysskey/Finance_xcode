@@ -149,22 +149,38 @@ struct OVideoItem: Codable, Identifiable, Hashable {
 
 struct OVideoChannel: Codable, Hashable {
     let name: String
-    // 【修改】从 [String] 改为 [String: String] 字典
     let episodes: [String: String]
+    // 【新增】服务器下发的原始集数顺序（与 JSON 中的书写顺序完全一致）
+    let episodeOrder: [String]?
     
-    // 【新增】辅助属性：对字典进行智能排序，返回有序的 (集数名, 播放URL) 数组
+    enum CodingKeys: String, CodingKey {
+        case name, episodes
+        case episodeOrder = "episode_order"
+    }
+    
     var sortedEpisodes: [(name: String, url: String)] {
         sortedEpisodes(ascending: true)
     }
     
-    // 【新增】支持正序/倒序的智能排序方法
     func sortedEpisodes(ascending: Bool) -> [(name: String, url: String)] {
-        episodes.sorted { (kv1, kv2) -> Bool in
-            // 尝试将 Key 转为数字进行排序（例如 "1", "2", "10"）
+        // 【核心】优先使用服务器下发的原始顺序：
+        // JSON 本身就是正确的时间顺序，正序直接用，倒序则 reversed
+        if let order = episodeOrder, !order.isEmpty {
+            let ordered = order.compactMap { key -> (name: String, url: String)? in
+                guard let url = episodes[key] else { return nil }
+                return (name: key, url: url)
+            }
+            // 数量一致才信任（防止 order 与 episodes 不匹配时漏集）
+            if ordered.count == episodes.count {
+                return ascending ? ordered : ordered.reversed()
+            }
+        }
+        
+        // 兜底（旧缓存数据 / 缺少 episode_order 时）：沿用原有智能排序
+        return episodes.sorted { (kv1, kv2) -> Bool in
             if let num1 = Int(kv1.key), let num2 = Int(kv2.key) {
                 return ascending ? (num1 < num2) : (num1 > num2)
             }
-            // 如果不是纯数字，则按标准字典序排序（例如 "第1集" 与 "第2集"）
             let comparison = kv1.key.localizedStandardCompare(kv2.key)
             return ascending ? (comparison == .orderedAscending) : (comparison == .orderedDescending)
         }.map { (name: $0.key, url: $0.value) }
