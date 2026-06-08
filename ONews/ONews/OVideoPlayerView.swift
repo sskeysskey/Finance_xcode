@@ -291,11 +291,16 @@ struct VideoPlayerPageView: View {
 
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
+    @ObservedObject private var quotaManager = FreeQuotaManager.shared
 
     @State private var realURL: String? = nil
     @State private var isResolving = true
     @State private var resolveError: String? = nil
     @State private var isBuffering = false
+
+    @State private var showEpisodeConsumeConfirm = false
+    @State private var episodeConsumeRemaining = 0
+    @State private var pendingEpisodeForSwitch: VideoEpisodeItem? = nil
 
     // ⭐ 选集相关状态
     @State private var showEpisodePicker = false
@@ -321,7 +326,7 @@ struct VideoPlayerPageView: View {
     var body: some View {
         ZStack {
             // 【新增】未订阅时显示锁屏，不解析、不播放
-            if !authManager.isSubscribed {
+            if !hasAccess {
                 lockedOverlay
             } else {
                 // 背景渐变
@@ -347,7 +352,8 @@ struct VideoPlayerPageView: View {
                                         videoTitle: displayTitle,
                                         coverImage: coverImage,
                                         seriesTitle: seriesBaseTitle,
-                                        episodeName: activeEpisodeName)
+                                        episodeName: activeEpisodeName,
+                                        episodeKey: activeEpisodeURL)
                             }
 
                             if let real = realURL, downloadManager.localBookmarks[real] != nil {
@@ -376,10 +382,8 @@ struct VideoPlayerPageView: View {
         .navigationTitle(isGlobalEnglishMode ? "Player" : "播放")
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            // 【修改】只有已订阅才解析
-            if authManager.isSubscribed && realURL == nil {
-                await resolve()
-            }
+            await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
+            if hasAccess && realURL == nil { await resolve() }
         }
         // 【新增】
         .sheet(isPresented: $showSubscriptionSheet) {
@@ -414,6 +418,21 @@ struct VideoPlayerPageView: View {
                  ? "You are on a cellular network. Online playback will use mobile data. Continue?"
                  : "当前处于蜂窝网络，在线播放将消耗流量，是否继续？")
         }
+        .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
+            isPresented: $showEpisodeConsumeConfirm) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
+                Task { await consumeAndSwitchEpisode() }
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "This will use 1 of today's free passes (\(episodeConsumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
+                : "本次将消耗 1 次今日免费次数（剩余 \(episodeConsumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
+        }
+    }
+
+    private var hasAccess: Bool {
+        authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(activeEpisodeURL)
     }
 
     private var lockedOverlay: some View {
@@ -558,24 +577,54 @@ struct VideoPlayerPageView: View {
     // ⭐ 选集核心逻辑：先解析→判断缓存→决定本地/在线（在线+蜂窝才提示）
     private func handleEpisodeSelection(_ ep: VideoEpisodeItem) {
         guard ep.url != activeEpisodeURL else { showEpisodePicker = false; return }
+        
+        // ⭐ 新增：先走门禁
+        switch decideVideoAccess(episodeKey: ep.url, auth: authManager, quota: quotaManager) {
+        case .allowed:
+            proceedToSwitch(episode: ep)
+        case .needConsume(let r):
+            pendingEpisodeForSwitch = ep
+            episodeConsumeRemaining = r
+            showEpisodeConsumeConfirm = true
+            showEpisodePicker = false   // 先关掉选集弹窗，再弹确认
+        case .exhausted:
+            showEpisodePicker = false
+            showSubscriptionSheet = true
+        }
+    }
+
+    // ⭐ 新增：确认消耗后切集
+    private func consumeAndSwitchEpisode() async {
+        guard let ep = pendingEpisodeForSwitch else { return }
+        let uid = FreeQuotaManager.currentUserId(auth: authManager)
+        let result = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
+                                            videoTitle: "\(seriesBaseTitle) · \(ep.name)")
+        switch result {
+        case .success, .alreadyUnlocked:
+            proceedToSwitch(episode: ep)
+        case .quotaExceeded:
+            showSubscriptionSheet = true
+        case .failed:
+            showSubscriptionSheet = true
+        }
+        pendingEpisodeForSwitch = nil
+    }
+
+    // ⭐ 新增：真正执行切集（把原来的 handleEpisodeSelection 逻辑搬进来）
+    private func proceedToSwitch(episode ep: VideoEpisodeItem) {
         showEpisodePicker = false
         Task {
-            // resolveRealURL 对 m3u8 会直接短路返回，不走网络；其它是一个很小的解析请求
             let resolved = try? await OVideoAPI.resolveRealURL(episodeURL: ep.url)
             await MainActor.run {
                 let realKey = resolved ?? ep.url
                 let cached = (resolved != nil) && (downloadManager.localBookmarks[realKey] != nil)
-
                 if cached {
-                    // 本地缓存：直接播，蜂窝也不提示
                     switchToEpisode(ep, resolvedURL: realKey)
                 } else if !network.isWiFi {
-                    // 在线 + 蜂窝：先提示
                     pendingOnlineEpisode = ep
                     pendingOnlineResolvedURL = resolved
                     showEpisodeCellularAlert = true
                 } else {
-                    // 在线 + Wi-Fi：直接播
                     switchToEpisode(ep, resolvedURL: resolved)
                 }
             }
@@ -654,11 +703,14 @@ struct CachedVideoPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
+    @ObservedObject private var quotaManager = FreeQuotaManager.shared   // ⭐ 新增
 
     // ⭐ 新增：选集相关状态
     @State private var showEpisodePicker = false
     @State private var overrideEpisodeURL: String? = nil
     @State private var overrideEpisodeName: String? = nil
+    @State private var showCachedConsumeConfirm = false
+    @State private var cachedConsumeRemaining = 0
 
     // ⭐ 计算当前实际在播的集数
     private var activeEpisodeURL: String { overrideEpisodeURL ?? realURL }
@@ -678,7 +730,7 @@ struct CachedVideoPlayerView: View {
 
     var body: some View {
         ZStack {
-            if !authManager.isSubscribed {
+            if !hasAccess {
                 lockedOverlay
             } else {
                 LinearGradient(colors: [Color(.systemBackground),
@@ -766,12 +818,57 @@ struct CachedVideoPlayerView: View {
             )
             .presentationDetents([.medium, .large])
         }
+        .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
+            isPresented: $showCachedConsumeConfirm) {          // ⭐ 改
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
+                Task { await consumeAndPlayCached() }             // ⭐ 改
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "This will use 1 of today's free passes (\(cachedConsumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."   // ⭐ 改
+                : "本次将消耗 1 次今日免费次数（剩余 \(cachedConsumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")   // ⭐ 改
+        }
         .task {
-            recordPlayback()
+            if !hasAccess {
+                // 未订阅且未解锁：尝试引导消耗
+                if FreeQuotaManager.shared.remaining > 0 {
+                    cachedConsumeRemaining = FreeQuotaManager.shared.remaining
+                    showCachedConsumeConfirm = true
+                } else {
+                    showSubscriptionSheet = true
+                }
+            } else {
+                recordPlayback()
+            }
         }
         .onChange(of: authManager.isSubscribed) { newValue in
             if newValue { recordPlayback() }
         }
+    }
+
+    // 3. 新增消耗方法
+    private func consumeAndPlayCached() async {
+        let uid = FreeQuotaManager.currentUserId(auth: authManager)
+        let result = await quotaManager.unlock(userId: uid, episodeKey: episodeKey,
+                                            videoTitle: displayTitle)
+        switch result {
+        case .success, .alreadyUnlocked:
+            // 解锁成功，刷新 UI（hasAccess 会重新计算为 true）
+            // 这里不需要手动跳转，因为 hasAccess 变了，body 会重新渲染
+            recordPlayback()
+        case .quotaExceeded:
+            showSubscriptionSheet = true
+        case .failed:
+            showSubscriptionSheet = true
+        }
+    }
+
+    private var episodeKey: String {
+        downloadManager.cacheMetadata[activeEpisodeURL]?.originalEpisodeURL ?? activeEpisodeURL
+    }
+    private var hasAccess: Bool {
+        authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(episodeKey)
     }
 
     // ⭐ 新增：选集按钮
@@ -801,7 +898,7 @@ struct CachedVideoPlayerView: View {
 
     // ⭐ 修改：统一的上报 + 写本地观看记录（首次播放或切集都调用）
     private func recordPlayback() {
-        guard authManager.isSubscribed else { return }
+        guard hasAccess else { return }
 
         let (trackUserId, trackUserType): (String, String) = {
             if let appleId = authManager.userIdentifier, !appleId.isEmpty {

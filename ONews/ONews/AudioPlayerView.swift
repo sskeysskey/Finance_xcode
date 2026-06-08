@@ -197,12 +197,21 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             return .success
         }
 
-        // 新增：锁屏快进 15 秒
+        // 锁屏快进 15 秒:target 保留,但锁屏上不显示(让出位置给"下一篇")
         commandCenter.skipForwardCommand.preferredIntervals = [15]
-        commandCenter.skipForwardCommand.isEnabled = true
+        commandCenter.skipForwardCommand.isEnabled = false   // ← 由 true 改为 false
         commandCenter.skipForwardCommand.addTarget { [weak self] _ in
             guard let self = self else { return .commandFailed }
             self.seekBy(seconds: 15)
+            return .success
+        }
+
+        // 锁屏快退 15 秒(保留)
+        commandCenter.skipBackwardCommand.preferredIntervals = [15]
+        commandCenter.skipBackwardCommand.isEnabled = true
+        commandCenter.skipBackwardCommand.addTarget { [weak self] _ in
+            guard let self = self else { return .commandFailed }
+            self.seekBy(seconds: -15)
             return .success
         }
 
@@ -824,7 +833,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         commandCenter.pauseCommand.isEnabled = true
         commandCenter.stopCommand.isEnabled = true
         commandCenter.nextTrackCommand.isEnabled = true
-        commandCenter.skipForwardCommand.isEnabled = true
+        commandCenter.skipForwardCommand.isEnabled = false
+        commandCenter.skipBackwardCommand.isEnabled = true
     }
 
     // ▶ 修改：播放完当前块 → 衔接下一块 / 全部完成

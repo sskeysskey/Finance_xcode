@@ -276,7 +276,9 @@ struct VideoModuleView: View {
         // 【说明】这里仍然保留 task，作为兜底。如果预加载已完成，loadVideosIfNeeded 内部应该会立即返回不重复加载
         // 【修改】传入 userId
         .task {
-            await dataManager.loadVideosIfNeeded(userId: authManager.userIdentifier)
+            await dataManager.loadVideosIfNeeded(userId: FreeQuotaManager.currentUserId(auth: authManager))
+            // ⭐ 新增：进入视频模块时刷新今日免费次数
+            await FreeQuotaManager.shared.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
         }
     }
 }

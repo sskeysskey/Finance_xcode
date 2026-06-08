@@ -356,6 +356,8 @@ struct VideoCacheMetadata: Codable {
     // 【新增】剧集归类用字段（可选，旧缓存数据缺失时自动为 nil）
     var seriesTitle: String?   // 剧名（去掉集数），如「权力的游戏」
     var episodeName: String?   // 集数名，如「第3集」「HD国语」
+    var originalEpisodeURL: String?   // 【新增】原始 episodeURL，用于免费次数绑定
+
 }
 
 // 【新增】统一的分组 key 计算逻辑

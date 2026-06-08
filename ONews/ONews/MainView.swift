@@ -73,7 +73,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         }
         
         // 【新增】视频模块预加载：延迟 0.01 秒后在后台预加载，避免抢占新闻模块首屏资源
-        Task { [weak self] in
+        Task(priority: .userInitiated) { [weak self] in
             try? await Task.sleep(nanoseconds: 10_000_000) // 等新闻先加载完
             guard let self = self else { return }
             print("📺 [预加载] 开始后台预加载视频模块数据...")
@@ -168,6 +168,14 @@ struct NewsReaderAppApp: App {
                 
                 // 【核心新增】调用 AuthManager 处理订阅状态同步
                 authManager.handleAppDidBecomeActive()
+
+                // ⭐ 新增：App 回到前台时刷新视频免费次数配额
+                // 这样跨零点后，unlockedKeys 能及时清空，避免拿昨天的解锁状态
+                Task {
+                    await FreeQuotaManager.shared.refresh(
+                        userId: FreeQuotaManager.currentUserId(auth: authManager)
+                    )
+                }
                 
             } else if newPhase == .background {
                 print("App entered background. Committing pending reads silently.")

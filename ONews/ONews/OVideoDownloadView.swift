@@ -115,7 +115,8 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 
     // MARK: 启动下载
     func startDownload(urlString: String, title: String, coverImage: String? = nil,
-                       seriesTitle: String? = nil, episodeName: String? = nil) {
+                   seriesTitle: String? = nil, episodeName: String? = nil,
+                   episodeKey: String? = nil) { 
         cancelledUrls.remove(urlString)
 
         guard let url = URL(string: urlString) else { return }
@@ -136,7 +137,8 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             if self.cacheMetadata[urlString] == nil {
                 self.cacheMetadata[urlString] = VideoCacheMetadata(
                     title: title, coverImage: coverImage, savedAt: Date(),
-                    seriesTitle: seriesTitle, episodeName: episodeName   // 【新增】
+                    seriesTitle: seriesTitle, episodeName: episodeName,
+                    originalEpisodeURL: episodeKey 
                 )
             }
             self.saveMetadata()
@@ -557,8 +559,9 @@ struct CacheCard: View {
     let realURL: String
     let videoTitle: String
     let coverImage: String?
-    var seriesTitle: String? = nil   // 【新增】
-    var episodeName: String? = nil   // 【新增】
+    var seriesTitle: String? = nil
+    var episodeName: String? = nil
+    var episodeKey: String? = nil
 
     @ObservedObject private var downloadManager = HLSDownloadManager.shared
     @ObservedObject private var network = NetworkMonitor.shared
@@ -606,10 +609,9 @@ struct CacheCard: View {
         .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示", isPresented: $showCellularAlert) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
             Button(isGlobalEnglishMode ? "Download Anyway" : "允许并下载") {
-                downloadManager.startDownload(urlString: realURL,
-                                            title: videoTitle,
-                                            coverImage: coverImage,
-                                            seriesTitle: seriesTitle, episodeName: episodeName)
+                downloadManager.startDownload(urlString: realURL, title: videoTitle, coverImage: coverImage,
+                              seriesTitle: seriesTitle, episodeName: episodeName,
+                              episodeKey: episodeKey) 
             }
         } message: {
             Text(isGlobalEnglishMode 
@@ -620,6 +622,11 @@ struct CacheCard: View {
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
+    }
+
+    private var hasAccess: Bool {
+        guard let key = episodeKey, !key.isEmpty else { return authManager.isSubscribed }
+        return authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(key)
     }
 
     // 已缓存
@@ -751,8 +758,16 @@ struct CacheCard: View {
     // 未下载
     private var idleRow: some View {
         Button {
-            guard authManager.canAccessVideoContent() else {
-                showSubscriptionSheet = true
+            guard hasAccess else {
+                // 未订阅且未解锁：看剩余次数决定弹什么
+                if FreeQuotaManager.shared.remaining > 0 {
+                    // 这里需要把消耗确认抛给父级，或者直接在 CacheCard 内做
+                    // 简单做法：直接走订阅页（因为播放页已经消耗过了，这里理论上不会走到）
+                    // 但为了严谨，建议保持和播放页一致：
+                    showSubscriptionSheet = true
+                } else {
+                    showSubscriptionSheet = true
+                }
                 return
             }
             if !network.isWiFi {
@@ -762,8 +777,9 @@ struct CacheCard: View {
                     urlString: realURL,
                     title: videoTitle,
                     coverImage: coverImage,
-                    seriesTitle: seriesTitle,   // ← 新增
-                    episodeName: episodeName    // ← 新增
+                    seriesTitle: seriesTitle,
+                    episodeName: episodeName,
+                    episodeKey: episodeKey
                 )
             }
         } label: {

@@ -13,6 +13,11 @@ struct VideoDetailView: View {
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
     @State private var navigateToPlayer = false
+    
+    @ObservedObject private var quotaManager = FreeQuotaManager.shared
+    @State private var showConsumeConfirm = false
+    @State private var consumeRemaining = 0
+    @State private var pendingEpisode: (name: String, url: String)? = nil
 
     // 新增：搜索跳转状态
     @State private var navigateToSearch = false
@@ -159,6 +164,20 @@ struct VideoDetailView: View {
         }
         .onDisappear {
             ReviewManager.shared.recordVideoInteraction()
+        }
+        .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
+            isPresented: $showConsumeConfirm) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
+                Task { await consumeAndPlay() }
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "This will use 1 of today's free passes (\(consumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
+                : "本次将消耗 1 次今日免费次数（剩余 \(consumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
+        }
+        .task {
+            await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
         }
     }
     
@@ -422,11 +441,7 @@ struct VideoDetailView: View {
                         ForEach(sortedEps, id: \.url) { episode in
                             Button {
                                 selectedEpisode = episode
-                                if authManager.canAccessVideoContent() {
-                                    navigateToPlayer = true
-                                } else {
-                                    showSubscriptionSheet = true
-                                }
+                                attemptPlay(episode: episode)
                             } label: {
                                 ZStack(alignment: .topTrailing) {
                                     // ⭐ 重塑后的剧集按钮：支持两行、自动缩放字号
@@ -473,6 +488,34 @@ struct VideoDetailView: View {
                     .padding(.top, 6)
                 }
             }
+        }
+    }
+
+    private func attemptPlay(episode: (name: String, url: String)) {
+        switch decideVideoAccess(episodeKey: episode.url, auth: authManager, quota: quotaManager) {
+        case .allowed:
+            navigateToPlayer = true
+        case .needConsume(let r):
+            pendingEpisode = episode
+            consumeRemaining = r
+            showConsumeConfirm = true
+        case .exhausted:
+            showSubscriptionSheet = true
+        }
+    }
+
+    private func consumeAndPlay() async {
+        guard let ep = pendingEpisode else { return }
+        let uid = FreeQuotaManager.currentUserId(auth: authManager)
+        let result = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
+                                            videoTitle: "\(item.name) · \(ep.name)")
+        switch result {
+        case .success, .alreadyUnlocked:
+            navigateToPlayer = true
+        case .quotaExceeded:
+            showSubscriptionSheet = true
+        case .failed:
+            showSubscriptionSheet = true   // 网络异常兜底，也可改成 toast 提示
         }
     }
     
@@ -625,11 +668,16 @@ struct BatchDownloadView: View {
     @EnvironmentObject var authManager: AuthManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @ObservedObject private var downloadManager = HLSDownloadManager.shared
+    @ObservedObject private var quotaManager = FreeQuotaManager.shared   // ⭐ 新增
 
     @State private var selectedURLs: Set<String> = []
     @State private var isProcessing = false
     @State private var processedCount = 0
     @State private var showSubscriptionSheet = false
+
+    @State private var pendingBatch: [(name: String, url: String)] = []
+    @State private var batchConsumeCount = 0
+    @State private var showBatchConsumeConfirm = false
 
     // ⭐ 剧集状态枚举
     private enum EpisodeStatus {
@@ -967,39 +1015,81 @@ struct BatchDownloadView: View {
             showSubscriptionSheet = true
             return
         }
-        // ⭐ 双保险：即便 selectedURLs 因某些时序意外包含了已占用集，这里也再过滤一次
+        
         let selected = episodes.filter {
             selectedURLs.contains($0.url) && status(for: $0) == .available
         }
         guard !selected.isEmpty else { return }
 
+        if authManager.isSubscribed {
+            performDownloads(selected)
+            return
+        }
+
+        // 需要新消耗次数的集（未解锁的）
+        let newOnes = selected.filter { !FreeQuotaManager.shared.isUnlocked($0.url) }
+        if newOnes.isEmpty {
+            performDownloads(selected)   // 全部已解锁
+            return
+        }
+
+        if FreeQuotaManager.shared.remaining < newOnes.count {
+            showSubscriptionSheet = true   // 次数不足 → 订阅
+            return
+        }
+        
+        pendingBatch = selected
+        batchConsumeCount = newOnes.count
+        showBatchConsumeConfirm = true     // 弹确认，等用户点击
+    }
+
+    // ⭐ 新增：用户确认后调用
+    private func confirmBatchDownload() async {
+        let selected = pendingBatch
+        guard !selected.isEmpty else { return }
+        
+        // 对未解锁的逐个消耗
+        let uid = FreeQuotaManager.currentUserId(auth: authManager)
+        let newOnes = selected.filter { !FreeQuotaManager.shared.isUnlocked($0.url) }
+        for ep in newOnes {
+            _ = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
+                                        videoTitle: "\(item.name) · \(ep.name)")
+        }
+        
+        await MainActor.run {
+            showBatchConsumeConfirm = false
+            performDownloads(selected)
+        }
+    }
+
+    // ⭐ 把原来的下载逻辑抽成 performDownloads
+    private func performDownloads(_ selected: [(name: String, url: String)]) {
         isProcessing = true
         processedCount = 0
 
         Task {
             for ep in selected {
                 do {
-                    // 与单集播放一致：先解析出真实可下载地址
                     let realURL = try await OVideoAPI.resolveRealURL(episodeURL: ep.url)
                     await MainActor.run {
                         downloadManager.startDownload(
                             urlString: realURL,
                             title: "\(item.name) · \(ep.name)",
                             coverImage: item.image,
-                            seriesTitle: item.name,      // 新增
-                            episodeName: ep.name         // 新增
+                            seriesTitle: item.name,
+                            episodeName: ep.name,
+                            episodeKey: ep.url          // 【新增】
                         )
                         processedCount += 1
                     }
                 } catch {
-                    // 单集解析失败不阻断其它集
                     await MainActor.run { processedCount += 1 }
                 }
             }
             await MainActor.run {
                 isProcessing = false
-                dismiss()            // 先关闭批量选择页
-                onStartDownloads()   // 通知父级跳转到缓存管理页
+                dismiss()
+                onStartDownloads()
             }
         }
     }
