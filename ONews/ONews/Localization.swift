@@ -168,7 +168,7 @@ struct Localized {
     static var planProDesc: String { tr("解锁全部视频和最新资讯，与世界同频", "Unlock latest news and Prediction Data instantly") }
     static var pricePerMonth: String { tr("¥12/月", "$1.99/mo") }
     static var currentProUser: String { tr("您当前是尊贵的专业版用户", "You are currently a Pro member") }
-    static var freePlanFootnote: String { tr("如果不选择付费，您将继续使用免费版，仍可以浏览三天前的文章。", "If you don't upgrade, you can still enjoy articles older than 3 days for free.") }
+    static var freePlanFootnote: String { tr("如果不选择付费，您仍可以享用三天前的文章和每日赠送的免费视频点数。", "If you don't upgrade, you can still enjoy articles older than 3 days for free.") }
     static var restorePurchase: String { tr("恢复购买", "Restore Purchase") }
     static var terms: String { tr("使用条款 (EULA)", "Terms of Use") }
     static var privacy: String { tr("隐私政策", "Privacy Policy") }
