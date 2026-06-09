@@ -14,38 +14,16 @@ struct VideoFilterView: View {
     // --- 新增：排序状态，默认按时间 ---
     @State private var selectedSort: VideoSortOption = .date
     
-    // --- 定义自定义排序规则 ---
+    // ⭐ 新增：预计算的筛选选项 + 就绪标志
+    @State private var isReady = false
+    @State private var allTypes: [String] = []
+    @State private var allYears: [Int] = []
+    @State private var allRegions: [String] = []
+    
     private let typeOrder = ["纪录片", "动漫", "综艺", "科幻", "喜剧", "爱情", "恐怖", "惊悚", "古装", "剧情"]
     private let regionOrder = ["美国", "韩国", "中国", "欧洲", "日本", "亚洲", "香港澳门", "中国台湾", "印度", "中东", "北美洲/南美洲", "非洲"]
     
-    // --- 使用自定义排序逻辑 ---
-    private var allTypes: [String] {
-        let set = Set(dataManager.allItems.flatMap { $0.normalizedTypes })
-        return set.sorted { (a, b) -> Bool in
-            let indexA = typeOrder.firstIndex(of: a) ?? Int.max
-            let indexB = typeOrder.firstIndex(of: b) ?? Int.max
-            if indexA != indexB { return indexA < indexB }
-            return a < b // 如果都在自定义列表中，按顺序；如果都不在，按字母排序
-        }
-    }
-    
-    private var allYears: [Int] {
-        let set = Set(dataManager.allItems.compactMap { $0.releaseYear })
-        return set.sorted(by: >)
-    }
-    
-    private var allRegions: [String] {
-        // 使用 normalizedRegion 进行去重和排序
-        let set = Set(dataManager.allItems.map { $0.normalizedRegion }).filter { $0 != "其它" }
-        return set.sorted { (a, b) -> Bool in
-            let indexA = regionOrder.firstIndex(of: a) ?? Int.max
-            let indexB = regionOrder.firstIndex(of: b) ?? Int.max
-            if indexA != indexB { return indexA < indexB }
-            return a < b
-        }
-    }
-    
-    // --- 修改：过滤逻辑 + 排序逻辑 ---
+    // 过滤逻辑 + 排序逻辑（仍按需计算，仅在已就绪时使用）
     private var filteredItems: [OVideoItem] {
         let filtered = dataManager.allItems.filter { item in
             if let t = selectedType, !item.normalizedTypes.contains(t) { return false }
@@ -58,64 +36,121 @@ struct VideoFilterView: View {
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    filterRow(title: isGlobalEnglishMode ? "Genre" : "类型",
-                              options: ["All"] + allTypes,
-                              selected: selectedType ?? "All") { v in
-                        selectedType = (v == "All") ? nil : v
-                    }
-                    filterRow(title: isGlobalEnglishMode ? "Year" : "年份",
-                              options: ["All"] + allYears.map { String($0) },
-                              selected: selectedYear.map { String($0) } ?? "All") { v in
-                        selectedYear = (v == "All") ? nil : Int(v)
-                    }
-                    filterRow(title: isGlobalEnglishMode ? "Region" : "地区",
-                              options: ["All"] + allRegions,
-                              selected: selectedRegion ?? "All") { v in
-                        selectedRegion = (v == "All") ? nil : v
-                    }
-                    
-                    // --- 新增：排序选择行 ---
-                    sortRow()
-                    
-                    Divider().padding(.horizontal, 16)
-                    
-                    HStack {
-                        Text(isGlobalEnglishMode
-                             ? "\(filteredItems.count) result(s)"
-                             : "共 \(filteredItems.count) 个结果")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        
-                        // 修改：如果任意条件被修改过，显示重置按钮
-                        if selectedType != nil || selectedYear != nil || selectedRegion != nil || selectedSort != .date {
-                            Button {
-                                selectedType = nil
-                                selectedYear = nil
-                                selectedRegion = nil
-                                selectedSort = .date
-                            } label: {
-                                Label(isGlobalEnglishMode ? "Reset" : "重置",
-                                      systemImage: "arrow.counterclockwise")
-                                    .font(.system(size: 12, weight: .medium))
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    
-                    WaterfallGridView(items: filteredItems, dataManager: dataManager)
-                        .padding(.top, 4)
+        Group {
+            if !isReady {
+                // ⭐ 秒出的占位界面
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .scaleEffect(1.1)
+                    Text(isGlobalEnglishMode ? "Loading filters..." : "正在加载分类资源…")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
-                .padding(.top, 12)
-                .padding(.bottom, 20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                contentView
             }
         }
         .background(Color(UIColor.systemGroupedBackground))
         .navigationTitle(isGlobalEnglishMode ? "Filter" : "分类检索")
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await prepareOptions()
+        }
+    }
+    
+    // ⭐ 正式内容
+    private var contentView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                filterRow(title: isGlobalEnglishMode ? "Genre" : "类型",
+                          options: ["All"] + allTypes,
+                          selected: selectedType ?? "All") { v in
+                    selectedType = (v == "All") ? nil : v
+                }
+                filterRow(title: isGlobalEnglishMode ? "Year" : "年份",
+                          options: ["All"] + allYears.map { String($0) },
+                          selected: selectedYear.map { String($0) } ?? "All") { v in
+                    selectedYear = (v == "All") ? nil : Int(v)
+                }
+                filterRow(title: isGlobalEnglishMode ? "Region" : "地区",
+                          options: ["All"] + allRegions,
+                          selected: selectedRegion ?? "All") { v in
+                    selectedRegion = (v == "All") ? nil : v
+                }
+                
+                sortRow()
+                
+                Divider().padding(.horizontal, 16)
+                
+                HStack {
+                    Text(isGlobalEnglishMode
+                         ? "\(filteredItems.count) result(s)"
+                         : "共 \(filteredItems.count) 个结果")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    
+                    if selectedType != nil || selectedYear != nil || selectedRegion != nil || selectedSort != .date {
+                        Button {
+                            selectedType = nil
+                            selectedYear = nil
+                            selectedRegion = nil
+                            selectedSort = .date
+                        } label: {
+                            Label(isGlobalEnglishMode ? "Reset" : "重置",
+                                  systemImage: "arrow.counterclockwise")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                
+                WaterfallGridView(items: filteredItems, dataManager: dataManager)
+                    .padding(.top, 4)
+            }
+            .padding(.top, 12)
+            .padding(.bottom, 20)
+        }
+    }
+    
+    // ⭐ 后台计算选项，算完才切换 isReady
+    private func prepareOptions() async {
+        if isReady { return }
+        
+        // 先让占位界面渲染出来（关键：把重计算让到下一帧之后）
+        await Task.yield()
+        
+        let items = dataManager.allItems
+        let tOrder = typeOrder
+        let rOrder = regionOrder
+        
+        // 计算（量大时也只在这里发生一次，且占位界面已显示，用户不会觉得没点中）
+        let typeSet = Set(items.flatMap { $0.normalizedTypes })
+        let sortedTypes = typeSet.sorted { a, b in
+            let ia = tOrder.firstIndex(of: a) ?? Int.max
+            let ib = tOrder.firstIndex(of: b) ?? Int.max
+            if ia != ib { return ia < ib }
+            return a < b
+        }
+        
+        let yearSet = Set(items.compactMap { $0.releaseYear })
+        let sortedYears = yearSet.sorted(by: >)
+        
+        let regionSet = Set(items.map { $0.normalizedRegion }).filter { $0 != "其它" }
+        let sortedRegions = regionSet.sorted { a, b in
+            let ia = rOrder.firstIndex(of: a) ?? Int.max
+            let ib = rOrder.firstIndex(of: b) ?? Int.max
+            if ia != ib { return ia < ib }
+            return a < b
+        }
+        
+        self.allTypes = sortedTypes
+        self.allYears = sortedYears
+        self.allRegions = sortedRegions
+        withAnimation(.easeInOut(duration: 0.2)) {
+            self.isReady = true
+        }
     }
     
     private func filterRow(title: String, options: [String],

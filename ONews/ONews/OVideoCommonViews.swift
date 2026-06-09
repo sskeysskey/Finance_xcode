@@ -625,16 +625,26 @@ struct VideoBrowseView: View {
     
     // 【新增】
     @EnvironmentObject var authManager: AuthManager
+    // ⭐ 新增：已知的频道固定顺序（与后端返回顺序一致），用于数据未加载完成前的占位显示
+    private static let knownCategoryKeys = ["Movie", "Drama", "Show", "Anime"]
     
     private var currentCategoryKey: String {
-        guard selectedCategoryIndex < dataManager.categories.count else { return "" }
-        return dataManager.categories[selectedCategoryIndex].name
+        // 1. 数据已加载：用真实数据（最准确）
+        if selectedCategoryIndex < dataManager.categories.count {
+            return dataManager.categories[selectedCategoryIndex].name
+        }
+        // 2. 数据未加载完成：用固定顺序兜底，保证一进来就显示正确频道
+        if selectedCategoryIndex >= 0,
+        selectedCategoryIndex < Self.knownCategoryKeys.count {
+            return Self.knownCategoryKeys[selectedCategoryIndex]
+        }
+        return ""
     }
-    
+
     private var currentCategoryDisplay: String {
-        guard selectedCategoryIndex < dataManager.categories.count
-        else { return isGlobalEnglishMode ? "Video" : "影视" }
-        return categoryDisplayName(dataManager.categories[selectedCategoryIndex].name)
+        let key = currentCategoryKey
+        guard !key.isEmpty else { return isGlobalEnglishMode ? "Video" : "影视" }
+        return categoryDisplayName(key)
     }
     
     private var currentCategoryColor: Color {
