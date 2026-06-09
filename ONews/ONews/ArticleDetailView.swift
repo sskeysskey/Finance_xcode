@@ -92,6 +92,8 @@ struct ArticleDetailView: View {
 
     // 【新增】引入全局的 AuthManager 用于判断是否为后门 VIP
     @EnvironmentObject var authManager: AuthManager
+    // 【新增】获取全局导航路径，用于跳转视频首页
+    @Environment(\.appNavPath) private var appNavPath
 
     // 【修改为】：让它变成普通属性，不再触发 ArticleDetailView 的整体刷新
     let audioPlayerManager: AudioPlayerManager
@@ -428,6 +430,14 @@ struct ArticleDetailView: View {
                         }
                         Button(action: { showFontAdjustment = true }) {
                             Label(Localized.isEnglish ? "Font Size" : "字体大小", systemImage: "textformat.size")
+                        }
+
+                        // 【新增】跳转视频首页
+                        Button(action: {
+                            appNavPath?.wrappedValue.append(NavigationTarget.videoModule)
+                        }) {
+                            Label(Localized.isEnglish ? "Video Library" : "影视频道",
+                                systemImage: "play.rectangle.fill")
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")

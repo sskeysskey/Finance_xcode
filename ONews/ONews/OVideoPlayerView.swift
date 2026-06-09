@@ -93,6 +93,8 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private var defaultRateObs: NSKeyValueObservation?   // ⭐ 新增
         private var currentItemObs: NSKeyValueObservation?
         private var bufferingResetWork: DispatchWorkItem?
+        private var targetOrientationMask: UIInterfaceOrientationMask?
+        private var orientationWork: DispatchWorkItem?
 
         // ⭐ 新增:标记全屏 / 画中画状态,用于在 viewWillDisappear 时判断是否应暂停
         var isFullScreen = false
@@ -192,25 +194,45 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             bufferEmptyObs?.invalidate()
             bufferFullObs?.invalidate()
             rateObs?.invalidate()
-            defaultRateObs?.invalidate()        // ⭐ 新增
+            defaultRateObs?.invalidate()
             currentItemObs?.invalidate()
             bufferingResetWork?.cancel()
+            orientationWork?.cancel()        // ⭐ 新增
         }
 
-        // MARK: 全屏代理(同时维护 isFullScreen 标记)
+        // MARK: 全屏代理（用过渡的 completion 决定最终状态）
         func playerViewController(_ playerViewController: AVPlayerViewController,
                                 willBeginFullScreenPresentationWithAnimationCoordinator
                                 coordinator: UIViewControllerTransitionCoordinator) {
+            // 先乐观地标记为全屏（保证 viewWillDisappear 期间不会误暂停）
             isFullScreen = true
-            AppDelegate.orientationLock = .landscape
-            forceOrientation(.landscapeRight)
+            coordinator.animate(alongsideTransition: nil) { [weak self] context in
+                guard let self = self else { return }
+                if context.isCancelled {
+                    // 用户半路放弃进入全屏 → 实际仍是非全屏
+                    self.isFullScreen = false
+                    self.applyOrientation(fullScreen: false)
+                } else {
+                    self.isFullScreen = true
+                    self.applyOrientation(fullScreen: true)
+                }
+            }
         }
+
         func playerViewController(_ playerViewController: AVPlayerViewController,
                                 willEndFullScreenPresentationWithAnimationCoordinator
                                 coordinator: UIViewControllerTransitionCoordinator) {
-            isFullScreen = false
-            AppDelegate.orientationLock = .portrait
-            forceOrientation(.portrait)
+            coordinator.animate(alongsideTransition: nil) { [weak self] context in
+                guard let self = self else { return }
+                if context.isCancelled {
+                    // 用户半路放弃退出 → 实际仍是全屏
+                    self.isFullScreen = true
+                    self.applyOrientation(fullScreen: true)
+                } else {
+                    self.isFullScreen = false
+                    self.applyOrientation(fullScreen: false)
+                }
+            }
         }
 
         // MARK: 画中画代理(维护 isPiP 标记)
@@ -221,16 +243,42 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             isPiP = false
         }
 
-        private func forceOrientation(_ orientation: UIInterfaceOrientation) {
+        // 统一入口：根据全屏与否设定锁 + 触发旋转
+        private func applyOrientation(fullScreen: Bool) {
+            let mask: UIInterfaceOrientationMask = fullScreen ? .landscape : .portrait
+            AppDelegate.orientationLock = mask
+            requestRotation(to: mask)
+        }
+
+        // 去抖：快速连续切换时只执行最后一次，避免 requestGeometryUpdate 互相打架
+        private func requestRotation(to mask: UIInterfaceOrientationMask) {
+            targetOrientationMask = mask
+            orientationWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self = self, let mask = self.targetOrientationMask else { return }
+                self.performRotation(mask: mask)
+            }
+            orientationWork = work
+            // 极短延迟即可把同一帧内的多次切换合并成一次
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+        }
+
+        private func performRotation(mask: UIInterfaceOrientationMask) {
             if #available(iOS 16.0, *) {
                 guard let scene = UIApplication.shared.connectedScenes
                         .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
                 else { return }
-                let mask: UIInterfaceOrientationMask = orientation.isLandscape ? .landscape : .portrait
-                scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
+                // 关键：先让系统重新询问"支持的方向"，再请求几何更新
                 scene.keyWindow?.rootViewController?
                     .setNeedsUpdateOfSupportedInterfaceOrientations()
+                scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
+                    // 忽略错误：通常是过渡进行中被拒，去抖下一次会补上
+                    #if DEBUG
+                    print("requestGeometryUpdate: \(error.localizedDescription)")
+                    #endif
+                }
             } else {
+                let orientation: UIInterfaceOrientation = (mask == .landscape) ? .landscapeRight : .portrait
                 UIDevice.current.setValue(orientation.rawValue, forKey: "orientation")
                 UIViewController.attemptRotationToDeviceOrientation()
             }
