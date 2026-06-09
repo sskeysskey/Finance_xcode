@@ -228,7 +228,7 @@ enum VideoCategoryTheme {
 struct VideoModuleView: View {
     // 【修改】从 @StateObject 改为 @EnvironmentObject，复用全局已预加载的实例
     @EnvironmentObject private var dataManager: OVideoDataManager
-    
+    @EnvironmentObject var authManager: AuthManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
     // ⭐ 持久化排序状态
@@ -237,9 +237,6 @@ struct VideoModuleView: View {
     
     // ⭐ 新增：持久化记录用户是否已经看过滑动引导
     @AppStorage("hasSeenVideoSwipeGuide") private var hasSeenVideoSwipeGuide = false
-    
-    // 【新增】获取 AuthManager 以读取 userId
-    @EnvironmentObject var authManager: AuthManager
     
     private var sortBinding: Binding<VideoSortOption> {
         Binding(
@@ -263,7 +260,8 @@ struct VideoModuleView: View {
                             selectedCategoryIndex: categoryIndexBinding,
                             sortOption: sortBinding)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VideoBottomBar(dataManager: dataManager)
+                    // ⭐ 传递 isLoading 状态
+                    VideoBottomBar(dataManager: dataManager, isLoading: dataManager.isLoading)
                 }
             
             // ⭐ 新增：如果还没看过引导，则显示新手引导遮罩
@@ -288,13 +286,15 @@ struct VideoBottomBar: View {
     @ObservedObject var dataManager: OVideoDataManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
-    /// 当前选中项（首页默认选中）。这里仅做高亮指示，真正的页面切换仍走 NavigationLink
+    // ⭐ 新增：接收加载状态
+    let isLoading: Bool
+    
     @State private var activeTab: Tab = .home
     enum Tab: Hashable { case home, filter, search, cache }
     
     var body: some View {
         HStack(spacing: 4) {
-            // 首页（直接是当前页，不需要 NavigationLink）
+            // 首页（始终可点击）
             Button {
                 activeTab = .home
             } label: {
@@ -308,6 +308,7 @@ struct VideoBottomBar: View {
             }
             .buttonStyle(.plain)
             
+            // ⭐ 分类按钮：加载中时禁用
             NavigationLink {
                 VideoFilterView(dataManager: dataManager)
             } label: {
@@ -320,7 +321,10 @@ struct VideoBottomBar: View {
                 )
             }
             .buttonStyle(.plain)
+            .disabled(isLoading)  // ⭐ 加载中时禁用
+            .opacity(isLoading ? 0.4 : 1.0)  // ⭐ 变暗提示不可点
             
+            // ⭐ 搜索按钮：加载中时禁用
             NavigationLink {
                 VideoSearchTabView(dataManager: dataManager)
             } label: {
@@ -333,7 +337,10 @@ struct VideoBottomBar: View {
                 )
             }
             .buttonStyle(.plain)
+            .disabled(isLoading)  // ⭐ 加载中时禁用
+            .opacity(isLoading ? 0.4 : 1.0)  // ⭐ 变暗提示不可点
             
+            // ⭐ 缓存按钮：加载中时禁用（可选，你也可以不禁用缓存）
             NavigationLink {
                 VideoCacheView()
             } label: {
