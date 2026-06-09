@@ -189,7 +189,7 @@ struct VideoDetailView: View {
         } message: {
             Text(isGlobalEnglishMode
                 ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
-                : "您今天的免费额度已用完，明天将会恢复。是否订阅以继续观看？")
+                : "您今天的免费额度已用完，订阅后即可以无限畅想所有视频。")
         }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))

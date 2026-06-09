@@ -63,7 +63,7 @@ struct SubscriptionView: View {
                 }
                 .padding(.top, 40)
                 
-                // 免费套餐卡片
+                // ========== 免费套餐卡片（灰圈 + 灰勾选） ==========
                 Button(action: {
                     // 选择免费，直接关闭
                     dismiss()
@@ -82,7 +82,7 @@ struct SubscriptionView: View {
                         Spacer()
                         if !authManager.isSubscribed {
                             Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
+                                .foregroundColor(.gray)        // ← 灰色勾选
                                 .font(.title)
                         }
                     }
@@ -92,13 +92,13 @@ struct SubscriptionView: View {
                     .cornerRadius(12)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(authManager.isSubscribed ? Color.clear : Color.green, lineWidth: 2)
+                            .stroke(authManager.isSubscribed ? Color.clear : Color.gray, lineWidth: 2)  // ← 灰色圈
                     )
                     .shadow(color: Color.black.opacity(0.05), radius: 5)
                 }
                 .buttonStyle(PlainButtonStyle())
                 
-                // 付费套餐卡片
+                // ========== 付费套餐卡片（绿圈 + 绿色字体） ==========
                 Button(action: {
                     // 【修改 2】购买按钮逻辑优化
                     if authManager.isLoggedIn {
@@ -122,7 +122,7 @@ struct SubscriptionView: View {
                             // 【修改】价格双语化
                             Text(Localized.pricePerMonth)
                                 .font(.title2.bold())
-                                .foregroundColor(.orange)
+                                .foregroundColor(.green)        // ← 绿色价格
                         }
                     }
                     .padding()
@@ -131,7 +131,7 @@ struct SubscriptionView: View {
                     .cornerRadius(12)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(authManager.isSubscribed ? Color.orange : Color.clear, lineWidth: 2)
+                            .stroke(Color.green, lineWidth: 2)  // ← 始终绿色边框
                     )
                     .shadow(color: Color.black.opacity(0.05), radius: 5)
                 }
@@ -398,7 +398,6 @@ struct SubscriptionView: View {
                     // 因为此时兑换框已经弹出来了，用户的“登录并自动触发兑换”意图已经完成。
                     // 剩下的重试操作由用户在当前 Alert 界面手动完成即可。
                     pendingAction = .none 
-                    
                     inviteCode = ""
                     errorMessage = error.localizedDescription
                     showError = true

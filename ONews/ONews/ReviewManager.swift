@@ -11,11 +11,11 @@ class ReviewManager {
     // 【新增】持久化存储视频交互计数（包括播放返回、详情页返回等）
     @AppStorage("userVideoInteractionCount") private var videoInteractionCount: Int = 0
     
-    // 新闻触发弹窗的阈值：第 5, 20, 50, 100, 200 篇
-    private let reviewThresholds: Set<Int> = [5, 20, 50, 100, 200]
+    // 新闻触发弹窗的阈值：
+    private let reviewThresholds: Set<Int> = [10, 25, 50, 100, 200]
     
-    // 【新增】视频触发弹窗的阈值：第 3, 10, 30, 80 次交互（考虑到视频消费频次低于新闻，阈值设得稍低且有节制）
-    private let videoThresholds: Set<Int> = [3, 10, 30, 80]
+    // 【新增】视频触发弹窗的阈值：第 10, 20, 50, 100 次交互（考虑到视频消费频次低于新闻，阈值设得稍低且有节制）
+    private let videoThresholds: Set<Int> = [10, 20, 50, 100]
     
     private init() {}
     

@@ -326,10 +326,10 @@ struct VideoPlayerPageView: View {
     var body: some View {
         ZStack {
             // 【新增】未订阅时显示锁屏，不解析、不播放
-            if !hasAccess {
-                lockedOverlay
-            } else {
-                // 背景渐变
+            // if !hasAccess {
+            //     // lockedOverlay
+            // } else {
+            //     // 背景渐变
                 LinearGradient(
                     colors: [Color(.systemBackground),
                             Color.accentColor.opacity(0.06),
@@ -377,7 +377,7 @@ struct VideoPlayerPageView: View {
                         .padding(.top, 16)
                     }
                 }
-            }
+            // }
         }
         .navigationTitle(isGlobalEnglishMode ? "Player" : "播放")
         .navigationBarTitleDisplayMode(.inline)
@@ -433,43 +433,6 @@ struct VideoPlayerPageView: View {
 
     private var hasAccess: Bool {
         authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(activeEpisodeURL)
-    }
-
-    private var lockedOverlay: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Image(systemName: "lock.fill")
-                .font(.system(size: 60))
-                .foregroundColor(.orange)
-            Text(isGlobalEnglishMode ? "Subscription Required" : "需要订阅")
-                .font(.title2.bold())
-            Text(isGlobalEnglishMode
-                 ? "Subscribe to unlock video playback and offline caching."
-                 : "订阅后即可在线播放并使用离线缓存功能")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-
-            Button {
-                showSubscriptionSheet = true
-            } label: {
-                Text(isGlobalEnglishMode ? "Subscribe Now" : "立即订阅")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 40).padding(.vertical, 12)
-                    .background(Capsule().fill(Color.orange))
-            }
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.viewBackground.ignoresSafeArea())
-        .onAppear {
-            // 进来就直接弹订阅页
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                showSubscriptionSheet = true
-            }
-        }
     }
 
     // 播放器主区
@@ -699,18 +662,22 @@ struct CachedVideoPlayerView: View {
 
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    
+
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
-    @ObservedObject private var quotaManager = FreeQuotaManager.shared   // ⭐ 新增
+    @ObservedObject private var quotaManager = FreeQuotaManager.shared
 
     // ⭐ 新增：选集相关状态
     @State private var showEpisodePicker = false
     @State private var overrideEpisodeURL: String? = nil
     @State private var overrideEpisodeName: String? = nil
+
+    // ⭐ 仅用于「选集切换到未解锁集」时的门禁
     @State private var showCachedConsumeConfirm = false
     @State private var cachedConsumeRemaining = 0
+    @State private var showQuotaExhaustedAlert = false
+    @State private var pendingSwitchEpisode: VideoEpisodeItem? = nil
 
     // ⭐ 计算当前实际在播的集数
     private var activeEpisodeURL: String { overrideEpisodeURL ?? realURL }
@@ -727,79 +694,79 @@ struct CachedVideoPlayerView: View {
     private var cachedEpisodes: [VideoEpisodeItem] {
         episodes.filter { downloadManager.localBookmarks[$0.url] != nil }
     }
+    private var episodeKey: String {
+        downloadManager.cacheMetadata[activeEpisodeURL]?.originalEpisodeURL ?? activeEpisodeURL
+    }
+    private var hasAccess: Bool {
+        authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(episodeKey)
+    }
 
     var body: some View {
         ZStack {
-            if !hasAccess {
-                lockedOverlay
-            } else {
-                LinearGradient(colors: [Color(.systemBackground),
-                                        Color.accentColor.opacity(0.05)],
-                            startPoint: .top, endPoint: .bottom).ignoresSafeArea()
+            LinearGradient(colors: [Color(.systemBackground),
+                                    Color.accentColor.opacity(0.05)],
+                           startPoint: .top, endPoint: .bottom).ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    ZStack {
-                        Color.black
-                        // ⭐ 使用 activeEpisodeURL 查找本地缓存，并强制重建
-                        if let local = downloadManager.getLocalURL(for: activeEpisodeURL) {
-                            VideoPlayerView(videoURL: local, isBuffering: .constant(false))
-                                .id(activeEpisodeURL)
-                        } else if let url = URL(string: activeEpisodeURL) {
-                            VideoPlayerView(videoURL: url, isBuffering: .constant(false))
-                                .id(activeEpisodeURL)
-                        } else {
-                            Text(isGlobalEnglishMode ? "Unable to play" : "无法播放")
-                                .foregroundColor(.white)
-                        }
+            VStack(spacing: 0) {
+                ZStack {
+                    Color.black
+                    if let local = downloadManager.getLocalURL(for: activeEpisodeURL) {
+                        VideoPlayerView(videoURL: local, isBuffering: .constant(false))
+                            .id(activeEpisodeURL)
+                    } else if let url = URL(string: activeEpisodeURL) {
+                        VideoPlayerView(videoURL: url, isBuffering: .constant(false))
+                            .id(activeEpisodeURL)
+                    } else {
+                        Text(isGlobalEnglishMode ? "Unable to play" : "无法播放")
+                            .foregroundColor(.white)
                     }
-                    .aspectRatio(16.0/9.0, contentMode: .fit)
-                    .frame(maxWidth: .infinity)
+                }
+                .aspectRatio(16.0/9.0, contentMode: .fit)
+                .frame(maxWidth: .infinity)
 
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 14) {
-                            // ⭐ 标题行：支持选集按钮
-                            HStack(spacing: 10) {
-                                Text(displayTitle)
-                                    .font(.system(size: 17, weight: .bold))
-                                    .foregroundColor(.primary)
-                                    .lineLimit(3)
-                                Spacer()
-                                if cachedEpisodes.count > 1 {
-                                    episodeSelectorButton
-                                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 10) {
+                            Text(displayTitle)
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundColor(.primary)
+                                .lineLimit(3)
+                            Spacer()
+                            if cachedEpisodes.count > 1 {
+                                episodeSelectorButton
                             }
-                            .padding(.horizontal, 16).padding(.top, 16)
-
-                            HStack(spacing: 6) {
-                                Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
-                                Text(isGlobalEnglishMode
-                                    ? "Playing from local cache"
-                                    : "正在使用本地缓存播放")
-                                    .font(.caption).foregroundColor(.secondary)
-                            }
-                            .padding(.horizontal, 12).padding(.vertical, 8)
-                            .background(Capsule().fill(Color.green.opacity(0.10)))
-                            .padding(.horizontal, 16)
-
-                            Button(role: .destructive) {
-                                downloadManager.deleteDownload(urlString: activeEpisodeURL)
-                                dismiss()
-                            } label: {
-                                Label(isGlobalEnglishMode ? "Delete Cache" : "删除缓存",
-                                    systemImage: "trash")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(.red)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                            .fill(Color.red.opacity(0.12))
-                                    )
-                            }
-                            .padding(.horizontal, 16)
-
-                            Spacer(minLength: 30)
                         }
+                        .padding(.horizontal, 16).padding(.top, 16)
+
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
+                            Text(isGlobalEnglishMode
+                                ? "Playing from local cache"
+                                : "正在使用本地缓存播放")
+                                .font(.caption).foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(Capsule().fill(Color.green.opacity(0.10)))
+                        .padding(.horizontal, 16)
+
+                        Button(role: .destructive) {
+                            downloadManager.deleteDownload(urlString: activeEpisodeURL)
+                            dismiss()
+                        } label: {
+                            Label(isGlobalEnglishMode ? "Delete Cache" : "删除缓存",
+                                systemImage: "trash")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.red)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.red.opacity(0.12))
+                                )
+                        }
+                        .padding(.horizontal, 16)
+
+                        Spacer(minLength: 30)
                     }
                 }
             }
@@ -808,6 +775,18 @@ struct CachedVideoPlayerView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
+        }
+        .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度已用完",
+            isPresented: $showQuotaExhaustedAlert) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
+                // 用户明确点订阅，才弹出订阅页
+                showSubscriptionSheet = true
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
+                : "您今天的免费额度已用完，订阅后即可以无限畅想所有视频。")
         }
         // ⭐ 新增：选集弹窗
         .sheet(isPresented: $showEpisodePicker) {
@@ -819,59 +798,38 @@ struct CachedVideoPlayerView: View {
             .presentationDetents([.medium, .large])
         }
         .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
-            isPresented: $showCachedConsumeConfirm) {          // ⭐ 改
-            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+               isPresented: $showCachedConsumeConfirm) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
+                pendingSwitchEpisode = nil
+            }
             Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
-                Task { await consumeAndPlayCached() }             // ⭐ 改
+                Task { await consumeAndSwitch() }
             }
         } message: {
             Text(isGlobalEnglishMode
-                ? "This will use 1 of today's free passes (\(cachedConsumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."   // ⭐ 改
-                : "本次将消耗 1 次今日免费次数（剩余 \(cachedConsumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")   // ⭐ 改
+                ? "This will use 1 of today's free passes (\(cachedConsumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
+                : "本次将消耗 1 次今日免费次数（剩余 \(cachedConsumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
+        }
+        .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度已用完",
+               isPresented: $showQuotaExhaustedAlert) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
+                showSubscriptionSheet = true
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
+                : "您今天的免费额度已用完，订阅后即可以无限畅想所有视频。")
         }
         .task {
-            if !hasAccess {
-                // 未订阅且未解锁：尝试引导消耗
-                if FreeQuotaManager.shared.remaining > 0 {
-                    cachedConsumeRemaining = FreeQuotaManager.shared.remaining
-                    showCachedConsumeConfirm = true
-                } else {
-                    showSubscriptionSheet = true
-                }
-            } else {
-                recordPlayback()
-            }
+            await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
+            recordPlayback()   // 进入即播，权限已在列表页保证
         }
         .onChange(of: authManager.isSubscribed) { newValue in
             if newValue { recordPlayback() }
         }
     }
 
-    // 3. 新增消耗方法
-    private func consumeAndPlayCached() async {
-        let uid = FreeQuotaManager.currentUserId(auth: authManager)
-        let result = await quotaManager.unlock(userId: uid, episodeKey: episodeKey,
-                                            videoTitle: displayTitle)
-        switch result {
-        case .success, .alreadyUnlocked:
-            // 解锁成功，刷新 UI（hasAccess 会重新计算为 true）
-            // 这里不需要手动跳转，因为 hasAccess 变了，body 会重新渲染
-            recordPlayback()
-        case .quotaExceeded:
-            showSubscriptionSheet = true
-        case .failed:
-            showSubscriptionSheet = true
-        }
-    }
-
-    private var episodeKey: String {
-        downloadManager.cacheMetadata[activeEpisodeURL]?.originalEpisodeURL ?? activeEpisodeURL
-    }
-    private var hasAccess: Bool {
-        authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(episodeKey)
-    }
-
-    // ⭐ 新增：选集按钮
     private var episodeSelectorButton: some View {
         Button {
             showEpisodePicker = true
@@ -888,15 +846,44 @@ struct CachedVideoPlayerView: View {
         .buttonStyle(PlainButtonStyle())
     }
 
-    // ⭐ 新增：切集逻辑（离线播放器直接切换本地缓存，无需网络解析）
+    // ⭐ 选集切换：先门禁，未解锁才弹确认；通过后再切
     private func switchToEpisode(_ ep: VideoEpisodeItem) {
         guard ep.url != activeEpisodeURL else { return }
+        let key = downloadManager.cacheMetadata[ep.url]?.originalEpisodeURL ?? ep.url
+        switch decideVideoAccess(episodeKey: key, auth: authManager, quota: quotaManager) {
+        case .allowed:
+            applyEpisode(ep)
+        case .needConsume(let r):
+            pendingSwitchEpisode = ep
+            cachedConsumeRemaining = r
+            showCachedConsumeConfirm = true
+        case .exhausted:
+            showQuotaExhaustedAlert = true
+        }
+    }
+
+    private func applyEpisode(_ ep: VideoEpisodeItem) {
         overrideEpisodeURL = ep.url
         overrideEpisodeName = ep.name
         recordPlayback()
     }
 
-    // ⭐ 修改：统一的上报 + 写本地观看记录（首次播放或切集都调用）
+    private func consumeAndSwitch() async {
+        guard let ep = pendingSwitchEpisode else { return }
+        let key = downloadManager.cacheMetadata[ep.url]?.originalEpisodeURL ?? ep.url
+        let uid = FreeQuotaManager.currentUserId(auth: authManager)
+        let base = title.components(separatedBy: " · ").first ?? title
+        let result = await quotaManager.unlock(userId: uid, episodeKey: key,
+                                               videoTitle: "\(base) · \(ep.name)")
+        switch result {
+        case .success, .alreadyUnlocked:
+            applyEpisode(ep)
+        case .quotaExceeded, .failed:
+            showQuotaExhaustedAlert = true
+        }
+        pendingSwitchEpisode = nil
+    }
+
     private func recordPlayback() {
         guard hasAccess else { return }
 
@@ -912,7 +899,7 @@ struct CachedVideoPlayerView: View {
 
         let baseTitle = title.components(separatedBy: " · ").first ?? title
         let trackTitle = activeEpisodeName.map { "\(baseTitle) · \($0)" } ?? title
-        
+
         TrackingManager.shared.track(
             event: .play,
             userId: trackUserId,
@@ -921,51 +908,16 @@ struct CachedVideoPlayerView: View {
             videoTitle: trackTitle
         )
 
+        let originalKey = downloadManager.cacheMetadata[activeEpisodeURL]?.originalEpisodeURL ?? activeEpisodeURL
+
         VideoPlayRecordManager.shared.addRecord(
             videoTitle: baseTitle,
             episodeName: activeEpisodeName ?? "",
-            videoURL: activeEpisodeURL,
+            videoURL: originalKey,                 // ⭐ 改成原始 episodeURL
             coverImage: downloadManager.cacheMetadata[activeEpisodeURL]?.coverImage,
             channelName: channelName,
             sourceURL: nil
         )
-    }
-    
-    // 【保留】未订阅锁屏视图
-    private var lockedOverlay: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Image(systemName: "lock.fill")
-                .font(.system(size: 60))
-                .foregroundColor(.orange)
-            Text(isGlobalEnglishMode ? "Subscription Required" : "需要订阅")
-                .font(.title2.bold())
-            Text(isGlobalEnglishMode 
-                 ? "Subscribe to unlock video playback and offline caching."
-                 : "订阅后即可在线播放并使用离线缓存功能")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
-            
-            Button {
-                showSubscriptionSheet = true
-            } label: {
-                Text(isGlobalEnglishMode ? "Subscribe Now" : "立即订阅")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 40).padding(.vertical, 12)
-                    .background(Capsule().fill(Color.orange))
-            }
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.viewBackground.ignoresSafeArea())
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                showSubscriptionSheet = true
-            }
-        }
     }
 }
 

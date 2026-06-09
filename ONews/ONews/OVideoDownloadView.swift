@@ -5,6 +5,15 @@ import SwiftUI
 import AVKit
 import UIKit
 
+// MARK: - 缓存播放跳转目标（用于门禁通过后再跳转）
+struct CachedPlayTarget: Identifiable {
+    var id: String { primaryURL }
+    let primaryURL: String          // 要播放的 url（也用于推导 episodeKey）
+    let title: String               // 剧名
+    let episodeName: String?
+    let episodes: [VideoEpisodeItem]
+}
+
 final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDelegate {
     static let shared = HLSDownloadManager()
     private var downloadSession: AVAssetDownloadURLSession!
@@ -897,10 +906,18 @@ struct VideoCacheView: View {
 
     // 【新增】订阅 / 蜂窝拦截
     @EnvironmentObject var authManager: AuthManager
+    @ObservedObject private var quotaManager = FreeQuotaManager.shared   // ⭐ 新增
     @State private var showSubscriptionSheet = false
     @State private var showCellularAlert = false
 
-    // 【替换】把原来的 cachedItems 改为按剧分组
+    // ⭐ 门禁 / 程序化跳转状态
+    @State private var cachedPlayTarget: CachedPlayTarget? = nil
+    @State private var navigateToCachedPlayer = false
+    @State private var pendingCachedTarget: CachedPlayTarget? = nil
+    @State private var showCachedConsumeConfirm = false
+    @State private var cachedConsumeRemaining = 0
+    @State private var showQuotaExhausted = false
+
     private var groupedCachedItems: [CachedSeriesGroup] {
         var dict: [String: [(url: String, meta: VideoCacheMetadata)]] = [:]
         for url in downloadManager.localBookmarks.keys {
@@ -941,6 +958,17 @@ struct VideoCacheView: View {
         downloadingItems.filter { downloadManager.isPaused[$0.url] ?? false }.count
     }
 
+    // ⭐ 把一个分组转成选集用的 VideoEpisodeItem 数组
+    private func makeEpisodeItems(from group: CachedSeriesGroup) -> [VideoEpisodeItem] {
+        group.episodes.enumerated().map { index, item in
+            let name = item.meta.episodeName ?? item.meta.title
+            let digits = name.filter { $0.isNumber }
+            let number = (!digits.isEmpty && digits.count <= 4 && Int(digits) != nil)
+                ? digits : String(index + 1)
+            return VideoEpisodeItem(number: number, name: name, url: item.url)
+        }
+    }
+
     var body: some View {
         ZStack {
             LinearGradient(
@@ -977,30 +1005,24 @@ struct VideoCacheView: View {
                         )) {
                             ForEach(groupedCachedItems) { group in
                                 if group.episodes.count == 1 {
-                                    // 单集 / 电影：直接卡片 + 跳转播放
+                                    // ⭐ 单集：Button + 门禁，不再直接 NavigationLink
                                     let row = group.episodes[0]
-                                    ZStack {
-                                        CachedItemCard(meta: row.meta, url: row.url)
-                                        let seriesTitle = row.meta.seriesTitle?.isEmpty == false
-                                            ? row.meta.seriesTitle!
-                                            : row.meta.title.components(separatedBy: " · ").first ?? row.meta.title
+                                    let seriesTitle = row.meta.seriesTitle?.isEmpty == false
+                                        ? row.meta.seriesTitle!
+                                        : row.meta.title.components(separatedBy: " · ").first ?? row.meta.title
+                                    let eps = makeEpisodeItems(from: group)
 
-                                        NavigationLink(destination: CachedVideoPlayerView(
-                                            realURL: row.url,
+                                    Button {
+                                        attemptPlayCached(CachedPlayTarget(
+                                            primaryURL: row.url,
                                             title: seriesTitle,
                                             episodeName: row.meta.episodeName,
-                                            episodes: group.episodes.enumerated().map { index, item in
-                                                let name = item.meta.episodeName ?? item.meta.title
-                                                let digits = name.filter { $0.isNumber }
-                                                let number = (!digits.isEmpty && digits.count <= 4 && Int(digits) != nil)
-                                                    ? digits : String(index + 1)
-                                                return VideoEpisodeItem(number: number, name: name, url: item.url)
-                                            }
-                                        )) {
-                                            EmptyView()
-                                        }
-                                        .opacity(0)
+                                            episodes: eps
+                                        ))
+                                    } label: {
+                                        CachedItemCard(meta: row.meta, url: row.url)
                                     }
+                                    .buttonStyle(.plain)
                                     .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                                     .listRowBackground(Color.clear)
                                     .listRowSeparator(.hidden)
@@ -1013,7 +1035,7 @@ struct VideoCacheView: View {
                                         .tint(.red)
                                     }
                                 } else {
-                                    // 多集剧集：折叠成一个分组卡片 + 跳转详情列表
+                                    // 多集剧集：仍然只是跳到详情列表（不涉及播放，无需门禁）
                                     ZStack {
                                         CachedSeriesCard(group: group)
                                         NavigationLink(destination: CachedSeriesDetailView(
@@ -1050,6 +1072,17 @@ struct VideoCacheView: View {
         }
         .navigationTitle(isGlobalEnglishMode ? "Offline Cache" : "离线缓存")
         .navigationBarTitleDisplayMode(.inline)
+        // ⭐ 程序化跳转：门禁通过后才进播放页
+        .navigationDestination(isPresented: $navigateToCachedPlayer) {
+            if let t = cachedPlayTarget {
+                CachedVideoPlayerView(
+                    realURL: t.primaryURL,
+                    title: t.title,
+                    episodeName: t.episodeName,
+                    episodes: t.episodes
+                )
+            }
+        }
         .toolbar {
             // 📺 【核心修改】：在右侧增加“观看记录”文本和时钟图标，并改用 NavigationLink 进行全屏推入
             ToolbarItemGroup(placement: .navigationBarTrailing) {
@@ -1080,9 +1113,67 @@ struct VideoCacheView: View {
                  ? "You are currently on a cellular network and 'Wi-Fi Only' is enabled. Do you want to disable 'Wi-Fi Only' and resume downloading?"
                  : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 缓存”。是否关闭该限制并继续下载？")
         }
+        // ⭐ 消耗确认 / 额度用完
+        .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
+               isPresented: $showCachedConsumeConfirm) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
+                pendingCachedTarget = nil
+            }
+            Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
+                Task { await consumeAndPlayCached() }
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "This will use 1 of today's free passes (\(cachedConsumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
+                : "本次将消耗 1 次今日免费次数（剩余 \(cachedConsumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
+        }
+        .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度已用完",
+               isPresented: $showQuotaExhausted) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
+                showSubscriptionSheet = true
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
+                : "您今天的免费额度已用完，订阅后即可以无限畅想所有视频。")
+        }
+        .task {
+            await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
+        }
     }
 
-    // 【新增】一键继续的处理逻辑
+    // MARK: - 门禁逻辑
+    private func attemptPlayCached(_ target: CachedPlayTarget) {
+        let key = downloadManager.cacheMetadata[target.primaryURL]?.originalEpisodeURL ?? target.primaryURL
+        switch decideVideoAccess(episodeKey: key, auth: authManager, quota: quotaManager) {
+        case .allowed:
+            cachedPlayTarget = target
+            navigateToCachedPlayer = true
+        case .needConsume(let r):
+            pendingCachedTarget = target
+            cachedConsumeRemaining = r
+            showCachedConsumeConfirm = true
+        case .exhausted:
+            showQuotaExhausted = true
+        }
+    }
+
+    private func consumeAndPlayCached() async {
+        guard let target = pendingCachedTarget else { return }
+        let key = downloadManager.cacheMetadata[target.primaryURL]?.originalEpisodeURL ?? target.primaryURL
+        let uid = FreeQuotaManager.currentUserId(auth: authManager)
+        let result = await quotaManager.unlock(userId: uid, episodeKey: key, videoTitle: target.title)
+        switch result {
+        case .success, .alreadyUnlocked:
+            cachedPlayTarget = target
+            navigateToCachedPlayer = true
+        case .quotaExceeded, .failed:
+            showQuotaExhausted = true
+        }
+        pendingCachedTarget = nil
+    }
+
     private func resumeAllAction() {
         guard authManager.canAccessVideoContent() else {
             showSubscriptionSheet = true
@@ -1434,10 +1525,18 @@ extension HLSDownloadManager {
 struct VideoPlayHistoryView: View {
     @StateObject private var recordManager = VideoPlayRecordManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    
-    // 用于控制在历史记录中点击后，跳转到播放页
-    // @State private var selectedRecord: VideoPlayRecord? = nil
-    // @State private var navigateToPlayer = false
+
+    @EnvironmentObject var authManager: AuthManager
+    @ObservedObject private var quotaManager = FreeQuotaManager.shared
+    @State private var showSubscriptionSheet = false
+
+    // ⭐ 门禁 / 程序化跳转
+    @State private var playRecord: VideoPlayRecord? = nil
+    @State private var navigateToPlayer = false
+    @State private var pendingRecord: VideoPlayRecord? = nil
+    @State private var showConsumeConfirm = false
+    @State private var consumeRemaining = 0
+    @State private var showQuotaExhausted = false
 
     var body: some View {
         ZStack {
@@ -1451,32 +1550,18 @@ struct VideoPlayHistoryView: View {
             } else {
                 List {
                     ForEach(recordManager.records) { record in
-                        ZStack {
-                            // 1. 放置卡片
+                        Button {
+                            attemptPlay(record)
+                        } label: {
                             recordRow(record)
-                            
-                            // 2. 放置透明 NavigationLink 覆盖整行以跳转
-                            NavigationLink(destination: VideoPlayerPageView(
-                                episodeURL: record.videoURL,
-                                videoTitle: "\(record.videoTitle) · \(record.episodeName)",
-                                coverImage: record.coverImage,
-                                channelName: record.channelName,
-                                episodeName: record.episodeName,
-                                sourceURL: record.sourceURL
-                            )) {
-                                EmptyView()
-                            }
-                            .opacity(0)
                         }
+                        .buttonStyle(.plain)
                         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
-                        // 🛠️ 调整 1：完美支持单个滑动删除
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
-                                withAnimation {
-                                    recordManager.removeRecord(record)
-                                }
+                                withAnimation { recordManager.removeRecord(record) }
                             } label: {
                                 Label(isGlobalEnglishMode ? "Delete" : "删除", systemImage: "trash")
                             }
@@ -1489,13 +1574,23 @@ struct VideoPlayHistoryView: View {
         }
         .navigationTitle(isGlobalEnglishMode ? "Watch History" : "观看记录")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $navigateToPlayer) {
+            if let r = playRecord {
+                VideoPlayerPageView(
+                    episodeURL: r.videoURL,
+                    videoTitle: "\(r.videoTitle) · \(r.episodeName)",
+                    coverImage: r.coverImage,
+                    channelName: r.channelName,
+                    episodeName: r.episodeName,
+                    sourceURL: r.sourceURL
+                )
+            }
+        }
         .toolbar {
             if !recordManager.records.isEmpty {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(role: .destructive) {
-                        withAnimation {
-                            recordManager.clearAll()
-                        }
+                        withAnimation { recordManager.clearAll() }
                     } label: {
                         Text(isGlobalEnglishMode ? "Clear All" : "清空")
                             .foregroundColor(.red)
@@ -1503,6 +1598,69 @@ struct VideoPlayHistoryView: View {
                 }
             }
         }
+        .sheet(isPresented: $showSubscriptionSheet) {
+            SubscriptionView()
+        }
+        .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
+               isPresented: $showConsumeConfirm) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
+                pendingRecord = nil
+            }
+            Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
+                Task { await consumeAndPlay() }
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "This will use 1 of today's free passes (\(consumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
+                : "本次将消耗 1 次今日免费次数（剩余 \(consumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
+        }
+        .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度已用完",
+               isPresented: $showQuotaExhausted) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
+                showSubscriptionSheet = true
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
+                : "您今天的免费额度已用完，订阅后即可以无限畅想所有视频。")
+        }
+        .task {
+            await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
+        }
+    }
+
+    // MARK: - 门禁
+    private func attemptPlay(_ record: VideoPlayRecord) {
+        switch decideVideoAccess(episodeKey: record.videoURL, auth: authManager, quota: quotaManager) {
+        case .allowed:
+            playRecord = record
+            navigateToPlayer = true
+        case .needConsume(let r):
+            pendingRecord = record
+            consumeRemaining = r
+            showConsumeConfirm = true
+        case .exhausted:
+            showQuotaExhausted = true
+        }
+    }
+
+    private func consumeAndPlay() async {
+        guard let record = pendingRecord else { return }
+        let uid = FreeQuotaManager.currentUserId(auth: authManager)
+        let result = await quotaManager.unlock(
+            userId: uid,
+            episodeKey: record.videoURL,
+            videoTitle: "\(record.videoTitle) · \(record.episodeName)"
+        )
+        switch result {
+        case .success, .alreadyUnlocked:
+            playRecord = record
+            navigateToPlayer = true
+        case .quotaExceeded, .failed:
+            showQuotaExhausted = true
+        }
+        pendingRecord = nil
     }
 
     private var emptyState: some View {
@@ -1522,15 +1680,12 @@ struct VideoPlayHistoryView: View {
 
     private func recordRow(_ record: VideoPlayRecord) -> some View {
         HStack(spacing: 12) {
-            // 缩略图
             coverThumb(name: record.coverImage)
-            
             VStack(alignment: .leading, spacing: 6) {
                 Text(record.videoTitle)
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.primary)
                     .lineLimit(1)
-                
                 HStack(spacing: 6) {
                     Text(record.episodeName)
                         .font(.system(size: 11, weight: .medium))
@@ -1538,10 +1693,7 @@ struct VideoPlayHistoryView: View {
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Color.accentColor.opacity(0.1))
                         .cornerRadius(4)
-                    
-                    // 🛠️ 调整 3：已移除 channelName (线路名) 的显示，不让用户看到
                 }
-                
                 HStack(spacing: 4) {
                     Image(systemName: "clock")
                     Text(formattedDate(record.playTime))
@@ -1549,9 +1701,7 @@ struct VideoPlayHistoryView: View {
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
             }
-            
             Spacer()
-            
             Image(systemName: "play.circle.fill")
                 .font(.system(size: 24))
                 .foregroundColor(.accentColor.opacity(0.8))
@@ -1678,7 +1828,18 @@ struct CachedSeriesDetailView: View {
     @ObservedObject private var dm = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
-    // 实时从 downloadManager 重新计算，保证删除某一集后列表即时刷新
+    @EnvironmentObject var authManager: AuthManager
+    @ObservedObject private var quotaManager = FreeQuotaManager.shared
+    @State private var showSubscriptionSheet = false
+
+    // ⭐ 门禁 / 程序化跳转
+    @State private var cachedPlayTarget: CachedPlayTarget? = nil
+    @State private var navigateToCachedPlayer = false
+    @State private var pendingCachedTarget: CachedPlayTarget? = nil
+    @State private var showCachedConsumeConfirm = false
+    @State private var cachedConsumeRemaining = 0
+    @State private var showQuotaExhausted = false
+
     private var episodes: [(url: String, meta: VideoCacheMetadata)] {
         dm.localBookmarks.keys.compactMap { url -> (String, VideoCacheMetadata)? in
             let meta = dm.cacheMetadata[url]
@@ -1692,6 +1853,17 @@ struct CachedSeriesDetailView: View {
         }
     }
 
+    // ⭐ 当前所有集（供选集用）
+    private var episodeItems: [VideoEpisodeItem] {
+        episodes.enumerated().map { index, item in
+            let name = item.meta.episodeName ?? item.meta.title
+            let digits = name.filter { $0.isNumber }
+            let number = (!digits.isEmpty && digits.count <= 4 && Int(digits) != nil)
+                ? digits : String(index + 1)
+            return VideoEpisodeItem(number: number, name: name, url: item.url)
+        }
+    }
+
     var body: some View {
         ZStack {
             LinearGradient(colors: [Color(.systemGroupedBackground), Color.accentColor.opacity(0.05)],
@@ -1699,24 +1871,17 @@ struct CachedSeriesDetailView: View {
 
             List {
                 ForEach(Array(episodes.enumerated()), id: \.element.url) { index, row in
-                    ZStack {
-                        episodeRow(index: index, meta: row.meta)
-                        NavigationLink(destination: CachedVideoPlayerView(
-                            realURL: row.url,
+                    Button {
+                        attemptPlayCached(CachedPlayTarget(
+                            primaryURL: row.url,
                             title: seriesTitle,
                             episodeName: row.meta.episodeName,
-                            episodes: episodes.enumerated().map { index, item in
-                                let name = item.meta.episodeName ?? item.meta.title
-                                let digits = name.filter { $0.isNumber }
-                                let number = (!digits.isEmpty && digits.count <= 4 && Int(digits) != nil)
-                                    ? digits : String(index + 1)
-                                return VideoEpisodeItem(number: number, name: name, url: item.url)
-                            }
-                        )) {
-                            EmptyView()
-                        }
-                        .opacity(0)
+                            episodes: episodeItems
+                        ))
+                    } label: {
+                        episodeRow(index: index, meta: row.meta)
                     }
+                    .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
@@ -1735,23 +1900,89 @@ struct CachedSeriesDetailView: View {
         }
         .navigationTitle(seriesTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $navigateToCachedPlayer) {
+            if let t = cachedPlayTarget {
+                CachedVideoPlayerView(
+                    realURL: t.primaryURL,
+                    title: t.title,
+                    episodeName: t.episodeName,
+                    episodes: t.episodes
+                )
+            }
+        }
+        .sheet(isPresented: $showSubscriptionSheet) {
+            SubscriptionView()
+        }
+        .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
+               isPresented: $showCachedConsumeConfirm) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
+                pendingCachedTarget = nil
+            }
+            Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
+                Task { await consumeAndPlayCached() }
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "This will use 1 of today's free passes (\(cachedConsumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
+                : "本次将消耗 1 次今日免费次数（剩余 \(cachedConsumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
+        }
+        .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度已用完",
+               isPresented: $showQuotaExhausted) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
+                showSubscriptionSheet = true
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
+                : "您今天的免费额度已用完，订阅后即可以无限畅想所有视频。")
+        }
+        .task {
+            await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
+        }
+    }
+
+    // MARK: - 门禁
+    private func attemptPlayCached(_ target: CachedPlayTarget) {
+        let key = dm.cacheMetadata[target.primaryURL]?.originalEpisodeURL ?? target.primaryURL
+        switch decideVideoAccess(episodeKey: key, auth: authManager, quota: quotaManager) {
+        case .allowed:
+            cachedPlayTarget = target
+            navigateToCachedPlayer = true
+        case .needConsume(let r):
+            pendingCachedTarget = target
+            cachedConsumeRemaining = r
+            showCachedConsumeConfirm = true
+        case .exhausted:
+            showQuotaExhausted = true
+        }
+    }
+
+    private func consumeAndPlayCached() async {
+        guard let target = pendingCachedTarget else { return }
+        let key = dm.cacheMetadata[target.primaryURL]?.originalEpisodeURL ?? target.primaryURL
+        let uid = FreeQuotaManager.currentUserId(auth: authManager)
+        let result = await quotaManager.unlock(userId: uid, episodeKey: key,
+                                               videoTitle: "\(target.title) · \(target.episodeName ?? "")")
+        switch result {
+        case .success, .alreadyUnlocked:
+            cachedPlayTarget = target
+            navigateToCachedPlayer = true
+        case .quotaExceeded, .failed:
+            showQuotaExhausted = true
+        }
+        pendingCachedTarget = nil
     }
 
     private func episodeRow(index: Int, meta: VideoCacheMetadata) -> some View {
-        // ✨ 核心修改：智能提取纯粹的集数名称，过滤掉项目/剧集大标题
         let displayEpisodeName: String = {
-            // 1. 如果有 episodeName 且不为空，直接使用
-            if let epName = meta.episodeName, !epName.isEmpty {
-                return epName
-            }
-            // 2. 如果没有 epName，但 title 里含有 " · "，则切分并取最后一部分（即集数名）
+            if let epName = meta.episodeName, !epName.isEmpty { return epName }
             if meta.title.contains(" · ") {
                 let components = meta.title.components(separatedBy: " · ")
                 if let lastComponent = components.last, !lastComponent.isEmpty {
                     return lastComponent
                 }
             }
-            // 3. 降级兜底：如果都拿不到，显示完整 title
             return meta.title
         }()
 
@@ -1763,7 +1994,7 @@ struct CachedSeriesDetailView: View {
                 Image(systemName: "play.fill").foregroundColor(.accentColor)
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(displayEpisodeName)   // ← ✨ 使用过滤后的纯集数名称
+                Text(displayEpisodeName)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.primary)
                     .lineLimit(1)

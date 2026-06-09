@@ -159,13 +159,13 @@ struct Localized {
     static var errTransactionUnverified: String { tr("交易验证失败", "Transaction unverified") }
 
     // MARK: - 订阅页与支付 (Subscription)
-    static var subTitle: String { tr("每月一份早餐钱🥲", "Recent news requires Pro🥲") }
-    static var subDesc: String { tr("如果实在不想付费😓\n三天前新闻可永久免费享用\n成功付费后一个月内畅享所有视频和新闻", "Unlock full access with Pro.\nOr enjoy older news (3+ days) for free forever.") }
+    static var subTitle: String { tr("订阅后即可畅享🥲", "Recent news requires Pro🥲") }
+    static var subDesc: String { tr("每月仅需一份早餐钱😓", "Unlock full access with Pro.\nOr enjoy older news (3+ days) for free forever.") }
     static var planFree: String { tr("【当前】免费版", "[Current] Free Plan") }
-    static var planFreeDetail: String { tr("可免费浏览 三天前 的所有文章", "Access articles older than 3 days") }
+    static var planFreeDetail: String { tr("每天会赠送免费视频额度，3天前的新闻免费阅读", "Access articles older than 3 days") }
     static var planFreeDetailSubbed: String { tr("可免费浏览 全部 视频和新闻", "Access ALL articles") }
-    static var planPro: String { tr("专业版套餐", "Pro Plan") }
-    static var planProDesc: String { tr("解锁最新资讯和全部视频，与世界同频", "Unlock latest news and Prediction Data instantly") }
+    static var planPro: String { tr("尊贵 VIP 套餐", "Pro Plan") }
+    static var planProDesc: String { tr("解锁全部视频和最新资讯，与世界同频", "Unlock latest news and Prediction Data instantly") }
     static var pricePerMonth: String { tr("¥12/月", "$1.99/mo") }
     static var currentProUser: String { tr("您当前是尊贵的专业版用户", "You are currently a Pro member") }
     static var freePlanFootnote: String { tr("如果不选择付费，您将继续使用免费版，仍可以浏览三天前的文章。", "If you don't upgrade, you can still enjoy articles older than 3 days for free.") }
