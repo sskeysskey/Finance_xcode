@@ -167,7 +167,9 @@ struct VideoDetailView: View {
         .onDisappear {
             ReviewManager.shared.recordVideoInteraction()
         }
-        .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
+        .alert(isGlobalEnglishMode
+            ? "Use Free Pass (\(consumeRemaining) left)"
+            : "今日免费赠送还剩\(consumeRemaining)点",
             isPresented: $showConsumeConfirm) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
             Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
@@ -175,21 +177,22 @@ struct VideoDetailView: View {
             }
         } message: {
             Text(isGlobalEnglishMode
-                ? "This will use 1 of today's free passes (\(consumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
-                : "本次将消耗 1 次今日免费次数（剩余 \(consumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
+                ? "This will use 1 pass."
+                : "当前视频将消耗 1 点")
         }
         // ⭐ 新增：额度用完的中间提示窗
-        .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度不足",
+        .alert(isGlobalEnglishMode
+            ? "Free Passes Used Up (0 left)"
+            : "今日免费额度不足",
             isPresented: $showQuotaExhaustedAlert) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
             Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
-                // 用户明确点订阅，才弹出订阅页
                 showSubscriptionSheet = true
             }
         } message: {
             Text(isGlobalEnglishMode
                 ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
-                : "您今天的免费额度已用完，订阅后即可以无限畅想所有视频。")
+                : "您今天的免费额度已用完，订阅后即可无限畅享所有视频。")
         }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
@@ -496,7 +499,7 @@ struct VideoDetailView: View {
                                                 .background(Circle().fill(Color.green))
                                                 .offset(x: 3, y: -3)
                                         } else if quotaManager.remaining <= 0 {
-                                            // ⭐ 未解锁且无剩余次数：橙色锁
+                                            // ⭐ 未解锁且无剩余点数：橙色锁
                                             Image(systemName: "lock.fill")
                                                 .font(.system(size: 8))
                                                 .foregroundColor(.white)
@@ -504,7 +507,7 @@ struct VideoDetailView: View {
                                                 .background(Circle().fill(Color.orange))
                                                 .offset(x: 3, y: -3)
                                         }
-                                        // ⭐ 未解锁但有剩余次数：不显示任何图标，暗示可免费点击
+                                        // ⭐ 未解锁但有剩余点数：不显示任何图标，暗示可免费点击
                                     }
                                 }
                             }
@@ -816,27 +819,24 @@ struct BatchDownloadView: View {
                 SubscriptionView()
             }
             // ⭐ 新增：批量消耗确认窗（根据数量动态文案）
-            .alert(isGlobalEnglishMode ? "Use Free Passes" : "使用免费次数",
+            .alert(isGlobalEnglishMode
+                ? "Use Free Passes (\(quotaManager.remaining) left)"
+                : "今日免费赠送还剩\(quotaManager.remaining)点",
                 isPresented: $showBatchConsumeConfirm) {
                 Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
                 Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
                     Task { await confirmBatchDownload() }
                 }
             } message: {
-                let remaining = quotaManager.remaining
-                if batchConsumeCount == 1 {
-                    Text(isGlobalEnglishMode
-                        ? "This will use 1 of today's free passes (\(remaining) left). After that, you can play / download / watch this episode unlimited times today."
-                        : "本次将消耗 1 次今日免费次数（剩余 \(remaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
-                } else {
-                    Text(isGlobalEnglishMode
-                        ? "This will use \(batchConsumeCount) of today's free passes (\(remaining) left). After that, you can play / download / watch these episodes unlimited times today."
-                        : "本次将消耗 \(batchConsumeCount) 次今日免费次数（剩余 \(remaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看所选剧集。")
-                }
+                Text(isGlobalEnglishMode
+                    ? "This will use \(batchConsumeCount) passes."
+                    : "当前操作将消耗 \(batchConsumeCount) 点")
             }
 
             // ⭐ 新增：额度不足提示窗（和详情页保持一致）
-            .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度不足",
+            .alert(isGlobalEnglishMode
+                ? "Free Passes Used Up (\(quotaManager.remaining) left)"
+                : "今日免费赠送仅剩\(quotaManager.remaining)点",
                 isPresented: $showQuotaExhaustedAlert) {
                 Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
                 Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
@@ -845,7 +845,7 @@ struct BatchDownloadView: View {
             } message: {
                 Text(isGlobalEnglishMode
                     ? "You need \(batchConsumeCount) passes but only have \(quotaManager.remaining) left. Come back tomorrow for more, or subscribe now for unlimited access."
-                    : "本次需要消耗 \(batchConsumeCount) 次免费额度，但您仅剩 \(quotaManager.remaining) 次。订阅后即可以无限畅想所有视频。")
+                    : "当前操作需消耗 \(batchConsumeCount) 点。订阅后即可无限畅享所有视频。")
             }
         }
     }
@@ -1085,14 +1085,14 @@ struct BatchDownloadView: View {
             return
         }
 
-        // 需要新消耗次数的集（未解锁的）
+        // 需要新消耗点数的集（未解锁的）
         let newOnes = selected.filter { !quotaManager.isUnlocked($0.url) }
         if newOnes.isEmpty {
             performDownloads(selected)   // 全部已解锁，直接下
             return
         }
 
-        // 记录本次需要消耗的数量，给提示文案用
+        // 记录本点需要消耗的数量，给提示文案用
         batchConsumeCount = newOnes.count
 
         // 额度不够 → 先弹"额度不足"提示，而不是直接进订阅页
