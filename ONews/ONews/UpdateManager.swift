@@ -269,17 +269,23 @@ class ResourceManager: ObservableObject {
     // 特效数据获取失败时的默认词汇
     func fetchSourceNames() async -> [String] {
         do {
-            // 复用已有的 getServerVersion 方法
-            let version = try await getServerVersion()
-            // 提取 source_mappings 的所有 value（即中文名称）
-            if let mappings = version.source_mappings {
-                let names = Array(mappings.values)
-                return names
+            // 1. 先调用 getServerVersion，这会更新 realMappings / reviewMappings / serverReviewMode
+            let _ = try await getServerVersion()
+            
+            // 2. ✅ 使用 sourceMappings 计算属性，自动处理审核模式
+            let mappings = self.sourceMappings
+            if !mappings.isEmpty {
+                // 处理 "|" 分隔符，提取中文名称（第一部分）
+                let names = mappings.values.map { rawName in
+                    let parts = rawName.components(separatedBy: "|")
+                    return parts.first?.trimmingCharacters(in: .whitespaces) ?? rawName
+                }
+                return Array(names)
             }
         } catch {
             print("特效数据获取失败: \(error)")
         }
-        // 使用双语字典中的默认词汇
+        // 失败时用默认词汇兜底
         return [
             Localized.fallbackSource1,
             Localized.fallbackSource2,

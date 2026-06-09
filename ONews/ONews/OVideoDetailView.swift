@@ -18,6 +18,8 @@ struct VideoDetailView: View {
     @State private var showConsumeConfirm = false
     @State private var consumeRemaining = 0
     @State private var pendingEpisode: (name: String, url: String)? = nil
+    // ⭐ 新增：今日额度已用完的中间提示
+    @State private var showQuotaExhaustedAlert = false
 
     // 新增：搜索跳转状态
     @State private var navigateToSearch = false
@@ -175,6 +177,19 @@ struct VideoDetailView: View {
             Text(isGlobalEnglishMode
                 ? "This will use 1 of today's free passes (\(consumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
                 : "本次将消耗 1 次今日免费次数（剩余 \(consumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
+        }
+        // ⭐ 新增：额度用完的中间提示窗
+        .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度已用完",
+            isPresented: $showQuotaExhaustedAlert) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
+                // 用户明确点订阅，才弹出订阅页
+                showSubscriptionSheet = true
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
+                : "您今天的免费额度已用完，明天将会恢复。是否订阅以继续观看？")
         }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
@@ -472,12 +487,24 @@ struct VideoDetailView: View {
                                         )
                                     
                                     if !authManager.isSubscribed {
-                                        Image(systemName: "lock.fill")
-                                            .font(.system(size: 8))
-                                            .foregroundColor(.white)
-                                            .padding(3)
-                                            .background(Circle().fill(Color.orange))
-                                            .offset(x: 3, y: -3)
+                                        if quotaManager.isUnlocked(episode.url) {
+                                            // ⭐ 已解锁：绿色对勾，表示"今天内免费可用"
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.system(size: 8))
+                                                .foregroundColor(.white)
+                                                .padding(3)
+                                                .background(Circle().fill(Color.green))
+                                                .offset(x: 3, y: -3)
+                                        } else if quotaManager.remaining <= 0 {
+                                            // ⭐ 未解锁且无剩余次数：橙色锁
+                                            Image(systemName: "lock.fill")
+                                                .font(.system(size: 8))
+                                                .foregroundColor(.white)
+                                                .padding(3)
+                                                .background(Circle().fill(Color.orange))
+                                                .offset(x: 3, y: -3)
+                                        }
+                                        // ⭐ 未解锁但有剩余次数：不显示任何图标，暗示可免费点击
                                     }
                                 }
                             }
@@ -500,7 +527,8 @@ struct VideoDetailView: View {
             consumeRemaining = r
             showConsumeConfirm = true
         case .exhausted:
-            showSubscriptionSheet = true
+            // ⭐ 修改：先弹"今日额度用完"提示，而不是直接进订阅页
+            showQuotaExhaustedAlert = true
         }
     }
 

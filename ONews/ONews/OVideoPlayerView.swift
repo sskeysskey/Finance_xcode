@@ -1005,7 +1005,9 @@ struct EpisodePickerView: View {
     let onSelect: (VideoEpisodeItem) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var authManager: AuthManager 
     @ObservedObject private var dm = HLSDownloadManager.shared
+    @ObservedObject private var quotaManager = FreeQuotaManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
@@ -1020,6 +1022,9 @@ struct EpisodePickerView: View {
                         // 判断不到也不影响功能，只是不显示下载角标
                         let isCached = dm.localBookmarks[ep.url] != nil
 
+                        // ⭐ 新增：判断免费解锁状态
+                        let isUnlocked = quotaManager.isUnlocked(ep.url)
+                        let hasQuota = quotaManager.remaining > 0
                         Button {
                             onSelect(ep)
                             dismiss()
@@ -1038,11 +1043,28 @@ struct EpisodePickerView: View {
                                             .foregroundColor(isCurrent ? .white : .primary)
                                             .padding(.horizontal, 4)
                                     )
+                                // ⭐ 修改后的角标优先级：缓存 > 已解锁 > 锁定
                                 if isCached {
                                     Image(systemName: "arrow.down.circle.fill")
                                         .font(.system(size: 10))
                                         .foregroundColor(.green)
                                         .padding(3)
+                                } else if !authManager.isSubscribed {
+                                    if isUnlocked {
+                                        // 已解锁：绿色对勾（今天内免费可用）
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(.green)
+                                            .padding(3)
+                                    } else if !hasQuota {
+                                        // 额度用完且未解锁：橙色锁
+                                        Image(systemName: "lock.fill")
+                                            .font(.system(size: 8))
+                                            .foregroundColor(.white)
+                                            .padding(3)
+                                            .background(Circle().fill(Color.orange))
+                                    }
+                                    // 有剩余次数且未解锁：不显示任何角标
                                 }
                             }
                         }
