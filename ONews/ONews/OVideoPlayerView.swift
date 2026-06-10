@@ -20,18 +20,41 @@ enum PlaybackSpeedStore {
 
 // MARK: - ⭐ 新增：播放进度记忆（按 URL 记忆，用于断点续播 / 黑屏自愈后回到原位置）
 enum PlaybackPositionStore {
-    private static func key(for url: URL) -> String {
-        "ONews_Pos_" + url.absoluteString
-    }
+    private static let prefix = "ONews_Pos_"
+    private static let indexKey = "ONews_PosIndex"   // 维护所有 key 的访问顺序
+    private static let maxEntries = 300
+
+    private static func key(for url: URL) -> String { prefix + url.absoluteString }
+
     static func save(_ seconds: Double, for url: URL) {
         guard seconds.isFinite, seconds > 0 else { return }
-        UserDefaults.standard.set(seconds, forKey: key(for: url))
+        let d = UserDefaults.standard
+        let k = key(for: url)
+        d.set(seconds, forKey: k)
+
+        // ⭐ LRU：最近使用的放末尾，超出上限删最旧
+        var index = d.stringArray(forKey: indexKey) ?? []
+        index.removeAll { $0 == k }
+        index.append(k)
+        if index.count > maxEntries {
+            let overflow = index.count - maxEntries
+            for old in index.prefix(overflow) { d.removeObject(forKey: old) }
+            index.removeFirst(overflow)
+        }
+        d.set(index, forKey: indexKey)
     }
+
     static func load(for url: URL) -> Double {
         UserDefaults.standard.double(forKey: key(for: url))
     }
+
     static func clear(for url: URL) {
-        UserDefaults.standard.removeObject(forKey: key(for: url))
+        let d = UserDefaults.standard
+        let k = key(for: url)
+        d.removeObject(forKey: k)
+        var index = d.stringArray(forKey: indexKey) ?? []
+        index.removeAll { $0 == k }
+        d.set(index, forKey: indexKey)
     }
 }
 
@@ -49,6 +72,8 @@ final class LifecycleAVPlayerViewController: AVPlayerViewController {
 struct VideoPlayerView: UIViewControllerRepresentable {
     let videoURL: URL
     @Binding var isBuffering: Bool
+    @Binding var hasStartedPlaying: Bool              // ⭐ 新增：是否已真正出第一帧
+    var onPlaybackFailed: ((String) -> Void)? = nil   // ⭐ 新增：播放失败兜底，避免无限转圈
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -69,7 +94,10 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         return controller
     }
 
-    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
+    // ⭐ 始终刷新 parent，保证 binding / 回调指向最新的 state
+    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
+        context.coordinator.parent = self
+    }
 
     static func dismantleUIViewController(_ uiViewController: AVPlayerViewController,
                                           coordinator: Coordinator) {
@@ -77,7 +105,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
     }
 
     class Coordinator: NSObject, AVPlayerViewControllerDelegate {
-        let parent: VideoPlayerView
+        var parent: VideoPlayerView                    // ⭐ let -> var
         private weak var controller: AVPlayerViewController?
         private weak var player: AVPlayer?
         private var url: URL?
@@ -91,6 +119,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private var rateObs: NSKeyValueObservation?
         private var defaultRateObs: NSKeyValueObservation?
         private var currentItemObs: NSKeyValueObservation?
+        private var lastPersistedSeconds: Double = 0
 
         // ⭐ 新增：进度记忆 / 恢复相关
         private var periodicObs: Any?
@@ -111,6 +140,13 @@ struct VideoPlayerView: UIViewControllerRepresentable {
 
         func pause() {
             player?.pause()
+        }
+
+        // ⭐ 统一入口：标记「已真正开始播放」
+        private func markStartedPlaying() {
+            if !parent.hasStartedPlaying {
+                parent.hasStartedPlaying = true
+            }
         }
 
         // MARK: 初始化（创建播放器 + 注册生命周期监听）
@@ -169,10 +205,10 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                                             options: [.new, .initial]) { [weak self] p, _ in
                 self?.updateBuffering(from: p)
             }
-            rateObs = player.observe(\.rate, options: [.new]) { [weak self] p, _ in
-                self?.updateBuffering(from: p)
-                let r = p.rate
-                if r > 0 && r <= 2.0 { PlaybackSpeedStore.rate = r }
+            rateObs = player.observe(\.rate, options: [.new]) { _, change in
+                if let r = change.newValue, r > 0, r <= 2.0 {
+                    PlaybackSpeedStore.rate = r
+                }
             }
             if #available(iOS 16.0, *) {
                 defaultRateObs = player.observe(\.defaultRate,
@@ -205,7 +241,17 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             statusObs = item.observe(\.status,
                                      options: [.new, .initial]) { [weak self] it, _ in
                 DispatchQueue.main.async {
-                    if it.status == .readyToPlay { self?.handleReadyToPlay() }
+                    guard let self = self else { return }
+                    switch it.status {
+                    case .readyToPlay:
+                        self.handleReadyToPlay()
+                    case .failed:
+                        // ⭐ 真正失败才报错，避免无限「缓冲中」
+                        self.parent.onPlaybackFailed?(
+                            it.error?.localizedDescription ?? "视频播放失败")
+                    default:
+                        break
+                    }
                 }
             }
             keepUpObs = item.observe(\.isPlaybackLikelyToKeepUp,
@@ -256,9 +302,15 @@ struct VideoPlayerView: UIViewControllerRepresentable {
 
         private func recordProgress(_ time: CMTime) {
             guard let url = url, time.seconds.isFinite, time.seconds > 0 else { return }
+            markStartedPlaying()   // ⭐ 时间在走 = 已出帧，收掉「缓冲中」
             restoreTime = time
-            PlaybackPositionStore.save(time.seconds, for: url)
-            // 接近结尾就清掉进度，避免下次从结尾续播
+
+            // ⭐ 磁盘写入节流：每累计 5 秒才落盘一次
+            if abs(time.seconds - lastPersistedSeconds) >= 5 {
+                lastPersistedSeconds = time.seconds
+                PlaybackPositionStore.save(time.seconds, for: url)
+            }
+
             if let item = player?.currentItem {
                 let dur = item.duration.seconds
                 if dur.isFinite, dur > 0, time.seconds >= dur - 3 {
@@ -289,10 +341,17 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         }
 
         @objc private func handleEnterForeground() {
-            // PiP 期间画面在小窗持续渲染，不存在黑屏，无需干预
+            // ⭐ 回前台先校正方向：不在全屏就一定恢复竖屏锁，
+            //    修复「全屏→PiP→退后台→恢复」后卡横屏的问题。
+            if !isFullScreen {
+                applyOrientation(fullScreen: false)
+            }
+
+            // PiP 期间画面在小窗持续渲染，不存在黑屏，无需干预播放器重绑
             guard !isPiP else { return }
             guard let player = player, let controller = controller else { return }
 
+            // ……（下面保持你原来的重绑/seek 逻辑不变）
             let item = player.currentItem
             let failed = (item == nil)
                 || (item?.status == .failed)
@@ -300,12 +359,10 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                 || (player.error != nil)
 
             if failed {
-                // 资源已失效 → 整条重建，并回到原进度
                 rebuildPreservingState()
                 return
             }
 
-            // 渲染表面被系统回收 → 解绑再重绑，强制刷新画面
             controller.player = nil
             controller.player = player
             let t = player.currentTime()
@@ -334,7 +391,9 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private func updateBuffering(from player: AVPlayer) {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                let waiting = (player.timeControlStatus == .waitingToPlayAtSpecifiedRate)
+                let status = player.timeControlStatus
+                if status == .playing { self.markStartedPlaying() }   // ⭐ 真正播放
+                let waiting = (status == .waitingToPlayAtSpecifiedRate)
                 self.setBuffering(waiting)
             }
         }
@@ -377,6 +436,8 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             NotificationCenter.default.removeObserver(self)
             bufferingResetWork?.cancel()
             orientationWork?.cancel()
+            // ⭐ 若不需要后台/PiP 常驻播放，离开时释放音频会话
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
 
         // MARK: 全屏代理
@@ -414,9 +475,33 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         // MARK: 画中画代理
         func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
             isPiP = true
+            // ⭐ 进入 PiP 系统会收起全屏界面。若此前处于横屏全屏，
+            //    必须同步作废全屏状态，否则回到 App 会卡在横屏。
+            if isFullScreen {
+                isFullScreen = false
+            }
+            AppDelegate.orientationLock = .portrait   // 仅复位锁；旋转留到回前台/active 时执行
         }
+
         func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
             isPiP = false
+            // ⭐ PiP 结束（含自动结束）后，只要不在全屏就强制回竖屏。
+            //    这里 App 已 active，requestGeometryUpdate 能真正生效。
+            if !isFullScreen {
+                DispatchQueue.main.async { [weak self] in
+                    self?.applyOrientation(fullScreen: false)
+                }
+            }
+        }
+
+        // ⭐ 新增：处理 PiP 上的「恢复」按钮。
+        //    我们不恢复全屏，直接完成并保持竖屏内嵌，符合「上滑离开全屏」的预期。
+        func playerViewController(_ playerViewController: AVPlayerViewController,
+                                restoreUserInterfaceForPictureInPictureStopWithCompletionHandler
+                                completionHandler: @escaping (Bool) -> Void) {
+            isFullScreen = false
+            applyOrientation(fullScreen: false)
+            completionHandler(true)
         }
 
         private func applyOrientation(fullScreen: Bool) {
@@ -506,6 +591,7 @@ struct VideoPlayerPageView: View {
 
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @StateObject private var network = NetworkMonitor.shared
+    @State private var hasStartedPlaying = false   // ⭐ 视频是否已出第一帧
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     @EnvironmentObject var authManager: AuthManager
@@ -692,13 +778,8 @@ struct VideoPlayerPageView: View {
     private var playerArea: some View {
         ZStack {
             Color.black
-            if isResolving {
-                VStack(spacing: 10) {
-                    ProgressView().tint(.white)
-                    Text(isGlobalEnglishMode ? "Resolving..." : "解析中...")
-                        .foregroundColor(.white).font(.caption)
-                }
-            } else if let error = resolveError {
+
+            if let error = resolveError {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.system(size: 36)).foregroundColor(.orange)
@@ -711,16 +792,36 @@ struct VideoPlayerPageView: View {
                     .background(Color.white.opacity(0.9))
                     .foregroundColor(.black).cornerRadius(16)
                 }
-            } else if let real = realURL {
-                let playURL = downloadManager.getLocalURL(for: real) ?? URL(string: real)!
-                VideoPlayerView(videoURL: playURL, isBuffering: $isBuffering)
-                    .id(playURL)   // ⭐ 切集时强制重建播放器，避免还放旧视频
-                if isBuffering {
-                    PlayerLoadingIndicator()
-                        .animation(.easeInOut(duration: 0.2), value: isBuffering)
-                }
+            } else if let real = realURL,
+                    let playURL = downloadManager.getLocalURL(for: real) ?? URL(string: real) {
+                // ⭐ 顺手修掉原来的强解包 URL(string: real)! 崩溃风险
+                VideoPlayerView(videoURL: playURL,
+                                isBuffering: $isBuffering,
+                                hasStartedPlaying: $hasStartedPlaying,
+                                onPlaybackFailed: { msg in
+                                    resolveError = msg     // 真失败才退回错误页
+                                })
+                    .id(playURL)
+            }
+
+            // ⭐ 统一「缓冲中」蒙层：解析中 / 等待首帧 / 播放中再缓冲 都走它，
+            //    用户在画面真正出现前始终看到「缓冲中…」，不再有空窗或一闪而过。
+            //    PlayerLoadingIndicator 已 allowsHitTesting(false)，不挡播放/快进等按钮。
+            if showLoadingIndicator {
+                PlayerLoadingIndicator()
+                    .transition(.opacity)
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: showLoadingIndicator)
+    }
+
+    // ⭐ 是否显示「缓冲中」
+    private var showLoadingIndicator: Bool {
+        if resolveError != nil { return false }   // 出错交给错误视图
+        if isResolving { return true }            // 解析中（对用户呈现为「缓冲中」，不暴露技术状态）
+        guard realURL != nil else { return true } // 地址还没就绪
+        if !hasStartedPlaying { return true }     // 有地址但还没出第一帧
+        return isBuffering                        // 播放途中再缓冲
     }
 
     // 标题卡片
@@ -828,9 +929,12 @@ struct VideoPlayerPageView: View {
     // ⭐ 新增：真正执行切集（把原来的 handleEpisodeSelection 逻辑搬进来）
     private func proceedToSwitch(episode ep: VideoEpisodeItem) {
         showEpisodePicker = false
+        isResolving = true            // ⭐ 立刻给出「解析中」反馈
+        resolveError = nil
         Task {
             let resolved = try? await OVideoAPI.resolveRealURL(episodeURL: ep.url)
             await MainActor.run {
+                isResolving = false   // ⭐ 解析结束先收掉 loading，再决定走哪条分支
                 let realKey = resolved ?? ep.url
                 let cached = (resolved != nil) && (downloadManager.localBookmarks[realKey] != nil)
                 if cached {
@@ -851,6 +955,7 @@ struct VideoPlayerPageView: View {
         overrideEpisodeURL = ep.url
         overrideEpisodeName = ep.name
         resolveError = nil
+        hasStartedPlaying = false         // ⭐ 新增
         if let resolved = resolvedURL {
             isResolving = false
             realURL = resolved
@@ -863,6 +968,7 @@ struct VideoPlayerPageView: View {
 
     private func resolve() async {
         isResolving = true; resolveError = nil
+        hasStartedPlaying = false        // ⭐ 新增
         do {
             let url = try await OVideoAPI.resolveRealURL(episodeURL: activeEpisodeURL)
             self.realURL = url
@@ -964,10 +1070,14 @@ struct CachedVideoPlayerView: View {
                 ZStack {
                     Color.black
                     if let local = downloadManager.getLocalURL(for: activeEpisodeURL) {
-                        VideoPlayerView(videoURL: local, isBuffering: .constant(false))
+                        VideoPlayerView(videoURL: local,
+                                        isBuffering: .constant(false),
+                                        hasStartedPlaying: .constant(true))
                             .id(activeEpisodeURL)
                     } else if let url = URL(string: activeEpisodeURL) {
-                        VideoPlayerView(videoURL: url, isBuffering: .constant(false))
+                        VideoPlayerView(videoURL: url,
+                                        isBuffering: .constant(false),
+                                        hasStartedPlaying: .constant(true))
                             .id(activeEpisodeURL)
                     } else {
                         Text(isGlobalEnglishMode ? "Unable to play" : "无法播放")
@@ -1066,18 +1176,6 @@ struct CachedVideoPlayerView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
-        }
-        .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度已用完",
-            isPresented: $showQuotaExhaustedAlert) {
-            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
-            Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
-                // 用户明确点订阅，才弹出订阅页
-                showSubscriptionSheet = true
-            }
-        } message: {
-            Text(isGlobalEnglishMode
-                ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
-                : "您今天的免费额度已用完，订阅后即可以无限畅想所有视频。")
         }
         // ⭐ 新增：选集弹窗
         .sheet(isPresented: $showEpisodePicker) {
