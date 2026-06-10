@@ -340,6 +340,7 @@ struct VideoPlayerPageView: View {
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
+    @Environment(\.appNavPath) var appNavPath
 
     @State private var realURL: String? = nil
     @State private var isResolving = true
@@ -419,6 +420,44 @@ struct VideoPlayerPageView: View {
                                     realURL: real
                                 )
                             }
+                            // 【新增】跳转到 Article All 入口
+                            Button(action: {
+                                appNavPath?.wrappedValue.append(NavigationTarget.allArticles)
+                            }) {
+                                HStack(spacing: 12) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color.blue.opacity(0.1))
+                                            .frame(width: 40, height: 40)
+                                        Image(systemName: "newspaper.fill")
+                                            .font(.system(size: 18))
+                                            .foregroundColor(.blue)
+                                    }
+                                    
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(isGlobalEnglishMode ? "Back to News" : "返回新闻阅读")
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundColor(.primary)
+                                        Text(isGlobalEnglishMode ? "Read all subscribed articles" : "阅读所有订阅文章")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .fill(Color(UIColor.secondarySystemGroupedBackground))
+                                )
+                                .padding(.horizontal, 16)
+                            }
+                            .buttonStyle(PlainButtonStyle())
 
                             Spacer(minLength: 30)
                         }
@@ -712,6 +751,7 @@ struct CachedVideoPlayerView: View {
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appNavPath) var appNavPath
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
@@ -814,6 +854,44 @@ struct CachedVideoPlayerView: View {
                         }
                         .padding(.horizontal, 16)
 
+                        // 【新增】跳转到 Article All 入口
+                        Button(action: {
+                            appNavPath?.wrappedValue.append(NavigationTarget.allArticles)
+                        }) {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(Color.blue.opacity(0.1))
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: "newspaper.fill")
+                                        .font(.system(size: 18))
+                                        .foregroundColor(.blue)
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(isGlobalEnglishMode ? "Back to News" : "返回新闻阅读")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(.primary)
+                                    Text(isGlobalEnglishMode ? "Read all subscribed articles" : "阅读所有订阅文章")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Spacer()
+                                
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(Color(UIColor.secondarySystemGroupedBackground))
+                            )
+                            .padding(.horizontal, 16)
+                        }
+                        .buttonStyle(PlainButtonStyle())
                         Spacer(minLength: 30)
                     }
                 }

@@ -1114,8 +1114,10 @@ struct VideoCacheView: View {
                  : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 缓存”。是否关闭该限制并继续下载？")
         }
         // ⭐ 消耗确认 / 额度用完
-        .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
-               isPresented: $showCachedConsumeConfirm) {
+        .alert(isGlobalEnglishMode
+            ? "Use Free Pass (\(cachedConsumeRemaining) left)"
+            : "今日免费赠送还剩\(cachedConsumeRemaining)点",
+            isPresented: $showCachedConsumeConfirm) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
                 pendingCachedTarget = nil
             }
@@ -1124,11 +1126,13 @@ struct VideoCacheView: View {
             }
         } message: {
             Text(isGlobalEnglishMode
-                ? "This will use 1 of today's free passes (\(cachedConsumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
-                : "本次将消耗 1 次今日免费次数（剩余 \(cachedConsumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
+                ? "This will use 1 pass."
+                : "当前视频将消耗 1 点")
         }
-        .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度已用完",
-               isPresented: $showQuotaExhausted) {
+        .alert(isGlobalEnglishMode
+            ? "Free Passes Used Up (0 left)"
+            : "今日免费额度不足",
+            isPresented: $showQuotaExhausted) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
             Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
                 showSubscriptionSheet = true
@@ -1136,7 +1140,7 @@ struct VideoCacheView: View {
         } message: {
             Text(isGlobalEnglishMode
                 ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
-                : "您今天的免费额度已用完，订阅后即可以无限畅想所有视频。")
+                : "您今天的免费额度已用完，订阅后即可无限畅享所有视频。")
         }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
@@ -1601,21 +1605,24 @@ struct VideoPlayHistoryView: View {
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
-        .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
-               isPresented: $showConsumeConfirm) {
-            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
-                pendingRecord = nil
-            }
+        .alert(isGlobalEnglishMode
+            ? "Use Free Pass (\(consumeRemaining) left)"
+            : "今日免费赠送还剩\(consumeRemaining)点",
+            isPresented: $showConsumeConfirm) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
             Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
                 Task { await consumeAndPlay() }
             }
         } message: {
             Text(isGlobalEnglishMode
-                ? "This will use 1 of today's free passes (\(consumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
-                : "本次将消耗 1 次今日免费次数（剩余 \(consumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
+                ? "This will use 1 pass."
+                : "当前视频将消耗 1 点")
         }
-        .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度已用完",
-               isPresented: $showQuotaExhausted) {
+        // ⭐ 新增：额度用完的中间提示窗
+        .alert(isGlobalEnglishMode
+            ? "Free Passes Used Up (0 left)"
+            : "今日免费额度不足",
+            isPresented: $showQuotaExhausted) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
             Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
                 showSubscriptionSheet = true
@@ -1623,7 +1630,7 @@ struct VideoPlayHistoryView: View {
         } message: {
             Text(isGlobalEnglishMode
                 ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
-                : "您今天的免费额度已用完，订阅后即可以无限畅想所有视频。")
+                : "您今天的免费额度已用完，订阅后即可无限畅享所有视频。")
         }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
@@ -1913,8 +1920,10 @@ struct CachedSeriesDetailView: View {
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
-        .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
-               isPresented: $showCachedConsumeConfirm) {
+        .alert(isGlobalEnglishMode
+            ? "Use Free Pass (\(cachedConsumeRemaining) left)"
+            : "今日免费赠送还剩\(cachedConsumeRemaining)点",
+            isPresented: $showCachedConsumeConfirm) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
                 pendingCachedTarget = nil
             }
@@ -1923,11 +1932,13 @@ struct CachedSeriesDetailView: View {
             }
         } message: {
             Text(isGlobalEnglishMode
-                ? "This will use 1 of today's free passes (\(cachedConsumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
-                : "本次将消耗 1 次今日免费次数（剩余 \(cachedConsumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
+                ? "This will use 1 pass."
+                : "当前视频将消耗 1 点")
         }
-        .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度已用完",
-               isPresented: $showQuotaExhausted) {
+        .alert(isGlobalEnglishMode
+            ? "Free Passes Used Up (0 left)"
+            : "今日免费额度不足",
+            isPresented: $showQuotaExhausted) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
             Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
                 showSubscriptionSheet = true
@@ -1935,7 +1946,7 @@ struct CachedSeriesDetailView: View {
         } message: {
             Text(isGlobalEnglishMode
                 ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
-                : "您今天的免费额度已用完，订阅后即可以无限畅想所有视频。")
+                : "您今天的免费额度已用完，订阅后即可无限畅享所有视频。")
         }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
