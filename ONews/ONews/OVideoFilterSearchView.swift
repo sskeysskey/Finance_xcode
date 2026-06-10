@@ -3,11 +3,24 @@
 
 import SwiftUI
 
-// MARK: - 分类检索页
+// MARK: - 筛选选项模型 & 字段枚举（文件私有）
+private struct FilterOption: Identifiable {
+    let value: String   // 内部值："All" / 大类key / 年份 / 地区 / 排序rawValue
+    let label: String   // 显示文字
+    var id: String { value }
+}
+
+private enum FilterField: Int, Identifiable {
+    case category, type, year, region, sort
+    var id: Int { rawValue }
+}
+
+// MARK: - 分类检索页（底部操作条 + 弹出式选择）
 struct VideoFilterView: View {
     @ObservedObject var dataManager: OVideoDataManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
+    // 筛选状态
     @State private var selectedCategory: String? = nil   // 大类: Movie/Drama/Show/Anime
     @State private var selectedType: String? = nil        // 子类(原"类型")
     @State private var selectedYear: Int? = nil
@@ -21,12 +34,14 @@ struct VideoFilterView: View {
     @State private var allYears: [Int] = []
     @State private var allRegions: [String] = []
     
+    // 当前弹出的面板
+    @State private var activeSheet: FilterField? = nil
     private let typeOrder = ["纪录片", "科幻", "喜剧", "情色", "爱情", "恐怖", "惊悚", "动作", "冒险", "战争", "体育片", "传记", "历史", "女性", "家庭", "灾难", "古装", "文艺", "校园", "百合", "美食", "西部"]
     private let regionOrder = ["美国", "韩国", "欧洲", "日本", "亚洲", "中国", "香港澳门", "中国台湾", "印度", "中东", "北美洲/南美洲", "非洲"]
     
     // 大类原始 key 列表（顺序与后端一致）
     private var allCategories: [String] { dataManager.categories.map { $0.name } }
-
+    
     // 大类中文名
     private func categoryDisplayName(_ key: String) -> String {
         if isGlobalEnglishMode { return key }
@@ -38,8 +53,8 @@ struct VideoFilterView: View {
         default:      return key
         }
     }
-
-    // 关键：选了大类就只在该大类里取，否则取全部
+    
+    // 选了大类 → 只在该大类内取；否则取全部
     private var baseItems: [OVideoItem] {
         if let cat = selectedCategory {
             return dataManager.categories.first { $0.name == cat }?.items ?? []
@@ -55,6 +70,11 @@ struct VideoFilterView: View {
             return true
         }
         return dataManager.sortItems(filtered, by: selectedSort)
+    }
+    
+    private var hasActiveFilter: Bool {
+        selectedCategory != nil || selectedType != nil || selectedYear != nil
+            || selectedRegion != nil || selectedSort != .date
     }
     
     var body: some View {
@@ -76,75 +96,162 @@ struct VideoFilterView: View {
         .background(Color(UIColor.systemGroupedBackground))
         .navigationTitle(isGlobalEnglishMode ? "Filter" : "分类检索")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            await prepareOptions()
+        .task { await prepareOptions() }
+        // 弹出式选择面板
+        .sheet(item: $activeSheet) { field in
+            let cfg = optionConfig(for: field)
+            FilterSheetView(
+                title: cfg.title,
+                options: cfg.options,
+                selected: cfg.selected
+            ) { value in
+                apply(field, value: value)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
     }
     
-    // ⭐ 正式内容
+    // MARK: - 主内容：上方结果 + 底部操作条
     private var contentView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                // ← 新增：大类（第一个）
-                filterRow(title: isGlobalEnglishMode ? "Category" : "大类",
-                        options: ["All"] + allCategories,
-                        selected: selectedCategory ?? "All",
-                        display: { categoryDisplayName($0) }) { v in
-                    selectedCategory = (v == "All") ? nil : v
-                }
-                
-                // ← 原"类型"改名"子类"
-                filterRow(title: isGlobalEnglishMode ? "Sub Genre" : "子类",
-                        options: ["All"] + allTypes,
-                        selected: selectedType ?? "All") { v in
-                    selectedType = (v == "All") ? nil : v
-                }
-                filterRow(title: isGlobalEnglishMode ? "Year" : "年份",
-                          options: ["All"] + allYears.map { String($0) },
-                          selected: selectedYear.map { String($0) } ?? "All") { v in
-                    selectedYear = (v == "All") ? nil : Int(v)
-                }
-                filterRow(title: isGlobalEnglishMode ? "Region" : "地区",
-                          options: ["All"] + allRegions,
-                          selected: selectedRegion ?? "All") { v in
-                    selectedRegion = (v == "All") ? nil : v
-                }
-                
-                sortRow()
-                
-                Divider().padding(.horizontal, 16)
-                
-                HStack {
-                    if selectedCategory != nil || selectedType != nil || selectedYear != nil
-                        || selectedRegion != nil || selectedSort != .date {
-                        Button {
-                            selectedCategory = nil   // ← 新增
+        VStack(spacing: 0) {
+            // 顶部统计 + 重置
+            HStack {
+                if hasActiveFilter {
+                    Button {
+                        withAnimation {
+                            selectedCategory = nil
                             selectedType = nil
                             selectedYear = nil
                             selectedRegion = nil
                             selectedSort = .date
-                        } label: {
-                            Label(isGlobalEnglishMode ? "Reset" : "重置",
-                                  systemImage: "arrow.counterclockwise")
-                                .font(.system(size: 12, weight: .medium))
                         }
+                    } label: {
+                        Label(isGlobalEnglishMode ? "Reset" : "重置",
+                              systemImage: "arrow.counterclockwise")
+                            .font(.system(size: 12, weight: .medium))
                     }
                 }
-                .padding(.horizontal, 16)
-                
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            
+            ScrollView {
                 WaterfallGridView(items: filteredItems, dataManager: dataManager)
                     .padding(.top, 4)
+                    .padding(.bottom, 20)
             }
-            .padding(.top, 12)
-            .padding(.bottom, 20)
+        }
+        // 底部固定操作条
+        .safeAreaInset(edge: .bottom) {
+            bottomFilterBar
         }
     }
     
-    // ⭐ 后台计算选项，算完才切换 isReady
+    // MARK: - 底部操作条
+    private var bottomFilterBar: some View {
+        HStack(spacing: 6) {
+            filterBarItem(field: .category,
+                          label: selectedCategory.map(categoryDisplayName) ?? (isGlobalEnglishMode ? "Category" : "大类"),
+                          isActive: selectedCategory != nil)
+            filterBarItem(field: .type,
+                          label: selectedType ?? (isGlobalEnglishMode ? "Genre" : "子类"),
+                          isActive: selectedType != nil)
+            filterBarItem(field: .year,
+                          label: selectedYear.map(String.init) ?? (isGlobalEnglishMode ? "Year" : "年份"),
+                          isActive: selectedYear != nil)
+            filterBarItem(field: .region,
+                          label: selectedRegion ?? (isGlobalEnglishMode ? "Region" : "地区"),
+                          isActive: selectedRegion != nil)
+            filterBarItem(field: .sort,
+                          label: selectedSort.shortName(isGlobalEnglishMode),
+                          isActive: selectedSort != .date)
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .background(
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+            }
+            .overlay(alignment: .top) {
+                LinearGradient(colors: [Color.primary.opacity(0.0),
+                                        Color.primary.opacity(0.15),
+                                        Color.primary.opacity(0.0)],
+                               startPoint: .leading, endPoint: .trailing)
+                    .frame(height: 0.5)
+            }
+            .ignoresSafeArea(edges: .bottom)
+        )
+    }
+    
+    private func filterBarItem(field: FilterField, label: String, isActive: Bool) -> some View {
+        Button {
+            activeSheet = field
+        } label: {
+            VStack(spacing: 3) {
+                Text(label)
+                    .font(.system(size: 13, weight: isActive ? .bold : .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundColor(isActive ? .white : .primary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isActive ? Color.accentColor : Color.secondary.opacity(0.12))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+    
+    // MARK: - 每个字段对应的选项配置
+    private func optionConfig(for field: FilterField)
+        -> (title: String, options: [FilterOption], selected: String) {
+        let allLabel = isGlobalEnglishMode ? "All" : "全部"
+        switch field {
+        case .category:
+            var opts = [FilterOption(value: "All", label: allLabel)]
+            opts += allCategories.map { FilterOption(value: $0, label: categoryDisplayName($0)) }
+            return (isGlobalEnglishMode ? "Category" : "大类", opts, selectedCategory ?? "All")
+        case .type:
+            var opts = [FilterOption(value: "All", label: allLabel)]
+            opts += allTypes.map { FilterOption(value: $0, label: $0) }
+            return (isGlobalEnglishMode ? "Genre" : "子类", opts, selectedType ?? "All")
+        case .year:
+            var opts = [FilterOption(value: "All", label: allLabel)]
+            opts += allYears.map { FilterOption(value: String($0), label: String($0)) }
+            return (isGlobalEnglishMode ? "Year" : "年份", opts, selectedYear.map(String.init) ?? "All")
+        case .region:
+            var opts = [FilterOption(value: "All", label: allLabel)]
+            opts += allRegions.map { FilterOption(value: $0, label: $0) }
+            return (isGlobalEnglishMode ? "Region" : "地区", opts, selectedRegion ?? "All")
+        case .sort:
+            let opts = VideoSortOption.allCases.map {
+                FilterOption(value: $0.rawValue, label: $0.displayName(isGlobalEnglishMode))
+            }
+            return (isGlobalEnglishMode ? "Sort" : "排序", opts, selectedSort.rawValue)
+        }
+    }
+    
+    private func apply(_ field: FilterField, value: String) {
+        withAnimation {
+            switch field {
+            case .category: selectedCategory = (value == "All") ? nil : value
+            case .type:     selectedType = (value == "All") ? nil : value
+            case .year:     selectedYear = (value == "All") ? nil : Int(value)
+            case .region:   selectedRegion = (value == "All") ? nil : value
+            case .sort:     selectedSort = VideoSortOption(rawValue: value) ?? .date
+            }
+        }
+    }
+    
+    // MARK: - 后台计算选项
     private func prepareOptions() async {
         if isReady { return }
-        
-        // 先让占位界面渲染出来（关键：把重计算让到下一帧之后）
         await Task.yield()
         
         let items = dataManager.allItems
@@ -174,81 +281,63 @@ struct VideoFilterView: View {
         self.allTypes = sortedTypes
         self.allYears = sortedYears
         self.allRegions = sortedRegions
-        withAnimation(.easeInOut(duration: 0.2)) {
-            self.isReady = true
-        }
+        withAnimation(.easeInOut(duration: 0.2)) { self.isReady = true }
     }
+}
+
+// MARK: - 弹出选择面板（纵向滚动）
+private struct FilterSheetView: View {
+    let title: String
+    let options: [FilterOption]
+    let selected: String
+    let onSelect: (String) -> Void
     
-    private func filterRow(title: String, options: [String],
-                           selected: String,
-                           display: ((String) -> String)? = nil,   // ← 新增
-                           onSelect: @escaping (String) -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 16)
+    @Environment(\.dismiss) private var dismiss
+    
+    private let columns = [GridItem(.adaptive(minimum: 90), spacing: 10)]
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(title).font(.headline)
+                Spacer()
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
             
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(options, id: \.self) { opt in
-                        let isSelected = opt == selected
+            Divider()
+            
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 10) {
+                    ForEach(options) { opt in
+                        let isSel = opt.value == selected
                         Button {
-                            onSelect(opt)
+                            onSelect(opt.value)
+                            dismiss()
                         } label: {
-                            // ← 这一行改成支持 display 转换
-                            Text(opt == "All"
-                                ? (isGlobalEnglishMode ? "All" : "全部")
-                                : (display?(opt) ?? opt))
-                                .font(.system(size: 13, weight: isSelected ? .bold : .medium))
-                                .foregroundColor(isSelected ? .white : .primary)
-                                .padding(.horizontal, 14).padding(.vertical, 7)
+                            Text(opt.label)
+                                .font(.system(size: 14, weight: isSel ? .bold : .medium))
+                                .foregroundColor(isSel ? .white : .primary)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 11)
                                 .background(
-                                    Capsule().fill(isSelected
-                                                ? Color.accentColor
-                                                : Color.secondary.opacity(0.12))
+                                    Capsule().fill(isSel ? Color.accentColor
+                                                         : Color.secondary.opacity(0.12))
                                 )
                         }
+                        .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(16)
             }
         }
-    }
-    
-    // --- 新增：单独的排序行视图 ---
-    private func sortRow() -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(isGlobalEnglishMode ? "Sort" : "排序")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 16)
-            
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(VideoSortOption.allCases, id: \.self) { opt in
-                        let isSelected = opt == selectedSort
-                        Button {
-                            withAnimation {
-                                selectedSort = opt
-                            }
-                        } label: {
-                            Text(opt.displayName(isGlobalEnglishMode))
-                                .font(.system(size: 13,
-                                              weight: isSelected ? .bold : .medium))
-                                .foregroundColor(isSelected ? .white : .primary)
-                                .padding(.horizontal, 14).padding(.vertical, 7)
-                                .background(
-                                    Capsule().fill(isSelected
-                                                   ? Color.accentColor
-                                                   : Color.secondary.opacity(0.12))
-                                )
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
-        }
+        .presentationBackground(.regularMaterial)
     }
 }
 
