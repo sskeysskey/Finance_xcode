@@ -18,6 +18,23 @@ enum PlaybackSpeedStore {
     }
 }
 
+// MARK: - ⭐ 新增：播放进度记忆（按 URL 记忆，用于断点续播 / 黑屏自愈后回到原位置）
+enum PlaybackPositionStore {
+    private static func key(for url: URL) -> String {
+        "ONews_Pos_" + url.absoluteString
+    }
+    static func save(_ seconds: Double, for url: URL) {
+        guard seconds.isFinite, seconds > 0 else { return }
+        UserDefaults.standard.set(seconds, forKey: key(for: url))
+    }
+    static func load(for url: URL) -> Double {
+        UserDefaults.standard.double(forKey: key(for: url))
+    }
+    static func clear(for url: URL) {
+        UserDefaults.standard.removeObject(forKey: key(for: url))
+    }
+}
+
 // MARK: - 生命周期可感知的播放控制器
 final class LifecycleAVPlayerViewController: AVPlayerViewController {
     var onWillDisappear: (() -> Void)?
@@ -36,23 +53,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIViewController(context: Context) -> AVPlayerViewController {
-        // ⭐ 关键：配置音频会话为播放模式（影响 AirPlay 路由能否带视频）
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .moviePlayback)
-        try? session.setActive(true)
-
         let controller = LifecycleAVPlayerViewController()
-        let player = AVPlayer(url: videoURL)
-        player.automaticallyWaitsToMinimizeStalling = true
-
-        // ⭐⭐ 关键修复：允许把"画面+声音"整条流投到 AirPlay 接收端
-        player.allowsExternalPlayback = true
-        player.usesExternalPlaybackWhileExternalScreenIsActive = true
-
-        // ⭐ 读取上次保存的倍速
-        let savedRate = PlaybackSpeedStore.rate
-
-        controller.player = player
         controller.allowsPictureInPicturePlayback = true
         controller.delegate = context.coordinator
         controller.videoGravity = .resizeAspect
@@ -63,15 +64,8 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             coordinator.pause()
         }
 
-        context.coordinator.attach(player: player)
-
-        if #available(iOS 16.0, *) {
-            player.defaultRate = savedRate
-            player.play()
-        } else {
-            player.play()
-            if savedRate != 1.0 { player.rate = savedRate }
-        }
+        // ⭐ 把「创建播放器 + 注册生命周期监听」交给 Coordinator 统一管理
+        context.coordinator.setup(controller: controller, url: videoURL)
         return controller
     }
 
@@ -84,43 +78,102 @@ struct VideoPlayerView: UIViewControllerRepresentable {
 
     class Coordinator: NSObject, AVPlayerViewControllerDelegate {
         let parent: VideoPlayerView
+        private weak var controller: AVPlayerViewController?
         private weak var player: AVPlayer?
+        private var url: URL?
+
+        // KVO
         private var timeControlObs: NSKeyValueObservation?
         private var keepUpObs: NSKeyValueObservation?
         private var bufferEmptyObs: NSKeyValueObservation?
         private var bufferFullObs: NSKeyValueObservation?
+        private var statusObs: NSKeyValueObservation?          // ⭐ 新增：监听 item 是否就绪
         private var rateObs: NSKeyValueObservation?
-        private var defaultRateObs: NSKeyValueObservation?   // ⭐ 新增
+        private var defaultRateObs: NSKeyValueObservation?
         private var currentItemObs: NSKeyValueObservation?
+
+        // ⭐ 新增：进度记忆 / 恢复相关
+        private var periodicObs: Any?
+        private var restoreTime: CMTime = .zero
+        private var wasPlayingBeforeBackground = true
+        private var pendingSeek: CMTime?
+        private var shouldAutoPlayWhenReady = true
+        private var didHandleReady = false
+
         private var bufferingResetWork: DispatchWorkItem?
         private var targetOrientationMask: UIInterfaceOrientationMask?
         private var orientationWork: DispatchWorkItem?
 
-        // ⭐ 新增:标记全屏 / 画中画状态,用于在 viewWillDisappear 时判断是否应暂停
         var isFullScreen = false
         var isPiP = false
 
         init(_ parent: VideoPlayerView) { self.parent = parent }
 
-        // ⭐ 新增:供外部(viewWillDisappear)调用的暂停
         func pause() {
             player?.pause()
         }
 
-        func attach(player: AVPlayer) {
-            self.player = player
+        // MARK: 初始化（创建播放器 + 注册生命周期监听）
+        func setup(controller: AVPlayerViewController, url: URL) {
+            self.controller = controller
+            self.url = url
 
+            // 初始进度：读取持久化记忆（进程被杀后再进入时的兜底续播）
+            let saved = PlaybackPositionStore.load(for: url)
+            let resume = saved > 3 ? CMTime(seconds: saved, preferredTimescale: 600) : nil
+            restoreTime = resume ?? .zero
+
+            configureAudioSession()
+            buildPlayer(resumeTime: resume, autoPlay: true)
+            registerLifecycleObservers()
+        }
+
+        // MARK: 音频会话（首次 & mediaServices 重启后都要配）
+        private func configureAudioSession() {
+            let session = AVAudioSession.sharedInstance()
+            try? session.setCategory(.playback, mode: .moviePlayback)
+            try? session.setActive(true)
+        }
+
+        // MARK: 构建 / 重建播放器
+        private func buildPlayer(resumeTime: CMTime?, autoPlay: Bool) {
+            guard let url = url, let controller = controller else { return }
+
+            teardownPlayerObservers()
+            didHandleReady = false
+
+            let player = AVPlayer(url: url)
+            player.automaticallyWaitsToMinimizeStalling = true
+            player.allowsExternalPlayback = true
+            player.usesExternalPlaybackWhileExternalScreenIsActive = true
+
+            if let rt = resumeTime, rt.seconds.isFinite, rt.seconds > 1 {
+                pendingSeek = rt
+            } else {
+                pendingSeek = nil
+            }
+            shouldAutoPlayWhenReady = autoPlay
+
+            if #available(iOS 16.0, *) {
+                player.defaultRate = PlaybackSpeedStore.rate
+            }
+
+            controller.player = player
+            self.player = player
+            attachObservers(to: player)
+        }
+
+        // MARK: 监听器
+        private func attachObservers(to player: AVPlayer) {
             timeControlObs = player.observe(\.timeControlStatus,
                                             options: [.new, .initial]) { [weak self] p, _ in
                 self?.updateBuffering(from: p)
             }
             rateObs = player.observe(\.rate, options: [.new]) { [weak self] p, _ in
                 self?.updateBuffering(from: p)
-                // ⭐ 用户改速度（播放中）→ 记住它
                 let r = p.rate
                 if r > 0 && r <= 2.0 { PlaybackSpeedStore.rate = r }
             }
-            // ⭐ iOS16+ 暂停时改速度走的是 defaultRate，单独监听一次
             if #available(iOS 16.0, *) {
                 defaultRateObs = player.observe(\.defaultRate,
                                                 options: [.new]) { _, change in
@@ -133,14 +186,28 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                                             options: [.new, .initial]) { [weak self] p, _ in
                 self?.attachItemObservers(item: p.currentItem)
             }
+            // ⭐ 每秒记录一次进度（内存 + 持久化）
+            periodicObs = player.addPeriodicTimeObserver(
+                forInterval: CMTime(seconds: 1, preferredTimescale: 1),
+                queue: .main) { [weak self] time in
+                self?.recordProgress(time)
+            }
         }
 
         private func attachItemObservers(item: AVPlayerItem?) {
             keepUpObs?.invalidate(); keepUpObs = nil
             bufferEmptyObs?.invalidate(); bufferEmptyObs = nil
             bufferFullObs?.invalidate(); bufferFullObs = nil
+            statusObs?.invalidate(); statusObs = nil
             guard let item = item else { return }
 
+            // ⭐ 就绪后再 seek 到目标位置并起播（保证 seek 不被吞掉）
+            statusObs = item.observe(\.status,
+                                     options: [.new, .initial]) { [weak self] it, _ in
+                DispatchQueue.main.async {
+                    if it.status == .readyToPlay { self?.handleReadyToPlay() }
+                }
+            }
             keepUpObs = item.observe(\.isPlaybackLikelyToKeepUp,
                                     options: [.new, .initial]) { [weak self] it, _ in
                 DispatchQueue.main.async {
@@ -161,6 +228,109 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             }
         }
 
+        private func handleReadyToPlay() {
+            guard !didHandleReady else { return }
+            didHandleReady = true
+            guard let player = player else { return }
+
+            let resume = { [weak self] in
+                guard let self = self, self.shouldAutoPlayWhenReady else { return }
+                if #available(iOS 16.0, *) {
+                    player.play()   // 使用 defaultRate
+                } else {
+                    player.play()
+                    let r = PlaybackSpeedStore.rate
+                    if r != 1.0 { player.rate = r }
+                }
+            }
+
+            if let seek = pendingSeek {
+                pendingSeek = nil
+                player.seek(to: seek, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                    resume()
+                }
+            } else {
+                resume()
+            }
+        }
+
+        private func recordProgress(_ time: CMTime) {
+            guard let url = url, time.seconds.isFinite, time.seconds > 0 else { return }
+            restoreTime = time
+            PlaybackPositionStore.save(time.seconds, for: url)
+            // 接近结尾就清掉进度，避免下次从结尾续播
+            if let item = player?.currentItem {
+                let dur = item.duration.seconds
+                if dur.isFinite, dur > 0, time.seconds >= dur - 3 {
+                    PlaybackPositionStore.clear(for: url)
+                }
+            }
+        }
+
+        // MARK: 生命周期 / 媒体重启监听
+        private func registerLifecycleObservers() {
+            let nc = NotificationCenter.default
+            nc.addObserver(self, selector: #selector(handleEnterBackground),
+                           name: UIApplication.didEnterBackgroundNotification, object: nil)
+            nc.addObserver(self, selector: #selector(handleEnterForeground),
+                           name: UIApplication.willEnterForegroundNotification, object: nil)
+            nc.addObserver(self, selector: #selector(handleMediaServicesReset),
+                           name: AVAudioSession.mediaServicesWereResetNotification, object: nil)
+        }
+
+        @objc private func handleEnterBackground() {
+            guard let player = player else { return }
+            wasPlayingBeforeBackground = (player.timeControlStatus != .paused)
+            let t = player.currentTime()
+            if t.seconds.isFinite, t.seconds > 0 {
+                restoreTime = t
+                if let url = url { PlaybackPositionStore.save(t.seconds, for: url) }
+            }
+        }
+
+        @objc private func handleEnterForeground() {
+            // PiP 期间画面在小窗持续渲染，不存在黑屏，无需干预
+            guard !isPiP else { return }
+            guard let player = player, let controller = controller else { return }
+
+            let item = player.currentItem
+            let failed = (item == nil)
+                || (item?.status == .failed)
+                || (item?.error != nil)
+                || (player.error != nil)
+
+            if failed {
+                // 资源已失效 → 整条重建，并回到原进度
+                rebuildPreservingState()
+                return
+            }
+
+            // 渲染表面被系统回收 → 解绑再重绑，强制刷新画面
+            controller.player = nil
+            controller.player = player
+            let t = player.currentTime()
+            player.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero)
+            if wasPlayingBeforeBackground {
+                if #available(iOS 16.0, *) {
+                    player.play()
+                } else {
+                    player.play()
+                    let r = PlaybackSpeedStore.rate
+                    if r != 1.0 { player.rate = r }
+                }
+            }
+        }
+
+        @objc private func handleMediaServicesReset() {
+            // mediaserverd 被重启：所有音视频对象失效，必须连音频会话一起重建
+            configureAudioSession()
+            rebuildPreservingState()
+        }
+
+        private func rebuildPreservingState() {
+            buildPlayer(resumeTime: restoreTime, autoPlay: wasPlayingBeforeBackground)
+        }
+
         private func updateBuffering(from player: AVPlayer) {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
@@ -173,12 +343,11 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             if parent.isBuffering != value {
                 parent.isBuffering = value
             }
-            // 兜底:即使 KVO 漏掉,8 秒后强制复位一次
             bufferingResetWork?.cancel()
             if value {
                 let work = DispatchWorkItem { [weak self] in
                     guard let self = self,
-                        let p = self.player else { return }
+                          let p = self.player else { return }
                     if p.timeControlStatus != .waitingToPlayAtSpecifiedRate {
                         self.parent.isBuffering = false
                     }
@@ -188,28 +357,36 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             }
         }
 
-        func detach() {
-            timeControlObs?.invalidate()
-            keepUpObs?.invalidate()
-            bufferEmptyObs?.invalidate()
-            bufferFullObs?.invalidate()
-            rateObs?.invalidate()
-            defaultRateObs?.invalidate()
-            currentItemObs?.invalidate()
-            bufferingResetWork?.cancel()
-            orientationWork?.cancel()        // ⭐ 新增
+        private func teardownPlayerObservers() {
+            if let token = periodicObs, let p = player {
+                p.removeTimeObserver(token)
+            }
+            periodicObs = nil
+            timeControlObs?.invalidate(); timeControlObs = nil
+            keepUpObs?.invalidate(); keepUpObs = nil
+            bufferEmptyObs?.invalidate(); bufferEmptyObs = nil
+            bufferFullObs?.invalidate(); bufferFullObs = nil
+            statusObs?.invalidate(); statusObs = nil
+            rateObs?.invalidate(); rateObs = nil
+            defaultRateObs?.invalidate(); defaultRateObs = nil
+            currentItemObs?.invalidate(); currentItemObs = nil
         }
 
-        // MARK: 全屏代理（用过渡的 completion 决定最终状态）
+        func detach() {
+            teardownPlayerObservers()
+            NotificationCenter.default.removeObserver(self)
+            bufferingResetWork?.cancel()
+            orientationWork?.cancel()
+        }
+
+        // MARK: 全屏代理
         func playerViewController(_ playerViewController: AVPlayerViewController,
                                 willBeginFullScreenPresentationWithAnimationCoordinator
                                 coordinator: UIViewControllerTransitionCoordinator) {
-            // 先乐观地标记为全屏（保证 viewWillDisappear 期间不会误暂停）
             isFullScreen = true
             coordinator.animate(alongsideTransition: nil) { [weak self] context in
                 guard let self = self else { return }
                 if context.isCancelled {
-                    // 用户半路放弃进入全屏 → 实际仍是非全屏
                     self.isFullScreen = false
                     self.applyOrientation(fullScreen: false)
                 } else {
@@ -225,7 +402,6 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             coordinator.animate(alongsideTransition: nil) { [weak self] context in
                 guard let self = self else { return }
                 if context.isCancelled {
-                    // 用户半路放弃退出 → 实际仍是全屏
                     self.isFullScreen = true
                     self.applyOrientation(fullScreen: true)
                 } else {
@@ -235,7 +411,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             }
         }
 
-        // MARK: 画中画代理(维护 isPiP 标记)
+        // MARK: 画中画代理
         func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
             isPiP = true
         }
@@ -243,14 +419,12 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             isPiP = false
         }
 
-        // 统一入口：根据全屏与否设定锁 + 触发旋转
         private func applyOrientation(fullScreen: Bool) {
             let mask: UIInterfaceOrientationMask = fullScreen ? .landscape : .portrait
             AppDelegate.orientationLock = mask
             requestRotation(to: mask)
         }
 
-        // 去抖：快速连续切换时只执行最后一次，避免 requestGeometryUpdate 互相打架
         private func requestRotation(to mask: UIInterfaceOrientationMask) {
             targetOrientationMask = mask
             orientationWork?.cancel()
@@ -259,7 +433,6 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                 self.performRotation(mask: mask)
             }
             orientationWork = work
-            // 极短延迟即可把同一帧内的多次切换合并成一次
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
         }
 
@@ -268,11 +441,9 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                 guard let scene = UIApplication.shared.connectedScenes
                         .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
                 else { return }
-                // 关键：先让系统重新询问"支持的方向"，再请求几何更新
                 scene.keyWindow?.rootViewController?
                     .setNeedsUpdateOfSupportedInterfaceOrientations()
                 scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
-                    // 忽略错误：通常是过渡进行中被拒，去抖下一次会补上
                     #if DEBUG
                     print("requestGeometryUpdate: \(error.localizedDescription)")
                     #endif
@@ -374,97 +545,91 @@ struct VideoPlayerPageView: View {
 
     var body: some View {
         ZStack {
-            // 【新增】未订阅时显示锁屏，不解析、不播放
-            // if !hasAccess {
-            //     // lockedOverlay
-            // } else {
-            //     // 背景渐变
-                LinearGradient(
-                    colors: [Color(.systemBackground),
-                            Color.accentColor.opacity(0.06),
-                            Color(.systemBackground)],
-                    startPoint: .top, endPoint: .bottom
-                ).ignoresSafeArea()
+            LinearGradient(
+                colors: [Color(.systemBackground),
+                        Color.accentColor.opacity(0.06),
+                        Color(.systemBackground)],
+                startPoint: .top, endPoint: .bottom
+            ).ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    playerArea
-                        .aspectRatio(16.0/9.0, contentMode: .fit)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.black)
+            VStack(spacing: 0) {
+                playerArea
+                    .aspectRatio(16.0/9.0, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.black)
 
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 18) {
-                            titleCard
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        titleCard
 
-                            if let real = realURL {
-                                CacheCard(realURL: real,
-                                        videoTitle: displayTitle,
-                                        coverImage: coverImage,
-                                        seriesTitle: seriesBaseTitle,
-                                        episodeName: activeEpisodeName,
-                                        episodeKey: activeEpisodeURL)
-                            }
-
-                            if let real = realURL, downloadManager.localBookmarks[real] != nil {
-                                offlineBadge
-                            }
-
-                            // ⭐ 在线播放页：保留错误链接举报入口
-                            if let real = realURL {
-                                ReportLinkCard(
+                        if let real = realURL {
+                            CacheCard(realURL: real,
                                     videoTitle: displayTitle,
-                                    sourceURL: sourceURL ?? activeEpisodeURL,
-                                    episodeURL: activeEpisodeURL,
-                                    channelName: channelName,
+                                    coverImage: coverImage,
+                                    seriesTitle: seriesBaseTitle,
                                     episodeName: activeEpisodeName,
-                                    realURL: real
-                                )
-                            }
-                            // 【新增】跳转到 Article All 入口
-                            Button(action: {
-                                appNavPath?.wrappedValue.append(NavigationTarget.allArticles)
-                            }) {
-                                HStack(spacing: 12) {
-                                    ZStack {
-                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .fill(Color.blue.opacity(0.1))
-                                            .frame(width: 40, height: 40)
-                                        Image(systemName: "newspaper.fill")
-                                            .font(.system(size: 18))
-                                            .foregroundColor(.blue)
-                                    }
-                                    
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(isGlobalEnglishMode ? "Back to News" : "返回新闻阅读")
-                                            .font(.system(size: 15, weight: .semibold))
-                                            .foregroundColor(.primary)
-                                        Text(isGlobalEnglishMode ? "Read all subscribed articles" : "阅读所有订阅文章")
-                                            .font(.system(size: 12))
-                                            .foregroundColor(.secondary)
-                                    }
-                                    
-                                    Spacer()
-                                    
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 14, weight: .semibold))
+                                    episodeKey: activeEpisodeURL)
+                        }
+
+                        if let real = realURL, downloadManager.localBookmarks[real] != nil {
+                            offlineBadge
+                        }
+
+                        // ⭐ 在线播放页：保留错误链接举报入口
+                        if let real = realURL {
+                            ReportLinkCard(
+                                videoTitle: displayTitle,
+                                sourceURL: sourceURL ?? activeEpisodeURL,
+                                episodeURL: activeEpisodeURL,
+                                channelName: channelName,
+                                episodeName: activeEpisodeName,
+                                realURL: real
+                            )
+                        }
+                        // 【新增】跳转到 Article All 入口
+                        Button(action: {
+                            appNavPath?.wrappedValue.append(NavigationTarget.allArticles)
+                        }) {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(Color.blue.opacity(0.1))
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: "newspaper.fill")
+                                        .font(.system(size: 18))
+                                        .foregroundColor(.blue)
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(isGlobalEnglishMode ? "Back to News" : "返回新闻阅读")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(.primary)
+                                    Text(isGlobalEnglishMode ? "Read all subscribed articles" : "阅读所有订阅文章")
+                                        .font(.system(size: 12))
                                         .foregroundColor(.secondary)
                                 }
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .fill(Color(UIColor.secondarySystemGroupedBackground))
-                                )
-                                .padding(.horizontal, 16)
+                                
+                                Spacer()
+                                
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.secondary)
                             }
-                            .buttonStyle(PlainButtonStyle())
-
-                            Spacer(minLength: 30)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(Color(UIColor.secondarySystemGroupedBackground))
+                            )
+                            .padding(.horizontal, 16)
                         }
-                        .padding(.top, 16)
+                        .buttonStyle(PlainButtonStyle())
+
+                        Spacer(minLength: 30)
                     }
+                    .padding(.top, 16)
                 }
-            // }
+            }
         }
         .navigationTitle(isGlobalEnglishMode ? "Player" : "播放")
         .navigationBarTitleDisplayMode(.inline)
