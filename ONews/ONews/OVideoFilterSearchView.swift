@@ -106,6 +106,26 @@ struct VideoFilterView: View {
         .background(Color(UIColor.systemGroupedBackground))
         .navigationTitle(isGlobalEnglishMode ? "Filter" : "分类检索")
         .navigationBarTitleDisplayMode(.inline)
+        // MARK: 👉 重置按钮放到导航栏右侧（分类检索旁边）
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if hasActiveFilter {
+                    Button {
+                        withAnimation {
+                            selectedCategory = nil
+                            selectedType = nil
+                            selectedYear = nil
+                            selectedRegion = nil
+                            selectedSort = .update
+                        }
+                    } label: {
+                        Label(isGlobalEnglishMode ? "Reset" : "重置",
+                              systemImage: "arrow.counterclockwise")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                }
+            }
+        }
         .task { await prepareOptions() }
         // 弹出式选择面板
         .sheet(item: $activeSheet) { field in
@@ -125,27 +145,7 @@ struct VideoFilterView: View {
     // MARK: - 主内容：上方结果 + 底部操作条
     private var contentView: some View {
         VStack(spacing: 0) {
-            // 顶部统计 + 重置
-            HStack {
-                if hasActiveFilter {
-                    Button {
-                        withAnimation {
-                            selectedCategory = nil
-                            selectedType = nil
-                            selectedYear = nil
-                            selectedRegion = nil
-                            selectedSort = .update
-                        }
-                    } label: {
-                        Label(isGlobalEnglishMode ? "Reset" : "重置",
-                              systemImage: "arrow.counterclockwise")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            
+            // 👉 这里删除了原来的顶部重置按钮区域
             ScrollView {
                 WaterfallGridView(items: filteredItems, dataManager: dataManager)
                     .padding(.top, 4)
