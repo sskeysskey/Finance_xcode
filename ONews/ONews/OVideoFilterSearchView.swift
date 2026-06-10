@@ -8,7 +8,8 @@ struct VideoFilterView: View {
     @ObservedObject var dataManager: OVideoDataManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     
-    @State private var selectedType: String? = nil
+    @State private var selectedCategory: String? = nil   // 大类: Movie/Drama/Show/Anime
+    @State private var selectedType: String? = nil        // 子类(原"类型")
     @State private var selectedYear: Int? = nil
     @State private var selectedRegion: String? = nil
     // --- 新增：排序状态，默认按时间 ---
@@ -20,18 +21,39 @@ struct VideoFilterView: View {
     @State private var allYears: [Int] = []
     @State private var allRegions: [String] = []
     
-    private let typeOrder = ["纪录片", "动漫", "综艺", "科幻", "喜剧", "爱情", "恐怖", "惊悚", "古装", "剧情"]
-    private let regionOrder = ["美国", "韩国", "中国", "欧洲", "日本", "亚洲", "香港澳门", "中国台湾", "印度", "中东", "北美洲/南美洲", "非洲"]
+    private let typeOrder = ["纪录片", "科幻", "喜剧", "情色", "爱情", "恐怖", "惊悚", "动作", "冒险", "战争", "体育片", "传记", "历史", "女性", "家庭", "灾难", "古装", "文艺", "校园", "百合", "美食", "西部"]
+    private let regionOrder = ["美国", "韩国", "欧洲", "日本", "亚洲", "中国", "香港澳门", "中国台湾", "印度", "中东", "北美洲/南美洲", "非洲"]
     
+    // 大类原始 key 列表（顺序与后端一致）
+    private var allCategories: [String] { dataManager.categories.map { $0.name } }
+
+    // 大类中文名
+    private func categoryDisplayName(_ key: String) -> String {
+        if isGlobalEnglishMode { return key }
+        switch key {
+        case "Movie": return "电影"
+        case "Drama": return "电视剧"
+        case "Show":  return "综艺"
+        case "Anime": return "动漫"
+        default:      return key
+        }
+    }
+
+    // 关键：选了大类就只在该大类里取，否则取全部
+    private var baseItems: [OVideoItem] {
+        if let cat = selectedCategory {
+            return dataManager.categories.first { $0.name == cat }?.items ?? []
+        }
+        return dataManager.allItems
+    }
     // 过滤逻辑 + 排序逻辑（仍按需计算，仅在已就绪时使用）
     private var filteredItems: [OVideoItem] {
-        let filtered = dataManager.allItems.filter { item in
+        let filtered = baseItems.filter { item in   // ← 改这里
             if let t = selectedType, !item.normalizedTypes.contains(t) { return false }
             if let y = selectedYear, item.releaseYear != y { return false }
             if let r = selectedRegion, item.normalizedRegion != r { return false }
             return true
         }
-        // 应用排序
         return dataManager.sortItems(filtered, by: selectedSort)
     }
     
@@ -63,9 +85,18 @@ struct VideoFilterView: View {
     private var contentView: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                filterRow(title: isGlobalEnglishMode ? "Genre" : "类型",
-                          options: ["All"] + allTypes,
-                          selected: selectedType ?? "All") { v in
+                // ← 新增：大类（第一个）
+                filterRow(title: isGlobalEnglishMode ? "Category" : "大类",
+                        options: ["All"] + allCategories,
+                        selected: selectedCategory ?? "All",
+                        display: { categoryDisplayName($0) }) { v in
+                    selectedCategory = (v == "All") ? nil : v
+                }
+                
+                // ← 原"类型"改名"子类"
+                filterRow(title: isGlobalEnglishMode ? "Sub Genre" : "子类",
+                        options: ["All"] + allTypes,
+                        selected: selectedType ?? "All") { v in
                     selectedType = (v == "All") ? nil : v
                 }
                 filterRow(title: isGlobalEnglishMode ? "Year" : "年份",
@@ -84,15 +115,10 @@ struct VideoFilterView: View {
                 Divider().padding(.horizontal, 16)
                 
                 HStack {
-                    Text(isGlobalEnglishMode
-                         ? "\(filteredItems.count) result(s)"
-                         : "共 \(filteredItems.count) 个结果")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    
-                    if selectedType != nil || selectedYear != nil || selectedRegion != nil || selectedSort != .date {
+                    if selectedCategory != nil || selectedType != nil || selectedYear != nil
+                        || selectedRegion != nil || selectedSort != .date {
                         Button {
+                            selectedCategory = nil   // ← 新增
                             selectedType = nil
                             selectedYear = nil
                             selectedRegion = nil
@@ -155,6 +181,7 @@ struct VideoFilterView: View {
     
     private func filterRow(title: String, options: [String],
                            selected: String,
+                           display: ((String) -> String)? = nil,   // ← 新增
                            onSelect: @escaping (String) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
@@ -169,15 +196,17 @@ struct VideoFilterView: View {
                         Button {
                             onSelect(opt)
                         } label: {
-                            Text(opt == "All" ? (isGlobalEnglishMode ? "All" : "全部") : opt)
-                                .font(.system(size: 13,
-                                              weight: isSelected ? .bold : .medium))
+                            // ← 这一行改成支持 display 转换
+                            Text(opt == "All"
+                                ? (isGlobalEnglishMode ? "All" : "全部")
+                                : (display?(opt) ?? opt))
+                                .font(.system(size: 13, weight: isSelected ? .bold : .medium))
                                 .foregroundColor(isSelected ? .white : .primary)
                                 .padding(.horizontal, 14).padding(.vertical, 7)
                                 .background(
                                     Capsule().fill(isSelected
-                                                   ? Color.accentColor
-                                                   : Color.secondary.opacity(0.12))
+                                                ? Color.accentColor
+                                                : Color.secondary.opacity(0.12))
                                 )
                         }
                     }
