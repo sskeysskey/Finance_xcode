@@ -26,7 +26,7 @@ struct VideoFilterView: View {
     @State private var selectedYear: Int? = nil
     @State private var selectedRegion: String? = nil
     // --- 新增：排序状态，默认按时间 ---
-    @State private var selectedSort: VideoSortOption = .date
+    @State private var selectedSort: VideoSortOption = .update
     
     // ⭐ 新增：预计算的筛选选项 + 就绪标志
     @State private var isReady = false
@@ -36,11 +36,15 @@ struct VideoFilterView: View {
     
     // 当前弹出的面板
     @State private var activeSheet: FilterField? = nil
-    private let typeOrder = ["纪录片", "科幻", "喜剧", "情色", "爱情", "恐怖", "惊悚", "动作", "冒险", "战争", "体育片", "传记", "历史", "女性", "家庭", "灾难", "古装", "文艺", "校园", "百合", "美食", "西部"]
+    // 虚拟大类 key（不与任何 JSON 顶层 key 冲突）
+    private let documentaryCategoryKey = "Documentary"
+    private let typeOrder = ["科幻", "喜剧", "情色", "爱情", "恐怖", "惊悚", "动作", "冒险", "战争", "体育片", "传记", "历史", "女性", "家庭", "灾难", "古装", "文艺", "校园", "百合", "美食", "西部"]
     private let regionOrder = ["美国", "韩国", "欧洲", "日本", "亚洲", "中国", "香港澳门", "中国台湾", "印度", "中东", "北美洲/南美洲", "非洲"]
     
     // 大类原始 key 列表（顺序与后端一致）
-    private var allCategories: [String] { dataManager.categories.map { $0.name } }
+    private var allCategories: [String] {
+        dataManager.categories.map { $0.name } + [documentaryCategoryKey]
+    }
     
     // 大类中文名
     private func categoryDisplayName(_ key: String) -> String {
@@ -50,6 +54,7 @@ struct VideoFilterView: View {
         case "Drama": return "电视剧"
         case "Show":  return "综艺"
         case "Anime": return "动漫"
+        case "Documentary": return "纪录片"   // ← 新增
         default:      return key
         }
     }
@@ -57,10 +62,15 @@ struct VideoFilterView: View {
     // 选了大类 → 只在该大类内取；否则取全部
     private var baseItems: [OVideoItem] {
         if let cat = selectedCategory {
+            if cat == documentaryCategoryKey {
+                // 跨全部分组，取类型含"纪录片"的条目
+                return dataManager.allItems.filter { $0.normalizedTypes.contains("纪录片") }
+            }
             return dataManager.categories.first { $0.name == cat }?.items ?? []
         }
         return dataManager.allItems
     }
+
     // 过滤逻辑 + 排序逻辑（仍按需计算，仅在已就绪时使用）
     private var filteredItems: [OVideoItem] {
         let filtered = baseItems.filter { item in   // ← 改这里
@@ -74,7 +84,7 @@ struct VideoFilterView: View {
     
     private var hasActiveFilter: Bool {
         selectedCategory != nil || selectedType != nil || selectedYear != nil
-            || selectedRegion != nil || selectedSort != .date
+            || selectedRegion != nil || selectedSort != .update
     }
     
     var body: some View {
@@ -124,7 +134,7 @@ struct VideoFilterView: View {
                             selectedType = nil
                             selectedYear = nil
                             selectedRegion = nil
-                            selectedSort = .date
+                            selectedSort = .update
                         }
                     } label: {
                         Label(isGlobalEnglishMode ? "Reset" : "重置",
@@ -165,7 +175,7 @@ struct VideoFilterView: View {
                           isActive: selectedRegion != nil)
             filterBarItem(field: .sort,
                           label: selectedSort.shortName(isGlobalEnglishMode),
-                          isActive: selectedSort != .date)
+                          isActive: selectedSort != .update)
         }
         .padding(.horizontal, 10)
         .padding(.top, 8)
@@ -244,7 +254,7 @@ struct VideoFilterView: View {
             case .type:     selectedType = (value == "All") ? nil : value
             case .year:     selectedYear = (value == "All") ? nil : Int(value)
             case .region:   selectedRegion = (value == "All") ? nil : value
-            case .sort:     selectedSort = VideoSortOption(rawValue: value) ?? .date
+            case .sort:     selectedSort = VideoSortOption(rawValue: value) ?? .update
             }
         }
     }
@@ -259,7 +269,7 @@ struct VideoFilterView: View {
         let rOrder = regionOrder
         
         // 计算（量大时也只在这里发生一次，且占位界面已显示，用户不会觉得没点中）
-        let typeSet = Set(items.flatMap { $0.normalizedTypes })
+        let typeSet = Set(items.flatMap { $0.normalizedTypes }).subtracting(["纪录片"])
         let sortedTypes = typeSet.sorted { a, b in
             let ia = tOrder.firstIndex(of: a) ?? Int.max
             let ib = tOrder.firstIndex(of: b) ?? Int.max

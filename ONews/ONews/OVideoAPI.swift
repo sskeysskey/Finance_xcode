@@ -337,7 +337,7 @@ extension OVideoItem {
 
 // 【修改】增加 update 选项，并修改 date 的显示文本
 enum VideoSortOption: String, CaseIterable {
-    case date, update, rating
+    case update, date, rating
     
     func displayName(_ en: Bool) -> String {
         switch self {
