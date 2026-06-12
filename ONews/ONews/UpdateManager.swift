@@ -247,12 +247,15 @@ class ResourceManager: ObservableObject {
     @Published var isWifiConnected: Bool = false
     // 【新增】增加一个通用的网络可用性标记
     @Published var isNetworkAvailable: Bool = true
+    // 【新增】监视器是否已经上报过状态（避免启动瞬间用默认值 true 误判）
+    private var hasReportedNetworkStatus = false
 
     // ✅ 修复 1: 去掉 override 关键字
     init() {
         // 启动网络监听
         networkMonitor.pathUpdateHandler = { [weak self] path in
             DispatchQueue.main.async {
+                self?.hasReportedNetworkStatus = true   // 【新增】
                 self?.isWifiConnected = path.usesInterfaceType(.wifi)
                 // 只要有网（WiFi或蜂窝）都算可用
                 self?.isNetworkAvailable = path.status == .satisfied
@@ -319,6 +322,21 @@ class ResourceManager: ObservableObject {
         
         print("检查发现所有图片均已本地存在。")
         return true
+    }
+
+    /// 在最多 timeout 秒内等待网络可用。
+    /// - 一旦确认有网立即返回 true（授权弹窗被点「允许」后会走到这里）。
+    /// - 若超时仍无网（典型如飞行模式），返回 false，让上层快速结束 loading。
+    private func waitForNetworkAvailability(timeout: TimeInterval) async -> Bool {
+        let start = Date()
+        while Date().timeIntervalSince(start) < timeout {
+            if hasReportedNetworkStatus && isNetworkAvailable {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        // 超时后给出最终判断；若监视器从未上报过（极少见），保守放行交给 URLSession 处理
+        return hasReportedNetworkStatus ? isNetworkAvailable : true
     }
 
     // 【新增】处理通知的逻辑
@@ -753,6 +771,13 @@ class ResourceManager: ObservableObject {
         self.progressText = ""
         self.downloadProgress = 0.0
         
+        // 【新增】先确认网络是否可用，避免飞行模式下卡死在 loading。
+        // 给授权弹窗预留 4 秒；一旦网络可用会立即继续，飞行模式下 4 秒后快速失败。
+        let networkOK = await waitForNetworkAvailability(timeout: 4.0)
+        guard networkOK else {
+            self.isSyncing = false
+            throw URLError(.notConnectedToInternet)
+        }
         // 使用 defer 确保 isSyncing 最终关闭
         // 这防止了 UI 永久卡死在 loading 状态
         defer {

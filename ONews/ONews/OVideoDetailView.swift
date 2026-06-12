@@ -13,6 +13,7 @@ struct VideoDetailView: View {
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
     @State private var navigateToPlayer = false
+    @State private var showLoginAlert = false   // ⭐ 新增
     
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
     @State private var showConsumeConfirm = false
@@ -193,6 +194,22 @@ struct VideoDetailView: View {
             Text(isGlobalEnglishMode
                 ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
                 : "您今天的免费额度已用完，订阅后即可无限畅享所有视频。")
+        }
+        .alert(isGlobalEnglishMode ? "Sign in to Watch Free" : "登录后免费观看",
+            isPresented: $showLoginAlert) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Sign in with Apple" : "登录") {
+                authManager.signInWithApple()
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "Sign in (free, no purchase needed) to unlock your free daily passes."
+                : "登录后即可获得每日免费观看点数，登录无需付费。")
+        }
+        .onChange(of: authManager.isLoggedIn) { loggedIn in
+            if loggedIn {
+                Task { await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
+            }
         }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
@@ -525,6 +542,8 @@ struct VideoDetailView: View {
         switch decideVideoAccess(episodeKey: episode.url, auth: authManager, quota: quotaManager) {
         case .allowed:
             navigateToPlayer = true
+        case .needLogin:                 // ⭐ 新增
+            showLoginAlert = true
         case .needConsume(let r):
             pendingEpisode = episode
             consumeRemaining = r

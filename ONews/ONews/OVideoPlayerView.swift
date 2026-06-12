@@ -603,6 +603,7 @@ struct VideoPlayerPageView: View {
     @State private var isResolving = true
     @State private var resolveError: String? = nil
     @State private var isBuffering = false
+    @State private var showLoginAlert = false
 
     @State private var showEpisodeConsumeConfirm = false
     @State private var episodeConsumeRemaining = 0
@@ -756,16 +757,21 @@ struct VideoPlayerPageView: View {
                  ? "You are on a cellular network. Online playback will use mobile data. Continue?"
                  : "当前处于蜂窝网络，在线播放将消耗流量，是否继续？")
         }
-        .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
-            isPresented: $showEpisodeConsumeConfirm) {
+        .alert(isGlobalEnglishMode ? "Sign in to Watch Free" : "登录后免费观看",
+            isPresented: $showLoginAlert) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
-            Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
-                Task { await consumeAndSwitchEpisode() }
+            Button(isGlobalEnglishMode ? "Sign in with Apple" : "登录") {
+                authManager.signInWithApple()
             }
         } message: {
             Text(isGlobalEnglishMode
-                ? "This will use 1 of today's free passes (\(episodeConsumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
-                : "本次将消耗 1 次今日免费次数（剩余 \(episodeConsumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
+                ? "Sign in (free, no purchase needed) to unlock your free daily passes."
+                : "登录后即可获得每日免费观看点数，登录无需付费。")
+        }
+        .onChange(of: authManager.isLoggedIn) { loggedIn in
+            if loggedIn {
+                Task { await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
+            }
         }
     }
 
@@ -898,6 +904,9 @@ struct VideoPlayerPageView: View {
         switch decideVideoAccess(episodeKey: ep.url, auth: authManager, quota: quotaManager) {
         case .allowed:
             proceedToSwitch(episode: ep)
+        case .needLogin:                 // ⭐ 新增
+            showEpisodePicker = false
+            showLoginAlert = true
         case .needConsume(let r):
             pendingEpisodeForSwitch = ep
             episodeConsumeRemaining = r
@@ -1033,9 +1042,6 @@ struct CachedVideoPlayerView: View {
     @State private var overrideEpisodeName: String? = nil
 
     // ⭐ 仅用于「选集切换到未解锁集」时的门禁
-    @State private var showCachedConsumeConfirm = false
-    @State private var cachedConsumeRemaining = 0
-    @State private var showQuotaExhaustedAlert = false
     @State private var pendingSwitchEpisode: VideoEpisodeItem? = nil
 
     // ⭐ 计算当前实际在播的集数
@@ -1055,9 +1061,6 @@ struct CachedVideoPlayerView: View {
     }
     private var episodeKey: String {
         downloadManager.cacheMetadata[activeEpisodeURL]?.originalEpisodeURL ?? activeEpisodeURL
-    }
-    private var hasAccess: Bool {
-        authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(episodeKey)
     }
 
     var body: some View {
@@ -1186,30 +1189,6 @@ struct CachedVideoPlayerView: View {
             )
             .presentationDetents([.medium, .large])
         }
-        .alert(isGlobalEnglishMode ? "Use a Free Pass" : "使用免费次数",
-               isPresented: $showCachedConsumeConfirm) {
-            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
-                pendingSwitchEpisode = nil
-            }
-            Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
-                Task { await consumeAndSwitch() }
-            }
-        } message: {
-            Text(isGlobalEnglishMode
-                ? "This will use 1 of today's free passes (\(cachedConsumeRemaining) left). After that, you can play / download / watch this episode unlimited times today."
-                : "本次将消耗 1 次今日免费次数（剩余 \(cachedConsumeRemaining) 次）。确认后，今天内可无限次在线播放 / 缓存下载 / 离线观看本集。")
-        }
-        .alert(isGlobalEnglishMode ? "Free Passes Used Up" : "今日免费额度已用完",
-               isPresented: $showQuotaExhaustedAlert) {
-            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
-            Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
-                showSubscriptionSheet = true
-            }
-        } message: {
-            Text(isGlobalEnglishMode
-                ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
-                : "您今天的免费额度已用完，订阅后即可以无限畅想所有视频。")
-        }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
             recordPlayback()   // 进入即播，权限已在列表页保证
@@ -1238,17 +1217,8 @@ struct CachedVideoPlayerView: View {
     // ⭐ 选集切换：先门禁，未解锁才弹确认；通过后再切
     private func switchToEpisode(_ ep: VideoEpisodeItem) {
         guard ep.url != activeEpisodeURL else { return }
-        let key = downloadManager.cacheMetadata[ep.url]?.originalEpisodeURL ?? ep.url
-        switch decideVideoAccess(episodeKey: key, auth: authManager, quota: quotaManager) {
-        case .allowed:
-            applyEpisode(ep)
-        case .needConsume(let r):
-            pendingSwitchEpisode = ep
-            cachedConsumeRemaining = r
-            showCachedConsumeConfirm = true
-        case .exhausted:
-            showQuotaExhaustedAlert = true
-        }
+        // ⭐ 离线缓存切集：直接播放，不再消耗点数
+        applyEpisode(ep)
     }
 
     private func applyEpisode(_ ep: VideoEpisodeItem) {
@@ -1257,25 +1227,7 @@ struct CachedVideoPlayerView: View {
         recordPlayback()
     }
 
-    private func consumeAndSwitch() async {
-        guard let ep = pendingSwitchEpisode else { return }
-        let key = downloadManager.cacheMetadata[ep.url]?.originalEpisodeURL ?? ep.url
-        let uid = FreeQuotaManager.currentUserId(auth: authManager)
-        let base = title.components(separatedBy: " · ").first ?? title
-        let result = await quotaManager.unlock(userId: uid, episodeKey: key,
-                                               videoTitle: "\(base) · \(ep.name)")
-        switch result {
-        case .success, .alreadyUnlocked:
-            applyEpisode(ep)
-        case .quotaExceeded, .failed:
-            showQuotaExhaustedAlert = true
-        }
-        pendingSwitchEpisode = nil
-    }
-
     private func recordPlayback() {
-        guard hasAccess else { return }
-
         let (trackUserId, trackUserType): (String, String) = {
             if let appleId = authManager.userIdentifier, !appleId.isEmpty {
                 return (appleId, "apple")
@@ -1405,7 +1357,7 @@ struct EpisodePickerView: View {
                                             .padding(3)
                                             .background(Circle().fill(Color.orange))
                                     }
-                                    // 有剩余次数且未解锁：不显示任何角标
+                                    // 有剩余点数且未解锁：不显示任何角标
                                 }
                             }
                         }

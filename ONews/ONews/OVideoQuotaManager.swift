@@ -101,6 +101,7 @@ final class FreeQuotaManager: ObservableObject {
 // MARK: - 统一门禁决策
 enum VideoAccessDecision {
     case allowed
+    case needLogin                       // ⭐ 新增
     case needConsume(remaining: Int)
     case exhausted
 }
@@ -111,6 +112,8 @@ func decideVideoAccess(episodeKey: String,
                        quota: FreeQuotaManager) -> VideoAccessDecision {
     if auth.isSubscribed { return .allowed }
     if quota.isUnlocked(episodeKey) { return .allowed }
+    // ⭐ 未登录不享受每日免费次数，必须先登录拿到 Apple ID
+    if !auth.isLoggedIn { return .needLogin }
     if quota.remaining > 0 { return .needConsume(remaining: quota.remaining) }
     return .exhausted
 }

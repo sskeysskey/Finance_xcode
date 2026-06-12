@@ -768,7 +768,7 @@ struct CacheCard: View {
     private var idleRow: some View {
         Button {
             guard hasAccess else {
-                // 未订阅且未解锁：看剩余次数决定弹什么
+                // 未订阅且未解锁：看剩余点数决定弹什么
                 if FreeQuotaManager.shared.remaining > 0 {
                     // 这里需要把消耗确认抛给父级，或者直接在 CacheCard 内做
                     // 简单做法：直接走订阅页（因为播放页已经消耗过了，这里理论上不会走到）
@@ -1113,35 +1113,6 @@ struct VideoCacheView: View {
                  ? "You are currently on a cellular network and 'Wi-Fi Only' is enabled. Do you want to disable 'Wi-Fi Only' and resume downloading?"
                  : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 缓存”。是否关闭该限制并继续下载？")
         }
-        // ⭐ 消耗确认 / 额度用完
-        .alert(isGlobalEnglishMode
-            ? "Use Free Pass (\(cachedConsumeRemaining) left)"
-            : "今日免费赠送还剩\(cachedConsumeRemaining)点",
-            isPresented: $showCachedConsumeConfirm) {
-            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
-                pendingCachedTarget = nil
-            }
-            Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
-                Task { await consumeAndPlayCached() }
-            }
-        } message: {
-            Text(isGlobalEnglishMode
-                ? "This will use 1 pass."
-                : "当前视频将消耗 1 点")
-        }
-        .alert(isGlobalEnglishMode
-            ? "Free Passes Used Up (0 left)"
-            : "今日免费额度不足",
-            isPresented: $showQuotaExhausted) {
-            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
-            Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
-                showSubscriptionSheet = true
-            }
-        } message: {
-            Text(isGlobalEnglishMode
-                ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
-                : "您今天的免费额度已用完，订阅后即可无限畅享所有视频。")
-        }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
         }
@@ -1149,33 +1120,9 @@ struct VideoCacheView: View {
 
     // MARK: - 门禁逻辑
     private func attemptPlayCached(_ target: CachedPlayTarget) {
-        let key = downloadManager.cacheMetadata[target.primaryURL]?.originalEpisodeURL ?? target.primaryURL
-        switch decideVideoAccess(episodeKey: key, auth: authManager, quota: quotaManager) {
-        case .allowed:
-            cachedPlayTarget = target
-            navigateToCachedPlayer = true
-        case .needConsume(let r):
-            pendingCachedTarget = target
-            cachedConsumeRemaining = r
-            showCachedConsumeConfirm = true
-        case .exhausted:
-            showQuotaExhausted = true
-        }
-    }
-
-    private func consumeAndPlayCached() async {
-        guard let target = pendingCachedTarget else { return }
-        let key = downloadManager.cacheMetadata[target.primaryURL]?.originalEpisodeURL ?? target.primaryURL
-        let uid = FreeQuotaManager.currentUserId(auth: authManager)
-        let result = await quotaManager.unlock(userId: uid, episodeKey: key, videoTitle: target.title)
-        switch result {
-        case .success, .alreadyUnlocked:
-            cachedPlayTarget = target
-            navigateToCachedPlayer = true
-        case .quotaExceeded, .failed:
-            showQuotaExhausted = true
-        }
-        pendingCachedTarget = nil
+        // ⭐ 离线缓存视频：已下载即可免费播放，不再消耗点数，也不要求登录/订阅
+        cachedPlayTarget = target
+        navigateToCachedPlayer = true
     }
 
     private func resumeAllAction() {
@@ -1533,6 +1480,7 @@ struct VideoPlayHistoryView: View {
     @EnvironmentObject var authManager: AuthManager
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
     @State private var showSubscriptionSheet = false
+    @State private var showLoginAlert = false
 
     // ⭐ 门禁 / 程序化跳转
     @State private var playRecord: VideoPlayRecord? = nil
@@ -1632,6 +1580,22 @@ struct VideoPlayHistoryView: View {
                 ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
                 : "您今天的免费额度已用完，订阅后即可无限畅享所有视频。")
         }
+        .alert(isGlobalEnglishMode ? "Sign in to Watch Free" : "登录后免费观看",
+            isPresented: $showLoginAlert) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Sign in with Apple" : "登录") {
+                authManager.signInWithApple()
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "Sign in (free, no purchase needed) to unlock your free daily passes."
+                : "登录后即可获得每日免费观看点数，登录无需付费。")
+        }
+        .onChange(of: authManager.isLoggedIn) { loggedIn in
+            if loggedIn {
+                Task { await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
+            }
+        }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
         }
@@ -1643,6 +1607,8 @@ struct VideoPlayHistoryView: View {
         case .allowed:
             playRecord = record
             navigateToPlayer = true
+        case .needLogin:                 // ⭐ 新增
+            showLoginAlert = true
         case .needConsume(let r):
             pendingRecord = record
             consumeRemaining = r
@@ -1920,34 +1886,6 @@ struct CachedSeriesDetailView: View {
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
-        .alert(isGlobalEnglishMode
-            ? "Use Free Pass (\(cachedConsumeRemaining) left)"
-            : "今日免费赠送还剩\(cachedConsumeRemaining)点",
-            isPresented: $showCachedConsumeConfirm) {
-            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
-                pendingCachedTarget = nil
-            }
-            Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
-                Task { await consumeAndPlayCached() }
-            }
-        } message: {
-            Text(isGlobalEnglishMode
-                ? "This will use 1 pass."
-                : "当前视频将消耗 1 点")
-        }
-        .alert(isGlobalEnglishMode
-            ? "Free Passes Used Up (0 left)"
-            : "今日免费额度不足",
-            isPresented: $showQuotaExhausted) {
-            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
-            Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
-                showSubscriptionSheet = true
-            }
-        } message: {
-            Text(isGlobalEnglishMode
-                ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
-                : "您今天的免费额度已用完，订阅后即可无限畅享所有视频。")
-        }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
         }
@@ -1955,34 +1893,9 @@ struct CachedSeriesDetailView: View {
 
     // MARK: - 门禁
     private func attemptPlayCached(_ target: CachedPlayTarget) {
-        let key = dm.cacheMetadata[target.primaryURL]?.originalEpisodeURL ?? target.primaryURL
-        switch decideVideoAccess(episodeKey: key, auth: authManager, quota: quotaManager) {
-        case .allowed:
-            cachedPlayTarget = target
-            navigateToCachedPlayer = true
-        case .needConsume(let r):
-            pendingCachedTarget = target
-            cachedConsumeRemaining = r
-            showCachedConsumeConfirm = true
-        case .exhausted:
-            showQuotaExhausted = true
-        }
-    }
-
-    private func consumeAndPlayCached() async {
-        guard let target = pendingCachedTarget else { return }
-        let key = dm.cacheMetadata[target.primaryURL]?.originalEpisodeURL ?? target.primaryURL
-        let uid = FreeQuotaManager.currentUserId(auth: authManager)
-        let result = await quotaManager.unlock(userId: uid, episodeKey: key,
-                                               videoTitle: "\(target.title) · \(target.episodeName ?? "")")
-        switch result {
-        case .success, .alreadyUnlocked:
-            cachedPlayTarget = target
-            navigateToCachedPlayer = true
-        case .quotaExceeded, .failed:
-            showQuotaExhausted = true
-        }
-        pendingCachedTarget = nil
+        // ⭐ 同上，缓存剧集直接播放
+        cachedPlayTarget = target
+        navigateToCachedPlayer = true
     }
 
     private func episodeRow(index: Int, meta: VideoCacheMetadata) -> some View {
