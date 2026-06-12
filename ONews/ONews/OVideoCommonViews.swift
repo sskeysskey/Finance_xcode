@@ -160,9 +160,6 @@ struct VideoCardView: View {
                     .lineLimit(1)
                     .padding(.horizontal, 2)
             }
-            
-            // 如果你觉得空间还不够高，可以在这里添加一个 Spacer 或者固定的 padding
-            // Spacer(minLength: 4) 
         }
         .padding(.bottom, 8) // 增加底部 padding，让卡片底部看起来更饱满
     }

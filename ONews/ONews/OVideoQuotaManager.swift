@@ -4,6 +4,21 @@ import SwiftUI
 final class FreeQuotaManager: ObservableObject {
     static let shared = FreeQuotaManager()
     private init() {}
+    
+    private var lastSyncDay: String = ""   // 上次与服务器成功同步的北京日期（refresh 或 unlock 都算）
+
+    // ⭐ 读取时即校验：今天没成功同步过，本地解锁状态一律不可信
+    func isUnlocked(_ episodeKey: String) -> Bool {
+        guard lastSyncDay == Self.localDayString() else { return false }
+        return unlockedKeys.contains(episodeKey)
+    }
+
+    private static func localDayString() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "Asia/Shanghai")   // 与服务端基准一致
+        return f.string(from: Date())
+    }
 
     @Published var dailyQuota: Int = 0
     @Published var remaining: Int = 0
@@ -16,10 +31,9 @@ final class FreeQuotaManager: ObservableObject {
         return "guest_user"
     }
 
-    func isUnlocked(_ episodeKey: String) -> Bool { unlockedKeys.contains(episodeKey) }
-
     /// 拉取今日配额（进入视频模块、App 回前台时调用）
     func refresh(userId: String) async {
+        let todayLocal = Self.localDayString()
         guard let enc = userId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "\(OVideoAPI.baseURL)/quota/status?user_id=\(enc)") else { return }
         var req = URLRequest(url: url); req.timeoutInterval = 12
@@ -29,8 +43,13 @@ final class FreeQuotaManager: ObservableObject {
             self.dailyQuota   = resp.daily_quota
             self.remaining    = resp.remaining
             self.unlockedKeys = Set(resp.unlocked_episodes)
+            self.lastSyncDay = todayLocal
         } catch {
-            // 离线时保留上次缓存，不清空
+            // 跨天且刷新失败：顺手把过期计数也清掉（isUnlocked 已独立兜底）
+            if lastSyncDay != todayLocal {
+                self.unlockedKeys = []
+                self.remaining = 0
+            }
         }
     }
 
@@ -56,9 +75,11 @@ final class FreeQuotaManager: ObservableObject {
             switch resp.status {
             case "success":
                 unlockedKeys.insert(episodeKey); remaining = resp.remaining
+                lastSyncDay = Self.localDayString()      // ⭐ 补上
                 return .success(remaining: resp.remaining)
             case "already_unlocked":
                 unlockedKeys.insert(episodeKey); remaining = resp.remaining
+                lastSyncDay = Self.localDayString()      // ⭐ 补上
                 return .alreadyUnlocked
             case "quota_exceeded":
                 remaining = 0; return .quotaExceeded
