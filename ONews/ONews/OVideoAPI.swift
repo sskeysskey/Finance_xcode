@@ -14,7 +14,7 @@ enum OVideoAPI {
         return URL(string: "\(baseURL)/cover/\(encoded)")
     }
     
-    // 【保留】老的全量接口，作为兜底，新客户端不再使用
+    // 【修改】增加 userId 参数
     static func fetchVideos(userId: String? = nil) async throws -> [OVideoCategory] {
         var urlString = "\(baseURL)/videos"
         if let uid = userId, !uid.isEmpty,
@@ -27,59 +27,6 @@ enum OVideoAPI {
         let (data, _) = try await URLSession.shared.data(for: request)
         let response = try JSONDecoder().decode(OVideoResponse.self, from: data)
         return response.categories
-    }
-    
-    // 【新增】只取分类名（极轻量）
-    static func fetchCategories(userId: String? = nil) async throws -> [String] {
-        var urlString = "\(baseURL)/categories"
-        if let uid = userId, !uid.isEmpty,
-           let encoded = uid.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-            urlString += "?user_id=\(encoded)"
-        }
-        guard let url = URL(string: urlString) else { throw URLError(.badURL) }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 15
-        let (data, _) = try await URLSession.shared.data(for: request)
-        return try JSONDecoder().decode(OVideoCategoriesResponse.self, from: data).categories
-    }
-    
-    // 【新增】分页拉取某分类（已按 sort 在服务端排好序）
-    static func fetchVideoPage(category: String,
-                               sort: VideoSortOption,
-                               page: Int,
-                               pageSize: Int,
-                               userId: String?) async throws -> OVideoListResponse {
-        guard var comp = URLComponents(string: "\(baseURL)/list") else { throw URLError(.badURL) }
-        var q = [
-            URLQueryItem(name: "category", value: category),
-            URLQueryItem(name: "sort", value: sort.rawValue),
-            URLQueryItem(name: "page", value: String(page)),
-            URLQueryItem(name: "page_size", value: String(pageSize))
-        ]
-        if let uid = userId, !uid.isEmpty {
-            q.append(URLQueryItem(name: "user_id", value: uid))
-        }
-        comp.queryItems = q
-        guard let url = comp.url else { throw URLError(.badURL) }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 20
-        let (data, _) = try await URLSession.shared.data(for: request)
-        return try JSONDecoder().decode(OVideoListResponse.self, from: data)
-    }
-
-    // 放到 OVideoAPI 内（fetchVideoPage 后面）
-    static func fetchDetail(url: String, userId: String? = nil) async throws -> [OVideoChannel] {
-        guard var comp = URLComponents(string: "\(baseURL)/detail") else { throw URLError(.badURL) }
-        var q = [URLQueryItem(name: "url", value: url)]
-        if let uid = userId, !uid.isEmpty {
-            q.append(URLQueryItem(name: "user_id", value: uid))
-        }
-        comp.queryItems = q
-        guard let u = comp.url else { throw URLError(.badURL) }
-        var request = URLRequest(url: u)
-        request.timeoutInterval = 20
-        let (data, _) = try await URLSession.shared.data(for: request)
-        return try JSONDecoder().decode(OVideoDetailResponse.self, from: data).playlist
     }
     
     static func resolveRealURL(episodeURL: String) async throws -> String {
@@ -161,26 +108,6 @@ struct OVideoResponse: Codable {
     let categories: [OVideoCategory]
 }
 
-// 【新增】分类名响应
-struct OVideoCategoriesResponse: Codable {
-    let categories: [String]
-}
-
-// 【新增】分页响应
-struct OVideoListResponse: Codable {
-    let items: [OVideoItem]
-    let hasMore: Bool
-    enum CodingKeys: String, CodingKey {
-        case items
-        case hasMore = "has_more"
-    }
-}
-
-// 放到 OVideoListResponse 附近
-struct OVideoDetailResponse: Codable {
-    let playlist: [OVideoChannel]
-}
-
 struct OVideoCategory: Codable, Identifiable, Hashable {
     var id: String { name }
     let name: String
@@ -205,9 +132,9 @@ struct OVideoItem: Codable, Identifiable, Hashable {
     let ratings: [String: String]?
     let playlist: [OVideoChannel]
     let update: String?
-
+    
     enum CodingKeys: String, CodingKey {
-        case time, name, url, info, image, date, alias, intro, playlist, update
+        case time, name, url, info, image, date, alias, intro, playlist, update 
         case director = "导演"
         case writers  = "编剧"
         case cast     = "主演"
@@ -215,28 +142,7 @@ struct OVideoItem: Codable, Identifiable, Hashable {
         case region   = "地区"
         case ratings  = "评分"
     }
-
-    // ⭐ 新增：列表接口不下发 playlist，缺省给空数组
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        time     = try c.decodeIfPresent(String.self, forKey: .time)
-        name     = try c.decode(String.self, forKey: .name)
-        url      = try c.decode(String.self, forKey: .url)
-        info     = try c.decodeIfPresent(String.self, forKey: .info)
-        image    = try c.decodeIfPresent(String.self, forKey: .image)
-        director = try c.decodeIfPresent(String.self, forKey: .director)
-        writers  = try c.decodeIfPresent([String].self, forKey: .writers)
-        cast     = try c.decodeIfPresent([String].self, forKey: .cast)
-        types    = try c.decodeIfPresent([String].self, forKey: .types)
-        region   = try c.decodeIfPresent(String.self, forKey: .region)
-        date     = try c.decodeIfPresent(String.self, forKey: .date)
-        alias    = try c.decodeIfPresent(String.self, forKey: .alias)
-        intro    = try c.decodeIfPresent(String.self, forKey: .intro)
-        ratings  = try c.decodeIfPresent([String: String].self, forKey: .ratings)
-        playlist = try c.decodeIfPresent([OVideoChannel].self, forKey: .playlist) ?? []
-        update   = try c.decodeIfPresent(String.self, forKey: .update)
-    }
-
+    
     func hash(into hasher: inout Hasher) { hasher.combine(url) }
     static func == (lhs: OVideoItem, rhs: OVideoItem) -> Bool { lhs.url == rhs.url }
 }
@@ -478,209 +384,54 @@ extension VideoCacheMetadata {
     }
 }
 
-// MARK: - 数据管理器（分页渐进加载）
+// MARK: - 数据管理器
 @MainActor
 class OVideoDataManager: ObservableObject {
     @Published var categories: [OVideoCategory] = []
-    @Published var isLoading = false          // 仅「首屏」（首个分类第一页）
-    @Published var isFullyLoaded = false      // 全部数据后台加载完毕
+    @Published var isLoading = false
     @Published var errorMessage: String? = nil
-    @Published private(set) var currentSort: VideoSortOption = .date
-    
     private var hasLoaded = false
     
     // 【新增】记录上一次加载所用的 userId，用于判断是否需要重新加载
     private var loadedUserId: String? = nil
-    private var loadedSort: VideoSortOption? = nil
-    
-    // 每个分类的分页状态
-    private struct PageState {
-        var nextPage = 0
-        var hasMore = true
-        var isLoading = false
-        var started = false
-    }
-    private var pageStates: [String: PageState] = [:]
-    
-    private let firstPageSize = 20      // 首屏小一点，秒进
-    private let backgroundPageSize = 80 // 后台批量大一点，减少刷新次数
-    
-    private var backgroundTask: Task<Void, Never>? = nil
-    private var searchIndex: [SearchIndexEntry] = []
+    // ⭐ 新增：排序结果缓存。key = "categoryName|sortOption"
     private var sortCache: [String: [OVideoItem]] = [:]
+    // ⭐ 新增：搜索索引
+    private var searchIndex: [SearchIndexEntry] = []
     
-    var allItems: [OVideoItem] { categories.flatMap { $0.items } }
-    
-    func items(for name: String) -> [OVideoItem] {
-        categories.first(where: { $0.name == name })?.items ?? []
+    func loadVideosIfNeeded(userId: String? = nil) async {
+        // 【修改】已加载，且用户身份与上次一致，才跳过；
+        // 否则（例如预加载时是 nil，进入页面时变成真实 userId）需要重新拉取，
+        // 这样邀请码用户才能拿到未过滤的数据
+        if hasLoaded && loadedUserId == userId { return }
+        await loadVideos(userId: userId)
     }
     
-    func hasMore(for name: String) -> Bool {
-        pageStates[name]?.hasMore ?? false
-    }
-    
-    // MARK: 对外入口
-    
-    func loadVideosIfNeeded(userId: String? = nil,
-                            sort: VideoSortOption = .date,
-                            initialCategoryIndex: Int = 0) async {
-        // 用户身份或排序变了都要重新拉
-        if hasLoaded && loadedUserId == userId && loadedSort == sort { return }
-        await reloadAll(userId: userId, sort: sort, priorityCategoryIndex: initialCategoryIndex)
-    }
-    
-    // 重试用
+    // 【修改】增加 userId 参数
     func loadVideos(userId: String? = nil) async {
-        await reloadAll(userId: userId, sort: currentSort, priorityCategoryIndex: 0)
-    }
-    
-    // 切换排序：服务端重新排序，重置后从优先分类第一页拉
-    func changeSort(to newSort: VideoSortOption, priorityCategoryIndex: Int) async {
-        guard newSort != currentSort else { return }
-        await reloadAll(userId: loadedUserId, sort: newSort, priorityCategoryIndex: priorityCategoryIndex)
-    }
-    
-    // 用户切到某个尚未开始加载的分类时，立刻拉它的第一页
-    func ensureCategoryStarted(_ name: String) {
-        guard let st = pageStates[name], !st.started, st.hasMore else { return }
-        Task { await loadPage(categoryName: name, pageSize: firstPageSize) }
-    }
-    
-    // 上拉加载更多（兜底，后台通常已自动补齐）
-    func loadMore(category name: String) {
-        guard let st = pageStates[name], st.hasMore, !st.isLoading else { return }
-        Task { await loadPage(categoryName: name, pageSize: backgroundPageSize) }
-    }
-    
-    // MARK: 核心加载流程
-    
-    private func reloadAll(userId: String?,
-                           sort: VideoSortOption,
-                           priorityCategoryIndex: Int) async {
-        backgroundTask?.cancel()
-        backgroundTask = nil
-        
         isLoading = true
         errorMessage = nil
-        currentSort = sort
-        loadedUserId = userId
-        loadedSort = sort
-        searchIndex = []
-        sortCache.removeAll()
-        isFullyLoaded = false
-        hasLoaded = true
-        
-        // 1. 分类列表（极轻量）
-        let names: [String]
+        defer { isLoading = false }
         do {
-            let fetched = try await OVideoAPI.fetchCategories(userId: userId)
-            names = fetched
+            // 【修改】传入 userId
+            let cats = try await OVideoAPI.fetchVideos(userId: userId)
+            self.categories = cats
+            self.sortCache.removeAll()
+            
+            // 构建搜索索引
+            let index = await Task.detached(priority: .utility) {
+                Self.buildIndex(from: cats)
+            }.value
+            self.searchIndex = index
+            
+            self.loadedUserId = userId   // 【新增】
+            self.hasLoaded = true
         } catch {
-            // 兜底固定顺序
-            names = ["Movie", "Drama", "Show", "Anime"]
-        }
-        
-        categories = names.map { OVideoCategory(name: $0, items: []) }
-        pageStates = Dictionary(uniqueKeysWithValues: names.map { ($0, PageState()) })
-        
-        guard !names.isEmpty else {
-            isLoading = false
-            isFullyLoaded = true
-            return
-        }
-        
-        // 2. 首屏：优先分类第一页
-        let pIdx = min(max(0, priorityCategoryIndex), names.count - 1)
-        await loadPage(categoryName: names[pIdx], pageSize: firstPageSize)
-        isLoading = false
-        
-        // 3. 后台补齐剩余页与其他分类
-        startBackgroundLoading(priorityIndex: pIdx)
-    }
-    
-    private func loadPage(categoryName: String, pageSize: Int) async {
-        guard var st = pageStates[categoryName], st.hasMore, !st.isLoading else { return }
-        st.isLoading = true
-        st.started = true
-        pageStates[categoryName] = st
-        
-        do {
-            let resp = try await OVideoAPI.fetchVideoPage(
-                category: categoryName,
-                sort: currentSort,
-                page: st.nextPage,
-                pageSize: pageSize,
-                userId: loadedUserId
-            )
-            appendItems(resp.items, to: categoryName)
-            st.nextPage += 1
-            st.hasMore = resp.hasMore
-            st.isLoading = false
-            pageStates[categoryName] = st
-        } catch {
-            st.isLoading = false
-            pageStates[categoryName] = st
-            // 仅当这一分类还一条都没有时，才把错误暴露给 UI
-            if (categories.first(where: { $0.name == categoryName })?.items.isEmpty ?? true) {
-                errorMessage = error.localizedDescription
-            }
+            errorMessage = error.localizedDescription
         }
     }
     
-    private func appendItems(_ items: [OVideoItem], to name: String) {
-        guard let idx = categories.firstIndex(where: { $0.name == name }) else { return }
-        let merged = categories[idx].items + items
-        categories[idx] = OVideoCategory(name: name, items: merged)
-        // 排序缓存失效（filter 视图可能仍会用到 sortItems）
-        for opt in VideoSortOption.allCases { sortCache["\(name)|\(opt.rawValue)"] = nil }
-        // 增量补搜索索引
-        if !items.isEmpty {
-            let cat = OVideoCategory(name: name, items: items)
-            searchIndex.append(contentsOf: Self.buildIndex(from: [cat]))
-        }
-    }
-    
-    private func startBackgroundLoading(priorityIndex: Int) {
-        backgroundTask = Task { [weak self] in
-            guard let self else { return }
-            let names = self.orderedNames(priorityIndex: priorityIndex)
-            for name in names {
-                while !Task.isCancelled {
-                    let cont = await self.loadNextBackgroundPage(name)
-                    if !cont { break }
-                }
-                if Task.isCancelled { return }
-            }
-            if !Task.isCancelled {
-                await MainActor.run { self.isFullyLoaded = true }
-            }
-        }
-    }
-    
-    @MainActor
-    private func loadNextBackgroundPage(_ name: String) async -> Bool {
-        guard let st = pageStates[name], st.hasMore else { return false }
-        if st.isLoading {
-            // 正被前台（ensureCategoryStarted / loadMore）加载，稍等再判断
-            try? await Task.sleep(nanoseconds: 200_000_000)
-            return pageStates[name]?.hasMore ?? false
-        }
-        let before = st.nextPage
-        await loadPage(categoryName: name, pageSize: backgroundPageSize)
-        let after = pageStates[name]?.nextPage ?? before
-        if after == before { return false } // 没前进（出错）就停
-        return pageStates[name]?.hasMore ?? false
-    }
-    
-    @MainActor
-    private func orderedNames(priorityIndex: Int) -> [String] {
-        let names = categories.map { $0.name }
-        guard !names.isEmpty else { return [] }
-        let p = min(max(0, priorityIndex), names.count - 1)
-        return [names[p]] + names.enumerated().filter { $0.offset != p }.map { $0.element }
-    }
-    
-    // MARK: 搜索索引构建
+    // ⭐ 修改：构建索引时捕获 categoryName，并对导演、演员进行中英文清洗
     nonisolated private static func buildIndex(from categories: [OVideoCategory]) -> [SearchIndexEntry] {
         var entries: [SearchIndexEntry] = []
         for category in categories {
@@ -718,7 +469,9 @@ class OVideoDataManager: ObservableObject {
         return entries
     }
     
-    // MARK: 排序（保留给 Filter 视图使用）
+    var allItems: [OVideoItem] { categories.flatMap { $0.items } }
+    
+    // ⭐ 新版：sortKey 做字符串比较 + 结果缓存
     func sortItems(_ items: [OVideoItem],
                    by option: VideoSortOption,
                    cacheKey: String? = nil) -> [OVideoItem] {
@@ -749,7 +502,7 @@ class OVideoDataManager: ObservableObject {
         }
     }
     
-    // MARK: 搜索（在已加载到的索引上做；后台补齐后即为全量）
+    // ⭐ 核心修改：多级严格分层搜索算法
     func searchAsync(keyword: String, limit: Int = 200) async -> [OVideoItem] {
         let kw = keyword.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !kw.isEmpty else { return [] }

@@ -21,9 +21,6 @@ struct VideoDetailView: View {
     @State private var pendingEpisode: (name: String, url: String)? = nil
     // ⭐ 新增：今日额度已用完的中间提示
     @State private var showQuotaExhaustedAlert = false
-    @State private var loadedPlaylist: [OVideoChannel]? = nil
-    @State private var isLoadingDetail = false
-    @State private var detailLoadFailed = false
 
     // 新增：搜索跳转状态
     @State private var navigateToSearch = false
@@ -36,9 +33,6 @@ struct VideoDetailView: View {
     // 用于记录当前点击并准备播放的剧集
     @State private var selectedEpisode: (name: String, url: String)? = nil
 
-    private var activePlaylist: [OVideoChannel] {
-        loadedPlaylist ?? item.playlist   // 详情没回来前用 item 的（空数组）
-    }
     // 对 playlist 进行过滤和排序的计算属性
     private var sortedPlaylist: [OVideoChannel] {
         // 这里的有效 URL 集合逻辑保持你原有的映射过滤
@@ -46,34 +40,33 @@ struct VideoDetailView: View {
             return Set<String>()
         }()
 
-        // ⭐ 把 item.playlist 改成 activePlaylist
-        let indexedChannels = activePlaylist.enumerated().map { (index, channel) -> (index: Int, channel: OVideoChannel, validCount: Int, qualityScore: Int) in
+        let indexedChannels = item.playlist.enumerated().map { (index, channel) -> (index: Int, channel: OVideoChannel, validCount: Int, qualityScore: Int) in
             let validCount = channel.episodes.values.filter { url in
                 validURLs.isEmpty ? true : validURLs.contains(url)
             }.count
 
             var qualityScore = 1
             let episodeKeys = channel.episodes.keys
-
+            
             let hasLowQuality = episodeKeys.contains { key in
                 let k = key.uppercased()
                 return k.contains("TC") || k.contains("TS") || k.contains("HC") || k.contains("抢先")
             }
-
+            
             let hasHighQuality = episodeKeys.contains { key in
                 let k = key.uppercased()
                 return k.contains("HD") || k.contains("正片")
             }
-
+            
             if hasLowQuality {
                 qualityScore = 0
             } else if hasHighQuality {
                 qualityScore = 2
             }
-
+            
             return (index, channel, validCount, qualityScore)
         }
-
+        
         let sortedIndexed = indexedChannels.sorted { a, b in
             if a.validCount != b.validCount {
                 return a.validCount > b.validCount
@@ -83,15 +76,14 @@ struct VideoDetailView: View {
             }
             return a.index < b.index
         }
-
+        
         return sortedIndexed.map { $0.channel }
     }
     
     // ⭐ 辅助计算属性：判断当前影片是否是多集类型（Drama, Show, Anime）
     // 如果影片只有 1 集，或者分类属于 Movie，通常不需要显示排序按钮
     private var isMultiEpisodeVideo: Bool {
-        // ⭐ 把 item.playlist 改成 activePlaylist
-        if let firstChannel = activePlaylist.first {
+        if let firstChannel = item.playlist.first {
             return firstChannel.episodes.count > 1
         }
         return false
@@ -221,20 +213,6 @@ struct VideoDetailView: View {
         }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
-            await loadDetailIfNeeded()
-        }
-    }
-
-    private func loadDetailIfNeeded() async {
-        guard loadedPlaylist == nil else { return }
-        isLoadingDetail = true
-        detailLoadFailed = false
-        defer { isLoadingDetail = false }
-        do {
-            let uid = FreeQuotaManager.currentUserId(auth: authManager)
-            loadedPlaylist = try await OVideoAPI.fetchDetail(url: item.url, userId: uid)
-        } catch {
-            detailLoadFailed = true   // 失败给重试，不要直接显示"洽谈中"误导用户
         }
     }
     
@@ -377,26 +355,7 @@ struct VideoDetailView: View {
                 .foregroundColor(.primary)
                 .padding(.horizontal, 16)
             
-            if loadedPlaylist == nil {
-                if detailLoadFailed {
-                    // 加载失败 → 重试
-                    VStack(spacing: 12) {
-                        Text(isGlobalEnglishMode ? "Failed to load episodes" : "播放列表加载失败")
-                            .font(.system(size: 14)).foregroundColor(.secondary)
-                        Button(isGlobalEnglishMode ? "Retry" : "重试") {
-                            Task { await loadDetailIfNeeded() }
-                        }
-                        .padding(.horizontal, 20).padding(.vertical, 8)
-                        .background(Color.accentColor.opacity(0.12))
-                        .cornerRadius(16)
-                    }
-                    .frame(maxWidth: .infinity).padding(.vertical, 28)
-                } else {
-                    // 详情拉取中
-                    ProgressView()
-                        .frame(maxWidth: .infinity, minHeight: 120)
-                }
-            } else if sortedPlaylist.isEmpty {
+            if sortedPlaylist.isEmpty {
                 // 🌟 【核心新增】高端大气的“无链接洽谈中”提示卡片
                 VStack(spacing: 12) {
                     Image(systemName: "hourglass.badge.plus")
