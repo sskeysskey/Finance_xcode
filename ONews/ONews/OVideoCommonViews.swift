@@ -297,9 +297,11 @@ struct VideoBottomBar: View {
             } label: {
                 BarItemView(
                     icon: "square.grid.2x2.fill",
-                    activeIcon: "square.grid.2x2.fill",
                     zh: "首页", en: "Home",
+                    tint: Color(red: 0.20, green: 0.72, blue: 0.45),  // 绿
                     isActive: activeTab == .home,
+                    isEnabled: true,
+                    isLoading: false,
                     isEnglish: isGlobalEnglishMode
                 )
             }
@@ -310,143 +312,138 @@ struct VideoBottomBar: View {
                 VideoFilterView(dataManager: dataManager)
             } label: {
                 BarItemView(
-                    icon: "line.3.horizontal.decrease",
-                    activeIcon: "line.3.horizontal.decrease.circle.fill",
+                    icon: "line.3.horizontal.decrease.circle.fill",
                     zh: "分类", en: "Filter",
+                    tint: Color(red: 0.62, green: 0.36, blue: 0.85),  // 紫
                     isActive: false,
+                    isEnabled: !isLoading,
+                    isLoading: isLoading,
                     isEnglish: isGlobalEnglishMode
                 )
             }
             .buttonStyle(.plain)
             .disabled(isLoading)  // ⭐ 加载中时禁用
-            .opacity(isLoading ? 0.4 : 1.0)  // ⭐ 变暗提示不可点
             
             // ⭐ 搜索按钮：加载中时禁用
             NavigationLink {
                 VideoSearchTabView(dataManager: dataManager)
             } label: {
                 BarItemView(
-                    icon: "magnifyingglass",
-                    activeIcon: "magnifyingglass.circle.fill",
+                    icon: "magnifyingglass.circle.fill",
                     zh: "搜索", en: "Search",
+                    tint: Color(red: 0.25, green: 0.55, blue: 0.95),  // 蓝
                     isActive: false,
+                    isEnabled: !isLoading,
+                    isLoading: isLoading,
                     isEnglish: isGlobalEnglishMode
                 )
             }
             .buttonStyle(.plain)
             .disabled(isLoading)  // ⭐ 加载中时禁用
-            .opacity(isLoading ? 0.4 : 1.0)  // ⭐ 变暗提示不可点
             
             // ⭐ 缓存按钮：加载中时禁用（可选，你也可以不禁用缓存）
             NavigationLink {
                 VideoCacheView()
             } label: {
                 BarItemView(
-                    icon: "arrow.down.to.line",
-                    activeIcon: "arrow.down.circle.fill",
+                    icon: "arrow.down.circle.fill",
                     zh: "缓存", en: "Cache",
+                    tint: Color(red: 0.98, green: 0.55, blue: 0.20),  // 橙
                     isActive: false,
+                    isEnabled: true,
+                    isLoading: false,
                     isEnglish: isGlobalEnglishMode
                 )
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 8)
-        .padding(.top, 4) // ⭐ 减小顶部 Padding
-        .padding(.bottom, 2) // ⭐ 减小底部 Padding
-        // ⭐ 现代化背景：毛玻璃 + 顶部细分隔线 + 极淡渐变
+        .padding(.top, 6)
+        .padding(.bottom, 2)
+        // 毛玻璃 + 顶部细分隔线
         .background(
             ZStack {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-                
+                Rectangle().fill(.ultraThinMaterial)
                 LinearGradient(
-                    colors: [
-                        Color.primary.opacity(0.04),
-                        Color.clear
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
+                    colors: [Color.primary.opacity(0.04), Color.clear],
+                    startPoint: .top, endPoint: .bottom
                 )
             }
             .overlay(alignment: .top) {
-                // 顶部 hairline 分隔线
                 LinearGradient(
                     colors: [
                         Color.primary.opacity(0.0),
                         Color.primary.opacity(0.18),
                         Color.primary.opacity(0.0)
                     ],
-                    startPoint: .leading,
-                    endPoint: .trailing
+                    startPoint: .leading, endPoint: .trailing
                 )
                 .frame(height: 0.5)
             }
-            .ignoresSafeArea(edges: .bottom) // <--- 关键点：让背景忽略底部安全区
+            .ignoresSafeArea(edges: .bottom)
         )
-        // ⭐ 让背景自然延伸到底部安全区
-        .background(.ultraThinMaterial.opacity(0.001)) // 占位，避免 ignoresSafeArea 影响布局
+        .background(.ultraThinMaterial.opacity(0.001))
     }
 }
 
-// MARK: - 底部栏单个按钮（现代风格、有点击放大反馈）
+// MARK: - 底部栏单个按钮（彩色渐变图标 + 加载态 + 置灰态）
 private struct BarItemView: View {
     let icon: String
-    let activeIcon: String
     let zh: String
     let en: String
+    let tint: Color
     let isActive: Bool
+    let isEnabled: Bool
+    let isLoading: Bool
     let isEnglish: Bool
     
     var body: some View {
-        VStack(spacing: 2) {
-            // 选中态：图标外裹一个柔光胶囊背景
+        VStack(spacing: 5) {
             ZStack {
-                if isActive {
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.accentColor.opacity(0.22),
-                                    Color.accentColor.opacity(0.12)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
+                // 图标底座：就绪时彩色渐变 + 阴影；未就绪时灰色
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: isEnabled
+                                ? [tint.opacity(0.95), tint.opacity(0.70)]
+                                : [Color.secondary.opacity(0.22),
+                                   Color.secondary.opacity(0.14)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
                         )
-                        .frame(width: 50, height: 24)
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(
-                                    Color.accentColor.opacity(0.35),
-                                    lineWidth: 0.5
-                                )
-                        )
-                        .shadow(
-                            color: Color.accentColor.opacity(0.25),
-                            radius: 4, x: 0, y: 1
-                        )
-                        .transition(.scale.combined(with: .opacity))
-                }
-                
-                Image(systemName: isActive ? activeIcon : icon)
-                    .font(.system(size: 25, weight: isActive ? .semibold : .regular))
-                    .foregroundStyle(
-                        isActive ? Color.accentColor : Color.secondary
                     )
-                    .symbolRenderingMode(.hierarchical)
-                    .scaleEffect(isActive ? 1.0 : 0.96)
+                    .frame(width: 50, height: 34)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(Color.white.opacity(isEnabled ? 0.25 : 0),
+                                          lineWidth: 0.5)
+                    )
+                    .shadow(color: isEnabled ? tint.opacity(0.40) : .clear,
+                            radius: 6, x: 0, y: 3)
+                    .scaleEffect(isActive ? 1.06 : 1.0)
+                
+                if isLoading {
+                    // 数据未就绪：小转圈，提示正在准备
+                    ProgressView()
+                        .scaleEffect(0.7)
+                        .tint(.secondary)
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundColor(.white)
+                        .symbolRenderingMode(.hierarchical)
+                }
             }
-            .frame(height: 30)
-            .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isActive)
             
             Text(isEnglish ? en : zh)
-                .font(.system(size: 14, weight: isActive ? .semibold : .medium))
-                .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
-                .animation(.easeInOut(duration: 0.2), value: isActive)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isEnabled ? .primary : .secondary)
         }
         .frame(maxWidth: .infinity)
+        .opacity(isEnabled ? 1.0 : 0.55)   // ⭐ 整体置灰提示不可点
         .contentShape(Rectangle())
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isActive)
+        .animation(.easeInOut(duration: 0.3), value: isEnabled)  // ⭐ 亮起时平滑过渡
     }
 }
 
