@@ -72,14 +72,23 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             }
         }
         
-        // 【新增】视频模块预加载：延迟 0.01 秒后在后台预加载，避免抢占新闻模块首屏资源
+        // 【修改】视频模块预加载：拉分类名 + 预热用户上次选中的分类首页
         Task(priority: .userInitiated) { [weak self] in
-            try? await Task.sleep(nanoseconds: 10_000_000) // 等新闻先加载完
+            try? await Task.sleep(nanoseconds: 10_000_000)
             guard let self = self else { return }
-            print("📺 [预加载] 开始后台预加载视频模块数据...")
-            // 【修改】传入 userId（若此刻还未登录则为 nil，进入页面后会按上面的逻辑自动重新拉取）
-            await self.videoDataManager.loadVideosIfNeeded(userId: self.authManager.userIdentifier)
-            print("📺 [预加载] 视频模块数据预加载完成。")
+            let uid = self.authManager.userIdentifier
+            await self.videoDataManager.bootstrap(userId: uid)
+
+            let idx = UserDefaults.standard.integer(forKey: "OVideo_SelectedCategoryIndex")
+            let sortRaw = UserDefaults.standard.string(forKey: "OVideo_SortOption")
+                ?? VideoSortOption.date.rawValue
+            let sort = VideoSortOption(rawValue: sortRaw) ?? .date
+            let names = await self.videoDataManager.categoryNames
+            if idx >= 0, idx < names.count {
+                await self.videoDataManager.loadFirstPageIfNeeded(
+                    category: names[idx], sort: sort, userId: uid)
+            }
+            print("📺 [预加载] 视频首页第一页已预热。")
         }
         
         let tv = UITableView.appearance()

@@ -32,6 +32,9 @@ struct VideoDetailView: View {
 
     // 用于记录当前点击并准备播放的剧集
     @State private var selectedEpisode: (name: String, url: String)? = nil
+    // ⭐ 新增：playlist 按需加载
+    @State private var loadedChannels: [OVideoChannel] = []
+    @State private var isLoadingPlaylist = true
 
     // 对 playlist 进行过滤和排序的计算属性
     private var sortedPlaylist: [OVideoChannel] {
@@ -40,7 +43,7 @@ struct VideoDetailView: View {
             return Set<String>()
         }()
 
-        let indexedChannels = item.playlist.enumerated().map { (index, channel) -> (index: Int, channel: OVideoChannel, validCount: Int, qualityScore: Int) in
+        let indexedChannels = loadedChannels.enumerated().map { (index, channel) -> (index: Int, channel: OVideoChannel, validCount: Int, qualityScore: Int) in
             let validCount = channel.episodes.values.filter { url in
                 validURLs.isEmpty ? true : validURLs.contains(url)
             }.count
@@ -83,7 +86,7 @@ struct VideoDetailView: View {
     // ⭐ 辅助计算属性：判断当前影片是否是多集类型（Drama, Show, Anime）
     // 如果影片只有 1 集，或者分类属于 Movie，通常不需要显示排序按钮
     private var isMultiEpisodeVideo: Bool {
-        if let firstChannel = item.playlist.first {
+        if let firstChannel = loadedChannels.first {
             return firstChannel.episodes.count > 1
         }
         return false
@@ -213,6 +216,13 @@ struct VideoDetailView: View {
         }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
+            if loadedChannels.isEmpty {
+                let channels = await dataManager.fetchPlaylist(url: item.url)
+                await MainActor.run {
+                    loadedChannels = channels
+                    isLoadingPlaylist = false
+                }
+            }
         }
     }
     
@@ -355,7 +365,12 @@ struct VideoDetailView: View {
                 .foregroundColor(.primary)
                 .padding(.horizontal, 16)
             
-            if sortedPlaylist.isEmpty {
+            if isLoadingPlaylist {
+                // 播放列表加载中
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
+            } else if sortedPlaylist.isEmpty {
                 // 🌟 【核心新增】高端大气的“无链接洽谈中”提示卡片
                 VStack(spacing: 12) {
                     Image(systemName: "hourglass.badge.plus")
