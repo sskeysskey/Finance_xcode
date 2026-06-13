@@ -271,8 +271,12 @@ struct VideoModuleView: View {
         // 【说明】这里仍然保留 task，作为兜底。如果预加载已完成，loadVideosIfNeeded 内部应该会立即返回不重复加载
         // 【修改】传入 userId
         .task {
-            await dataManager.loadVideosIfNeeded(userId: FreeQuotaManager.currentUserId(auth: authManager))
-            // ⭐ 新增：进入视频模块时刷新今日免费次数
+            let sort = VideoSortOption(rawValue: sortOptionRaw) ?? .date
+            await dataManager.loadVideosIfNeeded(
+                userId: FreeQuotaManager.currentUserId(auth: authManager),
+                sort: sort,
+                initialCategoryIndex: selectedCategoryIndex
+            )
             await FreeQuotaManager.shared.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
         }
     }
@@ -450,17 +454,13 @@ private struct BarItemView: View {
     }
 }
 
-// MARK: - ⭐ 单个分类的视频列表 —— 直接按 sortOption 计算，消除缓存带来的错乱
+// MARK: - 单个分类列表（按分类名实时读取，随后台追加自动刷新且不丢滚动位置）
 struct CategoryVideoListView: View {
-    let category: OVideoCategory
-    let sortOption: VideoSortOption
+    let categoryName: String
     @ObservedObject var dataManager: OVideoDataManager
     
     var body: some View {
-        // ⭐ 用 category.name 做 cacheKey，避免重复排序
-        let sortedItems = dataManager.sortItems(category.items,
-                                                by: sortOption,
-                                                cacheKey: category.name)
+        let items = dataManager.items(for: categoryName)
         
         ScrollViewReader { proxy in
             ScrollView {
@@ -469,26 +469,44 @@ struct CategoryVideoListView: View {
                     .frame(height: 0)
                     .id("top_anchor")
                 
-                WaterfallGridView(items: sortedItems, dataManager: dataManager)
-                    .padding(.top, 10)
-                    .padding(.bottom, 20)
+                if items.isEmpty {
+                    if dataManager.hasMore(for: categoryName) || dataManager.isLoading {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, minHeight: 240)
+                    } else {
+                        Text("暂无内容")
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 240)
+                    }
+                } else {
+                    WaterfallGridView(items: items, dataManager: dataManager)
+                        .padding(.top, 10)
+                        .padding(.bottom, 20)
+                    
+                    if dataManager.hasMore(for: categoryName) {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 20)
+                            .onAppear { dataManager.loadMore(category: categoryName) }
+                    }
+                }
             }
-            // 2. 监听排序选项的变化，一旦变化，平滑滚动回顶部
-            .onChange(of: sortOption) { _ in
+            // 排序变化（changeSort 后整体重载）时滚回顶部
+            .onChange(of: dataManager.currentSort) { _ in
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                     proxy.scrollTo("top_anchor", anchor: .top)
                 }
             }
         }
         .background(Color(UIColor.systemGroupedBackground))
+        .onAppear { dataManager.ensureCategoryStarted(categoryName) }
     }
 }
 
 // MARK: - ⭐️ 核心优化：丝滑无限循环 Pager (封装 UIPageViewController)
 struct InfinitePageViewController: UIViewControllerRepresentable {
-    var categories: [OVideoCategory]
+    var categoryNames: [String]
     @Binding var selectedIndex: Int
-    var sortOption: VideoSortOption
     var dataManager: OVideoDataManager
 
     func makeCoordinator() -> Coordinator {
@@ -505,8 +523,8 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
         pageViewController.delegate = context.coordinator
         pageViewController.view.backgroundColor = .clear
 
-        if !categories.isEmpty {
-            let safeIndex = min(max(0, selectedIndex), categories.count - 1)
+        if !categoryNames.isEmpty {
+            let safeIndex = min(max(0, selectedIndex), categoryNames.count - 1)
             let initialVC = context.coordinator.viewController(for: safeIndex)
             pageViewController.setViewControllers([initialVC], direction: .forward, animated: false)
         }
@@ -516,29 +534,12 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
 
     func updateUIViewController(_ pageViewController: UIPageViewController, context: Context) {
         context.coordinator.parent = self
-        guard !categories.isEmpty else { return }
+        guard !categoryNames.isEmpty else { return }
         
-        // ⭐ 只有 sortOption 或 categories 真正改变时，才重置已缓存视图的 rootView
-        let signature = categories.map { "\($0.name):\($0.items.count)" }.joined(separator: ",")
-        let sortChanged = context.coordinator.lastSortOption != sortOption
-        let dataChanged = context.coordinator.lastCategoriesSignature != signature
-        
-        if sortChanged || dataChanged {
-            for (index, vc) in context.coordinator.controllers where index < categories.count {
-                vc.rootView = CategoryVideoListView(
-                    category: categories[index],
-                    sortOption: sortOption,
-                    dataManager: dataManager
-                )
-            }
-            context.coordinator.lastSortOption = sortOption
-            context.coordinator.lastCategoriesSignature = signature
-        }
-        
-        // ⭐ 处理外部索引改变（点击顶部菜单切换频道）—— 保持原逻辑
-        let safeTarget = min(max(0, selectedIndex), categories.count - 1)
+        // 仅处理外部索引改变（点击顶部菜单切换频道）
+        let safeTarget = min(max(0, selectedIndex), categoryNames.count - 1)
         if context.coordinator.currentIndex != safeTarget {
-            let count = categories.count
+            let count = categoryNames.count
             let current = context.coordinator.currentIndex
             var diff = safeTarget - current
             if diff > count / 2 { diff -= count }
@@ -555,10 +556,6 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
         var currentIndex: Int
         var controllers = [Int: UIHostingController<CategoryVideoListView>]()
 
-        // ⭐ 新增：记住上一次的 sortOption 和 categories 标识
-        var lastSortOption: VideoSortOption?
-        var lastCategoriesSignature: String = ""
-
         init(_ parent: InfinitePageViewController) {
             self.parent = parent
             self.currentIndex = parent.selectedIndex
@@ -566,11 +563,10 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
 
         func viewController(for index: Int) -> UIViewController {
             if let cached = controllers[index] {
-                return cached    // ⭐ 直接返回，不再重新赋值 rootView
+                return cached
             }
             let view = CategoryVideoListView(
-                category: parent.categories[index],
-                sortOption: parent.sortOption,
+                categoryName: parent.categoryNames[index],
                 dataManager: parent.dataManager
             )
             let vc = UIHostingController(rootView: view)
@@ -580,20 +576,20 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
         }
 
         func pageViewController(_ pageViewController: UIPageViewController, viewControllerBefore viewController: UIViewController) -> UIViewController? {
-            guard !parent.categories.isEmpty else { return nil }
+            guard !parent.categoryNames.isEmpty else { return nil }
             guard let hostingVC = viewController as? UIHostingController<CategoryVideoListView> else { return nil }
             guard let index = controllers.first(where: { $0.value == hostingVC })?.key else { return nil }
 
-            let previousIndex = (index - 1 + parent.categories.count) % parent.categories.count
+            let previousIndex = (index - 1 + parent.categoryNames.count) % parent.categoryNames.count
             return self.viewController(for: previousIndex)
         }
 
         func pageViewController(_ pageViewController: UIPageViewController, viewControllerAfter viewController: UIViewController) -> UIViewController? {
-            guard !parent.categories.isEmpty else { return nil }
+            guard !parent.categoryNames.isEmpty else { return nil }
             guard let hostingVC = viewController as? UIHostingController<CategoryVideoListView> else { return nil }
             guard let index = controllers.first(where: { $0.value == hostingVC })?.key else { return nil }
 
-            let nextIndex = (index + 1) % parent.categories.count
+            let nextIndex = (index + 1) % parent.categoryNames.count
             return self.viewController(for: nextIndex)
         }
 
@@ -654,16 +650,16 @@ struct VideoBrowseView: View {
     
     var body: some View {
         Group {
-            if dataManager.isLoading && dataManager.categories.isEmpty {
+            if dataManager.isLoading && dataManager.allItems.isEmpty {
                 VStack(spacing: 12) {
                     ProgressView()
-                        .scaleEffect(1.2) // 稍微放大一点点，视觉更舒适
-                    Text(isGlobalEnglishMode ? "Loading, please wait..." : "图片加载中，请稍候...")
+                        .scaleEffect(1.2)
+                    Text(isGlobalEnglishMode ? "Loading, please wait..." : "加载中，请稍候...")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let err = dataManager.errorMessage, dataManager.categories.isEmpty {
+            } else if let err = dataManager.errorMessage, dataManager.allItems.isEmpty {
                 errorView(err)
             } else if dataManager.categories.isEmpty {
                 Text(isGlobalEnglishMode ? "No content" : "暂无内容")
@@ -671,12 +667,17 @@ struct VideoBrowseView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 InfinitePageViewController(
-                    categories: dataManager.categories,
+                    categoryNames: dataManager.categories.map { $0.name },
                     selectedIndex: $selectedCategoryIndex,
-                    sortOption: sortOption,
                     dataManager: dataManager
                 )
                 .ignoresSafeArea(edges: .bottom)
+            }
+        }
+        // 排序切换 → 服务端重新排序并重载
+        .onChange(of: sortOption) { newValue in
+            Task {
+                await dataManager.changeSort(to: newValue, priorityCategoryIndex: selectedCategoryIndex)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
