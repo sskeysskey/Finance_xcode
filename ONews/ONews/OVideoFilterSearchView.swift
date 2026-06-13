@@ -33,6 +33,9 @@ struct VideoFilterView: View {
     @State private var allTypes: [String] = []
     @State private var allYears: [Int] = []
     @State private var allRegions: [String] = []
+
+    // ⭐ 新增：用于强制 ScrollView 滚动回顶部的 ID
+    @State private var scrollID = UUID()
     
     // 当前弹出的面板
     @State private var activeSheet: FilterField? = nil
@@ -117,6 +120,8 @@ struct VideoFilterView: View {
                             selectedYear = nil
                             selectedRegion = nil
                             selectedSort = .update
+                            // ⭐ 新增：重置时也滚回顶部
+                            scrollID = UUID()
                         }
                     } label: {
                         Label(isGlobalEnglishMode ? "Reset" : "重置",
@@ -151,6 +156,7 @@ struct VideoFilterView: View {
                     .padding(.top, 4)
                     .padding(.bottom, 20)
             }
+            .id(scrollID)
         }
         // 底部固定操作条
         .safeAreaInset(edge: .bottom) {
@@ -256,6 +262,8 @@ struct VideoFilterView: View {
             case .region:   selectedRegion = (value == "All") ? nil : value
             case .sort:     selectedSort = VideoSortOption(rawValue: value) ?? .update
             }
+            // ⭐ 新增：切换筛选时，强制滚动回到顶部
+            scrollID = UUID()
         }
     }
     
