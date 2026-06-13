@@ -18,7 +18,7 @@ enum PlaybackSpeedStore {
     }
 }
 
-// MARK: - ⭐ 新增：播放进度记忆（按 URL 记忆，用于断点续播 / 黑屏自愈后回到原位置）
+// MARK: - ⭐ 播放进度记忆（按 URL 记忆，用于断点续播 / 黑屏自愈后回到原位置）
 enum PlaybackPositionStore {
     private static let prefix = "ONews_Pos_"
     private static let indexKey = "ONews_PosIndex"   // 维护所有 key 的访问顺序
@@ -58,6 +58,30 @@ enum PlaybackPositionStore {
     }
 }
 
+// MARK: - ⭐ 广告防骗固定提示条（所有播放页通用）
+struct AdWarningBanner: View {
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.shield.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.orange)
+            Text(isGlobalEnglishMode
+                 ? "Ads in the video are NOT from our platform. Do not tap them, to avoid being scammed."
+                 : "视频内广告链接非本平台植入，切勿点击，防止被骗")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+        .background(Color.orange.opacity(0.08))
+    }
+}
+
 // MARK: - 生命周期可感知的播放控制器
 final class LifecycleAVPlayerViewController: AVPlayerViewController {
     var onWillDisappear: (() -> Void)?
@@ -72,8 +96,8 @@ final class LifecycleAVPlayerViewController: AVPlayerViewController {
 struct VideoPlayerView: UIViewControllerRepresentable {
     let videoURL: URL
     @Binding var isBuffering: Bool
-    @Binding var hasStartedPlaying: Bool              // ⭐ 新增：是否已真正出第一帧
-    var onPlaybackFailed: ((String) -> Void)? = nil   // ⭐ 新增：播放失败兜底，避免无限转圈
+    @Binding var hasStartedPlaying: Bool              // ⭐ 是否已真正出第一帧
+    var onPlaybackFailed: ((String) -> Void)? = nil   // ⭐ 播放失败兜底，避免无限转圈
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -115,13 +139,13 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private var keepUpObs: NSKeyValueObservation?
         private var bufferEmptyObs: NSKeyValueObservation?
         private var bufferFullObs: NSKeyValueObservation?
-        private var statusObs: NSKeyValueObservation?          // ⭐ 新增：监听 item 是否就绪
+        private var statusObs: NSKeyValueObservation?          // ⭐ 监听 item 是否就绪
         private var rateObs: NSKeyValueObservation?
         private var defaultRateObs: NSKeyValueObservation?
         private var currentItemObs: NSKeyValueObservation?
         private var lastPersistedSeconds: Double = 0
 
-        // ⭐ 新增：进度记忆 / 恢复相关
+        // ⭐ 进度记忆 / 恢复相关
         private var periodicObs: Any?
         private var restoreTime: CMTime = .zero
         private var wasPlayingBeforeBackground = true
@@ -132,6 +156,11 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private var bufferingResetWork: DispatchWorkItem?
         private var targetOrientationMask: UIInterfaceOrientationMask?
         private var orientationWork: DispatchWorkItem?
+
+        // ⭐ 新增：卡顿自愈 watchdog（针对本地缓存横屏全屏偶发停住）
+        private var stallWatchdog: Timer?
+        private var lastWatchdogTime: Double = -1
+        private var stalledTicks = 0
 
         var isFullScreen = false
         var isPiP = false
@@ -162,6 +191,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             configureAudioSession()
             buildPlayer(resumeTime: resume, autoPlay: true)
             registerLifecycleObservers()
+            startStallWatchdog()   // ⭐ 启动卡顿自愈
         }
 
         // MARK: 音频会话（首次 & mediaServices 重启后都要配）
@@ -179,7 +209,9 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             didHandleReady = false
 
             let player = AVPlayer(url: url)
-            player.automaticallyWaitsToMinimizeStalling = true
+            // ⭐ 关键修复(问题2)：本地缓存文件关闭「等待以减少卡顿」，
+            //    避免本地播放时 AVPlayer 进入假性 waiting 而停住；在线流仍保留以应对网络抖动。
+            player.automaticallyWaitsToMinimizeStalling = !url.isFileURL
             player.allowsExternalPlayback = true
             player.usesExternalPlaybackWhileExternalScreenIsActive = true
 
@@ -319,6 +351,78 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             }
         }
 
+        // MARK: ⭐ 卡顿自愈 watchdog
+        private func startStallWatchdog() {
+            stallWatchdog?.invalidate()
+            lastWatchdogTime = -1
+            stalledTicks = 0
+            stallWatchdog = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                self?.watchdogTick()
+            }
+        }
+
+        private func watchdogTick() {
+            guard let player = player else { return }
+            
+            // ⭐ 新增：更保守的策略，仅对本地缓存文件（isFileURL）启用卡顿检测
+            // 在线播放完全交给 AVPlayer 和系统网络层自行调度，避免因网络波动导致的误判干预
+            guard url?.isFileURL == true else {
+                lastWatchdogTime = -1
+                stalledTicks = 0
+                return
+            }
+
+            // 仅在「期望播放」时检测；用户主动暂停时 timeControlStatus == .paused，不干预
+            let intendsToPlay = (player.timeControlStatus == .waitingToPlayAtSpecifiedRate)
+                || (player.timeControlStatus == .playing)
+            guard intendsToPlay else {
+                lastWatchdogTime = player.currentTime().seconds
+                stalledTicks = 0
+                return
+            }
+            
+            let now = player.currentTime().seconds
+            if lastWatchdogTime >= 0, abs(now - lastWatchdogTime) < 0.05 {
+                stalledTicks += 1
+                if stalledTicks >= 2 {           // 连续 ~2 秒时间不前进 → 判定卡死
+                    recoverFromStallIfNeeded()
+                    stalledTicks = 0
+                }
+            } else {
+                stalledTicks = 0
+            }
+            lastWatchdogTime = now
+        }
+
+        @objc private func handlePlaybackStalled() {
+            DispatchQueue.main.async { [weak self] in
+                self?.recoverFromStallIfNeeded()
+            }
+        }
+
+        private func recoverFromStallIfNeeded() {
+            guard let player = player, let item = player.currentItem else { return }
+            // 已到结尾就不折腾
+            let dur = item.duration.seconds
+            let cur = player.currentTime().seconds
+            if dur.isFinite, dur > 0, cur >= dur - 0.5 { return }
+
+            let isLocal = url?.isFileURL ?? false
+
+            if item.isPlaybackLikelyToKeepUp || item.isPlaybackBufferFull {
+                // 缓冲足够却卡住：直接续播
+                player.play()
+            } else if isLocal {
+                // ⭐ 本地缓存却卡住：轻微回退触发重新解码/缓冲，
+                //    等价于你手动「后退一点再播放」的自愈手法
+                let target = CMTime(seconds: max(0, cur - 1.0), preferredTimescale: 600)
+                player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                    self?.player?.play()
+                }
+            }
+            // 在线且缓冲不足：交给系统继续缓冲，不强行干预，避免拖累网络
+        }
+
         // MARK: 生命周期 / 媒体重启监听
         private func registerLifecycleObservers() {
             let nc = NotificationCenter.default
@@ -328,6 +432,9 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                            name: UIApplication.willEnterForegroundNotification, object: nil)
             nc.addObserver(self, selector: #selector(handleMediaServicesReset),
                            name: AVAudioSession.mediaServicesWereResetNotification, object: nil)
+            // ⭐ 新增：系统的卡顿通知，作为 watchdog 之外的另一条自愈触发途径
+            nc.addObserver(self, selector: #selector(handlePlaybackStalled),
+                           name: AVPlayerItem.playbackStalledNotification, object: nil)
         }
 
         @objc private func handleEnterBackground() {
@@ -351,7 +458,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             guard !isPiP else { return }
             guard let player = player, let controller = controller else { return }
 
-            // ……（下面保持你原来的重绑/seek 逻辑不变）
+            // ……（下面保持原来的重绑/seek 逻辑不变）
             let item = player.currentItem
             let failed = (item == nil)
                 || (item?.status == .failed)
@@ -436,6 +543,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             NotificationCenter.default.removeObserver(self)
             bufferingResetWork?.cancel()
             orientationWork?.cancel()
+            stallWatchdog?.invalidate(); stallWatchdog = nil   // ⭐ 停掉卡顿自愈
             // ⭐ 若不需要后台/PiP 常驻播放，离开时释放音频会话
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
@@ -494,7 +602,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             }
         }
 
-        // ⭐ 新增：处理 PiP 上的「恢复」按钮。
+        // ⭐ 处理 PiP 上的「恢复」按钮。
         //    我们不恢复全屏，直接完成并保持竖屏内嵌，符合「上滑离开全屏」的预期。
         func playerViewController(_ playerViewController: AVPlayerViewController,
                                 restoreUserInterfaceForPictureInPictureStopWithCompletionHandler
@@ -587,7 +695,7 @@ struct VideoPlayerPageView: View {
     var channelName: String? = nil
     var episodeName: String? = nil
     var sourceURL: String? = nil
-    var episodes: [VideoEpisodeItem] = []   // ⭐ 新增：当前线路全部集数
+    var episodes: [VideoEpisodeItem] = []   // ⭐ 当前线路全部集数
 
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @StateObject private var network = NetworkMonitor.shared
@@ -644,6 +752,9 @@ struct VideoPlayerPageView: View {
                     .aspectRatio(16.0/9.0, contentMode: .fit)
                     .frame(maxWidth: .infinity)
                     .background(Color.black)
+
+                // ⭐ 固定广告防骗提示条（播放操作面板下方、标题上方）
+                AdWarningBanner()
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
@@ -900,7 +1011,7 @@ struct VideoPlayerPageView: View {
     private func handleEpisodeSelection(_ ep: VideoEpisodeItem) {
         guard ep.url != activeEpisodeURL else { showEpisodePicker = false; return }
         
-        // ⭐ 新增：先走门禁
+        // ⭐ 先走门禁
         switch decideVideoAccess(episodeKey: ep.url, auth: authManager, quota: quotaManager) {
         case .allowed:
             proceedToSwitch(episode: ep)
@@ -918,7 +1029,7 @@ struct VideoPlayerPageView: View {
         }
     }
 
-    // ⭐ 新增：确认消耗后切集
+    // ⭐ 确认消耗后切集
     private func consumeAndSwitchEpisode() async {
         guard let ep = pendingEpisodeForSwitch else { return }
         let uid = FreeQuotaManager.currentUserId(auth: authManager)
@@ -935,7 +1046,7 @@ struct VideoPlayerPageView: View {
         pendingEpisodeForSwitch = nil
     }
 
-    // ⭐ 新增：真正执行切集（把原来的 handleEpisodeSelection 逻辑搬进来）
+    // ⭐ 真正执行切集
     private func proceedToSwitch(episode ep: VideoEpisodeItem) {
         showEpisodePicker = false
         isResolving = true            // ⭐ 立刻给出「解析中」反馈
@@ -964,7 +1075,7 @@ struct VideoPlayerPageView: View {
         overrideEpisodeURL = ep.url
         overrideEpisodeName = ep.name
         resolveError = nil
-        hasStartedPlaying = false         // ⭐ 新增
+        hasStartedPlaying = false
         if let resolved = resolvedURL {
             isResolving = false
             realURL = resolved
@@ -977,7 +1088,7 @@ struct VideoPlayerPageView: View {
 
     private func resolve() async {
         isResolving = true; resolveError = nil
-        hasStartedPlaying = false        // ⭐ 新增
+        hasStartedPlaying = false
         do {
             let url = try await OVideoAPI.resolveRealURL(episodeURL: activeEpisodeURL)
             self.realURL = url
@@ -1025,7 +1136,7 @@ struct CachedVideoPlayerView: View {
     let title: String
     var channelName: String? = nil
     var episodeName: String? = nil
-    var episodes: [VideoEpisodeItem] = []   // ⭐ 新增：当前剧集全部集数
+    var episodes: [VideoEpisodeItem] = []   // ⭐ 当前剧集全部集数
 
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
@@ -1036,7 +1147,7 @@ struct CachedVideoPlayerView: View {
     @State private var showSubscriptionSheet = false
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
 
-    // ⭐ 新增：选集相关状态
+    // ⭐ 选集相关状态
     @State private var showEpisodePicker = false
     @State private var overrideEpisodeURL: String? = nil
     @State private var overrideEpisodeName: String? = nil
@@ -1089,6 +1200,9 @@ struct CachedVideoPlayerView: View {
                 }
                 .aspectRatio(16.0/9.0, contentMode: .fit)
                 .frame(maxWidth: .infinity)
+
+                // ⭐ 固定广告防骗提示条（播放操作面板下方、标题上方）
+                AdWarningBanner()
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
@@ -1180,7 +1294,7 @@ struct CachedVideoPlayerView: View {
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
-        // ⭐ 新增：选集弹窗
+        // ⭐ 选集弹窗
         .sheet(isPresented: $showEpisodePicker) {
             EpisodePickerView(
                 episodes: cachedEpisodes,
@@ -1214,10 +1328,9 @@ struct CachedVideoPlayerView: View {
         .buttonStyle(PlainButtonStyle())
     }
 
-    // ⭐ 选集切换：先门禁，未解锁才弹确认；通过后再切
+    // ⭐ 选集切换：离线缓存切集直接播放
     private func switchToEpisode(_ ep: VideoEpisodeItem) {
         guard ep.url != activeEpisodeURL else { return }
-        // ⭐ 离线缓存切集：直接播放，不再消耗点数
         applyEpisode(ep)
     }
 
@@ -1254,7 +1367,7 @@ struct CachedVideoPlayerView: View {
         VideoPlayRecordManager.shared.addRecord(
             videoTitle: baseTitle,
             episodeName: activeEpisodeName ?? "",
-            videoURL: originalKey,                 // ⭐ 改成原始 episodeURL
+            videoURL: originalKey,                 // ⭐ 原始 episodeURL
             coverImage: downloadManager.cacheMetadata[activeEpisodeURL]?.coverImage,
             channelName: channelName,
             sourceURL: nil
@@ -1315,7 +1428,7 @@ struct EpisodePickerView: View {
                         // 判断不到也不影响功能，只是不显示下载角标
                         let isCached = dm.localBookmarks[ep.url] != nil
 
-                        // ⭐ 新增：判断免费解锁状态
+                        // ⭐ 判断免费解锁状态
                         let isUnlocked = quotaManager.isUnlocked(ep.url)
                         let hasQuota = quotaManager.remaining > 0
                         Button {
@@ -1336,7 +1449,7 @@ struct EpisodePickerView: View {
                                             .foregroundColor(isCurrent ? .white : .primary)
                                             .padding(.horizontal, 4)
                                     )
-                                // ⭐ 修改后的角标优先级：缓存 > 已解锁 > 锁定
+                                // ⭐ 角标优先级：缓存 > 已解锁 > 锁定
                                 if isCached {
                                     Image(systemName: "arrow.down.circle.fill")
                                         .font(.system(size: 10))

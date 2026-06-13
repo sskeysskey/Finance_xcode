@@ -74,7 +74,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         
         // 【新增】视频模块预加载
         Task(priority: .userInitiated) { [weak self] in
-            try? await Task.sleep(nanoseconds: 10_000_000)
+            try? await Task.sleep(nanoseconds: 1_000_000)
             guard let self = self else { return }
             print("📺 [预加载] 开始后台预加载视频模块数据...")
             let sortRaw = UserDefaults.standard.string(forKey: "OVideo_SortOption") ?? VideoSortOption.date.rawValue

@@ -575,7 +575,11 @@ struct CacheCard: View {
     @ObservedObject private var downloadManager = HLSDownloadManager.shared
     @ObservedObject private var network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    
+
+    // ⭐ 新增：首次缓存的广告提示是否已确认（确认后永不再弹）
+    @AppStorage("hasAcknowledgedAdWarning") private var hasAcknowledgedAdWarning = false
+    @State private var showAdWarningAlert = false
+
     // 【新增】
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
@@ -627,6 +631,17 @@ struct CacheCard: View {
                  ? "You are currently on a cellular network and 'Wi-Fi Only' is enabled. Do you want to disable 'Wi-Fi Only' and start downloading?" 
                  : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 缓存”。是否关闭该限制并继续下载？")
         }
+        // ⭐ 新增：首次点击“缓存到本地”时的广告防骗提示
+        .alert(isGlobalEnglishMode ? "Notice" : "温馨提示", isPresented: $showAdWarningAlert) {
+            Button(isGlobalEnglishMode ? "Got it" : "我知道了") {
+                hasAcknowledgedAdWarning = true
+                startDownloadFlow()
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                 ? "Ads inside the video are NOT placed by our platform. Do not tap them, to avoid being scammed."
+                 : "视频内广告链接非本平台植入，切勿点击，防止被骗")
+        }
         // 【新增】
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
@@ -636,6 +651,22 @@ struct CacheCard: View {
     private var hasAccess: Bool {
         guard let key = episodeKey, !key.isEmpty else { return authManager.isSubscribed }
         return authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(key)
+    }
+
+    // ⭐ 抽出真正的下载动作（蜂窝判断 + 启动）
+    private func startDownloadFlow() {
+        if !network.isWiFi {
+            showCellularAlert = true
+        } else {
+            downloadManager.startDownload(
+                urlString: realURL,
+                title: videoTitle,
+                coverImage: coverImage,
+                seriesTitle: seriesTitle,
+                episodeName: episodeName,
+                episodeKey: episodeKey
+            )
+        }
     }
 
     // 已缓存
@@ -770,27 +801,18 @@ struct CacheCard: View {
             guard hasAccess else {
                 // 未订阅且未解锁：看剩余点数决定弹什么
                 if FreeQuotaManager.shared.remaining > 0 {
-                    // 这里需要把消耗确认抛给父级，或者直接在 CacheCard 内做
-                    // 简单做法：直接走订阅页（因为播放页已经消耗过了，这里理论上不会走到）
-                    // 但为了严谨，建议保持和播放页一致：
                     showSubscriptionSheet = true
                 } else {
                     showSubscriptionSheet = true
                 }
                 return
             }
-            if !network.isWiFi {
-                showCellularAlert = true
-            } else {
-                downloadManager.startDownload(
-                    urlString: realURL,
-                    title: videoTitle,
-                    coverImage: coverImage,
-                    seriesTitle: seriesTitle,
-                    episodeName: episodeName,
-                    episodeKey: episodeKey
-                )
+            // ⭐ 首次缓存：先弹「广告非平台植入」提示，确认后才真正进入下载流程
+            if !hasAcknowledgedAdWarning {
+                showAdWarningAlert = true
+                return
             }
+            startDownloadFlow()
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.down.circle.fill")
