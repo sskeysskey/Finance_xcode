@@ -38,7 +38,7 @@ struct VideoFilterView: View {
     @State private var activeSheet: FilterField? = nil
     // 虚拟大类 key（不与任何 JSON 顶层 key 冲突）
     private let documentaryCategoryKey = "Documentary"
-    private let typeOrder = ["科幻", "喜剧", "情色", "爱情", "恐怖", "惊悚", "动作", "冒险", "战争", "体育片", "传记", "历史", "女性", "家庭", "灾难", "古装", "文艺", "校园", "百合", "美食", "西部"]
+    private let typeOrder = ["科幻", "喜剧", "爱情", "恐怖", "惊悚", "动作", "悬疑", "犯罪", "冒险", "战争", "情色", "体育", "传记", "历史", "女性", "家庭", "灾难", "古装", "文艺", "校园", "百合", "美食", "西部"]
     private let regionOrder = ["美国", "韩国", "欧洲", "日本", "亚洲", "中国", "香港澳门", "中国台湾", "印度", "中东", "北美洲/南美洲", "非洲"]
     
     // 大类原始 key 列表（顺序与后端一致）
