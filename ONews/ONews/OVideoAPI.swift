@@ -285,6 +285,7 @@ struct VideoCacheMetadata: Codable {
     var seriesTitle: String?
     var episodeName: String?
     var originalEpisodeURL: String?
+    var sourceURL: String?
 }
 extension VideoCacheMetadata {
     var groupKey: String {

@@ -119,12 +119,12 @@ struct VideoDetailView: View {
                 autoFocus: false   // 从人名点进来，不需要再弹键盘
             )
         }
-        .navigationTitle(
-            (item.info != nil && !item.info!.isEmpty) 
-            ? "\(item.name) · \(item.info!)" 
-            : item.name
-        )
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                navTitleView
+            }
+        }
         // 隐藏的 NavigationLink，响应播放跳转
         .navigationDestination(isPresented: $navigateToPlayer) {
             if let episode = selectedEpisode {
@@ -226,6 +226,35 @@ struct VideoDetailView: View {
         }
     }
     
+    // MARK: - 导航栏标题（过长自动两行）
+    private var navTitleView: some View {
+        let hasInfo = (item.info != nil && !item.info!.isEmpty)
+        let combined = hasInfo ? "\(item.name) · \(item.info!)" : item.name
+        // 阈值：中英文混排时 14 个字符大致是单行能容纳的上限，可按需微调
+        let isLong = combined.count > 14
+
+        return Group {
+            if hasInfo && isLong {
+                VStack(spacing: 1) {
+                    Text(item.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                    Text(item.info!)
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+                .frame(maxWidth: 240)
+            } else {
+                Text(combined)
+                    .font(.system(size: 17, weight: .semibold))
+                    .lineLimit(1)
+            }
+        }
+    }
+
     // MARK: - 1. 沉浸式模糊背景
     private var blurBackgroundSection: some View {
         GeometryReader { geo in
@@ -1175,7 +1204,8 @@ struct BatchDownloadView: View {
                             coverImage: item.image,
                             seriesTitle: item.name,
                             episodeName: ep.name,
-                            episodeKey: ep.url          // 【新增】
+                            episodeKey: ep.url,
+                            sourceURL: item.url            // ⭐ 新增
                         )
                         processedCount += 1
                     }

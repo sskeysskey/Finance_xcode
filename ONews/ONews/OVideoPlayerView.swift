@@ -725,6 +725,14 @@ struct VideoPlayerPageView: View {
     @State private var pendingOnlineResolvedURL: String? = nil
     @State private var showEpisodeCellularAlert = false
 
+    @AppStorage("OVideo_IsEpisodeAscending") private var isEpisodeAscending = true
+    @State private var loadedEpisodes: [VideoEpisodeItem] = []
+
+    // 实际可用的集数：外部传入优先，否则用自动加载的
+    private var activeEpisodes: [VideoEpisodeItem] {
+        episodes.isEmpty ? loadedEpisodes : episodes
+    }
+
     // ⭐ 计算当前实际在播的集数（切集后用 override）
     private var seriesBaseTitle: String {
         videoTitle.components(separatedBy: " · ").first ?? videoTitle
@@ -766,7 +774,8 @@ struct VideoPlayerPageView: View {
                                     coverImage: coverImage,
                                     seriesTitle: seriesBaseTitle,
                                     episodeName: activeEpisodeName,
-                                    episodeKey: activeEpisodeURL)
+                                    episodeKey: activeEpisodeURL,
+                                    sourceURL: sourceURL)
                         }
 
                         if let real = realURL, downloadManager.localBookmarks[real] != nil {
@@ -834,6 +843,17 @@ struct VideoPlayerPageView: View {
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
             if hasAccess && realURL == nil { await resolve() }
+
+            // ⭐ 没有外部传入集数（如从观看记录进入）时，自动按 sourceURL 拉取该剧播放列表
+            if episodes.isEmpty, loadedEpisodes.isEmpty,
+            let src = sourceURL, !src.isEmpty {
+                let channels = (try? await OVideoAPI.fetchPlaylist(url: src)) ?? []
+                // 优先匹配当时的线路名，匹配不到则用第一条
+                let chosen = channels.first { $0.name == channelName } ?? channels.first
+                if let ch = chosen {
+                    loadedEpisodes = ch.episodeItems(ascending: isEpisodeAscending)
+                }
+            }
         }
         // 【新增】
         .sheet(isPresented: $showSubscriptionSheet) {
@@ -949,7 +969,7 @@ struct VideoPlayerPageView: View {
                 .foregroundColor(.primary)
                 .lineLimit(3)
             Spacer()
-            if episodes.count > 1 {            // ⭐ 仅多集才显示「选集」
+            if activeEpisodes.count > 1 {            // ⭐ 原来是 episodes.count > 1
                 episodeSelectorButton
             }
             NetworkBadge()
@@ -974,11 +994,11 @@ struct VideoPlayerPageView: View {
         .buttonStyle(PlainButtonStyle())
         .sheet(isPresented: $showEpisodePicker) {
             EpisodePickerView(
-                episodes: episodes,
+                episodes: activeEpisodes,        // ⭐ 原来是 episodes
                 currentURL: activeEpisodeURL,
                 onSelect: { ep in handleEpisodeSelection(ep) }
             )
-            .presentationDetents([.medium, .large])   // iOS 16+
+            .presentationDetents([.medium, .large])
         }
     }
 

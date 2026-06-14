@@ -5,6 +5,46 @@ import SwiftUI
 import AVKit
 import UIKit
 
+// ⭐ 用最少字段构造一个 OVideoItem（供「下载更多」复用 BatchDownloadView）
+extension OVideoItem {
+    init(seriesName: String, sourceURL: String, cover: String?) {
+        self.init(time: nil, name: seriesName, url: sourceURL, info: nil,
+                  image: cover, director: nil, writers: nil, cast: nil,
+                  types: nil, region: nil, date: nil, alias: nil, intro: nil,
+                  ratings: nil, playlist: nil, update: nil)
+    }
+}
+
+// ⭐ 选最优线路（集数多优先 → 画质高优先），与详情页逻辑一致
+func optimalSortedChannels(_ channels: [OVideoChannel]) -> [OVideoChannel] {
+    let indexed = channels.enumerated().map { (index, channel) -> (Int, OVideoChannel, Int) in
+        var quality = 1
+        let keys = channel.episodes.keys
+        let hasLow = keys.contains {
+            let k = $0.uppercased()
+            return k.contains("TC") || k.contains("TS") || k.contains("HC") || k.contains("抢先")
+        }
+        let hasHigh = keys.contains {
+            let k = $0.uppercased()
+            return k.contains("HD") || k.contains("正片")
+        }
+        if hasLow { quality = 0 } else if hasHigh { quality = 2 }
+        return (index, channel, quality)
+    }
+    return indexed.sorted { a, b in
+        if a.1.episodes.count != b.1.episodes.count { return a.1.episodes.count > b.1.episodes.count }
+        if a.2 != b.2 { return a.2 > b.2 }
+        return a.0 < b.0
+    }.map { $0.1 }
+}
+
+// ⭐ 「下载更多」sheet 载荷
+struct DownloadMorePayload: Identifiable {
+    let id = UUID()
+    let item: OVideoItem
+    let channel: OVideoChannel
+}
+
 // MARK: - 缓存播放跳转目标（用于门禁通过后再跳转）
 struct CachedPlayTarget: Identifiable {
     var id: String { primaryURL }
@@ -124,8 +164,8 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 
     // MARK: 启动下载
     func startDownload(urlString: String, title: String, coverImage: String? = nil,
-                   seriesTitle: String? = nil, episodeName: String? = nil,
-                   episodeKey: String? = nil) { 
+               seriesTitle: String? = nil, episodeName: String? = nil,
+               episodeKey: String? = nil, sourceURL: String? = nil) {   // ⭐ 新增参数
         cancelledUrls.remove(urlString)
 
         guard let url = URL(string: urlString) else { return }
@@ -147,7 +187,8 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                 self.cacheMetadata[urlString] = VideoCacheMetadata(
                     title: title, coverImage: coverImage, savedAt: Date(),
                     seriesTitle: seriesTitle, episodeName: episodeName,
-                    originalEpisodeURL: episodeKey 
+                    originalEpisodeURL: episodeKey,
+                    sourceURL: sourceURL                 // ⭐ 新增
                 )
             }
             self.saveMetadata()
@@ -517,6 +558,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
     private func savePersistedProgress() {
         UserDefaults.standard.set(downloadProgress, forKey: progressKey)
         UserDefaults.standard.set(isPaused,         forKey: pausedKey)
+        updateIdleTimer()   // ⭐ 新增
     }
     private func loadPersistedProgress() {
         if let p = UserDefaults.standard.dictionary(forKey: progressKey) as? [String: Double] {
@@ -535,6 +577,16 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         }
     }
 
+    // MARK: ⭐ 前台下载防灭屏
+    private func updateIdleTimer() {
+        // 是否存在「未完成 且 未暂停」的下载任务
+        let hasActiveDownload = downloadProgress.keys.contains { url in
+            localBookmarks[url] == nil && (isPaused[url] != true)
+        }
+        let isForeground = UIApplication.shared.applicationState != .background
+        UIApplication.shared.isIdleTimerDisabled = hasActiveDownload && isForeground
+    }
+    
     private func observeAppLifecycle() {
         NotificationCenter.default.addObserver(
             forName: UIApplication.willTerminateNotification,
@@ -545,6 +597,17 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil, queue: .main
         ) { [weak self] _ in self?.savePersistedProgress() }
+
+        // ⭐ 回到前台/激活时重新评估是否需要常亮
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in self?.updateIdleTimer() }
+
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in self?.updateIdleTimer() }
     }
 }
 
@@ -571,6 +634,7 @@ struct CacheCard: View {
     var seriesTitle: String? = nil
     var episodeName: String? = nil
     var episodeKey: String? = nil
+    var sourceURL: String? = nil   // ⭐ 新增
 
     @ObservedObject private var downloadManager = HLSDownloadManager.shared
     @ObservedObject private var network = NetworkMonitor.shared
@@ -623,8 +687,9 @@ struct CacheCard: View {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
             Button(isGlobalEnglishMode ? "Download Anyway" : "允许并下载") {
                 downloadManager.startDownload(urlString: realURL, title: videoTitle, coverImage: coverImage,
-                              seriesTitle: seriesTitle, episodeName: episodeName,
-                              episodeKey: episodeKey) 
+                            seriesTitle: seriesTitle, episodeName: episodeName,
+                            episodeKey: episodeKey, sourceURL: sourceURL)   // ⭐ 补
+            
             }
         } message: {
             Text(isGlobalEnglishMode 
@@ -664,7 +729,8 @@ struct CacheCard: View {
                 coverImage: coverImage,
                 seriesTitle: seriesTitle,
                 episodeName: episodeName,
-                episodeKey: episodeKey
+                episodeKey: episodeKey,
+                sourceURL: sourceURL
             )
         }
     }
@@ -1816,12 +1882,14 @@ struct CachedSeriesCard: View {
 }
 
 // MARK: - 已缓存剧集详情（列出该剧所有已缓存集数）
+// MARK: - 已缓存剧集详情（列出该剧所有已缓存集数）
 struct CachedSeriesDetailView: View {
     let groupKey: String
     let seriesTitle: String
     let coverImage: String?
     @ObservedObject private var dm = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    @AppStorage("OVideo_IsEpisodeAscending") private var isEpisodeAscending = true
 
     @EnvironmentObject var authManager: AuthManager
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
@@ -1834,6 +1902,11 @@ struct CachedSeriesDetailView: View {
     @State private var showCachedConsumeConfirm = false
     @State private var cachedConsumeRemaining = 0
     @State private var showQuotaExhausted = false
+
+    // ⭐ 新增：下载更多
+    @State private var isLoadingMore = false
+    @State private var downloadMorePayload: DownloadMorePayload? = nil
+    @State private var showNoSourceAlert = false
 
     private var episodes: [(url: String, meta: VideoCacheMetadata)] {
         dm.localBookmarks.keys.compactMap { url -> (String, VideoCacheMetadata)? in
@@ -1857,6 +1930,11 @@ struct CachedSeriesDetailView: View {
                 ? digits : String(index + 1)
             return VideoEpisodeItem(number: number, name: name, url: item.url)
         }
+    }
+
+    // ⭐ 该剧的详情页 url（任意一集都一样）
+    private var seriesSourceURL: String? {
+        episodes.compactMap { $0.meta.sourceURL }.first
     }
 
     var body: some View {
@@ -1889,6 +1967,14 @@ struct CachedSeriesDetailView: View {
                         .tint(.red)
                     }
                 }
+
+                // ⭐ 新增：下载更多按钮
+                Section {
+                    downloadMoreButton
+                        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 20, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
             }
             .listStyle(PlainListStyle())
             .background(Color.clear)
@@ -1908,14 +1994,84 @@ struct CachedSeriesDetailView: View {
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
+        // ⭐ 下载更多弹窗（复用 BatchDownloadView）
+        .sheet(item: $downloadMorePayload) { payload in
+            BatchDownloadView(
+                item: payload.item,
+                channel: payload.channel,
+                channelDisplayName: isGlobalEnglishMode ? "Line 1" : "线路 1",
+                isAscending: isEpisodeAscending,
+                onStartDownloads: {}
+            )
+            .environmentObject(authManager)
+        }
+        .alert(isGlobalEnglishMode ? "Unavailable" : "暂不可用",
+               isPresented: $showNoSourceAlert) {
+            Button(isGlobalEnglishMode ? "OK" : "好的", role: .cancel) {}
+        } message: {
+            Text(isGlobalEnglishMode
+                 ? "Can't fetch more episodes for this older cache. Please re-enter from the video detail page to download more."
+                 : "该缓存较早，无法获取更多剧集信息。请从视频详情页重新进入以缓存更多。")
+        }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
         }
     }
 
+    // ⭐ 下载更多按钮
+    private var downloadMoreButton: some View {
+        Button {
+            startDownloadMore()
+        } label: {
+            HStack(spacing: 10) {
+                if isLoadingMore {
+                    ProgressView().tint(.white)
+                } else {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                Text(isGlobalEnglishMode ? "Download More Episodes" : "下载更多")
+                    .font(.system(size: 15, weight: .bold))
+            }
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(
+                Capsule().fill(LinearGradient(
+                    colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                    startPoint: .leading, endPoint: .trailing))
+            )
+            .shadow(color: Color.accentColor.opacity(0.3), radius: 8, y: 3)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(isLoadingMore)
+    }
+
+    private func startDownloadMore() {
+        guard let src = seriesSourceURL, !src.isEmpty else {
+            showNoSourceAlert = true
+            return
+        }
+        isLoadingMore = true
+        Task {
+            let channels = (try? await OVideoAPI.fetchPlaylist(url: src)) ?? []
+            let best = optimalSortedChannels(channels).first
+            await MainActor.run {
+                isLoadingMore = false
+                if let best = best {
+                    let fakeItem = OVideoItem(seriesName: seriesTitle,
+                                              sourceURL: src,
+                                              cover: coverImage)
+                    downloadMorePayload = DownloadMorePayload(item: fakeItem, channel: best)
+                } else {
+                    showNoSourceAlert = true
+                }
+            }
+        }
+    }
+
     // MARK: - 门禁
     private func attemptPlayCached(_ target: CachedPlayTarget) {
-        // ⭐ 同上，缓存剧集直接播放
         cachedPlayTarget = target
         navigateToCachedPlayer = true
     }
