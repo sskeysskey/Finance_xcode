@@ -468,20 +468,23 @@ struct VideoDetailView: View {
                             }
                         } label: {
                             HStack(spacing: 4) {
-                                Image(systemName: isEpisodeAscending ? "arrow.up.circle" : "arrow.down.circle")
+                                Image(systemName: isEpisodeAscending ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
                                     .font(.system(size: 13))
                                 Text(isEpisodeAscending
                                      ? (isGlobalEnglishMode ? "Asc" : "正序")
                                      : (isGlobalEnglishMode ? "Desc" : "倒序"))
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.system(size: 12, weight: .bold))
                             }
-                            .foregroundColor(.accentColor) // ⭐ 调整为蓝色，增强可点击感知
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
                             .background(
-                                Capsule()
-                                    .fill(Color.accentColor.opacity(0.08)) // ⭐ 调整为淡蓝色背景
+                                Capsule().fill(
+                                    LinearGradient(colors: [Color.blue, Color.cyan],
+                                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                                )
                             )
+                            .shadow(color: Color.blue.opacity(0.35), radius: 4, x: 0, y: 2)
                         }
                     }
 
@@ -491,18 +494,21 @@ struct VideoDetailView: View {
                             showBatchDownloadSheet = true
                         } label: {
                             HStack(spacing: 4) {
-                                Image(systemName: "square.and.arrow.down")
+                                Image(systemName: "square.and.arrow.down.fill")
                                     .font(.system(size: 13))
                                 Text(isGlobalEnglishMode ? "Batch" : "批量缓存")
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.system(size: 12, weight: .bold))
                             }
-                            .foregroundColor(.accentColor) // ⭐ 调整为蓝色，增强可点击感知
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
                             .background(
-                                Capsule()
-                                    .fill(Color.accentColor.opacity(0.08)) // ⭐ 调整为淡蓝色背景
+                                Capsule().fill(
+                                    LinearGradient(colors: [Color.orange, Color.pink],
+                                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                                )
                             )
+                            .shadow(color: Color.orange.opacity(0.35), radius: 4, x: 0, y: 2)
                         }
                         .padding(.trailing, 16)
                     }

@@ -241,25 +241,18 @@ struct VideoBottomBar: View {
     @ObservedObject var dataManager: OVideoDataManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     let isLoading: Bool
-    @State private var activeTab: Tab = .home
-    enum Tab: Hashable { case home, filter, search, cache }
 
     var body: some View {
         HStack(spacing: 4) {
-            Button { activeTab = .home } label: {
-                BarItemView(icon: "square.grid.2x2.fill", zh: "首页", en: "Home",
-                            tint: Color(red: 0.20, green: 0.72, blue: 0.45),
-                            isActive: activeTab == .home, isEnabled: true,
-                            isLoading: false, isEnglish: isGlobalEnglishMode)
-            }.buttonStyle(.plain)
-
+            // 分类
             NavigationLink { VideoFilterView(dataManager: dataManager) } label: {
                 BarItemView(icon: "line.3.horizontal.decrease.circle.fill", zh: "分类", en: "Filter",
-                            tint: Color(red: 0.62, green: 0.36, blue: 0.85),
+                            tint: Color(red: 0.20, green: 0.72, blue: 0.45),
                             isActive: false, isEnabled: true, isLoading: false,
                             isEnglish: isGlobalEnglishMode)
             }.buttonStyle(.plain)
 
+            // 搜索
             NavigationLink { VideoSearchTabView(dataManager: dataManager) } label: {
                 BarItemView(icon: "magnifyingglass.circle.fill", zh: "搜索", en: "Search",
                             tint: Color(red: 0.25, green: 0.55, blue: 0.95),
@@ -267,6 +260,7 @@ struct VideoBottomBar: View {
                             isEnglish: isGlobalEnglishMode)
             }.buttonStyle(.plain)
 
+            // 缓存
             NavigationLink { VideoCacheView() } label: {
                 BarItemView(icon: "arrow.down.circle.fill", zh: "缓存", en: "Cache",
                             tint: Color(red: 0.98, green: 0.55, blue: 0.20),

@@ -34,7 +34,9 @@ struct VideoFilterView: View {
     @State private var hasMore = true
     @State private var isLoading = false
     @State private var page = 0
-    @State private var scrollID = UUID()
+    // ⭐ 修复点：记录已加载的筛选条件签名，避免视图重新出现时被重复 reload 清空数据
+    @State private var loadedSignature: String? = nil
+    private let scrollTopID = "filter_scroll_top"
 
     @State private var activeSheet: FilterField? = nil
     private let documentaryCategoryKey = "Documentary"
@@ -91,7 +93,7 @@ struct VideoFilterView: View {
                         withAnimation {
                             selectedCategory = nil; selectedType = nil
                             selectedYear = nil; selectedRegion = nil
-                            selectedSort = .update; scrollID = UUID()
+                            selectedSort = .update
                         }
                     } label: {
                         Label(isGlobalEnglishMode ? "Reset" : "重置",
@@ -102,16 +104,12 @@ struct VideoFilterView: View {
             }
         }
         .task { await prepareOptions() }
-        // ⭐ 任意筛选条件变化 → 重新拉第一页
-        .task(id: filterSignature) {
+        // ⭐ 修复点：isReady 或筛选条件变化都纳入 id；内部再用 loadedSignature 守卫，
+        //    确保从详情页返回（视图重新出现）时不会重复 reload 清空已加载的数据。
+        .task(id: "\(isReady)|\(filterSignature)") {
             guard isReady else { return }
+            guard loadedSignature != filterSignature else { return }
             await reload()
-        }
-        // ⭐ 【新增】当 isReady 变为 true 时，主动拉取第一页数据
-        .onChange(of: isReady) { ready in
-            if ready {
-                Task { await reload() }
-            }
         }
         .sheet(item: $activeSheet) { field in
             let cfg = optionConfig(for: field)
@@ -124,8 +122,12 @@ struct VideoFilterView: View {
     }
 
     private var contentView: some View {
-        VStack(spacing: 0) {
+        ScrollViewReader { proxy in
             ScrollView {
+                Color.clear
+                    .frame(height: 0)
+                    .id(scrollTopID)
+
                 if results.isEmpty && isLoading {
                     ProgressView().padding(.top, 80)
                 } else {
@@ -139,15 +141,17 @@ struct VideoFilterView: View {
                     Color.clear.frame(height: 20)
                 }
             }
-            .id(scrollID)
+            .onChange(of: filterSignature) { _ in
+                proxy.scrollTo(scrollTopID, anchor: .top)
+            }
         }
         .safeAreaInset(edge: .bottom) { bottomFilterBar }
     }
 
     // 重新加载第一页
     private func reload() async {
+        loadedSignature = filterSignature      // ⭐ 标记当前签名已加载
         page = 0; hasMore = true; isLoading = true
-        scrollID = UUID()
         let r = await dataManager.fetchFilter(category: selectedCategory, type: selectedType,
                                               year: selectedYear, region: selectedRegion,
                                               sort: selectedSort, page: 0, userId: userId)
@@ -165,8 +169,9 @@ struct VideoFilterView: View {
         hasMore = r.hasMore; page += 1; isLoading = false
     }
 
+    // MARK: - ⭐ 改进后的底部筛选条（更醒目）
     private var bottomFilterBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             filterBarItem(field: .category,
                           label: selectedCategory.map(categoryDisplayName) ?? (isGlobalEnglishMode ? "Category" : "大类"),
                           isActive: selectedCategory != nil)
@@ -183,12 +188,18 @@ struct VideoFilterView: View {
                           label: selectedSort.shortName(isGlobalEnglishMode),
                           isActive: selectedSort != .update)
         }
-        .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 4)
+        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 6)
         .background(
-            ZStack { Rectangle().fill(.ultraThinMaterial) }
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                LinearGradient(colors: [Color.accentColor.opacity(0.08), Color.clear],
+                               startPoint: .top, endPoint: .bottom)
+            }
             .overlay(alignment: .top) {
-                LinearGradient(colors: [Color.primary.opacity(0.0), Color.primary.opacity(0.15), Color.primary.opacity(0.0)],
-                               startPoint: .leading, endPoint: .trailing).frame(height: 0.5)
+                LinearGradient(colors: [Color.accentColor.opacity(0.0),
+                                        Color.accentColor.opacity(0.55),
+                                        Color.accentColor.opacity(0.0)],
+                               startPoint: .leading, endPoint: .trailing).frame(height: 1.5)
             }
             .ignoresSafeArea(edges: .bottom)
         )
@@ -196,15 +207,33 @@ struct VideoFilterView: View {
 
     private func filterBarItem(field: FilterField, label: String, isActive: Bool) -> some View {
         Button { activeSheet = field } label: {
-            VStack(spacing: 3) {
-                Text(label).font(.system(size: 13, weight: isActive ? .bold : .medium))
+            VStack(spacing: 4) {
+                Text(label)
+                    .font(.system(size: 13, weight: .bold))
                     .lineLimit(1).minimumScaleFactor(0.7)
-                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .bold))
             }
-            .foregroundColor(isActive ? .white : .primary)
-            .frame(maxWidth: .infinity).padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 12)
-                .fill(isActive ? Color.accentColor : Color.secondary.opacity(0.12)))
+            // ⭐ 未激活也用 accent 色调，不再是灰色，整体更显眼
+            .foregroundColor(isActive ? .white : .accentColor)
+            .frame(maxWidth: .infinity).padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(
+                        isActive
+                        ? AnyShapeStyle(LinearGradient(colors: [Color.accentColor,
+                                                                Color.accentColor.opacity(0.75)],
+                                                       startPoint: .topLeading,
+                                                       endPoint: .bottomTrailing))
+                        : AnyShapeStyle(Color.accentColor.opacity(0.12))
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.accentColor.opacity(isActive ? 0 : 0.35), lineWidth: 1)
+            )
+            .shadow(color: isActive ? Color.accentColor.opacity(0.35) : .clear,
+                    radius: 5, x: 0, y: 2)
         }
         .buttonStyle(.plain)
     }
@@ -311,7 +340,7 @@ private struct FilterSheetView: View {
     }
 }
 
-// MARK: - 搜索 Tab（服务端搜索）
+// MARK: - 搜索 Tab（服务端搜索）⭐ 视觉重构，功能不变
 struct VideoSearchTabView: View {
     @ObservedObject var dataManager: OVideoDataManager
     let initialKeyword: String?
@@ -340,43 +369,18 @@ struct VideoSearchTabView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundColor(.secondary)
-                TextField(isGlobalEnglishMode ? "Search name / director / cast..." : "搜索视频名称 / 导演 / 演员",
-                          text: $keyword)
-                    .focused($focused).submitLabel(.search).autocorrectionDisabled()
-                    .onSubmit { commitSearch() }
-                if !keyword.isEmpty {
-                    Button { keyword = ""; focused = true } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
-                    }
-                }
-            }
-            .padding(10).background(Color.secondary.opacity(0.12)).cornerRadius(10)
-            .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 4)
+        ZStack {
+            // ⭐ 整体柔和渐变背景
+            LinearGradient(
+                colors: [Color(UIColor.systemGroupedBackground),
+                         Color.accentColor.opacity(0.06)],
+                startPoint: .top, endPoint: .bottom
+            )
+            .ignoresSafeArea()
 
-            if trimmedKeyword.isEmpty {
-                if historyManager.histories.isEmpty {
-                    hintView(icon: "magnifyingglass",
-                             text: isGlobalEnglishMode ? "Type to search" : "输入关键词开始搜索")
-                } else {
-                    historyView
-                }
-            } else if isSearching && results.isEmpty {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if results.isEmpty {
-                hintView(icon: "tray", text: isGlobalEnglishMode ? "No results" : "暂无搜索结果")
-            } else {
-                ScrollView {
-                    WaterfallGridView(items: results, dataManager: dataManager)
-                        .padding(.top, 10).padding(.bottom, 20)
-                }
-                .scrollDismissesKeyboard(.immediately)
-                .background(Color(UIColor.systemGroupedBackground))
-                .simultaneousGesture(TapGesture().onEnded {
-                    historyManager.add(trimmedKeyword); focused = false
-                })
+            VStack(spacing: 0) {
+                searchBar
+                contentArea
             }
         }
         .navigationTitle(isGlobalEnglishMode ? "Search" : "搜索")
@@ -395,6 +399,97 @@ struct VideoSearchTabView: View {
         .onChange(of: keyword) { newValue in scheduleSearch(newValue) }
     }
 
+    // MARK: - ⭐ 精致搜索框
+    private var searchBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(focused ? .accentColor : .secondary)
+
+            TextField(isGlobalEnglishMode ? "Search name / director / cast..." : "搜索视频名称 / 导演 / 演员",
+                      text: $keyword)
+                .font(.system(size: 16))
+                .focused($focused).submitLabel(.search).autocorrectionDisabled()
+                .onSubmit { commitSearch() }
+
+            if !keyword.isEmpty {
+                Button { keyword = ""; focused = true } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 17))
+                        .foregroundColor(.secondary.opacity(0.7))
+                }
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(UIColor.secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(
+                    focused
+                    ? LinearGradient(colors: [Color.accentColor, Color.accentColor.opacity(0.4)],
+                                     startPoint: .leading, endPoint: .trailing)
+                    : LinearGradient(colors: [Color.secondary.opacity(0.15), Color.secondary.opacity(0.15)],
+                                     startPoint: .leading, endPoint: .trailing),
+                    lineWidth: focused ? 1.6 : 1
+                )
+        )
+        .shadow(color: focused ? Color.accentColor.opacity(0.18) : Color.black.opacity(0.05),
+                radius: focused ? 10 : 4, x: 0, y: 3)
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
+        .animation(.easeInOut(duration: 0.22), value: focused)
+        .animation(.easeInOut(duration: 0.18), value: keyword.isEmpty)
+    }
+
+    // MARK: - 内容区
+    @ViewBuilder
+    private var contentArea: some View {
+        if trimmedKeyword.isEmpty {
+            if historyManager.histories.isEmpty {
+                hintView(icon: "magnifyingglass",
+                         text: isGlobalEnglishMode ? "Type to search" : "输入关键词开始搜索")
+            } else {
+                historyView
+            }
+        } else if isSearching && results.isEmpty {
+            VStack(spacing: 14) {
+                ProgressView().scaleEffect(1.2)
+                Text(isGlobalEnglishMode ? "Searching..." : "正在搜索…")
+                    .font(.system(size: 14)).foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if results.isEmpty {
+            hintView(icon: "tray", text: isGlobalEnglishMode ? "No results" : "暂无搜索结果")
+        } else {
+            ScrollView {
+                // ⭐ 结果数量提示条
+                HStack {
+                    Text(isGlobalEnglishMode
+                         ? "\(results.count) results"
+                         : "找到 \(results.count) 个结果")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 6)
+
+                WaterfallGridView(items: results, dataManager: dataManager)
+                    .padding(.top, 8).padding(.bottom, 20)
+            }
+            .scrollDismissesKeyboard(.immediately)
+            .simultaneousGesture(TapGesture().onEnded {
+                historyManager.add(trimmedKeyword); focused = false
+            })
+        }
+    }
+
     private func scheduleSearch(_ raw: String) {
         searchTask?.cancel()
         let kw = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -411,46 +506,76 @@ struct VideoSearchTabView: View {
 
     private func commitSearch() { historyManager.add(trimmedKeyword); focused = false }
 
+    // MARK: - ⭐ 搜索历史
     private var historyView: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
                 HStack {
-                    Text(isGlobalEnglishMode ? "Recent Searches" : "搜索历史")
-                        .font(.system(size: 14, weight: .bold)).foregroundColor(.secondary)
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.accentColor)
+                        Text(isGlobalEnglishMode ? "Recent Searches" : "搜索历史")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(.primary)
+                    }
                     Spacer()
                     Button { withAnimation { historyManager.clearAll() } } label: {
                         Label(isGlobalEnglishMode ? "Clear" : "清空", systemImage: "trash")
                             .font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
                     }
                 }
-                .padding(.horizontal, 16).padding(.top, 16)
-                FlowLayout(spacing: 8) {
+                .padding(.horizontal, 18).padding(.top, 18)
+
+                FlowLayout(spacing: 10) {
                     ForEach(historyManager.histories, id: \.self) { kw in historyChip(kw) }
                 }
-                .padding(.horizontal, 16).padding(.bottom, 20)
+                .padding(.horizontal, 18).padding(.bottom, 20)
             }
         }
-        .background(Color(UIColor.systemGroupedBackground))
     }
 
     private func historyChip(_ kw: String) -> some View {
-        HStack(spacing: 4) {
-            Text(kw).font(.system(size: 13)).lineLimit(1).foregroundColor(.primary)
-                .padding(.leading, 12).padding(.vertical, 7).contentShape(Rectangle())
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.accentColor.opacity(0.8))
+                .padding(.leading, 12)
+            Text(kw).font(.system(size: 13, weight: .medium))
+                .lineLimit(1).foregroundColor(.primary)
+                .padding(.vertical, 8).contentShape(Rectangle())
                 .onTapGesture { keyword = kw; historyManager.add(kw); focused = false }
             Button { withAnimation { historyManager.remove(kw) } } label: {
                 Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.secondary).padding(6).contentShape(Rectangle())
+                    .foregroundColor(.secondary).padding(7).contentShape(Rectangle())
             }
-            .buttonStyle(.plain).padding(.trailing, 4)
+            .buttonStyle(.plain).padding(.trailing, 3)
         }
-        .background(Capsule().fill(Color.secondary.opacity(0.12)))
+        .background(
+            Capsule().fill(Color(UIColor.secondarySystemBackground))
+        )
+        .overlay(
+            Capsule().stroke(Color.accentColor.opacity(0.15), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.04), radius: 3, x: 0, y: 1)
     }
 
+    // MARK: - ⭐ 空状态提示
     private func hintView(icon: String, text: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: icon).font(.system(size: 40)).foregroundColor(.secondary.opacity(0.5))
-            Text(text).foregroundColor(.secondary)
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(colors: [Color.accentColor.opacity(0.18),
+                                                  Color.accentColor.opacity(0.04)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 96, height: 96)
+                Image(systemName: icon)
+                    .font(.system(size: 40, weight: .light))
+                    .foregroundColor(.accentColor.opacity(0.75))
+            }
+            Text(text)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
