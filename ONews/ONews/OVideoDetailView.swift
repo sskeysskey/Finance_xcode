@@ -4,6 +4,7 @@ import SwiftUI
 struct VideoDetailView: View {
     let item: OVideoItem
     @ObservedObject var dataManager: OVideoDataManager   // 新增：需要传入
+    @ObservedObject private var downloadManager = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     // 记忆用户的正序/倒序偏好，默认正序 (true)
@@ -90,6 +91,16 @@ struct VideoDetailView: View {
             return firstChannel.episodes.count > 1
         }
         return false
+    }
+
+    // ⭐ 已缓存的"原始 url"集合（用于剧集按钮显示蓝色已下载角标）
+    private var cachedOriginalURLs: Set<String> {
+        var s = Set<String>()
+        for (key, meta) in downloadManager.cacheMetadata where downloadManager.localBookmarks[key] != nil {
+            s.insert(key)
+            if let orig = meta.originalEpisodeURL, !orig.isEmpty { s.insert(orig) }
+        }
+        return s
     }
     
     var body: some View {
@@ -389,7 +400,7 @@ struct VideoDetailView: View {
                 .background(Color.secondary.opacity(0.1))
                 .padding(.horizontal, 16)
 
-            // ⭐ 标题行：右侧放「正序/倒序」「批量缓存」
+            // ⭐ 标题行：右侧放「正序/倒序」「批量缓存/缓存」
             HStack(spacing: 8) {
                 Text(isGlobalEnglishMode ? "Episodes" : "播放列表")
                     .font(.system(size: 17, weight: .bold))
@@ -397,41 +408,45 @@ struct VideoDetailView: View {
 
                 Spacer()
 
-                if !isLoadingPlaylist && !sortedPlaylist.isEmpty && isMultiEpisodeVideo {
-                    // 正序 / 倒序切换
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            isEpisodeAscending.toggle()
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: isEpisodeAscending ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
-                                .font(.system(size: 13))
-                            Text(isEpisodeAscending
-                                ? (isGlobalEnglishMode ? "Asc" : "正序")
-                                : (isGlobalEnglishMode ? "Desc" : "倒序"))
-                                .font(.system(size: 12, weight: .bold))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(
-                            Capsule().fill(
-                                LinearGradient(colors: [Color.blue, Color.cyan],
-                                            startPoint: .topLeading, endPoint: .bottomTrailing)
+                if !isLoadingPlaylist && !sortedPlaylist.isEmpty {
+                    // 正序 / 倒序切换（仅多集影片显示）
+                    if isMultiEpisodeVideo {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isEpisodeAscending.toggle()
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: isEpisodeAscending ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+                                    .font(.system(size: 13))
+                                Text(isEpisodeAscending
+                                    ? (isGlobalEnglishMode ? "Asc" : "正序")
+                                    : (isGlobalEnglishMode ? "Desc" : "倒序"))
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule().fill(
+                                    LinearGradient(colors: [Color.blue, Color.cyan],
+                                                startPoint: .topLeading, endPoint: .bottomTrailing)
+                                )
                             )
-                        )
-                        .shadow(color: Color.blue.opacity(0.35), radius: 4, x: 0, y: 2)
+                            .shadow(color: Color.blue.opacity(0.35), radius: 4, x: 0, y: 2)
+                        }
                     }
 
-                    // 批量缓存
+                    // 缓存（单集显示「缓存」，多集显示「批量缓存」）
                     Button {
                         showBatchDownloadSheet = true
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "square.and.arrow.down.fill")
                                 .font(.system(size: 13))
-                            Text(isGlobalEnglishMode ? "Batch" : "批量缓存")
+                            Text(isMultiEpisodeVideo
+                                 ? (isGlobalEnglishMode ? "Batch" : "批量缓存")
+                                 : (isGlobalEnglishMode ? "Cache" : "缓存"))
                                 .font(.system(size: 12, weight: .bold))
                         }
                         .foregroundColor(.white)
@@ -546,7 +561,15 @@ struct VideoDetailView: View {
                                                 .stroke(Color.white.opacity(0.25), lineWidth: 1)
                                         )
 
-                                    if !authManager.isSubscribed {
+                                    if cachedOriginalURLs.contains(episode.url) {
+                                        // ⭐ 已下载：蓝色下载角标
+                                        Image(systemName: "arrow.down.circle.fill")
+                                            .font(.system(size: 8))
+                                            .foregroundColor(.white)
+                                            .padding(3)
+                                            .background(Circle().fill(Color.blue))
+                                            .offset(x: 3, y: -3)
+                                    } else if !authManager.isSubscribed {
                                         if quotaManager.isUnlocked(episode.url) {
                                             Image(systemName: "checkmark.circle.fill")
                                                 .font(.system(size: 8))

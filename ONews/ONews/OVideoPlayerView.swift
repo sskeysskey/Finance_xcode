@@ -939,6 +939,16 @@ struct VideoPlayerPageView: View {
         authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(activeEpisodeURL)
     }
 
+    // ⭐ 已缓存的"原始 url"集合（供选集弹窗显示蓝色已下载角标）
+    private var cachedOriginalURLs: Set<String> {
+        var s = Set<String>()
+        for (key, meta) in downloadManager.cacheMetadata where downloadManager.localBookmarks[key] != nil {
+            s.insert(key)
+            if let orig = meta.originalEpisodeURL, !orig.isEmpty { s.insert(orig) }
+        }
+        return s
+    }
+
     // 播放器主区
     @ViewBuilder
     private var playerArea: some View {
@@ -1027,6 +1037,7 @@ struct VideoPlayerPageView: View {
             EpisodePickerView(
                 episodes: activeEpisodes,        // ⭐ 原来是 episodes
                 currentURL: activeEpisodeURL,
+                cachedOriginalURLs: cachedOriginalURLs,   // ⭐ 新增
                 onSelect: { ep in handleEpisodeSelection(ep) }
             )
             .presentationDetents([.medium, .large])
