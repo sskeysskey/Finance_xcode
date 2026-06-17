@@ -52,6 +52,7 @@ struct CachedPlayTarget: Identifiable {
     let title: String               // 剧名
     let episodeName: String?
     let episodes: [VideoEpisodeItem]
+    var sourceURL: String? = nil   // ⭐ 新增
 }
 
 final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDelegate {
@@ -1089,7 +1090,7 @@ struct VideoCacheView: View {
                             count: cachedCount,
                             icon: "checkmark.seal.fill",
                             color: .green,
-                            subtitle: isGlobalEnglishMode ? "Subscription required for playback" : "订阅后即可无限畅享离线缓存视频"
+                            // subtitle: isGlobalEnglishMode ? "Subscription required for playback" : "订阅后即可无限畅享离线缓存视频"
                         )) {
                             ForEach(groupedCachedItems) { group in
                                 if group.episodes.count == 1 {
@@ -1105,7 +1106,8 @@ struct VideoCacheView: View {
                                             primaryURL: row.url,
                                             title: seriesTitle,
                                             episodeName: row.meta.episodeName,
-                                            episodes: eps
+                                            episodes: eps,
+                                            sourceURL: row.meta.sourceURL     // ⭐ 新增
                                         ))
                                     } label: {
                                         CachedItemCard(meta: row.meta, url: row.url)
@@ -1167,6 +1169,7 @@ struct VideoCacheView: View {
                     realURL: t.primaryURL,
                     title: t.title,
                     episodeName: t.episodeName,
+                    sourceURL: t.sourceURL,       // ⭐ 新增
                     episodes: t.episodes
                 )
             }
@@ -1949,7 +1952,8 @@ struct CachedSeriesDetailView: View {
                             primaryURL: row.url,
                             title: seriesTitle,
                             episodeName: row.meta.episodeName,
-                            episodes: episodeItems
+                            episodes: episodeItems,
+                            sourceURL: seriesSourceURL          // ⭐ 新增
                         ))
                     } label: {
                         episodeRow(index: index, meta: row.meta)
@@ -1987,6 +1991,7 @@ struct CachedSeriesDetailView: View {
                     realURL: t.primaryURL,
                     title: t.title,
                     episodeName: t.episodeName,
+                    sourceURL: t.sourceURL,       // ⭐ 新增
                     episodes: t.episodes
                 )
             }

@@ -80,7 +80,7 @@ struct WaterfallGridView: View {
     }
 }
 
-// MARK: - 卡片（不变）
+// MARK: - 卡片
 struct VideoCardView: View {
     let item: OVideoItem
     var body: some View {
@@ -141,6 +141,7 @@ struct VideoCardView: View {
             }
         }
         .padding(.bottom, 8)
+        .contentShape(Rectangle())   // ⭐ 整张卡片的点击命中区域限定为自身矩形
     }
 
     @ViewBuilder
@@ -164,6 +165,7 @@ struct VideoCardView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
+            .contentShape(Rectangle())   // ⭐ 限定命中区域，禁止 scaledToFill 溢出部分接收点击
         } else {
             ZStack {
                 Rectangle().fill(Color.secondary.opacity(0.12))

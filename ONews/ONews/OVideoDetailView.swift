@@ -382,31 +382,85 @@ struct VideoDetailView: View {
         .padding(.top, 16)
     }
     
-    // MARK: - 3. 播放列表与“洽谈中”无链接提醒
+    // MARK: - 3. 播放列表与"洽谈中"无链接提醒
     private var playlistSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Divider()
                 .background(Color.secondary.opacity(0.1))
                 .padding(.horizontal, 16)
-            
-            Text(isGlobalEnglishMode ? "Episodes" : "播放列表")
-                .font(.system(size: 17, weight: .bold))
-                .foregroundColor(.primary)
-                .padding(.horizontal, 16)
-            
+
+            // ⭐ 标题行：右侧放「正序/倒序」「批量缓存」
+            HStack(spacing: 8) {
+                Text(isGlobalEnglishMode ? "Episodes" : "播放列表")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(.primary)
+
+                Spacer()
+
+                if !isLoadingPlaylist && !sortedPlaylist.isEmpty && isMultiEpisodeVideo {
+                    // 正序 / 倒序切换
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isEpisodeAscending.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: isEpisodeAscending ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+                                .font(.system(size: 13))
+                            Text(isEpisodeAscending
+                                ? (isGlobalEnglishMode ? "Asc" : "正序")
+                                : (isGlobalEnglishMode ? "Desc" : "倒序"))
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule().fill(
+                                LinearGradient(colors: [Color.blue, Color.cyan],
+                                            startPoint: .topLeading, endPoint: .bottomTrailing)
+                            )
+                        )
+                        .shadow(color: Color.blue.opacity(0.35), radius: 4, x: 0, y: 2)
+                    }
+
+                    // 批量缓存
+                    Button {
+                        showBatchDownloadSheet = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "square.and.arrow.down.fill")
+                                .font(.system(size: 13))
+                            Text(isGlobalEnglishMode ? "Batch" : "批量缓存")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule().fill(
+                                LinearGradient(colors: [Color.orange, Color.pink],
+                                            startPoint: .topLeading, endPoint: .bottomTrailing)
+                            )
+                        )
+                        .shadow(color: Color.orange.opacity(0.35), radius: 4, x: 0, y: 2)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+
             if isLoadingPlaylist {
-                // 播放列表加载中
                 ProgressView()
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 28)
             } else if sortedPlaylist.isEmpty {
-                // 🌟 【核心新增】高端大气的“无链接洽谈中”提示卡片
+                // 无链接洽谈中提示卡片
                 VStack(spacing: 12) {
                     Image(systemName: "hourglass.badge.plus")
                         .font(.system(size: 36))
                         .foregroundColor(.orange.opacity(0.8))
                         .padding(.top, 8)
-                    
+
                     Text(isGlobalEnglishMode ? "Video is being negotiated, please wait patiently..." : "视频正在洽谈接入中，请耐心等候...")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.secondary)
@@ -424,127 +478,63 @@ struct VideoDetailView: View {
                         .stroke(Color.orange.opacity(0.15), lineWidth: 1)
                 )
                 .padding(.horizontal, 16)
-                
+
             } else {
-                // 线路选择 Tab + 排序按钮 + 批量下载按钮
-                HStack(spacing: 8) {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(Array(sortedPlaylist.enumerated()), id: \.offset) { idx, ch in
-                                Button {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                        selectedChannelIndex = idx
-                                    }
-                                } label: {
-                                    let displayName = isGlobalEnglishMode ? "Line \(idx + 1)" : "线路 \(idx + 1)"
-                                    
-                                    // ⭐ 弱化线路效果：使用更柔和的灰色/浅蓝色，不再使用高饱和度纯色
-                                    Text(displayName)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(selectedChannelIndex == idx ? .accentColor : .secondary)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 6)
-                                        .background(
-                                            Capsule()
-                                                .fill(selectedChannelIndex == idx
-                                                      ? Color.accentColor.opacity(0.12)
-                                                      : Color.secondary.opacity(0.05))
-                                        )
-                                        .overlay(
-                                            Capsule()
-                                                .stroke(selectedChannelIndex == idx ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
-                                        )
+                // 线路选择 Tab（仅横向滚动，不再带按钮）
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Array(sortedPlaylist.enumerated()), id: \.offset) { idx, ch in
+                            Button {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    selectedChannelIndex = idx
                                 }
+                            } label: {
+                                let displayName = isGlobalEnglishMode ? "Line \(idx + 1)" : "线路 \(idx + 1)"
+                                Text(displayName)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(selectedChannelIndex == idx ? .accentColor : .secondary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        Capsule()
+                                            .fill(selectedChannelIndex == idx
+                                                ? Color.accentColor.opacity(0.12)
+                                                : Color.secondary.opacity(0.05))
+                                    )
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(selectedChannelIndex == idx ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+                                    )
                             }
                         }
-                        .padding(.horizontal, 16)
                     }
-
-                    // 正序/倒序切换按钮（仅多集视频时显示）
-                    if isMultiEpisodeVideo {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                isEpisodeAscending.toggle()
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: isEpisodeAscending ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
-                                    .font(.system(size: 13))
-                                Text(isEpisodeAscending
-                                     ? (isGlobalEnglishMode ? "Asc" : "正序")
-                                     : (isGlobalEnglishMode ? "Desc" : "倒序"))
-                                    .font(.system(size: 12, weight: .bold))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule().fill(
-                                    LinearGradient(colors: [Color.blue, Color.cyan],
-                                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                                )
-                            )
-                            .shadow(color: Color.blue.opacity(0.35), radius: 4, x: 0, y: 2)
-                        }
-                    }
-
-                    // 批量下载按钮（仅多集视频时显示）
-                    if isMultiEpisodeVideo {
-                        Button {
-                            showBatchDownloadSheet = true
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "square.and.arrow.down.fill")
-                                    .font(.system(size: 13))
-                                Text(isGlobalEnglishMode ? "Batch" : "批量缓存")
-                                    .font(.system(size: 12, weight: .bold))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule().fill(
-                                    LinearGradient(colors: [Color.orange, Color.pink],
-                                                   startPoint: .topLeading, endPoint: .bottomTrailing)
-                                )
-                            )
-                            .shadow(color: Color.orange.opacity(0.35), radius: 4, x: 0, y: 2)
-                        }
-                        .padding(.trailing, 16)
-                    }
+                    .padding(.horizontal, 16)
                 }
 
                 // 剧集网格
                 if selectedChannelIndex < sortedPlaylist.count {
                     let channel = sortedPlaylist[selectedChannelIndex]
-                    // ⭐【修改】根据用户的排序偏好获取排序后的剧集
                     let sortedEps = channel.sortedEpisodes(ascending: isEpisodeAscending)
 
-                    // ⭐ 调整最小宽度为 75，让网格排布更紧凑，按钮视觉上自然变小
-                    // 找到这一段 LazyVGrid，并替换里面的 Button 视图：
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 10)], spacing: 10) { // ⭐ 最小宽度微调至 80，更适合双行
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 10)], spacing: 10) {
                         ForEach(sortedEps, id: \.url) { episode in
                             Button {
                                 selectedEpisode = episode
                                 attemptPlay(episode: episode)
                             } label: {
                                 ZStack(alignment: .topTrailing) {
-                                    // ⭐ 重塑后的剧集按钮：支持两行、自动缩放字号
                                     Text(episode.name)
-                                        .font(.system(size: 12, weight: .bold)) // ⭐ 基础字号微调至 12
-                                        .minimumScaleFactor(0.75)               // ⭐ 核心：字号不够时自动缩小，最高缩小至 9pt
-                                        .lineLimit(2)                           // ⭐ 核心：允许折行，最多两行
-                                        .multilineTextAlignment(.center)        // ⭐ 居中对齐
+                                        .font(.system(size: 12, weight: .bold))
+                                        .minimumScaleFactor(0.75)
+                                        .lineLimit(2)
+                                        .multilineTextAlignment(.center)
                                         .foregroundColor(.white)
                                         .frame(maxWidth: .infinity)
-                                        .frame(height: 46)                      // ⭐ 固定高度，保证单行和双行的按钮高度一致，视觉更整齐
-                                        .padding(.horizontal, 4)                // 左右留出微小边距防止贴边
+                                        .frame(height: 46)
+                                        .padding(.horizontal, 4)
                                         .background(
                                             LinearGradient(
-                                                colors: [
-                                                    Color(.systemIndigo),
-                                                    Color(.systemPurple)
-                                                ],
+                                                colors: [Color(.systemIndigo), Color(.systemPurple)],
                                                 startPoint: .topLeading,
                                                 endPoint: .bottomTrailing
                                             )
@@ -555,10 +545,9 @@ struct VideoDetailView: View {
                                             RoundedRectangle(cornerRadius: 10)
                                                 .stroke(Color.white.opacity(0.25), lineWidth: 1)
                                         )
-                                    
+
                                     if !authManager.isSubscribed {
                                         if quotaManager.isUnlocked(episode.url) {
-                                            // ⭐ 已解锁：绿色对勾，表示"今天内免费可用"
                                             Image(systemName: "checkmark.circle.fill")
                                                 .font(.system(size: 8))
                                                 .foregroundColor(.white)
@@ -566,7 +555,6 @@ struct VideoDetailView: View {
                                                 .background(Circle().fill(Color.green))
                                                 .offset(x: 3, y: -3)
                                         } else if quotaManager.remaining <= 0 {
-                                            // ⭐ 未解锁且无剩余点数：橙色锁
                                             Image(systemName: "lock.fill")
                                                 .font(.system(size: 8))
                                                 .foregroundColor(.white)
@@ -574,7 +562,6 @@ struct VideoDetailView: View {
                                                 .background(Circle().fill(Color.orange))
                                                 .offset(x: 3, y: -3)
                                         }
-                                        // ⭐ 未解锁但有剩余点数：不显示任何图标，暗示可免费点击
                                     }
                                 }
                             }
@@ -769,6 +756,9 @@ struct BatchDownloadView: View {
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @ObservedObject private var downloadManager = HLSDownloadManager.shared
     @ObservedObject private var quotaManager = FreeQuotaManager.shared   // ⭐ 新增
+    @ObservedObject private var network = NetworkMonitor.shared   // ⭐ 新增
+    @State private var showCellularAlert = false                  // ⭐ 新增
+    @State private var pendingCellularBatch: [(name: String, url: String)] = []  // ⭐ 新增
 
     @State private var selectedURLs: Set<String> = []
     @State private var isProcessing = false
@@ -915,6 +905,21 @@ struct BatchDownloadView: View {
                 Text(isGlobalEnglishMode
                     ? "You need \(batchConsumeCount) passes but only have \(quotaManager.remaining) left. Come back tomorrow for more, or subscribe now for unlimited access."
                     : "当前操作需消耗 \(batchConsumeCount) 点。订阅后即可无限畅享所有视频。")
+            }
+            // ⭐ 新增：批量下载蜂窝提醒（每次都提醒）
+            .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示",
+                isPresented: $showCellularAlert) {
+                Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
+                    pendingCellularBatch = []
+                }
+                Button(isGlobalEnglishMode ? "Download Anyway" : "允许并下载") {
+                    performDownloads(pendingCellularBatch)
+                    pendingCellularBatch = []
+                }
+            } message: {
+                Text(isGlobalEnglishMode
+                    ? "You are on a cellular network. Downloading will use mobile data. Continue?"
+                    : "当前处于蜂窝网络，批量缓存将消耗流量，是否继续？")
             }
         }
     }
@@ -1150,14 +1155,14 @@ struct BatchDownloadView: View {
 
         // 订阅用户直接下载
         if authManager.isSubscribed {
-            performDownloads(selected)
+            performDownloadsWithNetworkCheck(selected)
             return
         }
 
         // 需要新消耗点数的集（未解锁的）
         let newOnes = selected.filter { !quotaManager.isUnlocked($0.url) }
         if newOnes.isEmpty {
-            performDownloads(selected)   // 全部已解锁，直接下
+            performDownloadsWithNetworkCheck(selected)
             return
         }
 
@@ -1190,7 +1195,7 @@ struct BatchDownloadView: View {
         
         await MainActor.run {
             showBatchConsumeConfirm = false
-            performDownloads(selected)
+            performDownloadsWithNetworkCheck(selected)
         }
     }
 
@@ -1224,6 +1229,16 @@ struct BatchDownloadView: View {
                 dismiss()
                 onStartDownloads()
             }
+        }
+    }
+    
+    // ⭐ 新增：下载前先做蜂窝检查
+    private func performDownloadsWithNetworkCheck(_ selected: [(name: String, url: String)]) {
+        if !network.isWiFi {
+            pendingCellularBatch = selected
+            showCellularAlert = true
+        } else {
+            performDownloads(selected)
         }
     }
 }
