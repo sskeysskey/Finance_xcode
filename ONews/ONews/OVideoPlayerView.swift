@@ -157,6 +157,8 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private var bufferingResetWork: DispatchWorkItem?
         private var targetOrientationMask: UIInterfaceOrientationMask?
         private var orientationWork: DispatchWorkItem?
+        // ⭐ 全屏时用的原生加载指示器（挂在 contentOverlayView 上，会跟随进入全屏）
+        private var loadingView: UIView?
 
         // ⭐ 新增：卡顿自愈 watchdog（针对本地缓存横屏全屏偶发停住）
         private var stallWatchdog: Timer?
@@ -178,6 +180,61 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             if !parent.hasStartedPlaying {
                 parent.hasStartedPlaying = true
             }
+            updateLoadingOverlay()        // ⭐ 新增
+        }
+
+        // MARK: ⭐ 全屏可见的加载指示器（放进 contentOverlayView，会跟随进入全屏）
+        private func setupLoadingOverlay() {
+            guard let controller = controller else { return }
+            controller.loadViewIfNeeded()                       // 确保 contentOverlayView 已就绪
+            guard let overlay = controller.contentOverlayView else { return }
+
+            let isEnglish = UserDefaults.standard.bool(forKey: "isGlobalEnglishMode")
+
+            let box = UIView()
+            box.translatesAutoresizingMaskIntoConstraints = false
+            box.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+            box.layer.cornerRadius = 12
+            box.isUserInteractionEnabled = false                // ⭐ 不拦截播放/快进手势
+            box.isHidden = true
+
+            let spinner = UIActivityIndicatorView(style: .medium)
+            spinner.color = .white
+            spinner.translatesAutoresizingMaskIntoConstraints = false
+            spinner.startAnimating()
+
+            let label = UILabel()
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.text = isEnglish ? "Buffering…" : "缓冲中…"
+            label.textColor = UIColor.white.withAlphaComponent(0.9)
+            label.font = .systemFont(ofSize: 13, weight: .medium)
+
+            box.addSubview(spinner)
+            box.addSubview(label)
+            overlay.addSubview(box)
+
+            NSLayoutConstraint.activate([
+                box.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+                box.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
+                box.widthAnchor.constraint(greaterThanOrEqualToConstant: 120),
+
+                spinner.topAnchor.constraint(equalTo: box.topAnchor, constant: 16),
+                spinner.centerXAnchor.constraint(equalTo: box.centerXAnchor),
+
+                label.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 10),
+                label.centerXAnchor.constraint(equalTo: box.centerXAnchor),
+                label.leadingAnchor.constraint(greaterThanOrEqualTo: box.leadingAnchor, constant: 16),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -16),
+                label.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -16),
+            ])
+
+            loadingView = box
+        }
+
+        // ⭐ 仅在全屏时显示（竖屏内嵌仍由 SwiftUI 的 PlayerLoadingIndicator 负责，避免重复转圈）
+        private func updateLoadingOverlay() {
+            let shouldShow = isFullScreen && (!parent.hasStartedPlaying || parent.isBuffering)
+            loadingView?.isHidden = !shouldShow
         }
 
         // MARK: 初始化（创建播放器 + 注册生命周期监听）
@@ -185,15 +242,15 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             self.controller = controller
             self.url = url
 
-            // 初始进度：读取持久化记忆（进程被杀后再进入时的兜底续播）
             let saved = PlaybackPositionStore.load(for: url)
             let resume = saved > 3 ? CMTime(seconds: saved, preferredTimescale: 600) : nil
             restoreTime = resume ?? .zero
 
             configureAudioSession()
             buildPlayer(resumeTime: resume, autoPlay: true)
+            setupLoadingOverlay()          // ⭐ 新增：构建全屏可见的加载指示器
             registerLifecycleObservers()
-            startStallWatchdog()   // ⭐ 启动卡顿自愈
+            startStallWatchdog()
         }
 
         // MARK: 音频会话（首次 & mediaServices 重启后都要配）
@@ -535,6 +592,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             if parent.isBuffering != value {
                 parent.isBuffering = value
             }
+            updateLoadingOverlay()        // ⭐ 新增
             bufferingResetWork?.cancel()
             if value {
                 let work = DispatchWorkItem { [weak self] in
@@ -571,6 +629,9 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             orientationWork?.cancel()
             stallWatchdog?.invalidate(); stallWatchdog = nil
 
+            loadingView?.removeFromSuperview()                  // ⭐ 新增
+            loadingView = nil                                   // ⭐ 新增
+
             // ⭐ 非画中画时：彻底释放播放器 + 清掉锁屏「正在播放」信息
             if !isPiP {
                 player?.pause()
@@ -587,6 +648,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                                 willBeginFullScreenPresentationWithAnimationCoordinator
                                 coordinator: UIViewControllerTransitionCoordinator) {
             isFullScreen = true
+            updateLoadingOverlay()                              // ⭐ 新增：刚进全屏立即判断是否要显示
             coordinator.animate(alongsideTransition: nil) { [weak self] context in
                 guard let self = self else { return }
                 if context.isCancelled {
@@ -596,6 +658,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                     self.isFullScreen = true
                     self.applyOrientation(fullScreen: true)
                 }
+                self.updateLoadingOverlay()                     // ⭐ 新增
             }
         }
 
@@ -611,6 +674,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                     self.isFullScreen = false
                     self.applyOrientation(fullScreen: false)
                 }
+                self.updateLoadingOverlay()                     // ⭐ 新增：退出全屏后收起原生指示器
             }
         }
 
