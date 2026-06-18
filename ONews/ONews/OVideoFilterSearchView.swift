@@ -169,7 +169,7 @@ struct VideoFilterView: View {
         hasMore = r.hasMore; page += 1; isLoading = false
     }
 
-    // MARK: - ⭐ 改进后的底部筛选条（更醒目）
+    // MARK: - ⭐ 改进后的底部筛选条
     private var bottomFilterBar: some View {
         HStack(spacing: 8) {
             filterBarItem(field: .category,
@@ -190,18 +190,11 @@ struct VideoFilterView: View {
         }
         .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 6)
         .background(
-            ZStack {
-                Rectangle().fill(.ultraThinMaterial)
-                LinearGradient(colors: [Color.accentColor.opacity(0.08), Color.clear],
-                               startPoint: .top, endPoint: .bottom)
-            }
-            .overlay(alignment: .top) {
-                LinearGradient(colors: [Color.accentColor.opacity(0.0),
-                                        Color.accentColor.opacity(0.55),
-                                        Color.accentColor.opacity(0.0)],
-                               startPoint: .leading, endPoint: .trailing).frame(height: 1.5)
-            }
-            .ignoresSafeArea(edges: .bottom)
+            Rectangle().fill(Color(UIColor.systemBackground))
+                .overlay(alignment: .top) {
+                    Color.primary.opacity(0.15).frame(height: 0.5)
+                }
+                .ignoresSafeArea(edges: .bottom)
         )
     }
 

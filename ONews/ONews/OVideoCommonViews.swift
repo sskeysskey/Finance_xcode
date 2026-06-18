@@ -10,8 +10,8 @@ func videoCategoryDisplayName(_ key: String, english: Bool) -> String {
     switch key {
     case "Featured": return "精选"
     case "Movie":    return "电影"
-    case "Drama":    return "电视剧"
-    case "Show":     return "综艺节目"
+    case "Drama":    return "剧集"
+    case "Show":     return "综艺"
     case "Anime":    return "动漫"
     default:         return key
     }
@@ -84,13 +84,7 @@ struct WaterfallGridView: View {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(items) { item in
                     NavigationLink(destination: VideoDetailView(item: item, dataManager: dataManager)) {
-                        VideoCardView(item: item,
-                                      showCategoryTag: showCategoryTag,
-                                      isEnglish: isEnglish,
-                                      onTapCategory: { name in
-                                          // ⭐ 标签点击 → 请求切换分类
-                                          dataManager.requestCategorySwitch(name)
-                                      })
+                        VideoCardView(item: item)
                     }
                     .buttonStyle(PlainButtonStyle())
                     .onAppear {
@@ -106,9 +100,6 @@ struct WaterfallGridView: View {
 // MARK: - 卡片
 struct VideoCardView: View {
     let item: OVideoItem
-    var showCategoryTag: Bool = false                 // ⭐
-    var isEnglish: Bool = false                       // ⭐
-    var onTapCategory: ((String) -> Void)? = nil      // ⭐
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -168,45 +159,11 @@ struct VideoCardView: View {
                             .lineLimit(1)
                     }
                 }
-                Spacer(minLength: 4)
-                if showCategoryTag,
-                   let cat = item.category, !cat.isEmpty, cat != "Featured" {
-                    categoryTagButton(cat)
-                }
             }
             .padding(.horizontal, 2)
         }
         .padding(.bottom, 8)
         .contentShape(Rectangle())   // ⭐ 整张卡片的点击命中区域限定为自身矩形
-    }
-
-    // ⭐ 华丽分类标签按钮
-    @ViewBuilder
-    private func categoryTagButton(_ cat: String) -> some View {
-        Button {
-            onTapCategory?(cat)
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: VideoCategoryTheme.icon(for: cat))
-                    .font(.system(size: 9, weight: .bold))
-                Text(videoCategoryDisplayName(cat, english: isEnglish))
-                    .font(.system(size: 11, weight: .bold))
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule().fill(
-                    LinearGradient(
-                        colors: [VideoCategoryTheme.color(for: cat),
-                                 VideoCategoryTheme.color(for: cat).opacity(0.65)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing))
-            )
-            .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
-            .shadow(color: VideoCategoryTheme.color(for: cat).opacity(0.45), radius: 3, x: 0, y: 2)
-            .contentShape(Capsule())
-        }
-        .buttonStyle(BorderlessButtonStyle())   // ⭐ 关键：避免触发外层 NavigationLink 跳转
     }
 
     @ViewBuilder
@@ -305,7 +262,7 @@ struct VideoModuleView: View {
     }
 }
 
-// MARK: - 底部栏（不变）
+// MARK: - 底部栏
 struct VideoBottomBar: View {
     @ObservedObject var dataManager: OVideoDataManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
@@ -315,72 +272,51 @@ struct VideoBottomBar: View {
         HStack(spacing: 4) {
             NavigationLink { VideoFilterView(dataManager: dataManager) } label: {
                 BarItemView(icon: "line.3.horizontal.decrease.circle.fill", zh: "分类", en: "Filter",
-                            tint: Color(red: 0.20, green: 0.72, blue: 0.45),
-                            isActive: false, isEnabled: true, isLoading: false,
                             isEnglish: isGlobalEnglishMode)
             }.buttonStyle(.plain)
 
             NavigationLink { VideoSearchTabView(dataManager: dataManager) } label: {
                 BarItemView(icon: "magnifyingglass.circle.fill", zh: "搜索", en: "Search",
-                            tint: Color(red: 0.25, green: 0.55, blue: 0.95),
-                            isActive: false, isEnabled: true, isLoading: false,
                             isEnglish: isGlobalEnglishMode)
             }.buttonStyle(.plain)
 
             NavigationLink { VideoCacheView() } label: {
                 BarItemView(icon: "arrow.down.circle.fill", zh: "缓存", en: "Cache",
-                            tint: Color(red: 0.98, green: 0.55, blue: 0.20),
-                            isActive: false, isEnabled: true, isLoading: false,
                             isEnglish: isGlobalEnglishMode)
             }.buttonStyle(.plain)
         }
-        .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 2)
-        .background(
-            ZStack {
-                Rectangle().fill(.ultraThinMaterial)
-                LinearGradient(colors: [Color.primary.opacity(0.04), Color.clear],
-                               startPoint: .top, endPoint: .bottom)
-            }
-            .overlay(alignment: .top) {
-                LinearGradient(colors: [Color.primary.opacity(0.0), Color.primary.opacity(0.18), Color.primary.opacity(0.0)],
-                               startPoint: .leading, endPoint: .trailing).frame(height: 0.5)
-            }
-            .ignoresSafeArea(edges: .bottom)
-        )
-        .background(.ultraThinMaterial.opacity(0.001))
+        .padding(.horizontal, 8)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
+        .background(Color(UIColor.systemBackground)) // 跟随系统黑白背景
+        .overlay(alignment: .top) {
+            // 顶部细边框线
+            Color.primary.opacity(0.15).frame(height: 0.5)
+        }
+        .ignoresSafeArea(edges: .bottom)
     }
 }
 
 private struct BarItemView: View {
-    let icon: String; let zh: String; let en: String; let tint: Color
-    let isActive: Bool; let isEnabled: Bool; let isLoading: Bool; let isEnglish: Bool
+    let icon: String
+    let zh: String
+    let en: String
+    let isEnglish: Bool
+
     var body: some View {
-        VStack(spacing: 5) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(LinearGradient(
-                        colors: isEnabled ? [tint.opacity(0.95), tint.opacity(0.70)]
-                                          : [Color.secondary.opacity(0.22), Color.secondary.opacity(0.14)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 50, height: 34)
-                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Color.white.opacity(isEnabled ? 0.25 : 0), lineWidth: 0.5))
-                    .shadow(color: isEnabled ? tint.opacity(0.40) : .clear, radius: 6, x: 0, y: 3)
-                    .scaleEffect(isActive ? 1.06 : 1.0)
-                if isLoading {
-                    ProgressView().scaleEffect(0.7).tint(.secondary)
-                } else {
-                    Image(systemName: icon).font(.system(size: 19, weight: .semibold))
-                        .foregroundColor(.white).symbolRenderingMode(.hierarchical)
-                }
-            }
-            Text(isEnglish ? en : zh).font(.system(size: 12, weight: .semibold))
-                .foregroundColor(isEnabled ? .primary : .secondary)
+        VStack(spacing: 4) {
+            // 纯图标，无背景色块，尺寸放大
+            Image(systemName: icon)
+                .font(.system(size: 24, weight: .regular)) // 图标更大
+                .foregroundColor(.primary) // 系统黑白
+
+            // 文字
+            Text(isEnglish ? en : zh)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary)
         }
         .frame(maxWidth: .infinity)
-        .opacity(isEnabled ? 1.0 : 0.55)
         .contentShape(Rectangle())
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isActive)
     }
 }
 
@@ -538,7 +474,66 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
     }
 }
 
-// MARK: - 首页（需求1+3 版本，仍用菜单选分类）
+// ⭐ 需求2：横向分类栏（小红书风格）
+struct CategoryTabBar: View {
+    let categories: [String]
+    @Binding var selectedIndex: Int
+    let isEnglish: Bool
+    @Namespace private var ns
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(Array(categories.enumerated()), id: \.offset) { idx, cat in
+                        let isSelected = idx == selectedIndex
+                        let theme = VideoCategoryTheme.color(for: cat)
+                        Button {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                selectedIndex = idx
+                            }
+                        } label: {
+                            VStack(spacing: 5) {
+                                HStack(spacing: 4) {
+                                    if isSelected {
+                                        Image(systemName: VideoCategoryTheme.icon(for: cat))
+                                            .font(.system(size: 11, weight: .bold))
+                                            .foregroundColor(theme)
+                                    }
+                                    Text(videoCategoryDisplayName(cat, english: isEnglish))
+                                        .font(.system(size: isSelected ? 17 : 15,
+                                                      weight: isSelected ? .bold : .medium))
+                                        .foregroundColor(isSelected ? .primary : .secondary)
+                                }
+                                ZStack {
+                                    if isSelected {
+                                        Capsule()
+                                            .fill(theme)
+                                            .matchedGeometryEffect(id: "tab_underline", in: ns)
+                                            .frame(width: 24, height: 3)
+                                    } else {
+                                        Capsule().fill(Color.clear).frame(width: 24, height: 3)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .id(idx)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+            }
+            .onChange(of: selectedIndex) { newIdx in
+                withAnimation { proxy.scrollTo(newIdx, anchor: .center) }
+            }
+        }
+    }
+}
+
+// MARK: - 首页（需求2 版本：顶部横向分类栏）
 struct VideoBrowseView: View {
     @ObservedObject var dataManager: OVideoDataManager
     @Binding var selectedCategoryIndex: Int
@@ -546,38 +541,73 @@ struct VideoBrowseView: View {
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @EnvironmentObject var authManager: AuthManager
 
-    private var userId: String? { authManager.userIdentifier }
+    // ⭐ 新增：用于触发返回上一页的操作
+    @Environment(\.presentationMode) var presentationMode
 
-    private var currentCategoryKey: String {
-        let names = dataManager.categoryNames
-        if selectedCategoryIndex >= 0, selectedCategoryIndex < names.count {
-            return names[selectedCategoryIndex]
-        }
-        return ""
-    }
-    private var currentCategoryDisplay: String {
-        let key = currentCategoryKey
-        guard !key.isEmpty else { return isGlobalEnglishMode ? "Video" : "影视" }
-        return categoryDisplayName(key)
-    }
-    private var currentCategoryColor: Color { VideoCategoryTheme.color(for: currentCategoryKey) }
-    private var currentCategoryIcon: String { VideoCategoryTheme.icon(for: currentCategoryKey) }
+    private var userId: String? { authManager.userIdentifier }
 
     var body: some View {
         Group {
             if dataManager.categoryNames.isEmpty {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                InfinitePageViewController(categories: dataManager.categoryNames,
-                                           selectedIndex: $selectedCategoryIndex,
-                                           sortOption: sortOption,
-                                           dataManager: dataManager,
-                                           userId: userId)
-                    .ignoresSafeArea(edges: .bottom)
+                VStack(spacing: 0) {
+                    // ⭐ 顶部 banner：返回按钮 + 横向分类栏 + 右侧搜索图标
+                    HStack(spacing: 0) {
+                        // ⭐ 新增：自定义返回按钮
+                        Button {
+                            presentationMode.wrappedValue.dismiss()
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(.primary)
+                                .padding(.leading, 16)
+                                .padding(.trailing, 8) // 缩小一点间距，给搜索腾空间
+                                .padding(.vertical, 10)
+                        }
+
+                        // 原来的分类栏（自动占满中间空间）
+                        CategoryTabBar(categories: dataManager.categoryNames,
+                                    selectedIndex: $selectedCategoryIndex,
+                                    isEnglish: isGlobalEnglishMode)
+                            .frame(maxWidth: .infinity)
+
+                        // ⭐ 新增：右侧搜索图标（和底部搜索功能完全一致）
+                        NavigationLink {
+                            VideoSearchTabView(dataManager: dataManager)
+                        } label: {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.primary)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.plain)
+                        .offset(y: -2) // ⭐ 搜索图标轻微上移
+                    }
+                    .background(.ultraThinMaterial)
+
+                    Divider().opacity(0.4)
+
+                    // ⭐ 下方分页内容 + 悬浮排序按钮
+                    ZStack(alignment: .topTrailing) {
+                        InfinitePageViewController(categories: dataManager.categoryNames,
+                                                   selectedIndex: $selectedCategoryIndex,
+                                                   sortOption: sortOption,
+                                                   dataManager: dataManager,
+                                                   userId: userId)
+                            .ignoresSafeArea(edges: .bottom)
+
+                        floatingSortButton
+                            .padding(.trailing, 12)
+                            .padding(.top, 8)
+                    }
+                }
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        // ⭐ 需求3：监听卡片标签点击 → 切换分类
+        // ⭐ 隐藏系统导航栏，把空间让给分类栏
+        .toolbar(.hidden, for: .navigationBar)
+        // ⭐ 卡片标签点击切换分类（保留原逻辑）
         .onChange(of: dataManager.pendingCategorySwitch) { newVal in
             guard let name = newVal else { return }
             if let idx = dataManager.categoryNames.firstIndex(of: name) {
@@ -587,60 +617,35 @@ struct VideoBrowseView: View {
             }
             dataManager.pendingCategorySwitch = nil
         }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Menu {
-                    ForEach(Array(dataManager.categoryNames.enumerated()), id: \.offset) { idx, cat in
-                        Button { selectedCategoryIndex = idx } label: {
-                            if idx == selectedCategoryIndex {
-                                Label(categoryDisplayName(cat), systemImage: "checkmark")
-                            } else {
-                                Label(categoryDisplayName(cat),
-                                      systemImage: VideoCategoryTheme.icon(for: cat))
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: currentCategoryIcon)
-                            .font(.system(size: 13, weight: .bold)).foregroundColor(currentCategoryColor)
-                        Text(currentCategoryDisplay)
-                            .font(.system(size: 16, weight: .bold)).foregroundColor(.primary)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 10, weight: .bold)).foregroundColor(currentCategoryColor.opacity(0.8))
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(Capsule().fill(currentCategoryColor.opacity(0.15)))
-                    .overlay(Capsule().strokeBorder(currentCategoryColor.opacity(0.45), lineWidth: 1))
-                    .animation(.easeInOut(duration: 0.25), value: selectedCategoryIndex)
-                }
-            }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
-                    ForEach(VideoSortOption.allCases, id: \.self) { opt in
-                        Button { withAnimation { sortOption = opt } } label: {
-                            if opt == sortOption {
-                                Label(opt.displayName(isGlobalEnglishMode), systemImage: "checkmark")
-                            } else {
-                                Text(opt.displayName(isGlobalEnglishMode))
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(sortOption.shortName(isGlobalEnglishMode))
-                            .font(.system(size: 14, weight: .semibold))
-                        Image(systemName: "arrow.up.arrow.down").font(.system(size: 9, weight: .semibold))
-                    }
-                    .foregroundColor(.primary)
-                    .animation(.easeInOut(duration: 0.2), value: sortOption)
-                }
-            }
-        }
     }
 
-    private func categoryDisplayName(_ key: String) -> String {
-        videoCategoryDisplayName(key, english: isGlobalEnglishMode)   // ⭐ 统一辅助
+    // ⭐ 悬浮排序按钮（靠右，悬浮在卡片之上，会轻微遮挡下方卡片）
+    private var floatingSortButton: some View {
+        Menu {
+            ForEach(VideoSortOption.allCases, id: \.self) { opt in
+                Button { withAnimation { sortOption = opt } } label: {
+                    if opt == sortOption {
+                        Label(opt.displayName(isGlobalEnglishMode), systemImage: "checkmark")
+                    } else {
+                        Text(opt.displayName(isGlobalEnglishMode))
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(sortOption.shortName(isGlobalEnglishMode))
+                    .font(.system(size: 13, weight: .semibold))
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundColor(.primary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(.ultraThinMaterial))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+            .shadow(color: Color.black.opacity(0.15), radius: 5, x: 0, y: 2)
+            .animation(.easeInOut(duration: 0.2), value: sortOption)
+        }
     }
 }
 
@@ -664,7 +669,7 @@ struct VideoSwipeGuideView: View {
                 VStack(spacing: 12) {
                     Text(isGlobalEnglishMode ? "Swipe to switch channels" : "左右滑动切换频道")
                         .font(.title2.bold()).foregroundColor(.white)
-                    Text(isGlobalEnglishMode ? "Featured / Movies / Dramas / Shows / Anime" : "精选 / 电影 / 电视剧 / 综艺 / 动漫")
+                    Text(isGlobalEnglishMode ? "Featured / Movies / Dramas / Shows / Anime" : "精选 / 电影 / 剧集 / 综艺 / 动漫")
                         .font(.subheadline).foregroundColor(.white.opacity(0.8))
                 }
                 Button {
