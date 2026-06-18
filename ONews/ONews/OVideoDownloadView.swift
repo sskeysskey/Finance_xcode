@@ -11,7 +11,7 @@ extension OVideoItem {
         self.init(time: nil, name: seriesName, url: sourceURL, info: nil,
                   image: cover, director: nil, writers: nil, cast: nil,
                   types: nil, region: nil, date: nil, alias: nil, intro: nil,
-                  ratings: nil, playlist: nil, update: nil, category: nil)
+                  ratings: nil, playlist: nil, update: nil)
     }
 }
 

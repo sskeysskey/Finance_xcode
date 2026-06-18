@@ -333,7 +333,7 @@ private struct FilterSheetView: View {
     }
 }
 
-// MARK: - 搜索 Tab（服务端搜索）⭐ 视觉重构，功能不变
+// MARK: - 搜索 Tab（服务端搜索）⭐ 新增：无/少结果时的寻片提示
 struct VideoSearchTabView: View {
     @ObservedObject var dataManager: OVideoDataManager
     let initialKeyword: String?
@@ -349,7 +349,16 @@ struct VideoSearchTabView: View {
     @State private var searchTask: Task<Void, Never>? = nil
     @State private var isFirstAppear = true
 
+    // ⭐ 新增：寻片相关
+    @State private var showWishSheet = false
+    /// 结果数量 <= 该值时，在结果下方追加“没找到？”提示（可调）
+    private let fewResultsThreshold = 5
+
     private var userId: String? { authManager.userIdentifier }
+    private var userType: String {
+        guard let uid = userId, !uid.isEmpty else { return "device" }
+        return (uid.hasPrefix("dev_") || uid == "guest_user") ? "device" : "apple"
+    }
 
     init(dataManager: OVideoDataManager, initialKeyword: String? = nil, autoFocus: Bool = true) {
         self.dataManager = dataManager
@@ -390,6 +399,16 @@ struct VideoSearchTabView: View {
             }
         }
         .onChange(of: keyword) { newValue in scheduleSearch(newValue) }
+        // ⭐ 寻片提交弹窗
+        .sheet(isPresented: $showWishSheet) {
+            WishSubmitSheet(initialContent: trimmedKeyword,
+                            keyword: trimmedKeyword,
+                            userId: userId,
+                            userType: userType,
+                            isPresented: $showWishSheet)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     // MARK: - ⭐ 精致搜索框
@@ -458,7 +477,8 @@ struct VideoSearchTabView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if results.isEmpty {
-            hintView(icon: "tray", text: isGlobalEnglishMode ? "No results" : "暂无搜索结果")
+            // ⭐ 结果为空：整屏醒目寻片提示
+            emptyWishView
         } else {
             ScrollView {
                 // ⭐ 结果数量提示条
@@ -474,13 +494,92 @@ struct VideoSearchTabView: View {
                 .padding(.top, 6)
 
                 WaterfallGridView(items: results, dataManager: dataManager)
-                    .padding(.top, 8).padding(.bottom, 20)
+                    .padding(.top, 8)
+
+                // ⭐ 结果较少：底部追加温和的寻片提示
+                if results.count <= fewResultsThreshold {
+                    inlineWishCard
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                }
+
+                Color.clear.frame(height: 20)
             }
             .scrollDismissesKeyboard(.immediately)
             .simultaneousGesture(TapGesture().onEnded {
                 historyManager.add(trimmedKeyword); focused = false
             })
         }
+    }
+
+    // MARK: - ⭐ 寻片提示文案（“这里”放大可点）
+    private var wishPromptText: Text {
+        if isGlobalEnglishMode {
+            return Text("Didn't find it? Tap ")
+                    .font(.system(size: 15)).foregroundColor(.secondary)
+                + Text("HERE")
+                    .font(.system(size: 19, weight: .heavy)).foregroundColor(.orange) // 改为橙色
+                + Text(" to submit — we'll do our best to find it")
+                    .font(.system(size: 15)).foregroundColor(.secondary)
+        } else {
+            return Text("没有找到你想要的内容？点击")
+                    .font(.system(size: 15)).foregroundColor(.secondary)
+                + Text("这里")
+                    .font(.system(size: 21, weight: .heavy)).foregroundColor(.orange) // 改为橙色
+                + Text("提交，我们会全力为你寻找")
+                    .font(.system(size: 15)).foregroundColor(.secondary)
+        }
+    }
+
+    // 整屏（空结果）
+    private var emptyWishView: some View {
+        VStack(spacing: 20) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(colors: [Color.accentColor.opacity(0.18),
+                                                  Color.accentColor.opacity(0.04)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 96, height: 96)
+                Image(systemName: "sparkle.magnifyingglass")
+                    .font(.system(size: 40, weight: .light))
+                    .foregroundColor(.accentColor.opacity(0.75))
+            }
+            Text(isGlobalEnglishMode ? "No results" : "暂无搜索结果")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.primary)
+
+            Button { focused = false; showWishSheet = true } label: {
+                wishPromptText
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 28)
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // 结果下方（少结果）卡片
+    private var inlineWishCard: some View {
+        Button { focused = false; showWishSheet = true } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "hand.wave.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(.accentColor)
+                wishPromptText
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.accentColor.opacity(0.25), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func scheduleSearch(_ raw: String) {
@@ -571,6 +670,133 @@ struct VideoSearchTabView: View {
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - ⭐ 寻片提交弹窗
+private struct WishSubmitSheet: View {
+    let initialContent: String
+    let keyword: String
+    let userId: String?
+    let userType: String
+    @Binding var isPresented: Bool
+
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    @State private var content: String = ""
+    @State private var isSubmitting = false
+    @State private var submitted = false
+    @State private var errorMsg: String? = nil
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // header
+            HStack {
+                Text(isGlobalEnglishMode ? "Request a title" : "告诉我们你想看什么")
+                    .font(.headline)
+                Spacer()
+                Button { isPresented = false } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 22)).foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 18).padding(.vertical, 16)
+            Divider()
+
+            if submitted {
+                successView
+            } else {
+                inputView
+            }
+        }
+        .presentationBackground(.regularMaterial)
+        .onAppear { content = initialContent }
+    }
+
+    private var inputView: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(isGlobalEnglishMode
+                 ? "Enter the title / show name. We'll do our best to find it for you."
+                 : "输入你想看的剧集 / 电影名称，我们会全力为你寻找。")
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+
+            TextField(isGlobalEnglishMode ? "e.g. The Movie Name" : "例如：想看的剧集名称",
+                      text: $content)
+                .font(.system(size: 16))
+                .focused($focused)
+                .submitLabel(.done)
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(UIColor.secondarySystemBackground))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
+                )
+
+            if let err = errorMsg {
+                Text(err).font(.system(size: 13)).foregroundColor(.red)
+            }
+
+            Button { Task { await submit() } } label: {
+                HStack {
+                    if isSubmitting { ProgressView().tint(.white) }
+                    Text(isGlobalEnglishMode ? "Submit" : "提交")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(content.trimmingCharacters(in: .whitespaces).isEmpty
+                              ? AnyShapeStyle(Color.secondary.opacity(0.4))
+                              : AnyShapeStyle(LinearGradient(colors: [Color.accentColor,
+                                                                      Color.accentColor.opacity(0.8)],
+                                                             startPoint: .leading, endPoint: .trailing)))
+                )
+            }
+            .disabled(isSubmitting || content.trimmingCharacters(in: .whitespaces).isEmpty)
+
+            Spacer(minLength: 0)
+        }
+        .padding(18)
+    }
+
+    private var successView: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 56)).foregroundColor(.green)
+            Text(isGlobalEnglishMode ? "Submitted!" : "提交成功！")
+                .font(.system(size: 18, weight: .bold))
+            Text(isGlobalEnglishMode
+                 ? "Thanks! We'll do our best to find it for you."
+                 : "感谢反馈，我们会尽快为你寻找。")
+                .font(.system(size: 14)).foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { isPresented = false }
+        }
+    }
+
+    private func submit() async {
+        let text = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        focused = false
+        isSubmitting = true
+        errorMsg = nil
+        do {
+            try await OVideoAPI.submitWish(content: text, keyword: keyword,
+                                           userId: userId, userType: userType)
+            withAnimation { submitted = true }
+        } catch {
+            errorMsg = error.localizedDescription
+        }
+        isSubmitting = false
     }
 }
 

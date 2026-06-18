@@ -118,6 +118,54 @@ enum OVideoAPI {
         let result = try JSONDecoder().decode(OVideoResolveResponse.self, from: data)
         return result.real_url
     }
+
+    // 提交寻片/许愿请求
+    static func submitWish(content: String, keyword: String?,
+                           userId: String?, userType: String) async throws {
+        guard let url = URL(string: "\(baseURL)/wish") else { throw URLError(.badURL) }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 15
+        var body: [String: Any] = ["wish_content": content, "user_type": userType]
+        if let k = keyword, !k.isEmpty { body["keyword"] = k }
+        if let uid = userId, !uid.isEmpty { body["user_id"] = uid }
+        let appVer = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        body["app_version"] = appVer
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (_, response) = try await URLSession.shared.data(for: req)
+        if let http = response as? HTTPURLResponse {
+            if http.statusCode == 429 {
+                throw NSError(domain: "OVideo", code: 429,
+                              userInfo: [NSLocalizedDescriptionKey: "提交太频繁，请稍后再试"])
+            }
+            if http.statusCode >= 400 {
+                throw NSError(domain: "OVideo", code: http.statusCode,
+                              userInfo: [NSLocalizedDescriptionKey: "提交失败 (\(http.statusCode))"])
+            }
+        }
+    }
+
+    // 【第二阶段】拉取我的未读回复
+    static func fetchMyWishReplies(userId: String) async throws -> [WishReply] {
+        guard let url = makeURL("wish/my_replies",
+                                [URLQueryItem(name: "user_id", value: userId)]) else {
+            throw URLError(.badURL)
+        }
+        var req = URLRequest(url: url); req.timeoutInterval = 12
+        let (data, _) = try await URLSession.shared.data(for: req)
+        return try JSONDecoder().decode(WishRepliesResponse.self, from: data).replies
+    }
+
+    // 【第二阶段】标记回复已读
+    static func ackWishReply(id: Int, userId: String) async {
+        guard let url = URL(string: "\(baseURL)/wish/ack_reply") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["id": id, "user_id": userId])
+        _ = try? await URLSession.shared.data(for: req)
+    }
 }
 
 // ⭐ 中英文混合人名清洗（详情页仍要用）
@@ -129,6 +177,15 @@ func cleanName(_ rawName: String) -> String {
         return String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
     return trimmed
+}
+
+// MARK: - 寻片回复模型（第二阶段）
+struct WishRepliesResponse: Codable { let replies: [WishReply] }
+struct WishReply: Codable, Identifiable, Hashable {
+    let id: Int
+    let wish_content: String
+    let admin_reply: String?
+    let replied_at: String?
 }
 
 // MARK: - 响应模型
@@ -172,10 +229,9 @@ struct OVideoItem: Codable, Identifiable, Hashable {
     let ratings: [String: String]?
     let playlist: [OVideoChannel]?   // ⭐ 列表接口不返回 playlist
     let update: String?
-    let category: String?            // ⭐ 新增：服务器在精选/列表接口注入的真实分类
 
     enum CodingKeys: String, CodingKey {
-        case time, name, url, info, image, date, alias, intro, playlist, update, category
+        case time, name, url, info, image, date, alias, intro, playlist, update
         case director = "导演"
         case writers  = "编剧"
         case cast     = "主演"
@@ -303,10 +359,6 @@ class OVideoDataManager: ObservableObject {
     @Published var categoryNames: [String] = ["Featured", "Movie", "Drama", "Show", "Anime"]
     @Published var isBootstrapping = false
     @Published var bootstrapError: String? = nil
-
-    // ⭐ 需求3：卡片标签点击后请求切换分类（由 VideoBrowseView 监听并落到 selectedIndex）
-    @Published var pendingCategorySwitch: String? = nil
-    func requestCategorySwitch(_ name: String) { pendingCategorySwitch = name }
 
     // 每个 "category|sort" 的分页缓存
     @Published private(set) var pageItems: [String: [OVideoItem]] = [:]
@@ -471,5 +523,26 @@ final class VideoPlayRecordManager: ObservableObject {
            let decoded = try? JSONDecoder().decode([VideoPlayRecord].self, from: data) {
             self.records = decoded
         }
+    }
+}
+
+// MARK: - 寻片回复管理器（第二阶段）
+@MainActor
+final class WishReplyManager: ObservableObject {
+    static let shared = WishReplyManager()
+    @Published var pendingReplies: [WishReply] = []
+    private init() {}
+
+    func refresh(userId: String?) async {
+        guard let uid = userId, !uid.isEmpty else { return }
+        if let replies = try? await OVideoAPI.fetchMyWishReplies(userId: uid) {
+            self.pendingReplies = replies
+        }
+    }
+
+    func acknowledge(_ reply: WishReply, userId: String?) async {
+        guard let uid = userId, !uid.isEmpty else { return }
+        await OVideoAPI.ackWishReply(id: reply.id, userId: uid)
+        pendingReplies.removeAll { $0.id == reply.id }
     }
 }

@@ -83,7 +83,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             let sortRaw = UserDefaults.standard.string(forKey: "OVideo_SortOption")
                 ?? VideoSortOption.date.rawValue
             let sort = VideoSortOption(rawValue: sortRaw) ?? .date
-            let names = await self.videoDataManager.categoryNames
+            let names = self.videoDataManager.categoryNames
             if idx >= 0, idx < names.count {
                 await self.videoDataManager.loadFirstPageIfNeeded(
                     category: names[idx], sort: sort, userId: uid)

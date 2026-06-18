@@ -67,8 +67,6 @@ struct WaterfallGridView: View {
     let items: [OVideoItem]
     @ObservedObject var dataManager: OVideoDataManager
     var onReachEnd: (() -> Void)? = nil      // ⭐ 触底加载下一页
-    var showCategoryTag: Bool = false        // ⭐ 需求3：是否显示分类标签（精选页才显示）
-    var isEnglish: Bool = false              // ⭐ 标签文案语言
 
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 10),
@@ -144,20 +142,18 @@ struct VideoCardView: View {
                 .padding(.horizontal, 2)
                 .padding(.top, 2)
 
-            // ⭐ 需求3：时间行 → 改为 HStack，右侧放分类标签
-            HStack(spacing: 6) {
-                Group {
-                    if let date = item.date, !date.isEmpty {
-                        Text(date.split(separator: "(").first.map(String.init) ?? date)
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    } else if let types = item.types, !types.isEmpty {
-                        Text(types.joined(separator: " / "))
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
+            // 时间 / 类型行
+            Group {
+                if let date = item.date, !date.isEmpty {
+                    Text(date.split(separator: "(").first.map(String.init) ?? date)
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                } else if let types = item.types, !types.isEmpty {
+                    Text(types.joined(separator: " / "))
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
             }
             .padding(.horizontal, 2)
@@ -326,7 +322,6 @@ struct CategoryVideoListView: View {
     let sortOption: VideoSortOption
     @ObservedObject var dataManager: OVideoDataManager
     let userId: String?
-    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false   // ⭐
 
     var body: some View {
         let items = dataManager.items(category: categoryName, sort: sortOption)
@@ -343,9 +338,7 @@ struct CategoryVideoListView: View {
                                       onReachEnd: {
                                           Task { await dataManager.loadNextPage(category: categoryName,
                                                                                 sort: sortOption, userId: userId) }
-                                      },
-                                      showCategoryTag: categoryName == "Featured",  // ⭐ 仅精选页显示标签
-                                      isEnglish: isGlobalEnglishMode)
+                                      })
                     .padding(.top, 10)
 
                     if loading && !items.isEmpty {
@@ -607,16 +600,6 @@ struct VideoBrowseView: View {
         }
         // ⭐ 隐藏系统导航栏，把空间让给分类栏
         .toolbar(.hidden, for: .navigationBar)
-        // ⭐ 卡片标签点击切换分类（保留原逻辑）
-        .onChange(of: dataManager.pendingCategorySwitch) { newVal in
-            guard let name = newVal else { return }
-            if let idx = dataManager.categoryNames.firstIndex(of: name) {
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                    selectedCategoryIndex = idx
-                }
-            }
-            dataManager.pendingCategorySwitch = nil
-        }
     }
 
     // ⭐ 悬浮排序按钮（靠右，悬浮在卡片之上，会轻微遮挡下方卡片）
