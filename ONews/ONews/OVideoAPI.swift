@@ -170,11 +170,12 @@ struct OVideoItem: Codable, Identifiable, Hashable {
     let alias: String?
     let intro: String?
     let ratings: [String: String]?
-    let playlist: [OVideoChannel]?   // ⭐ 改为可选：列表接口不返回 playlist
+    let playlist: [OVideoChannel]?   // ⭐ 列表接口不返回 playlist
     let update: String?
+    let category: String?            // ⭐ 新增：服务器在精选/列表接口注入的真实分类
 
     enum CodingKeys: String, CodingKey {
-        case time, name, url, info, image, date, alias, intro, playlist, update
+        case time, name, url, info, image, date, alias, intro, playlist, update, category
         case director = "导演"
         case writers  = "编剧"
         case cast     = "主演"
@@ -298,9 +299,14 @@ extension VideoCacheMetadata {
 // MARK: - 数据管理器（分页 / 按需）
 @MainActor
 class OVideoDataManager: ObservableObject {
-    @Published var categoryNames: [String] = ["Movie", "Drama", "Show", "Anime"]
+    // ⭐ 默认含 Featured（兜底用，正常会被服务器返回覆盖）
+    @Published var categoryNames: [String] = ["Featured", "Movie", "Drama", "Show", "Anime"]
     @Published var isBootstrapping = false
     @Published var bootstrapError: String? = nil
+
+    // ⭐ 需求3：卡片标签点击后请求切换分类（由 VideoBrowseView 监听并落到 selectedIndex）
+    @Published var pendingCategorySwitch: String? = nil
+    func requestCategorySwitch(_ name: String) { pendingCategorySwitch = name }
 
     // 每个 "category|sort" 的分页缓存
     @Published private(set) var pageItems: [String: [OVideoItem]] = [:]

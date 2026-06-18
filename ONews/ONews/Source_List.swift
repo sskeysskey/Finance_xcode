@@ -1104,7 +1104,6 @@ struct SourceListView: View {
                             .transition(.opacity)
                         }
                         
-                        // 【已修改】将视频模块入口移至最上方
                         if (resourceManager.showVideoModule || authManager.isPermanentVIP) && !authManager.isVideoModuleBlocked {
                             videoModuleCard
                                 .padding(.horizontal, 16)

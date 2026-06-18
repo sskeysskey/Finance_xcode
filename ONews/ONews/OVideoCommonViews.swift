@@ -2,6 +2,21 @@
 
 import SwiftUI
 
+// ⭐ 新增：分类显示名统一辅助（卡片标签 + 首页菜单共用）
+func videoCategoryDisplayName(_ key: String, english: Bool) -> String {
+    if english {
+        return key   // 英文模式直接用原始 key
+    }
+    switch key {
+    case "Featured": return "精选"
+    case "Movie":    return "电影"
+    case "Drama":    return "电视剧"
+    case "Show":     return "综艺节目"
+    case "Anime":    return "动漫"
+    default:         return key
+    }
+}
+
 // MARK: - 图片内存缓存（不变）
 final class OImageCache {
     static let shared = OImageCache()
@@ -52,6 +67,8 @@ struct WaterfallGridView: View {
     let items: [OVideoItem]
     @ObservedObject var dataManager: OVideoDataManager
     var onReachEnd: (() -> Void)? = nil      // ⭐ 触底加载下一页
+    var showCategoryTag: Bool = false        // ⭐ 需求3：是否显示分类标签（精选页才显示）
+    var isEnglish: Bool = false              // ⭐ 标签文案语言
 
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 10),
@@ -67,7 +84,13 @@ struct WaterfallGridView: View {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(items) { item in
                     NavigationLink(destination: VideoDetailView(item: item, dataManager: dataManager)) {
-                        VideoCardView(item: item)
+                        VideoCardView(item: item,
+                                      showCategoryTag: showCategoryTag,
+                                      isEnglish: isEnglish,
+                                      onTapCategory: { name in
+                                          // ⭐ 标签点击 → 请求切换分类
+                                          dataManager.requestCategorySwitch(name)
+                                      })
                     }
                     .buttonStyle(PlainButtonStyle())
                     .onAppear {
@@ -83,6 +106,10 @@ struct WaterfallGridView: View {
 // MARK: - 卡片
 struct VideoCardView: View {
     let item: OVideoItem
+    var showCategoryTag: Bool = false                 // ⭐
+    var isEnglish: Bool = false                       // ⭐
+    var onTapCategory: ((String) -> Void)? = nil      // ⭐
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Color.clear
@@ -126,22 +153,60 @@ struct VideoCardView: View {
                 .padding(.horizontal, 2)
                 .padding(.top, 2)
 
-            if let date = item.date, !date.isEmpty {
-                Text(date.split(separator: "(").first.map(String.init) ?? date)
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .padding(.horizontal, 2)
-            } else if let types = item.types, !types.isEmpty {
-                Text(types.joined(separator: " / "))
-                    .font(.system(size: 15))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .padding(.horizontal, 2)
+            // ⭐ 需求3：时间行 → 改为 HStack，右侧放分类标签
+            HStack(spacing: 6) {
+                Group {
+                    if let date = item.date, !date.isEmpty {
+                        Text(date.split(separator: "(").first.map(String.init) ?? date)
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    } else if let types = item.types, !types.isEmpty {
+                        Text(types.joined(separator: " / "))
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                if showCategoryTag,
+                   let cat = item.category, !cat.isEmpty, cat != "Featured" {
+                    categoryTagButton(cat)
+                }
             }
+            .padding(.horizontal, 2)
         }
         .padding(.bottom, 8)
         .contentShape(Rectangle())   // ⭐ 整张卡片的点击命中区域限定为自身矩形
+    }
+
+    // ⭐ 华丽分类标签按钮
+    @ViewBuilder
+    private func categoryTagButton(_ cat: String) -> some View {
+        Button {
+            onTapCategory?(cat)
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: VideoCategoryTheme.icon(for: cat))
+                    .font(.system(size: 9, weight: .bold))
+                Text(videoCategoryDisplayName(cat, english: isEnglish))
+                    .font(.system(size: 11, weight: .bold))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule().fill(
+                    LinearGradient(
+                        colors: [VideoCategoryTheme.color(for: cat),
+                                 VideoCategoryTheme.color(for: cat).opacity(0.65)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing))
+            )
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
+            .shadow(color: VideoCategoryTheme.color(for: cat).opacity(0.45), radius: 3, x: 0, y: 2)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(BorderlessButtonStyle())   // ⭐ 关键：避免触发外层 NavigationLink 跳转
     }
 
     @ViewBuilder
@@ -165,7 +230,7 @@ struct VideoCardView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
-            .contentShape(Rectangle())   // ⭐ 限定命中区域，禁止 scaledToFill 溢出部分接收点击
+            .contentShape(Rectangle())
         } else {
             ZStack {
                 Rectangle().fill(Color.secondary.opacity(0.12))
@@ -175,10 +240,11 @@ struct VideoCardView: View {
     }
 }
 
-// MARK: - 频道主题（不变）
+// MARK: - 频道主题
 enum VideoCategoryTheme {
     static func color(for key: String) -> Color {
         switch key {
+        case "Featured": return Color(red: 0.95, green: 0.30, blue: 0.45)   // ⭐ 精选：玫红
         case "Movie": return Color(red: 0.25, green: 0.55, blue: 0.95)
         case "Drama": return Color(red: 0.62, green: 0.36, blue: 0.85)
         case "Show":  return Color(red: 0.98, green: 0.55, blue: 0.20)
@@ -189,6 +255,7 @@ enum VideoCategoryTheme {
     }
     static func icon(for key: String) -> String {
         switch key {
+        case "Featured": return "flame.fill"     // ⭐ 精选
         case "Movie": return "film.fill"
         case "Drama": return "theatermasks.fill"
         case "Show":  return "sparkles"
@@ -238,7 +305,7 @@ struct VideoModuleView: View {
     }
 }
 
-// MARK: - 底部栏（按钮始终可用：分类/搜索不再依赖完整加载）
+// MARK: - 底部栏（不变）
 struct VideoBottomBar: View {
     @ObservedObject var dataManager: OVideoDataManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
@@ -246,7 +313,6 @@ struct VideoBottomBar: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            // 分类
             NavigationLink { VideoFilterView(dataManager: dataManager) } label: {
                 BarItemView(icon: "line.3.horizontal.decrease.circle.fill", zh: "分类", en: "Filter",
                             tint: Color(red: 0.20, green: 0.72, blue: 0.45),
@@ -254,7 +320,6 @@ struct VideoBottomBar: View {
                             isEnglish: isGlobalEnglishMode)
             }.buttonStyle(.plain)
 
-            // 搜索
             NavigationLink { VideoSearchTabView(dataManager: dataManager) } label: {
                 BarItemView(icon: "magnifyingglass.circle.fill", zh: "搜索", en: "Search",
                             tint: Color(red: 0.25, green: 0.55, blue: 0.95),
@@ -262,7 +327,6 @@ struct VideoBottomBar: View {
                             isEnglish: isGlobalEnglishMode)
             }.buttonStyle(.plain)
 
-            // 缓存
             NavigationLink { VideoCacheView() } label: {
                 BarItemView(icon: "arrow.down.circle.fill", zh: "缓存", en: "Cache",
                             tint: Color(red: 0.98, green: 0.55, blue: 0.20),
@@ -326,6 +390,7 @@ struct CategoryVideoListView: View {
     let sortOption: VideoSortOption
     @ObservedObject var dataManager: OVideoDataManager
     let userId: String?
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false   // ⭐
 
     var body: some View {
         let items = dataManager.items(category: categoryName, sort: sortOption)
@@ -338,10 +403,13 @@ struct CategoryVideoListView: View {
                 if items.isEmpty && loading {
                     ProgressView().padding(.top, 80)
                 } else {
-                    WaterfallGridView(items: items, dataManager: dataManager, onReachEnd: {
-                        Task { await dataManager.loadNextPage(category: categoryName,
-                                                              sort: sortOption, userId: userId) }
-                    })
+                    WaterfallGridView(items: items, dataManager: dataManager,
+                                      onReachEnd: {
+                                          Task { await dataManager.loadNextPage(category: categoryName,
+                                                                                sort: sortOption, userId: userId) }
+                                      },
+                                      showCategoryTag: categoryName == "Featured",  // ⭐ 仅精选页显示标签
+                                      isEnglish: isGlobalEnglishMode)
                     .padding(.top, 10)
 
                     if loading && !items.isEmpty {
@@ -357,7 +425,6 @@ struct CategoryVideoListView: View {
             }
         }
         .background(Color(UIColor.systemGroupedBackground))
-        // ⭐ 首次出现 / 排序变化时按需加载第一页
         .task(id: "\(categoryName)|\(sortOption.rawValue)") {
             await dataManager.loadFirstPageIfNeeded(category: categoryName,
                                                     sort: sortOption, userId: userId)
@@ -365,7 +432,7 @@ struct CategoryVideoListView: View {
     }
 }
 
-// MARK: - 无限循环 Pager（按名称）
+// MARK: - 无限循环 Pager（按名称）— 不变
 struct InfinitePageViewController: UIViewControllerRepresentable {
     var categories: [String]
     @Binding var selectedIndex: Int
@@ -471,7 +538,7 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
     }
 }
 
-// MARK: - 首页
+// MARK: - 首页（需求1+3 版本，仍用菜单选分类）
 struct VideoBrowseView: View {
     @ObservedObject var dataManager: OVideoDataManager
     @Binding var selectedCategoryIndex: Int
@@ -510,6 +577,16 @@ struct VideoBrowseView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        // ⭐ 需求3：监听卡片标签点击 → 切换分类
+        .onChange(of: dataManager.pendingCategorySwitch) { newVal in
+            guard let name = newVal else { return }
+            if let idx = dataManager.categoryNames.firstIndex(of: name) {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    selectedCategoryIndex = idx
+                }
+            }
+            dataManager.pendingCategorySwitch = nil
+        }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Menu {
@@ -563,14 +640,7 @@ struct VideoBrowseView: View {
     }
 
     private func categoryDisplayName(_ key: String) -> String {
-        if isGlobalEnglishMode { return key }
-        switch key {
-        case "Movie": return "电影"
-        case "Drama": return "电视剧"
-        case "Show":  return "综艺节目"
-        case "Anime": return "动漫"
-        default:      return key
-        }
+        videoCategoryDisplayName(key, english: isGlobalEnglishMode)   // ⭐ 统一辅助
     }
 }
 
@@ -594,7 +664,7 @@ struct VideoSwipeGuideView: View {
                 VStack(spacing: 12) {
                     Text(isGlobalEnglishMode ? "Swipe to switch channels" : "左右滑动切换频道")
                         .font(.title2.bold()).foregroundColor(.white)
-                    Text(isGlobalEnglishMode ? "Movies / Dramas / Shows / Anime" : "电影 / 电视剧 / 综艺 / 动漫")
+                    Text(isGlobalEnglishMode ? "Featured / Movies / Dramas / Shows / Anime" : "精选 / 电影 / 电视剧 / 综艺 / 动漫")
                         .font(.subheadline).foregroundColor(.white.opacity(0.8))
                 }
                 Button {

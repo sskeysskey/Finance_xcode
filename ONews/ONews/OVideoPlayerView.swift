@@ -162,6 +162,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private var stallWatchdog: Timer?
         private var lastWatchdogTime: Double = -1
         private var stalledTicks = 0
+        private var stallRecoveryAttempts = 0   // ⭐ 自愈升级计数：多次轻量自愈无效则重建
 
         var isFullScreen = false
         var isPiP = false
@@ -364,33 +365,34 @@ struct VideoPlayerView: UIViewControllerRepresentable {
 
         private func watchdogTick() {
             guard let player = player else { return }
-            
-            // ⭐ 新增：更保守的策略，仅对本地缓存文件（isFileURL）启用卡顿检测
-            // 在线播放完全交给 AVPlayer 和系统网络层自行调度，避免因网络波动导致的误判干预
+
+            // 仅对本地缓存文件启用卡顿检测；在线交给系统网络层
             guard url?.isFileURL == true else {
                 lastWatchdogTime = -1
                 stalledTicks = 0
+                stallRecoveryAttempts = 0
                 return
             }
 
-            // 仅在「期望播放」时检测；用户主动暂停时 timeControlStatus == .paused，不干预
             let intendsToPlay = (player.timeControlStatus == .waitingToPlayAtSpecifiedRate)
                 || (player.timeControlStatus == .playing)
             guard intendsToPlay else {
                 lastWatchdogTime = player.currentTime().seconds
                 stalledTicks = 0
+                stallRecoveryAttempts = 0
                 return
             }
-            
+
             let now = player.currentTime().seconds
             if lastWatchdogTime >= 0, abs(now - lastWatchdogTime) < 0.05 {
                 stalledTicks += 1
-                if stalledTicks >= 2 {           // 连续 ~2 秒时间不前进 → 判定卡死
+                if stalledTicks >= 2 {           // 连续 ~2 秒不前进 → 判定卡死
                     recoverFromStallIfNeeded()
                     stalledTicks = 0
                 }
             } else {
                 stalledTicks = 0
+                stallRecoveryAttempts = 0        // ⭐ 时间正常前进，重置升级计数
             }
             lastWatchdogTime = now
         }
@@ -403,25 +405,33 @@ struct VideoPlayerView: UIViewControllerRepresentable {
 
         private func recoverFromStallIfNeeded() {
             guard let player = player, let item = player.currentItem else { return }
-            // 已到结尾就不折腾
             let dur = item.duration.seconds
             let cur = player.currentTime().seconds
             if dur.isFinite, dur > 0, cur >= dur - 0.5 { return }
 
             let isLocal = url?.isFileURL ?? false
 
+            // ⭐ 自愈升级：连续多次轻量自愈仍无效，说明渲染层可能已失效（黑屏），
+            //    直接彻底重建播放器以恢复画面。
+            stallRecoveryAttempts += 1
+            if stallRecoveryAttempts >= 3 {
+                stallRecoveryAttempts = 0
+                lastWatchdogTime = -1
+                stalledTicks = 0
+                rebuildPreservingState()
+                return
+            }
+
             if item.isPlaybackLikelyToKeepUp || item.isPlaybackBufferFull {
                 // 缓冲足够却卡住：直接续播
                 player.play()
             } else if isLocal {
-                // ⭐ 本地缓存却卡住：轻微回退触发重新解码/缓冲，
-                //    等价于你手动「后退一点再播放」的自愈手法
+                // 本地缓存却卡住：轻微回退触发重新解码/缓冲
                 let target = CMTime(seconds: max(0, cur - 1.0), preferredTimescale: 600)
                 player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                     self?.player?.play()
                 }
             }
-            // 在线且缓冲不足：交给系统继续缓冲，不强行干预，避免拖累网络
         }
 
         // MARK: 生命周期 / 媒体重启监听
@@ -482,6 +492,21 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                     player.play()
                     let r = PlaybackSpeedStore.rate
                     if r != 1.0 { player.rate = r }
+                }
+            }
+            // ⭐ 本地缓存兜底：回前台后做一次延迟校验，若仍想播放但时间没前进
+            //    （渲染层在长时间后台/内存压力下可能失效导致黑屏），则彻底重建播放器。
+            if url?.isFileURL == true, wasPlayingBeforeBackground {
+                let before = player.currentTime().seconds
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                    guard let self = self, let p = self.player else { return }
+                    if p.timeControlStatus != .paused,
+                       abs(p.currentTime().seconds - before) < 0.05 {
+                        self.lastWatchdogTime = -1
+                        self.stalledTicks = 0
+                        self.stallRecoveryAttempts = 0
+                        self.rebuildPreservingState()
+                    }
                 }
             }
         }
@@ -984,10 +1009,10 @@ struct VideoPlayerPageView: View {
             // ⭐ 统一「缓冲中」蒙层：解析中 / 等待首帧 / 播放中再缓冲 都走它，
             //    用户在画面真正出现前始终看到「缓冲中…」，不再有空窗或一闪而过。
             //    PlayerLoadingIndicator 已 allowsHitTesting(false)，不挡播放/快进等按钮。
-            if showLoadingIndicator {
-                PlayerLoadingIndicator()
-                    .transition(.opacity)
-            }
+            // ⭐ 改为常驻 + opacity 控制，避免反复插入/移除蒙层干扰播放器手势
+            PlayerLoadingIndicator()
+                .opacity(showLoadingIndicator ? 1 : 0)
+                .allowsHitTesting(false)
         }
         .animation(.easeInOut(duration: 0.2), value: showLoadingIndicator)
     }
@@ -1297,9 +1322,9 @@ struct CachedVideoPlayerView: View {
                                             self.playURL = nil
                                         })
                             .id(playURL)
-                        if isBuffering || isResolvingOnline {
-                            PlayerLoadingIndicator()
-                        }
+                        PlayerLoadingIndicator()
+                            .opacity((isBuffering || isResolvingOnline) ? 1 : 0)
+                            .allowsHitTesting(false)
                     } else if isResolvingOnline {
                         PlayerLoadingIndicator()
                     } else if let err = resolveError {
