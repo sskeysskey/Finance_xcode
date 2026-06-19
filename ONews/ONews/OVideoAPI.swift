@@ -166,6 +166,27 @@ enum OVideoAPI {
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["id": id, "user_id": userId])
         _ = try? await URLSession.shared.data(for: req)
     }
+
+    // 【举报回复】拉取我的未读回复
+    static func fetchMyReportReplies(userId: String) async throws -> [ReportReply] {
+        guard let url = makeURL("report/my_replies",
+                                [URLQueryItem(name: "user_id", value: userId)]) else {
+            throw URLError(.badURL)
+        }
+        var req = URLRequest(url: url); req.timeoutInterval = 12
+        let (data, _) = try await URLSession.shared.data(for: req)
+        return try JSONDecoder().decode(ReportRepliesResponse.self, from: data).replies
+    }
+
+    // 【举报回复】标记回复已读
+    static func ackReportReply(id: Int, userId: String) async {
+        guard let url = URL(string: "\(baseURL)/report/ack_reply") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["id": id, "user_id": userId])
+        _ = try? await URLSession.shared.data(for: req)
+    }
 }
 
 // ⭐ 中英文混合人名清洗（详情页仍要用）
@@ -184,6 +205,16 @@ struct WishRepliesResponse: Codable { let replies: [WishReply] }
 struct WishReply: Codable, Identifiable, Hashable {
     let id: Int
     let wish_content: String
+    let admin_reply: String?
+    let replied_at: String?
+}
+
+// MARK: - 举报回复模型
+struct ReportRepliesResponse: Codable { let replies: [ReportReply] }
+struct ReportReply: Codable, Identifiable, Hashable {
+    let id: Int
+    let video_title: String?
+    let episode_name: String?
     let admin_reply: String?
     let replied_at: String?
 }
@@ -543,6 +574,27 @@ final class WishReplyManager: ObservableObject {
     func acknowledge(_ reply: WishReply, userId: String?) async {
         guard let uid = userId, !uid.isEmpty else { return }
         await OVideoAPI.ackWishReply(id: reply.id, userId: uid)
+        pendingReplies.removeAll { $0.id == reply.id }
+    }
+}
+
+// MARK: - 举报回复管理器
+@MainActor
+final class ReportReplyManager: ObservableObject {
+    static let shared = ReportReplyManager()
+    @Published var pendingReplies: [ReportReply] = []
+    private init() {}
+
+    func refresh(userId: String?) async {
+        guard let uid = userId, !uid.isEmpty else { return }
+        if let replies = try? await OVideoAPI.fetchMyReportReplies(userId: uid) {
+            self.pendingReplies = replies
+        }
+    }
+
+    func acknowledge(_ reply: ReportReply, userId: String?) async {
+        guard let uid = userId, !uid.isEmpty else { return }
+        await OVideoAPI.ackReportReply(id: reply.id, userId: uid)
         pendingReplies.removeAll { $0.id == reply.id }
     }
 }

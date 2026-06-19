@@ -631,6 +631,9 @@ struct SourceListView: View {
 
                 // 【新增】2.5 寻片回复横幅（与系统通知并存，互不影响）
                 WishReplyBanner(userId: authManager.userIdentifier)
+
+                // 【新增】2.6 举报回复横幅
+                ReportReplyBanner(userId: authManager.userIdentifier)
                 
                 // 3. 主内容区
                 if isSearchActive {
@@ -741,6 +744,8 @@ struct SourceListView: View {
             Task { await predictionSyncManager.refreshAvailabilityFromServer() }
             // 【新增】拉取寻片请求的未读回复
             Task { await WishReplyManager.shared.refresh(userId: authManager.userIdentifier) }
+            // 【新增】拉取举报的未读回复
+            Task { await ReportReplyManager.shared.refresh(userId: authManager.userIdentifier) }
         }
         .sheet(isPresented: $showAddSourceSheet, onDismiss: { viewModel.loadNews() }) {
             NavigationView {
@@ -1710,6 +1715,74 @@ struct WishReplyBanner: View {
             }
         }
         // 自带动画：拉到/关闭回复时平滑出现/消失，且不依赖父视图
+        .animation(.easeInOut, value: manager.pendingReplies.first?.id)
+    }
+}
+
+// MARK: - 举报回复横幅（后台回复举报 → 首页展示）
+struct ReportReplyBanner: View {
+    @ObservedObject private var manager = ReportReplyManager.shared
+    let userId: String?
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+
+    var body: some View {
+        Group {
+            if let reply = manager.pendingReplies.first {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "checkmark.bubble.fill")
+                        .foregroundColor(.green)
+                        .font(.system(size: 16))
+                        .padding(.top, 3)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(isGlobalEnglishMode ? "Reply to your report" : "你举报的链接有回复啦")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.primary)
+
+                        if let title = reply.video_title, !title.isEmpty {
+                            let ep = (reply.episode_name?.isEmpty == false)
+                                     ? " · \(reply.episode_name!)" : ""
+                            Text("「\(title)\(ep)」")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        Text(reply.admin_reply ?? "")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(3)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    Button {
+                        Task { await manager.acknowledge(reply, userId: userId) }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.secondary)
+                            .padding(6)
+                            .background(Color.secondary.opacity(0.15))
+                            .clipShape(Circle())
+                    }
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(UIColor.secondarySystemGroupedBackground))
+                        .shadow(color: Color.black.opacity(0.06), radius: 3, x: 0, y: 2)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.green.opacity(0.25), lineWidth: 0.5)
+                )
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
         .animation(.easeInOut, value: manager.pendingReplies.first?.id)
     }
 }
