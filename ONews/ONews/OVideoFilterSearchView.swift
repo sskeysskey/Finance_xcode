@@ -351,8 +351,6 @@ struct VideoSearchTabView: View {
 
     // ⭐ 新增：寻片相关
     @State private var showWishSheet = false
-    /// 结果数量 <= 该值时，在结果下方追加“没找到？”提示（可调）
-    private let fewResultsThreshold = 5
 
     private var userId: String? { authManager.userIdentifier }
     private var userType: String {
@@ -481,7 +479,7 @@ struct VideoSearchTabView: View {
             emptyWishView
         } else {
             ScrollView {
-                // ⭐ 结果数量提示条
+                // ⭐ 结果数量提示条 + 常驻寻片求助
                 HStack {
                     Text(isGlobalEnglishMode
                          ? "\(results.count) results"
@@ -489,19 +487,18 @@ struct VideoSearchTabView: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.secondary)
                     Spacer()
+                    Button { focused = false; showWishSheet = true } label: {
+                        shortWishPromptText
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 6)
 
                 WaterfallGridView(items: results, dataManager: dataManager)
                     .padding(.top, 8)
-
-                // ⭐ 结果较少：底部追加温和的寻片提示
-                if results.count <= fewResultsThreshold {
-                    inlineWishCard
-                        .padding(.horizontal, 16)
-                        .padding(.top, 8)
-                }
 
                 Color.clear.frame(height: 20)
             }
@@ -531,6 +528,25 @@ struct VideoSearchTabView: View {
         }
     }
 
+    // MARK: - ⭐ 简短寻片提示（常驻于结果计数右侧）
+    private var shortWishPromptText: Text {
+        if isGlobalEnglishMode {
+            return Text("Not found? Tap ")
+                    .font(.system(size: 13)).foregroundColor(.secondary)
+                + Text("HERE")
+                    .font(.system(size: 15, weight: .heavy)).foregroundColor(.orange)
+                + Text(" for help")
+                    .font(.system(size: 13)).foregroundColor(.secondary)
+        } else {
+            return Text("没找到你想要的内容？点击")
+                    .font(.system(size: 13)).foregroundColor(.secondary)
+                + Text("这里")
+                    .font(.system(size: 15, weight: .heavy)).foregroundColor(.orange)
+                + Text("求助")
+                    .font(.system(size: 13)).foregroundColor(.secondary)
+        }
+    }
+
     // 整屏（空结果）
     private var emptyWishView: some View {
         VStack(spacing: 20) {
@@ -556,30 +572,6 @@ struct VideoSearchTabView: View {
             .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    // 结果下方（少结果）卡片
-    private var inlineWishCard: some View {
-        Button { focused = false; showWishSheet = true } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "hand.wave.fill")
-                    .font(.system(size: 20))
-                    .foregroundColor(.accentColor)
-                wishPromptText
-                    .multilineTextAlignment(.leading)
-                Spacer(minLength: 0)
-            }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.08))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.accentColor.opacity(0.25), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     private func scheduleSearch(_ raw: String) {
