@@ -673,15 +673,16 @@ struct CacheCard: View {
             cacheListNavigationRow
         }
         .padding(16)
+        // ⭐ 关键性能改动：用纯色背景替代 .ultraThinMaterial 毛玻璃，去掉每行阴影，
+        //    消除老设备 push 转场时多层实时模糊导致的掉帧。
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.05), radius: 12, y: 4)
         .padding(.horizontal, 16)
         // 蜂窝网络下拦截下载的 Alert 提示
         .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示", isPresented: $showCellularAlert) {
@@ -1445,15 +1446,16 @@ struct DownloadingCard: View {
             }
         }
         .padding(14)
+        // ⭐ 关键性能改动：用纯色背景替代 .ultraThinMaterial 毛玻璃，去掉每行阴影，
+        //    消除老设备 push 转场时多层实时模糊导致的掉帧。
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.04), radius: 8, y: 2)
         // 蜂窝网络下拦截继续下载的 Alert 提示
         .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示", isPresented: $showCellularAlert) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
@@ -1504,15 +1506,16 @@ struct CachedItemCard: View {
                 .foregroundColor(.secondary.opacity(0.6))
         }
         .padding(12)
+        // ⭐ 关键性能改动：用纯色背景替代 .ultraThinMaterial 毛玻璃，去掉每行阴影，
+        //    消除老设备 push 转场时多层实时模糊导致的掉帧。
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.04), radius: 8, y: 2)
         .contextMenu {
             Button(role: .destructive) {
                 dm.deleteDownload(urlString: url)
@@ -1850,9 +1853,17 @@ struct CachedSeriesCard: View {
                 .foregroundColor(.secondary.opacity(0.6))
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.ultraThinMaterial))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.primary.opacity(0.06), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.04), radius: 8, y: 2)
+        .padding(12)
+        // ⭐ 关键性能改动：用纯色背景替代 .ultraThinMaterial 毛玻璃，去掉每行阴影，
+        //    消除老设备 push 转场时多层实时模糊导致的掉帧。
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
     }
 
     @ViewBuilder
@@ -1885,7 +1896,6 @@ struct CachedSeriesCard: View {
 }
 
 // MARK: - 已缓存剧集详情（列出该剧所有已缓存集数）
-// MARK: - 已缓存剧集详情（列出该剧所有已缓存集数）
 struct CachedSeriesDetailView: View {
     let groupKey: String
     let seriesTitle: String
@@ -1898,7 +1908,7 @@ struct CachedSeriesDetailView: View {
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
     @State private var showSubscriptionSheet = false
 
-    // ⭐ 门禁 / 程序化跳转
+    // 门禁 / 程序化跳转
     @State private var cachedPlayTarget: CachedPlayTarget? = nil
     @State private var navigateToCachedPlayer = false
     @State private var pendingCachedTarget: CachedPlayTarget? = nil
@@ -1906,7 +1916,7 @@ struct CachedSeriesDetailView: View {
     @State private var cachedConsumeRemaining = 0
     @State private var showQuotaExhausted = false
 
-    // ⭐ 新增：下载更多
+    // 下载更多
     @State private var isLoadingMore = false
     @State private var downloadMorePayload: DownloadMorePayload? = nil
     @State private var showNoSourceAlert = false
@@ -1924,9 +1934,8 @@ struct CachedSeriesDetailView: View {
         }
     }
 
-    // ⭐ 当前所有集（供选集用）
-    private var episodeItems: [VideoEpisodeItem] {
-        episodes.enumerated().map { index, item in
+    private func makeEpisodeItems(_ eps: [(url: String, meta: VideoCacheMetadata)]) -> [VideoEpisodeItem] {
+        eps.enumerated().map { index, item in
             let name = item.meta.episodeName ?? item.meta.title
             let digits = name.filter { $0.isNumber }
             let number = (!digits.isEmpty && digits.count <= 4 && Int(digits) != nil)
@@ -1935,25 +1944,29 @@ struct CachedSeriesDetailView: View {
         }
     }
 
-    // ⭐ 该剧的详情页 url（任意一集都一样）
     private var seriesSourceURL: String? {
         episodes.compactMap { $0.meta.sourceURL }.first
     }
 
     var body: some View {
+        // ⭐ 单次计算后复用，避免一次渲染里多遍遍历 bookmarks
+        let eps = episodes
+        let epItems = makeEpisodeItems(eps)
+        let src = eps.compactMap { $0.meta.sourceURL }.first
+
         ZStack {
             LinearGradient(colors: [Color(.systemGroupedBackground), Color.accentColor.opacity(0.05)],
                            startPoint: .top, endPoint: .bottom).ignoresSafeArea()
 
             List {
-                ForEach(Array(episodes.enumerated()), id: \.element.url) { index, row in
+                ForEach(Array(eps.enumerated()), id: \.element.url) { index, row in
                     Button {
                         attemptPlayCached(CachedPlayTarget(
                             primaryURL: row.url,
                             title: seriesTitle,
                             episodeName: row.meta.episodeName,
-                            episodes: episodeItems,
-                            sourceURL: seriesSourceURL          // ⭐ 新增
+                            episodes: epItems,
+                            sourceURL: src
                         ))
                     } label: {
                         episodeRow(index: index, meta: row.meta)
@@ -1972,7 +1985,6 @@ struct CachedSeriesDetailView: View {
                     }
                 }
 
-                // ⭐ 新增：下载更多按钮
                 Section {
                     downloadMoreButton
                         .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 20, trailing: 16))
@@ -1991,7 +2003,7 @@ struct CachedSeriesDetailView: View {
                     realURL: t.primaryURL,
                     title: t.title,
                     episodeName: t.episodeName,
-                    sourceURL: t.sourceURL,       // ⭐ 新增
+                    sourceURL: t.sourceURL,
                     episodes: t.episodes
                 )
             }
@@ -1999,7 +2011,6 @@ struct CachedSeriesDetailView: View {
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
-        // ⭐ 下载更多弹窗（复用 BatchDownloadView）
         .sheet(item: $downloadMorePayload) { payload in
             BatchDownloadView(
                 item: payload.item,
@@ -2023,7 +2034,6 @@ struct CachedSeriesDetailView: View {
         }
     }
 
-    // ⭐ 下载更多按钮
     private var downloadMoreButton: some View {
         Button {
             startDownloadMore()
@@ -2075,7 +2085,6 @@ struct CachedSeriesDetailView: View {
         }
     }
 
-    // MARK: - 门禁
     private func attemptPlayCached(_ target: CachedPlayTarget) {
         cachedPlayTarget = target
         navigateToCachedPlayer = true
@@ -2117,8 +2126,15 @@ struct CachedSeriesDetailView: View {
                 .foregroundColor(.secondary.opacity(0.6))
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.ultraThinMaterial))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(0.06), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.04), radius: 8, y: 2)
+        // ⭐ 关键性能改动：用纯色背景替代 .ultraThinMaterial 毛玻璃，去掉每行阴影，
+        //    消除老设备 push 转场时多层实时模糊导致的掉帧。
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
     }
 }

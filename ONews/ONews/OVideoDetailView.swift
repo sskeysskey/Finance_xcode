@@ -4,6 +4,7 @@ import SwiftUI
 struct VideoDetailView: View {
     let item: OVideoItem
     @ObservedObject var dataManager: OVideoDataManager   // 新增：需要传入
+    var playSource: String = "unknown"      // ⭐ 新增，默认 unknown 兼容其它入口
     @ObservedObject private var downloadManager = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
@@ -147,7 +148,8 @@ struct VideoDetailView: View {
                     channelName: channel.name,
                     episodeName: episode.name,
                     sourceURL: item.url,
-                    episodes: channel.episodeItems(ascending: isEpisodeAscending)  // ⭐ 新增这一行
+                    episodes: channel.episodeItems(ascending: isEpisodeAscending),
+                    playSource: playSource          // ⭐ 新增这一行
                 )
             }
         }

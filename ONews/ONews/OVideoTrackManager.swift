@@ -17,12 +17,14 @@ final class TrackingManager {
         case downloadComplete  = "download_complete"
     }
     
-    /// 通用上报。失败不抛错，不影响主流程 (移除了 category 字段)
+    /// 通用上报。失败不抛错，不影响主流程
+    /// - Parameter source: 播放来源（仅在线播放传入，如 "home"/"filter"/"search"）
     func track(event: EventType,
                userId: String?,
-               userType: String? = nil,          // 【新增】
+               userType: String? = nil,
                videoURL: String,
-               videoTitle: String) {
+               videoTitle: String,
+               source: String? = nil) {          // 【新增】播放来源
         guard let userId = userId, !userId.isEmpty else { return }
         // 没显式传 type 时，按 "dev_" 前缀推断（与新闻模块统一）
         let resolvedType = userType ?? (userId.hasPrefix("dev_") ? "device" : "apple")
@@ -41,30 +43,34 @@ final class TrackingManager {
         Task {
             await Self.send(
                 userId: userId,
-                userType: resolvedType,           // 【新增】
+                userType: resolvedType,
                 videoURL: videoURL,
                 videoTitle: videoTitle,
-                eventType: event.rawValue
+                eventType: event.rawValue,
+                source: source                    // 【新增】
             )
         }
     }
 
     private static func send(userId: String, userType: String, videoURL: String,
-                             videoTitle: String, eventType: String) async {
+                             videoTitle: String, eventType: String,
+                             source: String?) async {      // 【新增】
         guard let url = URL(string: "http://106.15.183.158:5001/api/OVideo/track") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 10
         
-        // 移除了 "category" 键值对
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "user_id": userId,
-            "user_type": userType,                // 【新增】
+            "user_type": userType,
             "video_url": videoURL,
             "video_title": videoTitle,
             "event_type": eventType
         ]
+        if let source = source, !source.isEmpty {     // 【新增】仅在线播放会带 source
+            body["source"] = source
+        }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         _ = try? await URLSession.shared.data(for: request)
     }

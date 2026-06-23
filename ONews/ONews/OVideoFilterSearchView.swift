@@ -131,9 +131,11 @@ struct VideoFilterView: View {
                 if results.isEmpty && isLoading {
                     ProgressView().padding(.top, 80)
                 } else {
-                    WaterfallGridView(items: results, dataManager: dataManager, onReachEnd: {
-                        Task { await loadMore() }
-                    })
+                    WaterfallGridView(items: results, dataManager: dataManager,
+                                      playSource: "filter",        // ⭐ 分类检索
+                                      onReachEnd: {
+                                          Task { await loadMore() }
+                                      })
                     .padding(.top, 4)
                     if isLoading && !results.isEmpty {
                         ProgressView().padding(.vertical, 16)
@@ -497,7 +499,8 @@ struct VideoSearchTabView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 6)
 
-                WaterfallGridView(items: results, dataManager: dataManager)
+                WaterfallGridView(items: results, dataManager: dataManager,
+                                  playSource: "search")            // ⭐ 搜索结果
                     .padding(.top, 8)
 
                 Color.clear.frame(height: 20)

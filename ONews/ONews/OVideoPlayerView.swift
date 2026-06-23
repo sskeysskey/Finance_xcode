@@ -794,6 +794,7 @@ struct VideoPlayerPageView: View {
     var episodeName: String? = nil
     var sourceURL: String? = nil
     var episodes: [VideoEpisodeItem] = []   // ⭐ 当前线路全部集数
+    var playSource: String? = nil           // ⭐ 新增：在线播放来源
 
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @StateObject private var network = NetworkMonitor.shared
@@ -1277,7 +1278,8 @@ struct VideoPlayerPageView: View {
             userId: trackUserId,
             userType: trackUserType,
             videoURL: activeEpisodeURL,
-            videoTitle: displayTitle
+            videoTitle: displayTitle,
+            source: playSource
         )
 
         VideoPlayRecordManager.shared.addRecord(

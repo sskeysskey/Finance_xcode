@@ -66,7 +66,8 @@ struct CachedAsyncImage<Content: View>: View {
 struct WaterfallGridView: View {
     let items: [OVideoItem]
     @ObservedObject var dataManager: OVideoDataManager
-    var onReachEnd: (() -> Void)? = nil      // ⭐ 触底加载下一页
+    var playSource: String = "unknown"       // ⭐ 新增：点击来源，透传给详情页
+    var onReachEnd: (() -> Void)? = nil      // 触底加载下一页
 
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 10),
@@ -81,7 +82,9 @@ struct WaterfallGridView: View {
         } else {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(items) { item in
-                    NavigationLink(destination: VideoDetailView(item: item, dataManager: dataManager)) {
+                    NavigationLink(destination: VideoDetailView(item: item,
+                                                                dataManager: dataManager,
+                                                                playSource: playSource)) {   // ⭐ 透传
                         VideoCardView(item: item)
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -335,6 +338,7 @@ struct CategoryVideoListView: View {
                     ProgressView().padding(.top, 80)
                 } else {
                     WaterfallGridView(items: items, dataManager: dataManager,
+                                      playSource: "home",          // ⭐ 首页
                                       onReachEnd: {
                                           Task { await dataManager.loadNextPage(category: categoryName,
                                                                                 sort: sortOption, userId: userId) }
