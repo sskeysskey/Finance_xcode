@@ -298,6 +298,8 @@ class DataService: ObservableObject {
     @Published var compareDataUppercased: [String: String] = [:]
     
     @Published var sectorsPanel: SectorsPanel?
+    // 【新增】存储 52week_low 符号集合（来自 Sectors_panel.json 的板块分组）
+    @Published var weekLow52Symbols: Set<String> = []
     @Published var symbolEarningData: [String: [Date: Double]] = [:]
     
     @Published var earningReleases: [EarningRelease] = []
@@ -1336,7 +1338,29 @@ class DataService: ObservableObject {
         do {
             let data = try Data(contentsOf: url)
             let decodedData = try JSONDecoder().decode(SectorsPanel.self, from: data)
-            await MainActor.run { self.sectorsPanel = decodedData }
+            
+            // 【新增】解析 52week_low 符号：只取下面这 11 个板块分组里的 symbol
+            let lowSectorGroups: Set<String> = [
+                "Basic_Materials", "Real_Estate", "Energy", "Technology",
+                "Consumer_Cyclical", "Utilities", "Consumer_Defensive",
+                "Industrials", "Communication_Services", "Financial_Services", "Healthcare"
+            ]
+            var lowSymbols: Set<String> = []
+            if let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                for group in lowSectorGroups {
+                    if let dict = raw[group] as? [String: Any] {
+                        for sym in dict.keys {
+                            lowSymbols.insert(sym.uppercased())
+                        }
+                    }
+                }
+            }
+            let finalLowSymbols = lowSymbols
+            
+            await MainActor.run {
+                self.sectorsPanel = decodedData
+                self.weekLow52Symbols = finalLowSymbols   // 【新增】
+            }
         } catch {
             await MainActor.run { self.errorMessage = "加载 Sectors_panel.json 失败: \(error.localizedDescription)" }
         }

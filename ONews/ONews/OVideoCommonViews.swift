@@ -8,7 +8,7 @@ func videoCategoryDisplayName(_ key: String, english: Bool) -> String {
         return key   // 英文模式直接用原始 key
     }
     switch key {
-    case "Featured": return "精选"
+    case "Featured": return "最新"
     case "Movie":    return "电影"
     case "Drama":    return "剧集"
     case "Show":     return "综艺"
@@ -200,7 +200,7 @@ struct VideoCardView: View {
 enum VideoCategoryTheme {
     static func color(for key: String) -> Color {
         switch key {
-        case "Featured": return Color(red: 0.95, green: 0.30, blue: 0.45)   // ⭐ 精选：玫红
+        case "Featured": return Color(red: 0.95, green: 0.30, blue: 0.45)   // ⭐ 最新：玫红
         case "Movie": return Color(red: 0.25, green: 0.55, blue: 0.95)
         case "Drama": return Color(red: 0.62, green: 0.36, blue: 0.85)
         case "Show":  return Color(red: 0.98, green: 0.55, blue: 0.20)
@@ -211,7 +211,7 @@ enum VideoCategoryTheme {
     }
     static func icon(for key: String) -> String {
         switch key {
-        case "Featured": return "flame.fill"     // ⭐ 精选
+        case "Featured": return "flame.fill"     // ⭐ 最新
         case "Movie": return "film.fill"
         case "Drama": return "theatermasks.fill"
         case "Show":  return "sparkles"
@@ -656,7 +656,7 @@ struct VideoSwipeGuideView: View {
                 VStack(spacing: 12) {
                     Text(isGlobalEnglishMode ? "Swipe to switch channels" : "左右滑动切换频道")
                         .font(.title2.bold()).foregroundColor(.white)
-                    Text(isGlobalEnglishMode ? "Featured / Movies / Dramas / Shows / Anime" : "精选 / 电影 / 剧集 / 综艺 / 动漫")
+                    Text(isGlobalEnglishMode ? "Featured / Movies / Dramas / Shows / Anime" : "最新 / 电影 / 剧集 / 综艺 / 动漫")
                         .font(.subheadline).foregroundColor(.white.opacity(0.8))
                 }
                 Button {

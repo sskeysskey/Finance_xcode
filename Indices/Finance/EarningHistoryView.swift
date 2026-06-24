@@ -21,7 +21,7 @@ struct EarningHistoryView: View {
             // 2. 获取该分组的最新日期
             let sortedDates = dateMap.keys.sorted(by: >)
             guard let latestDate = sortedDates.first,
-                  let symbols = dateMap[latestDate] else { continue }
+                let symbols = dateMap[latestDate] else { continue }
             
             // 3. 清洗 Symbol 并去重
             let cleanSymbols = Set(symbols.map { $0.cleanTicker.uppercased() })
@@ -49,12 +49,18 @@ struct EarningHistoryView: View {
         // 5. 按次数分组，并过滤掉无意义的 2 次共振
         var countToSymbols: [Int: [String]] = [:]
         for (sym, groups) in symbolGroups {
-            // 核心修改：计算“有效分组”集合
+            // 核心修改：计算"有效分组"集合
             var effectiveGroups = groups
             
             // 如果包含 PE_Hot，则剔除它的所有源头分组，使它们合并只算 1 次共振
             if effectiveGroups.contains("PE_Hot") {
                 effectiveGroups.subtract(peHotSources)
+            }
+            
+            // 【新增】如果该 symbol 同时出现在 Sectors_panel 的 52周新低板块里，
+            // 则额外增加一个虚拟分组，使共振次数 +1
+            if dataService.weekLow52Symbols.contains(sym) {
+                effectiveGroups.insert("52week_low")
             }
             
             // 使用剔除后的有效分组数量作为共振次数
