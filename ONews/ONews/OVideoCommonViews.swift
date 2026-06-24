@@ -365,6 +365,39 @@ struct CategoryVideoListView: View {
     }
 }
 
+// ⭐ 新增:支持"中间滑动切栏目 / 贴边右滑返回上一页"的分页控制器
+final class EdgeSwipePageViewController: UIPageViewController, UIGestureRecognizerDelegate {
+    private var didSetupEdgeGesture = false
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        setupEdgeGestureIfNeeded()
+    }
+
+    private func setupEdgeGestureIfNeeded() {
+        guard !didSetupEdgeGesture,
+              let nav = navigationController,
+              let popGesture = nav.interactivePopGestureRecognizer else { return }
+        didSetupEdgeGesture = true
+
+        // 因为隐藏了系统导航栏,需要手动开启并接管返回手势
+        popGesture.isEnabled = true
+        popGesture.delegate = self
+
+        // 关键:内部横向滚动手势必须等"边缘返回手势"失败后才触发
+        for sub in view.subviews {
+            if let scroll = sub as? UIScrollView {
+                scroll.panGestureRecognizer.require(toFail: popGesture)
+            }
+        }
+    }
+
+    // 栈里有上一页时,才允许触发返回手势
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        return (navigationController?.viewControllers.count ?? 0) > 1
+    }
+}
+
 // MARK: - 无限循环 Pager（按名称）— 不变
 struct InfinitePageViewController: UIViewControllerRepresentable {
     var categories: [String]
@@ -376,7 +409,7 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIViewController(context: Context) -> UIPageViewController {
-        let pvc = UIPageViewController(transitionStyle: .scroll,
+        let pvc = EdgeSwipePageViewController(transitionStyle: .scroll,
                                       navigationOrientation: .horizontal, options: nil)
         pvc.dataSource = context.coordinator
         pvc.delegate = context.coordinator
