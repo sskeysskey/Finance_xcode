@@ -497,36 +497,35 @@ struct VideoDetailView: View {
                 .padding(.horizontal, 16)
 
             } else {
-                // 线路选择 Tab（仅横向滚动，不再带按钮）
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(Array(sortedPlaylist.enumerated()), id: \.offset) { idx, ch in
-                            Button {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                    selectedChannelIndex = idx
-                                }
-                            } label: {
-                                let displayName = isGlobalEnglishMode ? "Line \(idx + 1)" : "线路 \(idx + 1)"
-                                Text(displayName)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(selectedChannelIndex == idx ? .accentColor : .secondary)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        Capsule()
-                                            .fill(selectedChannelIndex == idx
-                                                ? Color.accentColor.opacity(0.12)
-                                                : Color.secondary.opacity(0.05))
-                                    )
-                                    .overlay(
-                                        Capsule()
-                                            .stroke(selectedChannelIndex == idx ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
-                                    )
+                // 线路选择 Tab（FlowLayout 自动换行，不抢横向手势，左滑返回正常）
+                FlowLayout(spacing: 8) {
+                    ForEach(Array(sortedPlaylist.enumerated()), id: \.offset) { idx, ch in
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                selectedChannelIndex = idx
                             }
+                        } label: {
+                            let displayName = isGlobalEnglishMode ? "Line \(idx + 1)" : "线路 \(idx + 1)"
+                            Text(displayName)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(selectedChannelIndex == idx ? .accentColor : .secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(selectedChannelIndex == idx
+                                            ? Color.accentColor.opacity(0.12)
+                                            : Color.secondary.opacity(0.05))
+                                )
+                                .overlay(
+                                    Capsule()
+                                        .stroke(selectedChannelIndex == idx ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+                                )
                         }
+                        .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 16)
                 }
+                .padding(.horizontal, 16)
 
                 // 剧集网格
                 if selectedChannelIndex < sortedPlaylist.count {

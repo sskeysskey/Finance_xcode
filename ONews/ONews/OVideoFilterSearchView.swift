@@ -239,7 +239,9 @@ struct VideoFilterView: View {
         switch field {
         case .category:
             var opts = [FilterOption(value: "All", label: allLabel)]
-            opts += allCategories.map { FilterOption(value: $0, label: categoryDisplayName($0)) }
+            // 👇 只加这一句，过滤掉 Featured
+            let filteredCategories = allCategories.filter { $0 != "Featured" }
+            opts += filteredCategories.map { FilterOption(value: $0, label: categoryDisplayName($0)) }
             return (isGlobalEnglishMode ? "Category" : "大类", opts, selectedCategory ?? "All")
         case .type:
             var opts = [FilterOption(value: "All", label: allLabel)]
