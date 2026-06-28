@@ -275,12 +275,20 @@ class ResourceManager: ObservableObject {
 
             var names: [String] = []
 
-            // 2. 新闻源名称（自动按审核状态选真名/假名）
+            // ==============================================
+            // 【核心修改】只保留这 5 个固定新闻源
+            // ==============================================
+            let fixedSourceKeys = ["wsj", "ft", "nytimes", "bloomberg", "reuters"]
+            
+            // 2. 只取固定 5 个新闻源名称（自动按审核状态选真名/假名）
             let mappings = self.sourceMappings
-            if !mappings.isEmpty {
-                names += mappings.values.map { rawName in
+            for key in fixedSourceKeys {
+                if let rawName = mappings[key] {
                     let parts = rawName.components(separatedBy: "|")
-                    return parts.first?.trimmingCharacters(in: .whitespaces) ?? rawName
+                    if let displayName = parts.first?.trimmingCharacters(in: .whitespaces),
+                    !displayName.isEmpty {
+                        names.append(displayName)
+                    }
                 }
             }
 
