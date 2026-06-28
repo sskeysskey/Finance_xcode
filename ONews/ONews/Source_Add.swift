@@ -2,22 +2,16 @@ import SwiftUI
 import Foundation
 
 // 文件名: Source_Add.swift
-// 职责: 提供一个列表，让用户能够添加或移除新闻源订阅。
-// 职责: 集中管理用户的新闻源订阅列表，使用 UserDefaults 进行持久化存储。
+// 职责: 提供列表让用户添加/移除视频订阅与新闻源订阅，并集中管理新闻订阅持久化。
 
 class SubscriptionManager: ObservableObject {
-    static let shared = SubscriptionManager() // 使用单例模式，方便全局访问
+    static let shared = SubscriptionManager() // 单例
 
-    // 【修改】Key 改名，明确存储的是 ID
     private let subscribedSourceIDsKey = "subscribedNewsSourceIDs"
-    // 【兼容】保留旧 Key 用于迁移检查
     let oldSubscribedSourcesKey = "subscribedNewsSources"
-    
-    @Published var subscribedSourceIDs: Set<String> { // 【改为ID集合】
-        didSet {
-            saveSubscribedIDs()
-            // print("订阅列表(ID)已更新并保存: \(subscribedSourceIDs)")
-        }
+
+    @Published var subscribedSourceIDs: Set<String> {
+        didSet { saveSubscribedIDs() }
     }
 
     private init() {
@@ -30,27 +24,13 @@ class SubscriptionManager: ObservableObject {
     }
 
     // MARK: - 公共方法
+    func isSubscribed(sourceId: String) -> Bool { subscribedSourceIDs.contains(sourceId) }
+    func addSubscription(sourceId: String) { subscribedSourceIDs.insert(sourceId) }
+    func removeSubscription(sourceId: String) { subscribedSourceIDs.remove(sourceId) }
+    func subscribeToAll(_ sourceIds: [String]) { subscribedSourceIDs.formUnion(sourceIds) }
+    func removeAll(_ sourceIds: [String]) { sourceIds.forEach { subscribedSourceIDs.remove($0) } }
 
-    /// 根据 source_id 判断是否订阅
-    func isSubscribed(sourceId: String) -> Bool {
-        return subscribedSourceIDs.contains(sourceId)
-    }
-
-    func addSubscription(sourceId: String) {
-        subscribedSourceIDs.insert(sourceId)
-    }
-
-    func removeSubscription(sourceId: String) {
-        subscribedSourceIDs.remove(sourceId)
-    }
-    
-    func subscribeToAll(_ sourceIds: [String]) {
-        subscribedSourceIDs.formUnion(sourceIds)
-    }
-    
-    /// 供外部调用的迁移方法：将旧的名称订阅转换为 ID 订阅
     func migrateOldSubscription(name: String, id: String) {
-        // 读取旧的名称列表
         let oldNames = UserDefaults.standard.stringArray(forKey: oldSubscribedSourcesKey) ?? []
         if oldNames.contains(name) {
             print("迁移订阅: 发现旧名称订阅 [\(name)]，自动映射为 ID [\(id)]")
@@ -60,178 +40,290 @@ class SubscriptionManager: ObservableObject {
 }
 
 struct AddSourceView: View {
-    // 状态：存储 (ID, Name) 元组
+    // 新闻源 (ID, Name)
     @State private var allAvailableSources: [(id: String, name: String)] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
 
-    // 订阅管理器
+    // 视频订阅选择
+    @State private var selectedVideoKeys: Set<String> = []
+
     @ObservedObject private var subscriptionManager = SubscriptionManager.shared
 
-    // 获取资源管理器和语言设置
-    @EnvironmentObject var resourceManager: ResourceManager 
-    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false 
-    
-    // 用于判断显示逻辑（首次设置 vs. 后续添加）
+    @EnvironmentObject var resourceManager: ResourceManager
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    @AppStorage("prefersVideoHome") private var prefersVideoHome = false
+
     let isFirstTimeSetup: Bool
-    var onComplete: (() -> Void)? // 仅在首次设置时使用
-    var onConfirm: (() -> Void)?  // 非首次场景点击“确定”的回调（默认关闭页面）
+    var onComplete: (() -> Void)?
+    var onConfirm: (() -> Void)?
 
     @Environment(\.presentationMode) var presentationMode
 
-    // MARK: - 新增计算属性
-    /// 计算是否所有可用源都已被订阅，用于禁用“一键添加”按钮
-    private var areAllSourcesSubscribed: Bool {
-        let allIDs = Set(allAvailableSources.map { $0.id })
-        return subscriptionManager.subscribedSourceIDs.isSuperset(of: allIDs)
+    private let selectedVideoStorageKey = "selectedVideoCategories"
+    private let videoKeyOrder = ["vid_movie", "vid_west_drama", "vid_asia_drama", "vid_anime", "vid_show"]
+
+    // 两列网格
+    private let twoColumns = [GridItem(.flexible(), spacing: 12),
+                              GridItem(.flexible(), spacing: 12)]
+
+    // MARK: - 计算属性
+    private var videoCategories: [(key: String, name: String)] {
+        guard resourceManager.showVideoModule else { return [] }
+        let mappings = resourceManager.videoCategoryMappings
+        return videoKeyOrder.compactMap { key in
+            guard let raw = mappings[key] else { return nil }
+            let parts = raw.components(separatedBy: "|")
+            let name = isGlobalEnglishMode
+                ? (parts.count > 1 ? parts[1] : (parts.first ?? raw))
+                : (parts.first ?? raw)
+            return (key, name)
+        }
     }
-    
+
+    private var hasAnySelection: Bool {
+        !subscriptionManager.subscribedSourceIDs.isEmpty || !selectedVideoKeys.isEmpty
+    }
+
     var body: some View {
-        // 【修改 1】不再使用 ZStack 包裹，直接使用主容器
         Group {
             if isLoading {
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .scaleEffect(1.2)
-                    Text(Localized.fetchingSources) // 【双语化】
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxHeight: .infinity)
-                .background(Color.viewBackground) // 确保加载时也有背景色
+                loadingView
             } else if let error = errorMessage {
-                VStack(spacing: 16) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.largeTitle)
-                        .foregroundColor(.orange)
-                    Text(error)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                        .foregroundColor(.secondary)
-                    
-                    // 【核心修改】点击"刷新"时，先同步服务器资源，成功后再加载列表
-                    Button(Localized.refresh) {
-                        syncThenLoadSources()
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .frame(maxHeight: .infinity)
-                .background(Color.viewBackground)
+                errorView(error)
             } else {
-                // 【修改 2】主列表
-                List {
-                    Section {
-                        ForEach(allAvailableSources, id: \.id) { source in
-                            HStack {
-                                Text(source.name)
-                                    .fontWeight(.medium)
-                                    // 【修改】文字颜色自适应
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                
-                                Button(action: {
-                                    // 震动反馈
-                                    let generator = UIImpactFeedbackGenerator(style: .light)
-                                    generator.impactOccurred()
-                                    
-                                    withAnimation(.spring()) {
-                                        if subscriptionManager.isSubscribed(sourceId: source.id) {
-                                            subscriptionManager.removeSubscription(sourceId: source.id)
-                                        } else {
-                                            subscriptionManager.addSubscription(sourceId: source.id)
-                                        }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        // 上部：视频订阅（仅在应显示视频内容时出现）
+                        if !videoCategories.isEmpty {
+                            VStack(alignment: .leading, spacing: 14) {
+                                moduleHeader(
+                                    title: isGlobalEnglishMode ? "Video Sources" : "视频订阅源",
+                                    accent: .purple,
+                                    onAll: selectAllVideos,
+                                    onNone: selectNoneVideos
+                                )
+                                LazyVGrid(columns: twoColumns, spacing: 12) {
+                                    ForEach(videoCategories, id: \.key) { cat in
+                                        selectCard(
+                                            name: cat.name,
+                                            isSelected: selectedVideoKeys.contains(cat.key),
+                                            accent: .purple
+                                        ) { toggleVideo(cat.key) }
                                     }
-                                }) {
-                                    Image(systemName: subscriptionManager.isSubscribed(sourceId: source.id) ? "checkmark.circle.fill" : "plus.circle")
-                                        .font(.system(size: 24)) // 稍微调大一点更容易点
-                                        .foregroundColor(subscriptionManager.isSubscribed(sourceId: source.id) ? .green : .blue)
                                 }
-                                .buttonStyle(PlainButtonStyle()) // 确保点击只触发按钮，不触发整行
                             }
-                            .padding(.vertical, 6)
                         }
-                    } header: {
-                        Text(Localized.availableSources) // 【双语化】
-                    }
-                    // 【关键点】这里不需要 footer spacer 了，因为 safeAreaInset 会自动处理
-                }
-                .listStyle(.insetGrouped)
-                // 【修改 3】使用 safeAreaInset 放置底部悬浮栏
-                // 这会让 List 自动感知底部的空间，从而允许最后一行滚动到按钮上方
-                .safeAreaInset(edge: .bottom) {
-                    VStack(spacing: 0) {
-                        Divider() // 顶部分割线
-                        
-                        VStack(spacing: 12) {
-                            // 一键全选按钮（高亮版）
-                            if !areAllSourcesSubscribed {
-                                Button(action: {
-                                    let allIDs = allAvailableSources.map { $0.id }
-                                    let generator = UIImpactFeedbackGenerator(style: .medium)
-                                    generator.impactOccurred()
-                                    withAnimation(.spring()) {
-                                        subscriptionManager.subscribeToAll(allIDs)
-                                    }
-                                }) {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "checkmark.rectangle.stack.fill")
-                                            .font(.system(size: 18))
-                                        // 【双语化】一键添加所有 (n)
-                                        Text("\(Localized.addAll) (\(allAvailableSources.count))")
-                                            .fontWeight(.bold)
-                                    }
-                                    .font(.headline)
-                                    .foregroundColor(.white)
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 54)
-                                    .background(
-                                        LinearGradient(
-                                            gradient: Gradient(colors: [Color.green, Color.mint]),
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
-                                    .cornerRadius(16)
-                                    .shadow(color: Color.green.opacity(0.4), radius: 8, x: 0, y: 4)
+
+                        // 下部：新闻来源
+                        VStack(alignment: .leading, spacing: 14) {
+                            moduleHeader(
+                                title: isGlobalEnglishMode ? "News Sources" : "新闻订阅源",
+                                accent: .blue,
+                                onAll: selectAllNews,
+                                onNone: selectNoneNews
+                            )
+                            LazyVGrid(columns: twoColumns, spacing: 12) {
+                                ForEach(allAvailableSources, id: \.id) { source in
+                                    selectCard(
+                                        name: source.name,
+                                        isSelected: subscriptionManager.isSubscribed(sourceId: source.id),
+                                        accent: .blue
+                                    ) { toggleNews(source.id) }
                                 }
-                                .transition(.scale.combined(with: .opacity))
                             }
-                            
-                            // 完成设置按钮
-                            Button(action: handleConfirm) {
-                                // 【双语化】请至少选择一个 / 完成设置
-                                Text(subscriptionManager.subscribedSourceIDs.isEmpty ? Localized.selectAtLeastOne : Localized.finishSetup)
-                                    .font(.headline)
-                                    .foregroundColor(subscriptionManager.subscribedSourceIDs.isEmpty ? .secondary : .white)
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 50)
-                                    .background(
-                                        subscriptionManager.subscribedSourceIDs.isEmpty
-                                        ? Color.secondary.opacity(0.2)
-                                        : Color.blue
-                                    )
-                                    .cornerRadius(16)
-                            }
-                            .disabled(subscriptionManager.subscribedSourceIDs.isEmpty)
                         }
-                        .padding(16)
-                        // 适配 iPhone 底部 Home Indicator 区域
-                        .padding(.bottom, 0)
-                        .background(
-                            Material.regular // 毛玻璃背景，让列表滚动到底下时有模糊效果
-                        )
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 24)
                 }
+                .background(Color.viewBackground)
+                .safeAreaInset(edge: .bottom) { bottomBar }
             }
         }
-        .navigationTitle(Localized.addSourceTitle) // 【双语化】
+        .navigationTitle(Localized.addSourceTitle)
         .navigationBarTitleDisplayMode(.inline)
-        // 移除右上角“完成”按钮，保留默认返回按钮
-        .onAppear(perform: loadAvailableSources)
+        .onAppear {
+            loadSelectedVideoKeys()
+            loadAvailableSources()
+        }
     }
-    
+
+    // MARK: - 模块标题 + 全选/全不选
+    private func moduleHeader(title: String, accent: Color,
+                              onAll: @escaping () -> Void,
+                              onNone: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(accent)
+                .frame(width: 4, height: 18)
+            Text(title)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(.primary)
+            Spacer()
+            Button(action: onAll) {
+                Text(isGlobalEnglishMode ? "All" : "全选")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(Capsule().fill(accent))
+            }
+            .buttonStyle(PlainButtonStyle())
+            Button(action: onNone) {
+                Text(isGlobalEnglishMode ? "None" : "全不选")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(Capsule().fill(Color.secondary.opacity(0.15)))
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+    }
+
+    // MARK: - 通用选择卡片
+    private func selectCard(name: String, isSelected: Bool,
+                            accent: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Text(name)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Spacer(minLength: 2)
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 19))
+                    .foregroundColor(isSelected ? accent : Color.secondary.opacity(0.35))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 13)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isSelected ? accent.opacity(0.10) : Color.cardBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(isSelected ? accent.opacity(0.55) : Color.secondary.opacity(0.12),
+                            lineWidth: isSelected ? 1.5 : 1)
+            )
+            .shadow(color: Color.black.opacity(isSelected ? 0.05 : 0.02),
+                    radius: 4, x: 0, y: 2)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    // MARK: - 底部栏（只保留"完成"）
+    private var bottomBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            Button(action: handleConfirm) {
+                Text(hasAnySelection ? Localized.finishSetup : Localized.selectAtLeastOne)
+                    .font(.headline)
+                    .foregroundColor(hasAnySelection ? .white : .secondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background(hasAnySelection ? Color.blue : Color.secondary.opacity(0.2))
+                    .cornerRadius(16)
+            }
+            .disabled(!hasAnySelection)
+            .padding(16)
+            .background(Material.regular)
+        }
+    }
+
+    // MARK: - 交互
+    private func haptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle = .light) {
+        let g = UIImpactFeedbackGenerator(style: style)
+        g.impactOccurred()
+    }
+
+    private func toggleVideo(_ key: String) {
+        haptic()
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            if selectedVideoKeys.contains(key) { selectedVideoKeys.remove(key) }
+            else { selectedVideoKeys.insert(key) }
+        }
+        saveSelectedVideoKeys()
+    }
+
+    private func toggleNews(_ id: String) {
+        haptic()
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            if subscriptionManager.isSubscribed(sourceId: id) {
+                subscriptionManager.removeSubscription(sourceId: id)
+            } else {
+                subscriptionManager.addSubscription(sourceId: id)
+            }
+        }
+    }
+
+    private func selectAllVideos() {
+        haptic(.medium)
+        withAnimation(.spring()) { selectedVideoKeys.formUnion(videoCategories.map { $0.key }) }
+        saveSelectedVideoKeys()
+    }
+    private func selectNoneVideos() {
+        haptic()
+        withAnimation(.spring()) { videoCategories.forEach { selectedVideoKeys.remove($0.key) } }
+        saveSelectedVideoKeys()
+    }
+    private func selectAllNews() {
+        haptic(.medium)
+        withAnimation(.spring()) { subscriptionManager.subscribeToAll(allAvailableSources.map { $0.id }) }
+    }
+    private func selectNoneNews() {
+        haptic()
+        withAnimation(.spring()) { subscriptionManager.removeAll(allAvailableSources.map { $0.id }) }
+    }
+
+    // MARK: - 子视图：加载 / 错误
+    private var loadingView: some View {
+        VStack(spacing: 16) {
+            ProgressView().scaleEffect(1.2)
+            Text(Localized.fetchingSources)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxHeight: .infinity)
+        .background(Color.viewBackground)
+    }
+
+    private func errorView(_ error: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.largeTitle)
+                .foregroundColor(.orange)
+            Text(error)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+                .foregroundColor(.secondary)
+            Button(Localized.refresh) { syncThenLoadSources() }
+                .buttonStyle(.bordered)
+        }
+        .frame(maxHeight: .infinity)
+        .background(Color.viewBackground)
+    }
+
+    // MARK: - 确认逻辑
     private func handleConfirm() {
+        saveSelectedVideoKeys()
+
         if isFirstTimeSetup {
+            let hasNews = !subscriptionManager.subscribedSourceIDs.isEmpty
+            let hasVideo = !selectedVideoKeys.isEmpty
+
+            if resourceManager.serverReviewMode {
+                // 审核模式：永远进入新闻列表；兜底确保新闻可审
+                prefersVideoHome = false
+                if subscriptionManager.subscribedSourceIDs.isEmpty {
+                    subscriptionManager.subscribeToAll(allAvailableSources.map { $0.id })
+                }
+            } else {
+                // 非审核：只选了视频（没选新闻）→ 直接进视频首页
+                prefersVideoHome = hasVideo && !hasNews
+            }
+
             onComplete?()
         } else {
             if let onConfirm {
@@ -242,26 +334,32 @@ struct AddSourceView: View {
         }
     }
 
-    // 【新增】先同步服务器资源，成功后再加载本地新闻源列表
-    // 这个方法同时服务于错误页面的"刷新"按钮
+    // MARK: - 视频订阅本地持久化
+    private func loadSelectedVideoKeys() {
+        let arr = UserDefaults.standard.stringArray(forKey: selectedVideoStorageKey) ?? []
+        selectedVideoKeys = Set(arr)
+    }
+
+    private func saveSelectedVideoKeys() {
+        UserDefaults.standard.set(Array(selectedVideoKeys), forKey: selectedVideoStorageKey)
+    }
+
+    // MARK: - 先同步服务器资源，成功后再加载本地新闻源列表
     private func syncThenLoadSources() {
         isLoading = true
         errorMessage = nil
-        
+
         Task {
             do {
                 try await resourceManager.checkAndDownloadAllNewsManifests(isManual: true)
-                // 同步成功后，抑制 ResourceManager 可能触发的 "已是最新" 弹窗
                 resourceManager.showAlreadyUpToDateAlert = false
             } catch {
-                // 同步失败：显示网络错误提示
                 await MainActor.run {
                     self.errorMessage = Localized.networkError
                     self.isLoading = false
                 }
                 return
             }
-            // 同步成功，从本地文件加载新闻源列表
             loadAvailableSources()
         }
     }
@@ -269,49 +367,37 @@ struct AddSourceView: View {
     private func loadAvailableSources() {
         isLoading = true
         errorMessage = nil
-        
-        // 【修复】在进入后台线程前，先从 ResourceManager 获取映射表
-        // 这样 mappings 变量就在闭包的作用域内了
+
         let mappings = resourceManager.sourceMappings
-        let useEnglish = self.isGlobalEnglishMode // 捕获主线程状态
-        
+        let useEnglish = self.isGlobalEnglishMode
+
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                 let allFiles = try FileManager.default.contentsOfDirectory(at: documentsDirectory, includingPropertiesForKeys: nil)
 
-                // 找到所有 onews_*.json 文件
                 let newsJSONURLs = allFiles
                     .filter { $0.lastPathComponent.starts(with: "onews_") && $0.pathExtension == "json" }
-                
+
                 guard !newsJSONURLs.isEmpty else {
-                    // 【双语化错误提示】
-                    let errorMsg = useEnglish 
+                    let errorMsg = useEnglish
                         ? "No news data found in local storage.\nPlease go back and sync resources first."
                         : "本地未发现新闻数据。\n请先返回主页同步资源。"
                     throw NSError(domain: "AppError", code: 1, userInfo: [NSLocalizedDescriptionKey: errorMsg])
                 }
 
-                // 使用字典去重：Key 是 ID，Value 是 Name
-                // 如果同一个 ID 对应多个 Name (比如不同日期的文件改名了)，我们取最新的那个（这里简化为取扫描到的最后一个）
                 var sourceMap = [String: String]()
                 let decoder = JSONDecoder()
-                
+
                 for url in newsJSONURLs {
                     guard let data = try? Data(contentsOf: url),
                           let decoded = try? decoder.decode([String: [Article]].self, from: data) else {
                         continue
                     }
-                    
+
                     for (fileKeyName, articles) in decoded {
                         if let firstArticle = articles.first, let sourceId = firstArticle.source_id, !sourceId.isEmpty {
-                            // 【核心修改】如果有映射，使用映射名；否则使用文件里的 Key
-                            // 现在 mappings 变量已经存在了，不会报错
                             let rawDisplayName = mappings[sourceId] ?? fileKeyName
-                            // 根据当前语言模式，直接决定显示哪一段
-                            // 注意：loadAvailableSources 闭包里用到了 self.isGlobalEnglishMode
-                            // 建议在闭包外捕获一下: let useEnglish = self.isGlobalEnglishMode
-
                             let parts = rawDisplayName.components(separatedBy: "|")
                             let finalName: String
                             if useEnglish {
@@ -319,27 +405,17 @@ struct AddSourceView: View {
                             } else {
                                 finalName = parts.first ?? rawDisplayName
                             }
-
                             sourceMap[sourceId] = finalName
                         }
                     }
                 }
-                
-                // 2. 数据读取完毕后，再进行排序
+
                 let preferredOrder = NewsViewModel.preferredSourceOrder
-                
                 let sortedSources = sourceMap.map { (id: $0.key, name: $0.value) }
                     .sorted { source1, source2 in
-                        // 获取两个源在自定义列表中的索引
                         let index1 = preferredOrder.firstIndex(of: source1.id) ?? Int.max
                         let index2 = preferredOrder.firstIndex(of: source2.id) ?? Int.max
-                        
-                        // 优先按列表顺序排
-                        if index1 != index2 {
-                            return index1 < index2
-                        }
-                        
-                        // 列表里没有的，或者都在列表里的，按名称排
+                        if index1 != index2 { return index1 < index2 }
                         return source1.name < source2.name
                     }
 

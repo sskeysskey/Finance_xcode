@@ -207,17 +207,22 @@ struct NewsReaderAppApp: App {
 // 这是你的 MainAppView.swift 文件中的 body 部分
 struct MainAppView: View {
     @AppStorage("hasCompletedInitialSetup") private var hasCompletedInitialSetup = false
+    // 【新增】用户只勾选视频时的路由标记
+    @AppStorage("prefersVideoHome") private var prefersVideoHome = false
     
-    // 这些 EnvironmentObject 会从 NewsReaderAppApp 的 body 中正确接收到值
     @EnvironmentObject var resourceManager: ResourceManager
     @EnvironmentObject var newsViewModel: NewsViewModel
-    // 【新增】获取 AuthManager，虽然这里不用，但确保它能被子视图获取
     @EnvironmentObject var authManager: AuthManager
     
     var body: some View {
-        ZStack { // 【修改】使用 ZStack 包裹，以便放置强制更新层
+        ZStack {
             if hasCompletedInitialSetup {
-                SourceListView()
+                // 【修改】只勾视频的用户始终进入 VideoOnlyHomeView，由它内部决定显示视频还是"已关闭"提示
+                if prefersVideoHome {
+                    VideoOnlyHomeView()
+                } else {
+                    SourceListView()
+                }
             } else {
                 WelcomeView(hasCompletedInitialSetup: $hasCompletedInitialSetup)
             }
@@ -230,21 +235,34 @@ struct MainAppView: View {
             }
             
             // 【新增】App 搬家迁移层
-            if resourceManager.showMigrationSheet, 
+            if resourceManager.showMigrationSheet,
                let config = resourceManager.activeMigration {
                 MigrationView(
                     config: config,
-                    // 强制模式不传 onDismiss,UI 上就不会显示"稍后"按钮
                     onDismiss: config.isForced ? nil : {
                         resourceManager.dismissMigration()
                     }
                 )
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
-                .zIndex(999)  // 比 ForceUpdate 优先级更高
+                .zIndex(999)
             }
         }
         .animation(.easeInOut, value: resourceManager.showForceUpdate)
         .animation(.easeInOut, value: resourceManager.showMigrationSheet)
+    }
+}
+
+// 【修改】只看视频的首页容器：无返回按钮；模块关闭时显示提示页
+struct VideoOnlyHomeView: View {
+    @EnvironmentObject var resourceManager: ResourceManager
+    var body: some View {
+        NavigationStack {
+            if resourceManager.showVideoModule {
+                VideoModuleView(showBackButton: false)
+            } else {
+                VideoModuleClosedView()
+            }
+        }
     }
 }
 

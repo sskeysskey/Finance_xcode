@@ -116,6 +116,10 @@ struct ServerVersion: Codable {
     let source_mappings_review: [String: String]?   // 【新增】
     let review_mode: Bool?                          // 【新增】
     let video_module_enabled: Bool?   // 【新增】视频模块总开关
+    let video_review_enabled: Bool?           // 【新增】视频审核二级开关
+    let video_mappings: [String: String]?     // 【新增】视频分类映射(正式)
+    let video_mappings_review: [String: String]?  // 【新增】视频分类映射(审核)
+    let video_review_max_year: Int?   // 【新增】审核员可见的最大上映年份
     let migration: MigrationConfig?
     let files: [FileInfo]
 }
@@ -146,66 +150,60 @@ class ResourceManager: ObservableObject {
     @Published var serverReviewMode: Bool = false
     // 【新增】视频模块总开关，默认为 true（兼容旧版本服务器没返回这个字段的情况）
     @Published var serverVideoModuleEnabled: Bool = true
+    // 【新增】视频审核二级开关，默认 true
+    @Published var serverVideoReviewEnabled: Bool = true
+    // 【新增】审核员进入视频模块时，只能看到 <= 此年份的老片
+    @Published var serverVideoReviewMaxYear: Int = 1980
+    // 【新增】视频分类映射（正式 / 审核），仅用于显示
+    @Published var realVideoMappings: [String: String] = [:]
+    @Published var reviewVideoMappings: [String: String] = [:]
 
     // 【新增】UserDefaults Key
     private let setupDuringReviewKey = "setupCompletedDuringReviewMode"
     
-    // 【新增】对外暴露的"有效映射表"——其它文件都用这个属性，无需修改
-    var sourceMappings: [String: String] {
-        // 1. 服务器关了审核模式：所有人看真名
-        guard serverReviewMode else {
-            return realMappings
-        }
-        
-        // 2. 服务器开了审核模式：判断是新装还是老用户
+    // 【新增】是否对当前用户使用"审核伪装内容"
+    // 复用原 sourceMappings 里的新装/审核员/老用户判定逻辑
+    var useReviewDisguise: Bool {
+        // 服务器没开审核 → 一律真名
+        guard serverReviewMode else { return false }
+
         let defaults = UserDefaults.standard
         let hasCompletedSetup = defaults.bool(forKey: "hasCompletedInitialSetup")
         let setupDuringReview = defaults.bool(forKey: setupDuringReviewKey)
-        
-        if !hasCompletedSetup {
-            // 还没完成首次设置 → 新装机（含审核员），显示假名
-            return reviewMappings
-        }
-        
-        if setupDuringReview {
-            // 老用户，但是是在"审核模式开启时"完成的设置（典型审核员）
-            // 永久锁定假名直到服务器关闭审核模式
-            return reviewMappings
-        }
-        
-        // 真正的老用户（在审核模式开启之前就完成了设置）
-        return realMappings
+
+        if !hasCompletedSetup { return true }   // 新装机（含审核员）
+        if setupDuringReview { return true }    // 审核期完成设置的用户（典型审核员）
+        return false                            // 真正的老用户
     }
 
-    // 在 ResourceManager 类中，紧跟 sourceMappings 后面添加
-    var showVideoModule: Bool {
-        // 【新增】0. 最高优先级：总开关。关了就谁都看不到
-        guard serverVideoModuleEnabled else {
-            return false
-        }
+    // 对外暴露的"有效新闻映射表"——其它文件无需改动
+    var sourceMappings: [String: String] {
+        return useReviewDisguise ? reviewMappings : realMappings
+    }
 
-        // 1. 服务器关了审核模式：所有人都能看
-        guard serverReviewMode else {
-            return true
+    // 【新增】视频分类的有效映射表
+    var videoCategoryMappings: [String: String] {
+        return useReviewDisguise ? reviewVideoMappings : realVideoMappings
+    }
+
+    // 在 ResourceManager 类中，紧跟 sourceMappings 后面
+    var showVideoModule: Bool {
+        if serverReviewMode {
+            // —— 审核模式：video_module_enabled 不再生效 ——
+            // 真正的老用户（审核前就装好）始终可见，且用真实文案
+            if !useReviewDisguise { return true }
+            // 新装机 / 审核员：是否显示完全由「视频审核二级开关」决定（显示时用伪装文案）
+            return serverVideoReviewEnabled
+        } else {
+            // —— 非审核模式：video_review_enabled 不生效，由 video_module_enabled 决定 ——
+            // 普通用户（新+老）一律看真实内容
+            return serverVideoModuleEnabled
         }
-        
-        // 2. 服务器开了审核模式：区分新老用户
-        let defaults = UserDefaults.standard
-        let hasCompletedSetup = defaults.bool(forKey: "hasCompletedInitialSetup")
-        let setupDuringReview = defaults.bool(forKey: setupDuringReviewKey)
-        
-        // 新装用户(还没完成首次设置) → 隐藏
-        if !hasCompletedSetup {
-            return false
-        }
-        
-        // 在审核模式下完成首次设置的用户(典型审核员) → 隐藏
-        if setupDuringReview {
-            return false
-        }
-        
-        // 真正的老用户(审核模式开启前就装好的) → 可见
-        return true
+    }
+
+    // 【新增】仅"审核伪装"用户（审核员）进入视频时，限定只看老片；其余返回 nil（不限制）
+    var effectiveReviewVideoMaxYear: Int? {
+        return useReviewDisguise ? serverVideoReviewMaxYear : nil
     }
     
     // 当前需要显示的通知（如果为 nil 则不显示）
@@ -272,18 +270,30 @@ class ResourceManager: ObservableObject {
     // 特效数据获取失败时的默认词汇
     func fetchSourceNames() async -> [String] {
         do {
-            // 1. 先调用 getServerVersion，这会更新 realMappings / reviewMappings / serverReviewMode
+            // 1. 先拉取服务器版本，刷新各类映射 + 开关
             let _ = try await getServerVersion()
-            
-            // 2. ✅ 使用 sourceMappings 计算属性，自动处理审核模式
+
+            var names: [String] = []
+
+            // 2. 新闻源名称（自动按审核状态选真名/假名）
             let mappings = self.sourceMappings
             if !mappings.isEmpty {
-                // 处理 "|" 分隔符，提取中文名称（第一部分）
-                let names = mappings.values.map { rawName in
+                names += mappings.values.map { rawName in
                     let parts = rawName.components(separatedBy: "|")
                     return parts.first?.trimmingCharacters(in: .whitespaces) ?? rawName
                 }
-                return Array(names)
+            }
+
+            // 3. 视频分类名称（仅在视频内容应显示时追加，飞屏字幕里混合出现）
+            if self.showVideoModule {
+                names += self.videoCategoryMappings.values.map { rawName in
+                    let parts = rawName.components(separatedBy: "|")
+                    return parts.first?.trimmingCharacters(in: .whitespaces) ?? rawName
+                }
+            }
+
+            if !names.isEmpty {
+                return names
             }
         } catch {
             print("特效数据获取失败: \(error)")
@@ -969,6 +979,11 @@ class ResourceManager: ObservableObject {
             self.serverReviewMode = version.review_mode ?? false
             // 【新增】读取视频模块开关，默认 true（向后兼容）
             self.serverVideoModuleEnabled = version.video_module_enabled ?? true
+            self.serverVideoReviewMaxYear = version.video_review_max_year ?? 1980
+            // 【新增】视频审核二级开关 + 视频分类映射
+            self.serverVideoReviewEnabled = version.video_review_enabled ?? true
+            self.realVideoMappings = version.video_mappings ?? [:]
+            self.reviewVideoMappings = version.video_mappings_review ?? (version.video_mappings ?? [:])
             self.serverLockedDays = version.locked_days ?? 0
             self.updateNotificationStatus(serverMessage: version.notification)
             self.handleMigrationFromServer(version.migration)

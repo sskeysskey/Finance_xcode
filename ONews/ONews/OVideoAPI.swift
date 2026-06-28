@@ -31,12 +31,14 @@ enum OVideoAPI {
 
     // 首页分页列表
     static func fetchList(category: String, sort: VideoSortOption,
-                          page: Int, pageSize: Int, userId: String?) async throws -> OVideoListResponse {
+                        page: Int, pageSize: Int, userId: String?,
+                        maxYear: Int? = nil) async throws -> OVideoListResponse {
         var q = [URLQueryItem(name: "category", value: category),
-                 URLQueryItem(name: "sort", value: sort.rawValue),
-                 URLQueryItem(name: "page", value: String(page)),
-                 URLQueryItem(name: "page_size", value: String(pageSize))]
+                URLQueryItem(name: "sort", value: sort.rawValue),
+                URLQueryItem(name: "page", value: String(page)),
+                URLQueryItem(name: "page_size", value: String(pageSize))]
         if let uid = userId, !uid.isEmpty { q.append(URLQueryItem(name: "user_id", value: uid)) }
+        if let y = maxYear { q.append(URLQueryItem(name: "max_year", value: String(y))) }
         guard let url = makeURL("list", q) else { throw URLError(.badURL) }
         var req = URLRequest(url: url); req.timeoutInterval = 15
         let (data, _) = try await URLSession.shared.data(for: req)
@@ -46,15 +48,16 @@ enum OVideoAPI {
     // 筛选分页列表
     static func fetchFilter(category: String?, type: String?, year: Int?, region: String?,
                             sort: VideoSortOption, page: Int, pageSize: Int,
-                            userId: String?) async throws -> OVideoListResponse {
+                            userId: String?, maxYear: Int? = nil) async throws -> OVideoListResponse {
         var q = [URLQueryItem(name: "sort", value: sort.rawValue),
-                 URLQueryItem(name: "page", value: String(page)),
-                 URLQueryItem(name: "page_size", value: String(pageSize))]
+                URLQueryItem(name: "page", value: String(page)),
+                URLQueryItem(name: "page_size", value: String(pageSize))]
         if let c = category { q.append(URLQueryItem(name: "category", value: c)) }
         if let t = type     { q.append(URLQueryItem(name: "type", value: t)) }
         if let y = year     { q.append(URLQueryItem(name: "year", value: String(y))) }
         if let r = region   { q.append(URLQueryItem(name: "region", value: r)) }
         if let uid = userId, !uid.isEmpty { q.append(URLQueryItem(name: "user_id", value: uid)) }
+        if let my = maxYear { q.append(URLQueryItem(name: "max_year", value: String(my))) }
         guard let url = makeURL("filter", q) else { throw URLError(.badURL) }
         var req = URLRequest(url: url); req.timeoutInterval = 15
         let (data, _) = try await URLSession.shared.data(for: req)
@@ -72,9 +75,10 @@ enum OVideoAPI {
     }
 
     // 搜索
-    static func search(keyword: String, userId: String?) async throws -> [OVideoItem] {
+    static func search(keyword: String, userId: String?, maxYear: Int? = nil) async throws -> [OVideoItem] {
         var q = [URLQueryItem(name: "q", value: keyword)]
         if let uid = userId, !uid.isEmpty { q.append(URLQueryItem(name: "user_id", value: uid)) }
+        if let y = maxYear { q.append(URLQueryItem(name: "max_year", value: String(y))) }
         guard let url = makeURL("search2", q) else { throw URLError(.badURL) }
         var req = URLRequest(url: url); req.timeoutInterval = 15
         let (data, _) = try await URLSession.shared.data(for: req)
@@ -388,6 +392,16 @@ extension VideoCacheMetadata {
 class OVideoDataManager: ObservableObject {
     // ⭐ 默认含 Featured（兜底用，正常会被服务器返回覆盖）
     @Published var categoryNames: [String] = ["Featured", "Movie", "Drama", "Show", "Anime"]
+    // 【新增】审核员模式：只看 <= 此年份的老片（nil 表示不限制）
+    @Published var reviewMaxYear: Int? = nil {
+        didSet {
+            // 限定条件变化时，把已经加载的旧片单清掉，强制按新 key 重新拉
+            if oldValue != reviewMaxYear {
+                pageItems.removeAll(); hasMore.removeAll()
+                nextPage.removeAll(); loadingKeys.removeAll()
+            }
+        }
+    }
     @Published var isBootstrapping = false
     @Published var bootstrapError: String? = nil
 
@@ -404,7 +418,10 @@ class OVideoDataManager: ObservableObject {
     // 兼容旧 UI（底部栏不再依赖加载状态）
     var isLoading: Bool { isBootstrapping }
 
-    func cacheKey(_ cat: String, _ sort: VideoSortOption) -> String { "\(cat)|\(sort.rawValue)" }
+    func cacheKey(_ cat: String, _ sort: VideoSortOption) -> String {
+        if let y = reviewMaxYear { return "\(cat)|\(sort.rawValue)|ry\(y)" }
+        return "\(cat)|\(sort.rawValue)"
+    }
 
     func items(category: String, sort: VideoSortOption) -> [OVideoItem] {
         pageItems[cacheKey(category, sort)] ?? []
@@ -450,7 +467,8 @@ class OVideoDataManager: ObservableObject {
         defer { loadingKeys.remove(key) }
         do {
             let resp = try await OVideoAPI.fetchList(category: category, sort: sort,
-                                                     page: page, pageSize: pageSize, userId: userId)
+                                         page: page, pageSize: pageSize,
+                                         userId: userId, maxYear: reviewMaxYear)
             var arr = pageItems[key] ?? []
             let existing = Set(arr.map { $0.url })
             arr.append(contentsOf: resp.items.filter { !existing.contains($0.url) })
@@ -464,7 +482,7 @@ class OVideoDataManager: ObservableObject {
 
     // 搜索
     func search(keyword: String, userId: String?) async -> [OVideoItem] {
-        (try? await OVideoAPI.search(keyword: keyword, userId: userId)) ?? []
+        (try? await OVideoAPI.search(keyword: keyword, userId: userId, maxYear: reviewMaxYear)) ?? []
     }
 
     // 筛选选项
@@ -474,12 +492,13 @@ class OVideoDataManager: ObservableObject {
 
     // 筛选分页
     func fetchFilter(category: String?, type: String?, year: Int?, region: String?,
-                     sort: VideoSortOption, page: Int, userId: String?)
+                    sort: VideoSortOption, page: Int, userId: String?)
     async -> (items: [OVideoItem], hasMore: Bool) {
         do {
             let resp = try await OVideoAPI.fetchFilter(category: category, type: type, year: year,
-                                                       region: region, sort: sort, page: page,
-                                                       pageSize: pageSize, userId: userId)
+                                                    region: region, sort: sort, page: page,
+                                                    pageSize: pageSize, userId: userId,
+                                                    maxYear: reviewMaxYear)
             return (resp.items, resp.has_more)
         } catch {
             return ([], false)

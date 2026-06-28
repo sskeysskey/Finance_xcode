@@ -188,23 +188,15 @@ struct WelcomeView: View {
                 // 文字层
                 VStack(spacing: 0) {
                     Spacer().frame(height: 100)
-                    Text(Localized.appName)
-                        .font(.system(size: 60, weight: .black, design: .rounded))
-                        .foregroundColor(.blue)
-                        .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
-                    
-                    Text(Localized.appSlogan)
-                        .font(.title2.bold())
-                        .foregroundColor(.primary.opacity(0.8))
-                        .padding(.top, 10)
-                    
-                    Spacer()
-                    
                     Text(Localized.welcomeInstruction)
-                        .font(.subheadline)
+                        .font(.system(size: 30, weight: .black, design: .rounded))
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
-                        .padding(.bottom, 140)
+                        Spacer() // 把文字往上推（你要的就是这个）
+                        Spacer()
+                        Spacer()
+                        Spacer()
+                        Spacer()
                 }
                 
                 // 底部按钮层 (Action Area)

@@ -226,11 +226,15 @@ enum VideoCategoryTheme {
 struct VideoModuleView: View {
     @EnvironmentObject private var dataManager: OVideoDataManager
     @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var resourceManager: ResourceManager   // 【新增】
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     @AppStorage("OVideo_SortOption") private var sortOptionRaw: String = VideoSortOption.date.rawValue
     @AppStorage("OVideo_SelectedCategoryIndex") private var selectedCategoryIndex: Int = 0
     @AppStorage("hasSeenVideoSwipeGuide") private var hasSeenVideoSwipeGuide = false
+
+    // 【新增】是否显示左上角返回按钮（只看视频的根视图传 false）
+    var showBackButton: Bool = true
 
     private var sortBinding: Binding<VideoSortOption> {
         Binding(get: { VideoSortOption(rawValue: sortOptionRaw) ?? .date },
@@ -244,7 +248,8 @@ struct VideoModuleView: View {
         ZStack {
             VideoBrowseView(dataManager: dataManager,
                             selectedCategoryIndex: categoryIndexBinding,
-                            sortOption: sortBinding)
+                            sortOption: sortBinding,
+                            showBackButton: showBackButton)   // 【新增】
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VideoBottomBar(dataManager: dataManager, isLoading: false)
                 }
@@ -254,10 +259,35 @@ struct VideoModuleView: View {
                     .transition(.opacity)
             }
         }
+        .onAppear {
+            // 【新增】审核员进入视频模块时，限定只看老片（≤ 可配置年份）；其余用户为 nil 不限制
+            dataManager.reviewMaxYear = resourceManager.effectiveReviewVideoMaxYear
+        }
         .task {
             await dataManager.bootstrap(userId: authManager.userIdentifier)
             await FreeQuotaManager.shared.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
         }
+    }
+}
+
+// 【新增】视频模块关闭时的占位提示页（只看视频的用户遇到模块关闭时显示）
+struct VideoModuleClosedView: View {
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "film.stack")
+                .font(.system(size: 64))
+                .foregroundColor(.secondary.opacity(0.35))
+            Text(isGlobalEnglishMode
+                 ? "The video module is temporarily closed due to copyright reasons. Thank you for your understanding."
+                 : "因版权原因，视频模块暂时关闭，敬请谅解。")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
     }
 }
 
@@ -358,7 +388,7 @@ struct CategoryVideoListView: View {
             }
         }
         .background(Color(UIColor.systemGroupedBackground))
-        .task(id: "\(categoryName)|\(sortOption.rawValue)") {
+        .task(id: "\(categoryName)|\(sortOption.rawValue)|\(dataManager.reviewMaxYear ?? -1)") {
             await dataManager.loadFirstPageIfNeeded(category: categoryName,
                                                     sort: sortOption, userId: userId)
         }
@@ -568,6 +598,8 @@ struct VideoBrowseView: View {
     @ObservedObject var dataManager: OVideoDataManager
     @Binding var selectedCategoryIndex: Int
     @Binding var sortOption: VideoSortOption
+    // 【新增】是否显示返回按钮
+    var showBackButton: Bool = true
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @EnvironmentObject var authManager: AuthManager
 
@@ -584,25 +616,26 @@ struct VideoBrowseView: View {
                 VStack(spacing: 0) {
                     // ⭐ 顶部 banner：返回按钮 + 横向分类栏 + 右侧搜索图标
                     HStack(spacing: 0) {
-                        // ⭐ 新增：自定义返回按钮
-                        Button {
-                            presentationMode.wrappedValue.dismiss()
-                        } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundColor(.primary)
-                                .padding(.leading, 16)
-                                .padding(.trailing, 8) // 缩小一点间距，给搜索腾空间
-                                .padding(.vertical, 10)
+                        // 【修改】只看视频的根视图不显示返回按钮
+                        if showBackButton {
+                            Button {
+                                presentationMode.wrappedValue.dismiss()
+                            } label: {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                    .padding(.leading, 16)
+                                    .padding(.trailing, 8)
+                                    .padding(.vertical, 10)
+                            }
                         }
 
-                        // 原来的分类栏（自动占满中间空间）
                         CategoryTabBar(categories: dataManager.categoryNames,
                                     selectedIndex: $selectedCategoryIndex,
                                     isEnglish: isGlobalEnglishMode)
                             .frame(maxWidth: .infinity)
+                            .padding(.leading, showBackButton ? 0 : 8)   // 【新增】无返回按钮时补一点左边距
 
-                        // ⭐ 新增：右侧搜索图标（和底部搜索功能完全一致）
                         NavigationLink {
                             VideoSearchTabView(dataManager: dataManager)
                         } label: {
@@ -613,7 +646,7 @@ struct VideoBrowseView: View {
                                 .padding(.vertical, 10)
                         }
                         .buttonStyle(.plain)
-                        .offset(y: -2) // ⭐ 搜索图标轻微上移
+                        .offset(y: -2)
                     }
                     .background(.ultraThinMaterial)
 

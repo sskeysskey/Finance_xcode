@@ -730,7 +730,7 @@ struct SourceListView: View {
                 case .predictionEntry(let source):
                     PredictionEntryView(initialSource: source)
                 case .videoModule:
-                    VideoModuleView()
+                    VideoModuleView(showBackButton: true)
                 }
             }
         }
@@ -907,7 +907,16 @@ struct SourceListView: View {
 
     // MARK: - 视频模块入口卡片 (华丽设计)
     private var videoModuleCard: some View {
-        NavigationLink(value: NavigationTarget.videoModule) {
+        // 审核伪装：标题"视频模块"，副标题"老片新看"
+        let disguise = resourceManager.useReviewDisguise
+        let titleText = disguise
+            ? (isGlobalEnglishMode ? "Video" : "视频模块")
+            : (isGlobalEnglishMode ? "Video Library" : "影视频道")
+        let subtitleText = disguise
+            ? (isGlobalEnglishMode ? "Classic films, timeless memories" : "老片新看")
+            : (isGlobalEnglishMode ? "Movies · US Drama · K-Drama · Variety Show · Anime" : "电影 · 美剧 · 韩剧 · 综艺 · 动漫")
+
+        return NavigationLink(value: NavigationTarget.videoModule) {
             HStack(spacing: 14) {
                 // 左侧：图标带光晕
                 ZStack {
@@ -921,37 +930,38 @@ struct SourceListView: View {
                         )
                         .frame(width: 44, height: 44)
                         .shadow(color: .pink.opacity(0.5), radius: 6, x: 0, y: 3)
-                    
+
                     Image(systemName: "play.rectangle.fill")
                         .font(.system(size: 22, weight: .bold))
                         .foregroundColor(.white)
                 }
-                
+
                 // 中间：文字
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 4) {
-                        Text(isGlobalEnglishMode ? "Video Library" : "影视频道")
+                        Text(titleText)
                             .font(.system(size: 16, weight: .bold))
                             .foregroundColor(.white)
-                        
-                        // HOT 小标签
-                        Text("HOT")
-                            .font(.system(size: 9, weight: .heavy))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Color.red)
-                            .cornerRadius(4)
+
+                        // HOT 小标签（伪装时隐藏）
+                        if !disguise {
+                            Text("HOT")
+                                .font(.system(size: 9, weight: .heavy))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.red)
+                                .cornerRadius(4)
+                        }
                     }
-                    
-                    Text(isGlobalEnglishMode ? "Movies · US Drama · K-Drama · Variety Show · Anime" : "电影 · 美剧 · 韩剧 · 综艺 · 动漫")
+
+                    Text(subtitleText)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white.opacity(0.85))
                 }
-                
+
                 Spacer()
-                
-                // 右侧：箭头
+
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(.white.opacity(0.7))
@@ -960,7 +970,6 @@ struct SourceListView: View {
             .padding(.vertical, 14)
             .background(
                 ZStack {
-                    // 深色渐变基底
                     LinearGradient(
                         colors: [
                             Color(red: 0.15, green: 0.15, blue: 0.35),
@@ -970,8 +979,6 @@ struct SourceListView: View {
                         startPoint: .leading,
                         endPoint: .trailing
                     )
-                    
-                    // 叠加一个光晕效果
                     RadialGradient(
                         colors: [Color.white.opacity(0.15), Color.clear],
                         center: .topLeading,

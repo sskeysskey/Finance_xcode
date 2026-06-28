@@ -72,10 +72,8 @@ struct Localized {
     static var errSessionFailed: String { tr("音频会话激活失败", "Audio session failed") }
     
     // MARK: - 欢迎页 (WelcomeView)
-    static var appName: String { tr("「国外消息」", "ONews") }
-    static var appSlogan: String { tr("可以听的双语海外资讯", "Bilingual global news you can listen to") }
-    static var welcomeInstruction: String { tr("点击右下角按钮\n定制您的专属新闻源", "Tap the button below\nto customize your news feed") }
-    static var upToDateMessage: String { tr("请点击右下角“+”按钮来选择你喜欢的新闻源。", "Connection is OK. Tap the '+' button to select your news sources.") }
+    static var welcomeInstruction: String { tr("点击右下角按钮\n定制您的专属\n新闻源和影视源", "Tap the button below\nto customize your news feed") }
+    static var upToDateMessage: String { tr("请点击右下角“+”按钮来选择您喜欢的影视新闻源。", "Connection is OK. Tap the '+' button to select your news sources.") }
 
     // MARK: - 主页 / 列表页
     static var mySubscriptions: String { tr("我的订阅", "My Subscriptions") }
@@ -98,7 +96,7 @@ struct Localized {
     static var readBelow: String { tr("以下全部已读", "Mark Below as Read") }
     
     // MARK: - 添加源页面
-    static var addSourceTitle: String { tr("添加内容", "Add Content") }
+    static var addSourceTitle: String { tr("添加可选订阅源", "Add Sources") }
     static var availableSources: String { tr("可用新闻源", "Available Sources") }
     static var fetchingSources: String { tr("正在获取最新源...", "Fetching sources...") }
     static var addAll: String { tr("一键添加所有", "Add All") }
