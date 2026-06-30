@@ -880,10 +880,6 @@ struct VideoPlayerPageView: View {
                                     sourceURL: sourceURL)
                         }
 
-                        if let real = realURL, downloadManager.localBookmarks[real] != nil {
-                            offlineBadge
-                        }
-
                         // ⭐ 在线播放页：保留错误链接举报入口
                         if let real = realURL {
                             ReportLinkCard(
@@ -895,52 +891,11 @@ struct VideoPlayerPageView: View {
                                 realURL: real
                             )
                         }
-                        // 【新增】跳转到 Article All 入口
-                        Button(action: {
-                            appNavPath?.wrappedValue.append(NavigationTarget.allArticles)
-                        }) {
-                            HStack(spacing: 12) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(Color.blue.opacity(0.1))
-                                        .frame(width: 40, height: 40)
-                                    Image(systemName: "newspaper.fill")
-                                        .font(.system(size: 18))
-                                        .foregroundColor(.blue)
-                                }
-                                
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(isGlobalEnglishMode ? "Back to News" : "返回新闻阅读")
-                                        .font(.system(size: 15, weight: .semibold))
-                                        .foregroundColor(.primary)
-                                    Text(isGlobalEnglishMode ? "Read all subscribed articles" : "阅读所有订阅文章")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.secondary)
-                                }
-                                
-                                Spacer()
-                                
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(Color(UIColor.secondarySystemGroupedBackground))
-                            )
-                            .padding(.horizontal, 16)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-
-                        Spacer(minLength: 30)
                     }
                     .padding(.top, 16)
                 }
             }
         }
-        .navigationTitle(isGlobalEnglishMode ? "Player" : "播放")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
@@ -1132,20 +1087,6 @@ struct VideoPlayerPageView: View {
             )
             .presentationDetents([.medium, .large])
         }
-    }
-
-    private var offlineBadge: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
-            Text(isGlobalEnglishMode
-                 ? "Playing from local cache"
-                 : "正在使用本地缓存播放，此时不消耗流量。")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.secondary)
-        }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(Capsule().fill(Color.green.opacity(0.10)))
-        .padding(.horizontal, 16)
     }
 
     private func badge(text: String, systemImage: String, color: Color) -> some View {
@@ -1407,6 +1348,7 @@ struct CachedVideoPlayerView: View {
                 }
                 .aspectRatio(16.0/9.0, contentMode: .fit)
                 .frame(maxWidth: .infinity)
+                .background(Color.black)
 
                 AdWarningBanner()
 
@@ -1423,27 +1365,6 @@ struct CachedVideoPlayerView: View {
                             }
                         }
                         .padding(.horizontal, 16).padding(.top, 16)
-
-                        // 当前播放来源徽标
-                        HStack(spacing: 6) {
-                            if isCurrentCached {
-                                Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
-                                Text(isGlobalEnglishMode
-                                    ? "Playing from local cache"
-                                    : "正在使用本地缓存播放")
-                                    .font(.caption).foregroundColor(.secondary)
-                            } else {
-                                Image(systemName: "wifi").foregroundColor(.orange)
-                                Text(isGlobalEnglishMode
-                                    ? "Playing online (not cached)"
-                                    : "该集未缓存，正在在线播放")
-                                    .font(.caption).foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(Capsule().fill(
-                            (isCurrentCached ? Color.green : Color.orange).opacity(0.10)))
-                        .padding(.horizontal, 16)
 
                         // 仅已缓存集允许删除
                         if let cacheKey = currentCacheKey {
@@ -1505,7 +1426,6 @@ struct CachedVideoPlayerView: View {
                 }
             }
         }
-        .navigationTitle(isGlobalEnglishMode ? "Player" : "播放")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
