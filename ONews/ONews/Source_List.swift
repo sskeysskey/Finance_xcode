@@ -840,23 +840,14 @@ struct SourceListView: View {
         .overlay(
             // 【修改】将两个遮罩层组合在一起，避免互相覆盖
             ZStack {
-                // 1. 原有的同步状态遮罩 (Loading / 下载进度)
-                // 注意：加一个判断 !resourceManager.showAlreadyUpToDateAlert，防止两个弹窗重叠
-                if resourceManager.isSyncing && !resourceManager.showAlreadyUpToDateAlert {
+                // 1. 同步状态遮罩：只在"真正下载文件（带进度条）"时显示。
+                //    网络检查/加载中的"正在加载..."弹窗不再显示，但底层的同步逻辑（isSyncing）照常执行。
+                if resourceManager.isSyncing && resourceManager.isDownloading && !resourceManager.showAlreadyUpToDateAlert {
                     VStack(spacing: 15) {
-                        if resourceManager.syncMessage.contains("最新") || resourceManager.syncMessage.contains("date") {
-                            // 这一步其实是为了兼容旧逻辑，但现在我们有专门的弹窗了，可以保留作为双重保险
-                            Image(systemName: "checkmark.circle.fill").font(.largeTitle).foregroundColor(.white)
-                            Text(resourceManager.syncMessage).font(.headline).foregroundColor(.white)
-                        } else if resourceManager.isDownloading {
-                            Text(resourceManager.syncMessage).font(.headline).foregroundColor(.white)
-                            ProgressView(value: resourceManager.downloadProgress)
-                                .progressViewStyle(LinearProgressViewStyle(tint: .white))
-                                .padding(.horizontal, 50)
-                        } else {
-                            ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white)).scaleEffect(1.2)
-                            Text(Localized.loading).foregroundColor(.white.opacity(0.9)) // 【双语化】
-                        }
+                        Text(resourceManager.syncMessage).font(.headline).foregroundColor(.white)
+                        ProgressView(value: resourceManager.downloadProgress)
+                            .progressViewStyle(LinearProgressViewStyle(tint: .white))
+                            .padding(.horizontal, 50)
                     }
                     .frame(width: 200, height: 160) // 小巧的 HUD 尺寸
                     .background(Material.ultraThinMaterial)
