@@ -1058,7 +1058,7 @@ struct VideoPlayerPageView: View {
             if activeEpisodes.count > 1 {            // ⭐ 原来是 episodes.count > 1
                 episodeSelectorButton
             }
-            NetworkBadge()
+            // 移除了 NetworkBadge()
         }
         .padding(.horizontal, 16)
     }
