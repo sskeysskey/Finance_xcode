@@ -7,10 +7,11 @@ final class VideoReportManager {
     static let shared = VideoReportManager()
     private let endpoint = "http://106.15.183.158:5001/api/OVideo/report"
 
-    private let reportedKey = "ONews_ReportedLinks"   // [episodeURL: timestamp]
-    private let cooldownKey = "ONews_LastReportTime"  // 全局上次举报时间
+    private let reportedKey = "ONews_ReportedLinks"        // [episodeURL: timestamp]
+    private let recentReportsKey = "ONews_RecentReportTimes" // 最近提交时间戳数组(滑动窗口)
 
-    private let globalCooldown: TimeInterval = 30          // 任意两次举报至少间隔 30s
+    private let burstWindow: TimeInterval = 10             // ⭐ 滑动窗口 10 秒
+    private let burstLimit = 2                             // ⭐ 窗口内最多 2 次（可连续举报两个坏链接）
     private let perVideoInterval: TimeInterval = 24 * 3600 // 同一链接 24h 内只能举报一次
 
     private init() {}
@@ -29,11 +30,16 @@ final class VideoReportManager {
     /// 提交前的本地限流检查
     func canReport(episodeURL: String) -> (ok: Bool, reason: String?) {
         let now = Date().timeIntervalSince1970
-        let lastGlobal = UserDefaults.standard.double(forKey: cooldownKey)
-        if lastGlobal > 0, now - lastGlobal < globalCooldown {
-            let wait = Int(globalCooldown - (now - lastGlobal))
+
+        // ⭐ 滑动窗口限流：burstWindow 秒内最多 burstLimit 次
+        let recent = (UserDefaults.standard.array(forKey: recentReportsKey) as? [Double] ?? [])
+            .filter { now - $0 < burstWindow }
+        if recent.count >= burstLimit, let oldest = recent.min() {
+            let wait = max(1, Int(ceil(burstWindow - (now - oldest))))
             return (false, "操作过于频繁，请 \(wait) 秒后再试")
         }
+
+        // 同一链接 24h 内只能举报一次
         let reported = UserDefaults.standard.dictionary(forKey: reportedKey) as? [String: Double] ?? [:]
         if let last = reported[episodeURL], now - last < perVideoInterval {
             return (false, "你已举报过该链接，我们正在核实修复中")
@@ -79,7 +85,14 @@ final class VideoReportManager {
             guard let http = resp as? HTTPURLResponse else { return .failure(.network("无响应")) }
             if http.statusCode == 200 {
                 let now = Date().timeIntervalSince1970
-                UserDefaults.standard.set(now, forKey: cooldownKey)
+
+                // ⭐ 记录到滑动窗口（只保留窗口内的时间戳）
+                var recent = (UserDefaults.standard.array(forKey: recentReportsKey) as? [Double] ?? [])
+                    .filter { now - $0 < burstWindow }
+                recent.append(now)
+                UserDefaults.standard.set(recent, forKey: recentReportsKey)
+
+                // 记录该链接的举报时间
                 var reported = UserDefaults.standard.dictionary(forKey: reportedKey) as? [String: Double] ?? [:]
                 reported[episodeURL] = now
                 UserDefaults.standard.set(reported, forKey: reportedKey)

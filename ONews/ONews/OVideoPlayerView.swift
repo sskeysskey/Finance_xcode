@@ -785,8 +785,7 @@ struct PlayerLoadingIndicator: View {
     }
 }
 
-// MARK: - 播放页（重做 UI）
-// MARK: - 播放页（重做 UI）
+// MARK: - 播放页
 struct VideoPlayerPageView: View {
     let episodeURL: String
     let videoTitle: String
@@ -817,7 +816,8 @@ struct VideoPlayerPageView: View {
     @State private var showLoginAlert = false
 
     // ⭐ 新增：无法播放 / 加载超时的反馈修复弹窗
-    @State private var showRepairSheet = false
+    @State private var showRepairSheet = false        // 自动检测失败 → 半屏修复弹窗
+    @State private var showReportSheet = false         // ⭐ 手动点「反馈修复」→ 全屏直达提交
     @State private var loadTimeoutWork: DispatchWorkItem? = nil
 
     @State private var showEpisodeConsumeConfirm = false
@@ -869,8 +869,20 @@ struct VideoPlayerPageView: View {
                     .background(Color.black)
 
                 // ⭐ 固定广告防骗提示条（播放操作面板下方、标题上方）
-                //    顺便把「反馈修复」弹窗挂在这里，避免和订阅/选集 sheet 冲突
+                //    「反馈修复」现在直达填写页（ReportSheet），省掉中间说明弹窗
                 AdWarningBanner()
+                    // ⭐ 手动点击「反馈修复」→ 全屏直达填写页
+                    .fullScreenCover(isPresented: $showReportSheet) {
+                        ReportSheet(
+                            videoTitle: displayTitle,
+                            sourceURL: sourceURL ?? activeEpisodeURL,
+                            episodeURL: activeEpisodeURL,
+                            channelName: channelName,
+                            episodeName: activeEpisodeName,
+                            realURL: realURL ?? activeEpisodeURL
+                        )
+                    }
+                    // ⭐ 程序自动发现播不了 → 半屏修复弹窗(带重试)
                     .sheet(isPresented: $showRepairSheet) {
                         PlaybackRepairSheet(
                             videoTitle: displayTitle,
@@ -879,7 +891,10 @@ struct VideoPlayerPageView: View {
                             channelName: channelName,
                             episodeName: activeEpisodeName,
                             realURL: realURL ?? activeEpisodeURL,
-                            onRetry: { Task { await resolve() } }
+                            onRetry: {
+                                showRepairSheet = false
+                                Task { await resolve() }
+                            }
                         )
                         .presentationDetents([.medium, .large])
                     }
@@ -969,6 +984,20 @@ struct VideoPlayerPageView: View {
                  ? "You are on a cellular network. Online playback will use mobile data. Continue?"
                  : "当前处于蜂窝网络，在线播放将消耗流量，是否继续？")
         }
+        // ⭐ 需求3修复：切集消耗点数的确认弹窗（之前 body 里漏挂，导致 needConsume 分支无反应）
+        .alert(isGlobalEnglishMode
+               ? "Use Free Pass (\(episodeConsumeRemaining) left)"
+               : "今日免费赠送还剩\(episodeConsumeRemaining)点",
+               isPresented: $showEpisodeConsumeConfirm) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
+                pendingEpisodeForSwitch = nil
+            }
+            Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
+                Task { await consumeAndSwitchEpisode() }
+            }
+        } message: {
+            Text(isGlobalEnglishMode ? "This will use 1 pass." : "当前视频将消耗 1 点")
+        }
         .alert(isGlobalEnglishMode ? "Sign in to Watch Free" : "登录后免费观看",
             isPresented: $showLoginAlert) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
@@ -1053,7 +1082,7 @@ struct VideoPlayerPageView: View {
 
                         // ⭐ 错误页也提供一个直接举报入口
                         Button(isGlobalEnglishMode ? "Report" : "反馈修复") {
-                            showRepairSheet = true
+                            showReportSheet = true          // ⭐ 手动 → 全屏
                         }
                         .padding(.horizontal, 16).padding(.vertical, 6)
                         .background(Color.orange.opacity(0.9))
@@ -1280,7 +1309,6 @@ struct VideoPlayerPageView: View {
 }
 
 // MARK: - 离线缓存播放器（选集显示全部剧集）
-// MARK: - 离线缓存播放器（选集显示全部剧集）
 struct CachedVideoPlayerView: View {
     let realURL: String
     let title: String
@@ -1313,6 +1341,7 @@ struct CachedVideoPlayerView: View {
 
     // ⭐ 新增：反馈修复弹窗 + 超时看门狗
     @State private var showRepairSheet = false
+    @State private var showReportSheet = false     // ⭐ 手动 → 全屏
     @State private var loadTimeoutWork: DispatchWorkItem? = nil
 
     @State private var showEpisodePicker = false
@@ -1411,6 +1440,16 @@ struct CachedVideoPlayerView: View {
 
                 // ⭐ 反馈修复弹窗挂在提示条上，避免和其他 sheet 冲突
                 AdWarningBanner()
+                    .fullScreenCover(isPresented: $showReportSheet) {
+                        ReportSheet(
+                            videoTitle: displayTitle,
+                            sourceURL: sourceURL ?? activeKey,
+                            episodeURL: activeKey,
+                            channelName: channelName,
+                            episodeName: activeName,
+                            realURL: activeKey
+                        )
+                    }
                     .sheet(isPresented: $showRepairSheet) {
                         PlaybackRepairSheet(
                             videoTitle: displayTitle,
@@ -1419,7 +1458,10 @@ struct CachedVideoPlayerView: View {
                             channelName: channelName,
                             episodeName: activeName,
                             realURL: activeKey,
-                            onRetry: { retryCurrent() }
+                            onRetry: {
+                                showRepairSheet = false
+                                retryCurrent()          // ⭐ 这里用上你已有的 retryCurrent
+                            }
                         )
                         .presentationDetents([.medium, .large])
                     }
@@ -1883,7 +1925,7 @@ struct EpisodePickerView: View {
     }
 }
 
-// MARK: - ⭐ 无法播放 / 加载超时的「反馈修复」弹窗
+// MARK: - ⭐ 无法播放 / 加载超时的「反馈修复」弹窗(半屏,自动弹出用)
 struct PlaybackRepairSheet: View {
     let videoTitle: String
     let sourceURL: String
@@ -1900,25 +1942,23 @@ struct PlaybackRepairSheet: View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 18) {
-                    // 顶部说明
                     VStack(spacing: 10) {
                         ZStack {
-                            Circle().fill(Color.orange.opacity(0.12))
+                            Circle().fill(Color.blue.opacity(0.12))
                                 .frame(width: 64, height: 64)
                             Image(systemName: "wrench.and.screwdriver.fill")
                                 .font(.system(size: 26))
-                                .foregroundColor(.orange)
+                                .foregroundColor(.blue)
                         }
                         Text(isGlobalEnglishMode ? "Can't play this video?" : "视频无法播放？")
                             .font(.system(size: 18, weight: .bold))
                             .foregroundColor(.primary)
-                            Spacer()
-                            Spacer()
                     }
                     .padding(.top, 8)
                     .padding(.horizontal, 16)
+                    Spacer()
 
-                    // ⭐ 复用现有举报卡片：它自带「提交」动作
+                    // ⭐ 复用现有举报卡片:它自带「提交」动作
                     ReportLinkCard(
                         videoTitle: videoTitle,
                         sourceURL: sourceURL,
