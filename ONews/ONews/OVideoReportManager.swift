@@ -123,9 +123,10 @@ struct ReportLinkCard: View {
                         .foregroundColor(.white)
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(isGlobalEnglishMode ? "Report a broken link" : "举报错误链接")
-                        .font(.system(size: 13, weight: .semibold))
+                    Text(isGlobalEnglishMode ? "Report a broken link" : "提交修复错误链接")
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(.primary)
+                    Spacer()
                     Text(isGlobalEnglishMode
                          ? "Can't play or cache? Let us know."
                          : "无法播放或缓存？点此反馈，我们会尽快修复")
@@ -229,13 +230,10 @@ struct ReportSheet: View {
                                 .fill((isSuccess ? Color.green : Color.orange).opacity(0.1))
                         )
                     }
-
                     submitButton
                 }
                 .padding(16)
             }
-            .navigationTitle(isGlobalEnglishMode ? "Report Link" : "举报错误链接")
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(isGlobalEnglishMode ? "Close" : "关闭") { dismiss() }
@@ -328,7 +326,7 @@ struct ReportSheet: View {
                 if isSubmitting { ProgressView().tint(.white) }
                 Text(isSuccess
                      ? (isGlobalEnglishMode ? "Submitted" : "已提交")
-                     : (isGlobalEnglishMode ? "Submit Report" : "提交举报"))
+                     : (isGlobalEnglishMode ? "Submit Report" : "提交修复"))
                     .font(.system(size: 15, weight: .bold))
             }
             .foregroundColor(.white)

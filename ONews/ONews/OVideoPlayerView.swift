@@ -786,6 +786,7 @@ struct PlayerLoadingIndicator: View {
 }
 
 // MARK: - 播放页（重做 UI）
+// MARK: - 播放页（重做 UI）
 struct VideoPlayerPageView: View {
     let episodeURL: String
     let videoTitle: String
@@ -800,9 +801,9 @@ struct VideoPlayerPageView: View {
     @StateObject private var network = NetworkMonitor.shared
     @State private var hasStartedPlaying = false   // ⭐ 视频是否已出第一帧
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    @AppStorage("hasWarnedCellularOnlinePlay") private var hasWarnedCellularOnlinePlay = false  // ⭐ 新增
-    @State private var showFirstPlayCellularAlert = false   // ⭐ 新增
-    @State private var cellularPlayBlocked = false          // ⭐ 新增
+    @AppStorage("hasWarnedCellularOnlinePlay") private var hasWarnedCellularOnlinePlay = false
+    @State private var showFirstPlayCellularAlert = false
+    @State private var cellularPlayBlocked = false
 
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
@@ -814,6 +815,10 @@ struct VideoPlayerPageView: View {
     @State private var resolveError: String? = nil
     @State private var isBuffering = false
     @State private var showLoginAlert = false
+
+    // ⭐ 新增：无法播放 / 加载超时的反馈修复弹窗
+    @State private var showRepairSheet = false
+    @State private var loadTimeoutWork: DispatchWorkItem? = nil
 
     @State private var showEpisodeConsumeConfirm = false
     @State private var episodeConsumeRemaining = 0
@@ -864,7 +869,20 @@ struct VideoPlayerPageView: View {
                     .background(Color.black)
 
                 // ⭐ 固定广告防骗提示条（播放操作面板下方、标题上方）
+                //    顺便把「反馈修复」弹窗挂在这里，避免和订阅/选集 sheet 冲突
                 AdWarningBanner()
+                    .sheet(isPresented: $showRepairSheet) {
+                        PlaybackRepairSheet(
+                            videoTitle: displayTitle,
+                            sourceURL: sourceURL ?? activeEpisodeURL,
+                            episodeURL: activeEpisodeURL,
+                            channelName: channelName,
+                            episodeName: activeEpisodeName,
+                            realURL: realURL ?? activeEpisodeURL,
+                            onRetry: { Task { await resolve() } }
+                        )
+                        .presentationDetents([.medium, .large])
+                    }
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
@@ -897,6 +915,13 @@ struct VideoPlayerPageView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        // ⭐ 一旦真正出帧，取消超时看门狗
+        .onChange(of: hasStartedPlaying) { started in
+            if started {
+                loadTimeoutWork?.cancel()
+                loadTimeoutWork = nil
+            }
+        }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
             if hasAccess && realURL == nil { await resolve() }
@@ -905,26 +930,24 @@ struct VideoPlayerPageView: View {
             if episodes.isEmpty, loadedEpisodes.isEmpty,
             let src = sourceURL, !src.isEmpty {
                 let channels = (try? await OVideoAPI.fetchPlaylist(url: src)) ?? []
-                // 优先匹配当时的线路名，匹配不到则用第一条
                 let chosen = channels.first { $0.name == channelName } ?? channels.first
                 if let ch = chosen {
                     loadedEpisodes = ch.episodeItems(ascending: isEpisodeAscending)
                 }
             }
         }
-        // 【新增】
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
-        // 【新增】订阅成功后自动开始解析
         .onChange(of: authManager.isSubscribed) { newValue in
             if newValue && realURL == nil {
                 Task { await resolve() }
             }
         }
-        // 【新增】当用户退出播放器（返回详情页）时，记录一次视频模块的有效交互
         .onDisappear {
             ReviewManager.shared.recordVideoInteraction()
+            loadTimeoutWork?.cancel()   // ⭐ 离开页面清理看门狗
+            loadTimeoutWork = nil
         }
         // ⭐ 切集到「在线播放」且当前是蜂窝时的拦截
         .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示",
@@ -934,7 +957,7 @@ struct VideoPlayerPageView: View {
                 pendingOnlineResolvedURL = nil
             }
             Button(isGlobalEnglishMode ? "Play Anyway" : "允许并播放") {
-                hasWarnedCellularOnlinePlay = true   // ⭐ 新增
+                hasWarnedCellularOnlinePlay = true
                 if let ep = pendingOnlineEpisode {
                     switchToEpisode(ep, resolvedURL: pendingOnlineResolvedURL)
                 }
@@ -957,7 +980,7 @@ struct VideoPlayerPageView: View {
                 ? "Sign in (free, no purchase needed) to unlock your free daily passes."
                 : "登录后即可获得每日免费观看点数，登录无需付费。")
         }
-        // ⭐ 新增：首次在线播放的蜂窝提醒（确认后永久不再提醒）
+        // ⭐ 首次在线播放的蜂窝提醒（确认后永久不再提醒）
         .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示",
             isPresented: $showFirstPlayCellularAlert) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
@@ -967,6 +990,7 @@ struct VideoPlayerPageView: View {
             Button(isGlobalEnglishMode ? "Play Anyway" : "允许并播放") {
                 hasWarnedCellularOnlinePlay = true
                 cellularPlayBlocked = false
+                scheduleLoadTimeout()   // ⭐ 允许后开始计时超时看门狗
             }
         } message: {
             Text(isGlobalEnglishMode
@@ -994,6 +1018,19 @@ struct VideoPlayerPageView: View {
         return s
     }
 
+    // ⭐ 加载超时看门狗：15 秒还没出帧就弹反馈修复
+    private func scheduleLoadTimeout() {
+        loadTimeoutWork?.cancel()
+        let work = DispatchWorkItem {
+            // showLoadingIndicator 已包含「仍在加载 / 未出帧 / 无错误 / 非蜂窝拦截」判断
+            if hasAccess, showLoadingIndicator {
+                showRepairSheet = true
+            }
+        }
+        loadTimeoutWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: work)
+    }
+
     // 播放器主区
     @ViewBuilder
     private var playerArea: some View {
@@ -1006,30 +1043,37 @@ struct VideoPlayerPageView: View {
                         .font(.system(size: 36)).foregroundColor(.orange)
                     Text(error).foregroundColor(.white).font(.subheadline)
                         .multilineTextAlignment(.center).padding(.horizontal)
-                    Button(isGlobalEnglishMode ? "Retry" : "重试") {
-                        Task { await resolve() }
+                    HStack(spacing: 10) {
+                        Button(isGlobalEnglishMode ? "Retry" : "重试") {
+                            Task { await resolve() }
+                        }
+                        .padding(.horizontal, 16).padding(.vertical, 6)
+                        .background(Color.white.opacity(0.9))
+                        .foregroundColor(.black).cornerRadius(16)
+
+                        // ⭐ 错误页也提供一个直接举报入口
+                        Button(isGlobalEnglishMode ? "Report" : "反馈修复") {
+                            showRepairSheet = true
+                        }
+                        .padding(.horizontal, 16).padding(.vertical, 6)
+                        .background(Color.orange.opacity(0.9))
+                        .foregroundColor(.white).cornerRadius(16)
                     }
-                    .padding(.horizontal, 16).padding(.vertical, 6)
-                    .background(Color.white.opacity(0.9))
-                    .foregroundColor(.black).cornerRadius(16)
                 }
             } else if let real = realURL,
                     !cellularPlayBlocked,
                     let playURL = downloadManager.getLocalURL(for: real) ?? URL(string: real) {
-                // ⭐ 顺手修掉原来的强解包 URL(string: real)! 崩溃风险
                 VideoPlayerView(videoURL: playURL,
                                 isBuffering: $isBuffering,
                                 hasStartedPlaying: $hasStartedPlaying,
                                 onPlaybackFailed: { msg in
-                                    resolveError = msg     // 真失败才退回错误页
+                                    resolveError = msg          // 真失败才退回错误页
+                                    showRepairSheet = true      // ⭐ 同时弹反馈修复
+                                    loadTimeoutWork?.cancel()   // ⭐ 已失败，取消超时看门狗
                                 })
                     .id(playURL)
             }
 
-            // ⭐ 统一「缓冲中」蒙层：解析中 / 等待首帧 / 播放中再缓冲 都走它，
-            //    用户在画面真正出现前始终看到「缓冲中…」，不再有空窗或一闪而过。
-            //    PlayerLoadingIndicator 已 allowsHitTesting(false)，不挡播放/快进等按钮。
-            // ⭐ 改为常驻 + opacity 控制，避免反复插入/移除蒙层干扰播放器手势
             PlayerLoadingIndicator()
                 .opacity(showLoadingIndicator ? 1 : 0)
                 .allowsHitTesting(false)
@@ -1039,7 +1083,7 @@ struct VideoPlayerPageView: View {
 
     // ⭐ 是否显示「缓冲中」
     private var showLoadingIndicator: Bool {
-        if cellularPlayBlocked { return false }   // ⭐ 新增：等待用户决定，不显示缓冲
+        if cellularPlayBlocked { return false }
         if resolveError != nil { return false }
         if isResolving { return true }
         guard realURL != nil else { return true }
@@ -1055,15 +1099,14 @@ struct VideoPlayerPageView: View {
                 .foregroundColor(.primary)
                 .lineLimit(3)
             Spacer()
-            if activeEpisodes.count > 1 {            // ⭐ 原来是 episodes.count > 1
+            if activeEpisodes.count > 1 {
                 episodeSelectorButton
             }
-            // 移除了 NetworkBadge()
         }
         .padding(.horizontal, 16)
     }
 
-    // ⭐ 选集按钮（把弹窗 sheet 挂在按钮上，避免和订阅 sheet 冲突）
+    // ⭐ 选集按钮
     private var episodeSelectorButton: some View {
         Button {
             showEpisodePicker = true
@@ -1080,9 +1123,9 @@ struct VideoPlayerPageView: View {
         .buttonStyle(PlainButtonStyle())
         .sheet(isPresented: $showEpisodePicker) {
             EpisodePickerView(
-                episodes: activeEpisodes,        // ⭐ 原来是 episodes
+                episodes: activeEpisodes,
                 currentURL: activeEpisodeURL,
-                cachedOriginalURLs: cachedOriginalURLs,   // ⭐ 新增
+                cachedOriginalURLs: cachedOriginalURLs,
                 onSelect: { ep in handleEpisodeSelection(ep) }
             )
             .presentationDetents([.medium, .large])
@@ -1100,22 +1143,21 @@ struct VideoPlayerPageView: View {
         .background(Capsule().fill(color.opacity(0.12)))
     }
 
-    // ⭐ 选集核心逻辑：先解析→判断缓存→决定本地/在线（在线+蜂窝才提示）
+    // ⭐ 选集核心逻辑
     private func handleEpisodeSelection(_ ep: VideoEpisodeItem) {
         guard ep.url != activeEpisodeURL else { showEpisodePicker = false; return }
-        
-        // ⭐ 先走门禁
+
         switch decideVideoAccess(episodeKey: ep.url, auth: authManager, quota: quotaManager) {
         case .allowed:
             proceedToSwitch(episode: ep)
-        case .needLogin:                 // ⭐ 新增
+        case .needLogin:
             showEpisodePicker = false
             showLoginAlert = true
         case .needConsume(let r):
             pendingEpisodeForSwitch = ep
             episodeConsumeRemaining = r
             showEpisodeConsumeConfirm = true
-            showEpisodePicker = false   // 先关掉选集弹窗，再弹确认
+            showEpisodePicker = false
         case .exhausted:
             showEpisodePicker = false
             showSubscriptionSheet = true
@@ -1142,17 +1184,17 @@ struct VideoPlayerPageView: View {
     // ⭐ 真正执行切集
     private func proceedToSwitch(episode ep: VideoEpisodeItem) {
         showEpisodePicker = false
-        isResolving = true            // ⭐ 立刻给出「解析中」反馈
+        isResolving = true
         resolveError = nil
         Task {
             let resolved = try? await OVideoAPI.resolveRealURL(episodeURL: ep.url)
             await MainActor.run {
-                isResolving = false   // ⭐ 解析结束先收掉 loading，再决定走哪条分支
+                isResolving = false
                 let realKey = resolved ?? ep.url
                 let cached = (resolved != nil) && (downloadManager.localBookmarks[realKey] != nil)
                 if cached {
                     switchToEpisode(ep, resolvedURL: realKey)
-                } else if !network.isWiFi && !hasWarnedCellularOnlinePlay {   // ⭐ 加条件
+                } else if !network.isWiFi && !hasWarnedCellularOnlinePlay {
                     pendingOnlineEpisode = ep
                     pendingOnlineResolvedURL = resolved
                     showEpisodeCellularAlert = true
@@ -1163,7 +1205,7 @@ struct VideoPlayerPageView: View {
         }
     }
 
-    // ⭐ 原地切到目标集；resolvedURL 有值就直接用，否则重新解析
+    // ⭐ 原地切到目标集
     private func switchToEpisode(_ ep: VideoEpisodeItem, resolvedURL: String?) {
         overrideEpisodeURL = ep.url
         overrideEpisodeName = ep.name
@@ -1172,6 +1214,7 @@ struct VideoPlayerPageView: View {
         if let resolved = resolvedURL {
             isResolving = false
             realURL = resolved
+            scheduleLoadTimeout()          // ⭐ 直接起播，也要挂超时看门狗
             recordPlayback(real: resolved)
         } else {
             realURL = nil
@@ -1182,18 +1225,20 @@ struct VideoPlayerPageView: View {
     private func resolve() async {
         isResolving = true; resolveError = nil
         hasStartedPlaying = false
+        scheduleLoadTimeout()              // ⭐ 开始加载即挂超时看门狗
         do {
             let url = try await OVideoAPI.resolveRealURL(episodeURL: activeEpisodeURL)
             self.realURL = url
-            evaluateCellularGate(real: url)   // ⭐ 新增：在线 + 蜂窝 + 首次 → 拦截
+            evaluateCellularGate(real: url)
             recordPlayback(real: url)
         } catch {
             self.resolveError = error.localizedDescription
+            self.showRepairSheet = true    // ⭐ 解析失败：弹反馈修复
+            self.loadTimeoutWork?.cancel()
         }
         isResolving = false
     }
 
-    // ⭐ 新增
     private func evaluateCellularGate(real: String) {
         let isCached = downloadManager.localBookmarks[real] != nil
         if !isCached && !network.isWiFi && !hasWarnedCellularOnlinePlay {
@@ -1202,7 +1247,7 @@ struct VideoPlayerPageView: View {
         }
     }
 
-    // ⭐ 统一的「上报 + 写本地观看记录」，切集和首次播放共用
+    // ⭐ 统一的「上报 + 写本地观看记录」
     private func recordPlayback(real: String) {
         let (trackUserId, trackUserType): (String, String) = {
             if let appleId = authManager.userIdentifier, !appleId.isEmpty {
@@ -1235,13 +1280,14 @@ struct VideoPlayerPageView: View {
 }
 
 // MARK: - 离线缓存播放器（选集显示全部剧集）
+// MARK: - 离线缓存播放器（选集显示全部剧集）
 struct CachedVideoPlayerView: View {
     let realURL: String
     let title: String
     var channelName: String? = nil
     var episodeName: String? = nil
-    var sourceURL: String? = nil            // ⭐ 新增：拉取完整剧集
-    var episodes: [VideoEpisodeItem] = []   // 兜底：仅已缓存集
+    var sourceURL: String? = nil
+    var episodes: [VideoEpisodeItem] = []
 
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @StateObject private var network = NetworkMonitor.shared
@@ -1255,10 +1301,8 @@ struct CachedVideoPlayerView: View {
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
     @State private var showSubscriptionSheet = false
 
-    // ⭐ 全部剧集（按需在线拉取）
     @State private var allEpisodes: [VideoEpisodeItem] = []
 
-    // ⭐ 当前在播集（key 取 pickerEpisodes 的 url 空间）
     @State private var activeKey: String = ""
     @State private var activeName: String? = nil
     @State private var playURL: URL? = nil
@@ -1267,7 +1311,10 @@ struct CachedVideoPlayerView: View {
     @State private var resolveError: String? = nil
     @State private var didInit = false
 
-    // ⭐ 选集 / 门禁 / 蜂窝
+    // ⭐ 新增：反馈修复弹窗 + 超时看门狗
+    @State private var showRepairSheet = false
+    @State private var loadTimeoutWork: DispatchWorkItem? = nil
+
     @State private var showEpisodePicker = false
     @State private var showLoginAlert = false
     @State private var showConsumeConfirm = false
@@ -1277,7 +1324,6 @@ struct CachedVideoPlayerView: View {
     @State private var showCellularAlert = false
     @State private var pendingOnlineEpisode: VideoEpisodeItem? = nil
 
-    // 选集用的剧集列表：优先全部，拉取失败回退到已缓存集
     private var pickerEpisodes: [VideoEpisodeItem] {
         allEpisodes.isEmpty ? episodes : allEpisodes
     }
@@ -1290,7 +1336,6 @@ struct CachedVideoPlayerView: View {
         return title
     }
 
-    // ⭐ 已缓存的"原始 url"集合（供选集角标判断；含 resolved key 与 original key）
     private var cachedOriginalURLs: Set<String> {
         var s = Set<String>()
         for (key, meta) in downloadManager.cacheMetadata where downloadManager.localBookmarks[key] != nil {
@@ -1300,7 +1345,6 @@ struct CachedVideoPlayerView: View {
         return s
     }
 
-    // 当前在播集对应的本地缓存 key（没有则代表当前在在线播放）
     private var currentCacheKey: String? {
         if downloadManager.localBookmarks[activeKey] != nil { return activeKey }
         for (key, meta) in downloadManager.cacheMetadata
@@ -1310,6 +1354,12 @@ struct CachedVideoPlayerView: View {
         return nil
     }
     private var isCurrentCached: Bool { currentCacheKey != nil }
+
+    // ⭐ 是否处于「仍在加载」状态（用于超时看门狗判断）
+    private var isCachedLoading: Bool {
+        if resolveError != nil { return false }
+        return isResolvingOnline || isBuffering
+    }
 
     var body: some View {
         ZStack {
@@ -1327,6 +1377,8 @@ struct CachedVideoPlayerView: View {
                                         onPlaybackFailed: { msg in
                                             resolveError = msg
                                             self.playURL = nil
+                                            showRepairSheet = true      // ⭐
+                                            loadTimeoutWork?.cancel()   // ⭐
                                         })
                             .id(playURL)
                         PlayerLoadingIndicator()
@@ -1340,6 +1392,13 @@ struct CachedVideoPlayerView: View {
                                 .font(.system(size: 36)).foregroundColor(.orange)
                             Text(err).foregroundColor(.white).font(.subheadline)
                                 .multilineTextAlignment(.center).padding(.horizontal)
+                            // ⭐ 错误页直接提供反馈修复入口
+                            Button(isGlobalEnglishMode ? "Report" : "反馈修复") {
+                                showRepairSheet = true
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 6)
+                            .background(Color.orange.opacity(0.9))
+                            .foregroundColor(.white).cornerRadius(16)
                         }
                     } else {
                         Text(isGlobalEnglishMode ? "Unable to play" : "无法播放")
@@ -1350,7 +1409,20 @@ struct CachedVideoPlayerView: View {
                 .frame(maxWidth: .infinity)
                 .background(Color.black)
 
+                // ⭐ 反馈修复弹窗挂在提示条上，避免和其他 sheet 冲突
                 AdWarningBanner()
+                    .sheet(isPresented: $showRepairSheet) {
+                        PlaybackRepairSheet(
+                            videoTitle: displayTitle,
+                            sourceURL: sourceURL ?? activeKey,
+                            episodeURL: activeKey,
+                            channelName: channelName,
+                            episodeName: activeName,
+                            realURL: activeKey,
+                            onRetry: { retryCurrent() }
+                        )
+                        .presentationDetents([.medium, .large])
+                    }
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
@@ -1366,7 +1438,6 @@ struct CachedVideoPlayerView: View {
                         }
                         .padding(.horizontal, 16).padding(.top, 16)
 
-                        // 仅已缓存集允许删除
                         if let cacheKey = currentCacheKey {
                             Button(role: .destructive) {
                                 downloadManager.deleteDownload(urlString: cacheKey)
@@ -1386,7 +1457,6 @@ struct CachedVideoPlayerView: View {
                             .padding(.horizontal, 16)
                         }
 
-                        // 返回新闻阅读
                         Button(action: {
                             appNavPath?.wrappedValue.append(NavigationTarget.allArticles)
                         }) {
@@ -1439,7 +1509,6 @@ struct CachedVideoPlayerView: View {
             )
             .presentationDetents([.medium, .large])
         }
-        // 切到未缓存集的门禁提示
         .alert(isGlobalEnglishMode
             ? "Use Free Pass (\(consumeRemaining) left)"
             : "今日免费赠送还剩\(consumeRemaining)点",
@@ -1471,7 +1540,6 @@ struct CachedVideoPlayerView: View {
                 ? "Sign in (free) to unlock your free daily passes."
                 : "登录后即可获得每日免费观看点数，登录无需付费。")
         }
-        // 未缓存集在线播放的蜂窝提醒（与主播放页共用"只提醒一次"）
         .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示",
                isPresented: $showCellularAlert) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
@@ -1487,7 +1555,23 @@ struct CachedVideoPlayerView: View {
                  ? "You are on a cellular network. Online playback will use mobile data. Continue?"
                  : "当前处于蜂窝网络，在线播放将消耗流量，是否继续？")
         }
-        .onAppear { startInitialPlaybackIfNeeded() }
+        .onAppear {
+            startInitialPlaybackIfNeeded()
+            if isCachedLoading { scheduleLoadTimeout() }   // ⭐
+        }
+        // ⭐ 加载状态变化：进入加载→计时；结束加载→取消
+        .onChange(of: isCachedLoading) { loading in
+            if loading {
+                scheduleLoadTimeout()
+            } else {
+                loadTimeoutWork?.cancel()
+                loadTimeoutWork = nil
+            }
+        }
+        .onDisappear {
+            loadTimeoutWork?.cancel()   // ⭐
+            loadTimeoutWork = nil
+        }
         .onChange(of: authManager.isLoggedIn) { loggedIn in
             if loggedIn {
                 Task { await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
@@ -1515,15 +1599,43 @@ struct CachedVideoPlayerView: View {
         .buttonStyle(PlainButtonStyle())
     }
 
+    // ⭐ 加载超时看门狗
+    private func scheduleLoadTimeout() {
+        loadTimeoutWork?.cancel()
+        let work = DispatchWorkItem {
+            if isCachedLoading { showRepairSheet = true }
+        }
+        loadTimeoutWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: work)
+    }
+
+    // ⭐ 重试当前集（本地优先，否则在线重新解析）
+    private func retryCurrent() {
+        resolveError = nil
+        if let local = localURL(forOriginal: activeKey) {
+            playURL = local
+            return
+        }
+        if let ep = pickerEpisodes.first(where: { $0.url == activeKey }) {
+            resolveAndPlayOnline(ep)
+        }
+    }
+
     // MARK: - 初始化 / 拉取
 
     private func startInitialPlaybackIfNeeded() {
         guard !didInit else { return }
         didInit = true
         activeName = episodeName
-        activeKey = realURL   // 先用传入的 resolved key
+        activeKey = realURL
         playURL = downloadManager.getLocalURL(for: realURL) ?? URL(string: realURL)
-        recordPlayback()
+        if playURL == nil {
+            // ⭐ 连播放地址都构造不出来：直接判定无法播放，弹反馈修复
+            resolveError = isGlobalEnglishMode ? "Unable to play" : "无法播放"
+            showRepairSheet = true
+        } else {
+            recordPlayback()
+        }
     }
 
     private func loadAllEpisodes() async {
@@ -1533,7 +1645,6 @@ struct CachedVideoPlayerView: View {
         let items = best.episodeItems(ascending: isEpisodeAscending)
         await MainActor.run {
             self.allEpisodes = items
-            // 把 activeKey 从 resolved key 迁移到 original key，便于选集高亮
             let orig = downloadManager.cacheMetadata[realURL]?.originalEpisodeURL ?? realURL
             if items.contains(where: { $0.url == orig }) {
                 self.activeKey = orig
@@ -1547,7 +1658,6 @@ struct CachedVideoPlayerView: View {
         showEpisodePicker = false
         guard ep.url != activeKey else { return }
 
-        // 已缓存 → 直接本地播放
         if let local = localURL(forOriginal: ep.url) {
             activeKey = ep.url
             activeName = ep.name
@@ -1557,7 +1667,6 @@ struct CachedVideoPlayerView: View {
             return
         }
 
-        // 未缓存 → 在线播放，走门禁
         switch decideVideoAccess(episodeKey: ep.url, auth: authManager, quota: quotaManager) {
         case .allowed:
             startOnline(ep)
@@ -1596,6 +1705,7 @@ struct CachedVideoPlayerView: View {
                     recordPlayback()
                 } else {
                     resolveError = isGlobalEnglishMode ? "Unable to play" : "无法播放"
+                    showRepairSheet = true   // ⭐ 解析失败：弹反馈修复
                 }
             }
         }
@@ -1617,7 +1727,6 @@ struct CachedVideoPlayerView: View {
         }
     }
 
-    // 给定"原始 url"，找到本地缓存文件 URL（同时兼容 resolved key 自身）
     private func localURL(forOriginal original: String) -> URL? {
         if let u = downloadManager.getLocalURL(for: original) { return u }
         for (key, meta) in downloadManager.cacheMetadata where meta.originalEpisodeURL == original {
@@ -1645,7 +1754,6 @@ struct CachedVideoPlayerView: View {
             videoTitle: displayTitle
         )
 
-        // 观看记录里 videoURL 用"原始 episodeURL"
         let originalKey = downloadManager.cacheMetadata[activeKey]?.originalEpisodeURL ?? activeKey
         VideoPlayRecordManager.shared.addRecord(
             videoTitle: baseTitle,
@@ -1769,6 +1877,62 @@ struct EpisodePickerView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(isGlobalEnglishMode ? "Done" : "完成") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - ⭐ 无法播放 / 加载超时的「反馈修复」弹窗
+struct PlaybackRepairSheet: View {
+    let videoTitle: String
+    let sourceURL: String
+    let episodeURL: String
+    var channelName: String? = nil
+    var episodeName: String? = nil
+    let realURL: String
+    var onRetry: (() -> Void)? = nil
+
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 18) {
+                    // 顶部说明
+                    VStack(spacing: 10) {
+                        ZStack {
+                            Circle().fill(Color.orange.opacity(0.12))
+                                .frame(width: 64, height: 64)
+                            Image(systemName: "wrench.and.screwdriver.fill")
+                                .font(.system(size: 26))
+                                .foregroundColor(.orange)
+                        }
+                        Text(isGlobalEnglishMode ? "Can't play this video?" : "视频无法播放？")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.primary)
+                            Spacer()
+                            Spacer()
+                    }
+                    .padding(.top, 8)
+                    .padding(.horizontal, 16)
+
+                    // ⭐ 复用现有举报卡片：它自带「提交」动作
+                    ReportLinkCard(
+                        videoTitle: videoTitle,
+                        sourceURL: sourceURL,
+                        episodeURL: episodeURL,
+                        channelName: channelName,
+                        episodeName: episodeName,
+                        realURL: realURL
+                    )
+                }
+                .padding(.bottom, 24)
+            }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(isGlobalEnglishMode ? "Close" : "关闭") { dismiss() }
                 }
             }
         }
