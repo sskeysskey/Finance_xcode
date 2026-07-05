@@ -197,9 +197,14 @@ enum OVideoAPI {
 func cleanName(_ rawName: String) -> String {
     let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return "" }
-    let chineseRegex = "[\u{4e00}-\u{9fa5}·]+"
-    if let range = trimmed.range(of: chineseRegex, options: .regularExpression) {
-        return String(trimmed[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+    // 仅当字符串含有中文字符时，才尝试提取中文（含间隔号）部分；
+    // 纯外文人名（如 "Héctor·Muniente"）原样返回，避免只剩下一个「·」
+    let hasChinese = trimmed.range(of: "[\u{4e00}-\u{9fa5}]", options: .regularExpression) != nil
+    if hasChinese,
+       let range = trimmed.range(of: "[\u{4e00}-\u{9fa5}·]+", options: .regularExpression) {
+        let extracted = String(trimmed[range])
+            .trimmingCharacters(in: CharacterSet(charactersIn: "·").union(.whitespaces))
+        if !extracted.isEmpty { return extracted }
     }
     return trimmed
 }

@@ -145,10 +145,24 @@ struct VideoCardView: View {
                 .padding(.horizontal, 2)
                 .padding(.top, 2)
 
-            // 时间 / 类型行
-            Group {
+            // 时间 / 地区 / 类型行
+            HStack(spacing: 10) {
                 if let date = item.date, !date.isEmpty {
                     Text(date.split(separator: "(").first.map(String.init) ?? date)
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+
+                    // ⭐ 新增：上映日期右边显示地区
+                    if let region = item.region, !region.isEmpty {
+                        Text(region)
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                } else if let region = item.region, !region.isEmpty {
+                    // 没有日期时，只显示地区（可选兜底）
+                    Text(region)
                         .font(.system(size: 13))
                         .foregroundColor(.secondary)
                         .lineLimit(1)

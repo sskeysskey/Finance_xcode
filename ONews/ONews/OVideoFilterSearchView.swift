@@ -482,8 +482,8 @@ struct VideoSearchTabView: View {
             // ⭐ 结果为空：整屏醒目寻片提示
             emptyWishView
         } else {
-            ScrollView {
-                // ⭐ 结果数量提示条 + 常驻寻片求助
+            VStack(spacing: 0) {
+                // ⭐ 固定信息条：钉在搜索框下方，不随列表滚动消失
                 HStack {
                     Text(isGlobalEnglishMode
                          ? "\(results.count) results"
@@ -499,18 +499,24 @@ struct VideoSearchTabView: View {
                     .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 6)
+                .padding(.vertical, 8)
+                .background(
+                    Rectangle()
+                        .fill(Color(UIColor.systemBackground).opacity(0.001)) // 保持点击区域，视觉透明
+                )
 
-                WaterfallGridView(items: results, dataManager: dataManager,
-                                  playSource: "search")            // ⭐ 搜索结果
-                    .padding(.top, 8)
+                ScrollView {
+                    WaterfallGridView(items: results, dataManager: dataManager,
+                                      playSource: "search")            // ⭐ 搜索结果
+                        .padding(.top, 8)
 
-                Color.clear.frame(height: 20)
+                    Color.clear.frame(height: 20)
+                }
+                .scrollDismissesKeyboard(.immediately)
+                .simultaneousGesture(TapGesture().onEnded {
+                    historyManager.add(trimmedKeyword); focused = false
+                })
             }
-            .scrollDismissesKeyboard(.immediately)
-            .simultaneousGesture(TapGesture().onEnded {
-                historyManager.add(trimmedKeyword); focused = false
-            })
         }
     }
 
@@ -539,14 +545,14 @@ struct VideoSearchTabView: View {
             return Text("Not found? Tap ")
                     .font(.system(size: 13)).foregroundColor(.secondary)
                 + Text("HERE")
-                    .font(.system(size: 15, weight: .heavy)).foregroundColor(.orange)
+                    .font(.system(size: 18, weight: .heavy)).foregroundColor(.green)  // ⭐ 放大 + 绿色
                 + Text(" for help")
                     .font(.system(size: 13)).foregroundColor(.secondary)
         } else {
             return Text("没找到你想要的内容？点击")
                     .font(.system(size: 13)).foregroundColor(.secondary)
                 + Text("这里")
-                    .font(.system(size: 15, weight: .heavy)).foregroundColor(.orange)
+                    .font(.system(size: 18, weight: .heavy)).foregroundColor(.green)  // ⭐ 放大 + 绿色
                 + Text("求助")
                     .font(.system(size: 13)).foregroundColor(.secondary)
         }
