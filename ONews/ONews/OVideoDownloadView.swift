@@ -800,11 +800,7 @@ struct CacheCard: View {
                 // 暂停 / 继续
                 Button {
                     if isPaused {
-                        // 【新增】继续下载也需要订阅
-                        guard authManager.canAccessVideoContent() else {
-                            showSubscriptionSheet = true
-                            return
-                        }
+                        // ⭐ 修复：续传不再重复校验订阅/点数（任务存在即已授权）
                         if !network.isWiFi {
                             showCellularAlert = true
                         } else {
@@ -1218,10 +1214,10 @@ struct VideoCacheView: View {
     }
 
     private func resumeAllAction() {
-        guard authManager.canAccessVideoContent() else {
-            showSubscriptionSheet = true
-            return
-        }
+        // guard authManager.canAccessVideoContent() else {
+        //     showSubscriptionSheet = true
+        //     return
+        // }
         if !network.isWiFi {            // ← 去掉 downloadManager.wifiOnly &&
             showCellularAlert = true
             return
@@ -1393,10 +1389,8 @@ struct DownloadingCard: View {
             HStack(spacing: 10) {
                 Button {
                     if paused {
-                        guard authManager.canAccessVideoContent() else {
-                            showSubscriptionSheet = true
-                            return
-                        }
+                        // ⭐ 修复：下载任务已存在即代表当初已授权（已消耗点数或已订阅），
+                        //    续传不再重复校验权限，避免已绑定点数的任务被误判为需要订阅。
                         if !network.isWiFi {
                             showCellularAlert = true
                         } else {
@@ -1407,8 +1401,8 @@ struct DownloadingCard: View {
                     }
                 } label: {
                     Label(paused ? (isGlobalEnglishMode ? "Resume" : "继续")
-                                 : (isGlobalEnglishMode ? "Pause" : "暂停"),
-                          systemImage: paused ? "play.fill" : "pause.fill")
+                                : (isGlobalEnglishMode ? "Pause" : "暂停"),
+                        systemImage: paused ? "play.fill" : "pause.fill")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.white)
                         .padding(.horizontal, 14).padding(.vertical, 8)
@@ -1420,7 +1414,7 @@ struct DownloadingCard: View {
                                 startPoint: .leading, endPoint: .trailing))
                         )
                 }
-                .buttonStyle(BorderlessButtonStyle())   // ✅ 关键修复：让按钮独立响应点击
+                .buttonStyle(BorderlessButtonStyle())
 
                 Button {
                     showCancelAlert = true
@@ -1656,9 +1650,8 @@ struct VideoPlayHistoryView: View {
                 Task { await consumeAndPlay() }
             }
         } message: {
-            Text(isGlobalEnglishMode
-                ? "This will use 1 pass."
-                : "当前视频将消耗 1 点")
+            Text(quotaManager.consumeSourceNote(english: isGlobalEnglishMode)
+                + "\n" + quotaManager.remainingSummary(english: isGlobalEnglishMode))
         }
         // ⭐ 新增：额度用完的中间提示窗
         .alert(isGlobalEnglishMode

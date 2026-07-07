@@ -985,10 +985,8 @@ struct VideoPlayerPageView: View {
                  : "当前处于蜂窝网络，在线播放将消耗流量，是否继续？")
         }
         // ⭐ 需求3修复：切集消耗点数的确认弹窗（之前 body 里漏挂，导致 needConsume 分支无反应）
-        .alert(isGlobalEnglishMode
-               ? "Use Free Pass (\(episodeConsumeRemaining) left)"
-               : "今日免费赠送还剩\(episodeConsumeRemaining)点",
-               isPresented: $showEpisodeConsumeConfirm) {
+        .alert(isGlobalEnglishMode ? "Use 1 Free Pass" : "使用免费点数",
+            isPresented: $showEpisodeConsumeConfirm) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
                 pendingEpisodeForSwitch = nil
             }
@@ -996,7 +994,8 @@ struct VideoPlayerPageView: View {
                 Task { await consumeAndSwitchEpisode() }
             }
         } message: {
-            Text(isGlobalEnglishMode ? "This will use 1 pass." : "当前视频将消耗 1 点")
+            Text(quotaManager.consumeSourceNote(english: isGlobalEnglishMode)
+                + "\n" + quotaManager.remainingSummary(english: isGlobalEnglishMode))
         }
         .alert(isGlobalEnglishMode ? "Sign in to Watch Free" : "登录后免费观看",
             isPresented: $showLoginAlert) {
@@ -1560,7 +1559,8 @@ struct CachedVideoPlayerView: View {
                 Task { await consumeAndPlay() }
             }
         } message: {
-            Text(isGlobalEnglishMode ? "This will use 1 pass." : "当前视频将消耗 1 点")
+            Text(quotaManager.consumeSourceNote(english: isGlobalEnglishMode)
+                + "\n" + quotaManager.remainingSummary(english: isGlobalEnglishMode))
         }
         .alert(isGlobalEnglishMode ? "Free Passes Used Up (0 left)" : "今日免费额度不足",
             isPresented: $showQuotaExhausted) {

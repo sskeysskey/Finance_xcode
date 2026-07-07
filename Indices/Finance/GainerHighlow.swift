@@ -234,6 +234,8 @@ struct CustomTabBar: View {
     // 封装按钮逻辑
     private func tabButton(title: String, icon: String, color: Color, destination: TabDestination) -> some View {
         Button(action: {
+            // 【新增】统计点击
+            FinanceAnalytics.shared.track(cardKey: title, cardName: title, authManager: authManager)
             if usageManager.canProceed(authManager: authManager, action: .openList) {
                 self.activeTab = destination
             } else {

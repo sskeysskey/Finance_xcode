@@ -127,12 +127,16 @@ struct SearchContentView: View {
                 icon: "chart.line.uptrend.xyaxis",
                 color: .blue
             ) {
+                FinanceAnalytics.shared.track(cardKey: "对比", cardName: "对比", authManager: authManager)
                 showCompare = true
             }
             
             // 2. 搜索按钮 (占据中间主要位置)
             // 使用 layoutPriority 让搜索按钮在空间不足时优先压缩，或者保持弹性
-            Button(action: { showSearch = true }) {
+            Button(action: {
+                FinanceAnalytics.shared.track(cardKey: "搜索", cardName: "搜索", authManager: authManager)
+                showSearch = true
+            }) {
                 HStack {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 18, weight: .bold))
@@ -155,6 +159,7 @@ struct SearchContentView: View {
                 icon: "calendar",
                 color: .orange
             ) {
+                FinanceAnalytics.shared.track(cardKey: "财报", cardName: "财报", authManager: authManager)
                 if usageManager.canProceed(authManager: authManager, action: .openEarnings) {
                     navigateToEarnings = true
                 } else {
@@ -165,12 +170,10 @@ struct SearchContentView: View {
             // 4. 【新增】复盘按钮
             ToolButton(
                 title: "复盘",
-                icon: "clock.arrow.circlepath", // 使用回溯/历史相关的图标
-                color: .purple // 使用紫色区分
+                icon: "clock.arrow.circlepath",
+                color: .purple
             ) {
-                // 这里假设复盘功能也需要权限，或者你可以直接设为 true
-                // 如果没有定义 .openHistory，可以暂时复用 .openEarnings 或不检查
-                // 这里演示直接跳转
+                FinanceAnalytics.shared.track(cardKey: "复盘", cardName: "复盘", authManager: authManager)
                 navigateToHistory = true
             }
         }

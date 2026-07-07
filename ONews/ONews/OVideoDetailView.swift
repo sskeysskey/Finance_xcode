@@ -1,49 +1,90 @@
 import SwiftUI
 
+// MARK: - ⭐ 季度解析辅助（全局）
+// 中文数字转阿拉伯数字（够用到 99）
+func chineseNumeralToInt(_ raw: String) -> Int? {
+    let s = raw.trimmingCharacters(in: .whitespaces)
+    if let n = Int(s) { return n }
+    let map: [Character: Int] = ["零":0,"一":1,"二":2,"三":3,"四":4,"五":5,
+                                 "六":6,"七":7,"八":8,"九":9,"十":10]
+    let chars = Array(s)
+    guard !chars.isEmpty else { return nil }
+    if s == "十" { return 10 }
+    if let idx = chars.firstIndex(of: "十") {
+        let before = chars[..<idx]
+        let after  = chars[(idx+1)...]
+        let tens = before.isEmpty ? 1 : (map[before.first!] ?? 0)
+        let ones = after.isEmpty ? 0 : (map[after.first!] ?? 0)
+        return tens * 10 + ones
+    }
+    var val = 0
+    for ch in chars {
+        guard let d = map[ch] else { return nil }
+        val = val * 10 + d
+    }
+    return val
+}
+
+// 从片名解析 (基础名, 季号)，如 "龙之家族 第一季" → ("龙之家族", 1)
+func videoSeasonInfo(from name: String) -> (base: String, season: Int)? {
+    let pattern = "第\\s*([0-9零一二三四五六七八九十百]+)\\s*季"
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let full = NSRange(name.startIndex..., in: name)
+    guard let match = regex.firstMatch(in: name, range: full),
+          let numRange = Range(match.range(at: 1), in: name),
+          let matchRange = Range(match.range, in: name) else { return nil }
+    guard let season = chineseNumeralToInt(String(name[numRange])) else { return nil }
+    var base = name
+    base.removeSubrange(matchRange)
+    base = base.trimmingCharacters(in: .whitespaces)
+    return (base, season)
+}
+
 // MARK: - 视频详情页
 struct VideoDetailView: View {
     let item: OVideoItem
-    @ObservedObject var dataManager: OVideoDataManager   // 新增：需要传入
-    var playSource: String = "unknown"      // ⭐ 新增，默认 unknown 兼容其它入口
+    @ObservedObject var dataManager: OVideoDataManager
+    var playSource: String = "unknown"
     @ObservedObject private var downloadManager = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
-    // 记忆用户的正序/倒序偏好，默认正序 (true)
     @AppStorage("OVideo_IsEpisodeAscending") private var isEpisodeAscending = true
 
     @State private var selectedChannelIndex = 0
     @EnvironmentObject var authManager: AuthManager
     @State private var showSubscriptionSheet = false
     @State private var navigateToPlayer = false
-    @State private var showLoginAlert = false   // ⭐ 新增
+    @State private var showLoginAlert = false
     
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
     @State private var showConsumeConfirm = false
     @State private var consumeRemaining = 0
     @State private var pendingEpisode: (name: String, url: String)? = nil
-    // ⭐ 新增：今日额度已用完的中间提示
     @State private var showQuotaExhaustedAlert = false
 
-    // 新增：搜索跳转状态
+    // ⭐ 新人礼包欢迎提示
+    @State private var showBonusWelcome = false
+    @State private var bonusWelcomeAmount = 0
+
+    // 搜索跳转
     @State private var navigateToSearch = false
     @State private var searchKeyword = ""
 
-    // 批量下载相关状态（保留原有）
+    // 批量下载
     @State private var showBatchDownloadSheet = false
     @State private var navigateToCacheView = false
 
-    // 用于记录当前点击并准备播放的剧集
     @State private var selectedEpisode: (name: String, url: String)? = nil
-    // ⭐ 新增：playlist 按需加载
     @State private var loadedChannels: [OVideoChannel] = []
     @State private var isLoadingPlaylist = true
 
-    // 对 playlist 进行过滤和排序的计算属性
+    // ⭐ 同系列其它季
+    @State private var seasonSiblings: [OVideoItem] = []
+    @State private var selectedSeasonItem: OVideoItem? = nil
+    @State private var navigateToSeason = false
+
     private var sortedPlaylist: [OVideoChannel] {
-        // 这里的有效 URL 集合逻辑保持你原有的映射过滤
-        let validURLs: Set<String> = {
-            return Set<String>()
-        }()
+        let validURLs: Set<String> = { return Set<String>() }()
 
         let indexedChannels = loadedChannels.enumerated().map { (index, channel) -> (index: Int, channel: OVideoChannel, validCount: Int, qualityScore: Int) in
             let validCount = channel.episodes.values.filter { url in
@@ -57,36 +98,24 @@ struct VideoDetailView: View {
                 let k = key.uppercased()
                 return k.contains("TC") || k.contains("TS") || k.contains("HC") || k.contains("抢先")
             }
-            
             let hasHighQuality = episodeKeys.contains { key in
                 let k = key.uppercased()
                 return k.contains("HD") || k.contains("正片")
             }
-            
-            if hasLowQuality {
-                qualityScore = 0
-            } else if hasHighQuality {
-                qualityScore = 2
-            }
+            if hasLowQuality { qualityScore = 0 }
+            else if hasHighQuality { qualityScore = 2 }
             
             return (index, channel, validCount, qualityScore)
         }
         
         let sortedIndexed = indexedChannels.sorted { a, b in
-            if a.validCount != b.validCount {
-                return a.validCount > b.validCount
-            }
-            if a.qualityScore != b.qualityScore {
-                return a.qualityScore > b.qualityScore
-            }
+            if a.validCount != b.validCount { return a.validCount > b.validCount }
+            if a.qualityScore != b.qualityScore { return a.qualityScore > b.qualityScore }
             return a.index < b.index
         }
-        
         return sortedIndexed.map { $0.channel }
     }
     
-    // ⭐ 辅助计算属性：判断当前影片是否是多集类型（Drama, Show, Anime）
-    // 如果影片只有 1 集，或者分类属于 Movie，通常不需要显示排序按钮
     private var isMultiEpisodeVideo: Bool {
         if let firstChannel = loadedChannels.first {
             return firstChannel.episodes.count > 1
@@ -94,7 +123,6 @@ struct VideoDetailView: View {
         return false
     }
 
-    // ⭐ 已缓存的"原始 url"集合（用于剧集按钮显示蓝色已下载角标）
     private var cachedOriginalURLs: Set<String> {
         var s = Set<String>()
         for (key, meta) in downloadManager.cacheMetadata where downloadManager.localBookmarks[key] != nil {
@@ -106,20 +134,14 @@ struct VideoDetailView: View {
     
     var body: some View {
         ZStack {
-            // 影院级沉浸式背景：使用海报图的超大高斯模糊作为底色
             blurBackgroundSection
             
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    // 头部基本信息（海报 + 元数据）
                     headerSection
-                    
-                    // 播放列表区域（若无链接则展示“正在洽谈”提示）
+                    seasonSection            // ⭐ 新增：同系列各季切换
                     playlistSection
-                    
-                    // 详情介绍块（演员、简介等）
                     detailsSection
-                    
                     Spacer(minLength: 40)
                 }
             }
@@ -128,8 +150,14 @@ struct VideoDetailView: View {
             VideoSearchTabView(
                 dataManager: dataManager,
                 initialKeyword: searchKeyword,
-                autoFocus: false   // 从人名点进来，不需要再弹键盘
+                autoFocus: false
             )
+        }
+        // ⭐ 切换到其它季的详情页
+        .navigationDestination(isPresented: $navigateToSeason) {
+            if let s = selectedSeasonItem {
+                VideoDetailView(item: s, dataManager: dataManager, playSource: playSource)
+            }
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -137,10 +165,9 @@ struct VideoDetailView: View {
                 navTitleView
             }
         }
-        // 隐藏的 NavigationLink，响应播放跳转
         .navigationDestination(isPresented: $navigateToPlayer) {
             if let episode = selectedEpisode {
-                let channel = sortedPlaylist[selectedChannelIndex]   // 先取出当前线路
+                let channel = sortedPlaylist[selectedChannelIndex]
                 VideoPlayerPageView(
                     episodeURL: episode.url,
                     videoTitle: "\(item.name) · \(episode.name)",
@@ -149,19 +176,16 @@ struct VideoDetailView: View {
                     episodeName: episode.name,
                     sourceURL: item.url,
                     episodes: channel.episodeItems(ascending: isEpisodeAscending),
-                    playSource: playSource          // ⭐ 新增这一行
+                    playSource: playSource
                 )
             }
         }
-        // ⭐ 新增：批量下载完成后推入缓存管理页（返回即回到详情页）
         .navigationDestination(isPresented: $navigateToCacheView) {
             VideoCacheView()
         }
-        // 订阅页弹窗
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
-        // ⭐ 新增：批量下载选择页
         .sheet(isPresented: $showBatchDownloadSheet) {
             if selectedChannelIndex < sortedPlaylist.count {
                 BatchDownloadView(
@@ -172,7 +196,6 @@ struct VideoDetailView: View {
                         : "线路 \(selectedChannelIndex + 1)",
                     isAscending: isEpisodeAscending,
                     onStartDownloads: {
-                        // 等 sheet 关闭动画结束后再跳转，避免时序冲突
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                             navigateToCacheView = true
                         }
@@ -184,22 +207,20 @@ struct VideoDetailView: View {
         .onDisappear {
             ReviewManager.shared.recordVideoInteraction()
         }
-        .alert(isGlobalEnglishMode
-            ? "Use Free Pass (\(consumeRemaining) left)"
-            : "今日免费赠送还剩\(consumeRemaining)点",
+        // ⭐ 消耗确认：文案更清晰（区分赠送/每日 + 剩余构成）
+        .alert(isGlobalEnglishMode ? "Use 1 Free Pass" : "使用免费点数",
             isPresented: $showConsumeConfirm) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
             Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
                 Task { await consumeAndPlay() }
             }
         } message: {
-            Text(isGlobalEnglishMode
-                ? "This will use 1 pass."
-                : "当前视频将消耗 1 点")
+            Text(quotaManager.consumeSourceNote(english: isGlobalEnglishMode)
+                 + "\n"
+                 + quotaManager.remainingSummary(english: isGlobalEnglishMode))
         }
-        // ⭐ 新增：额度用完的中间提示窗
         .alert(isGlobalEnglishMode
-            ? "Free Passes Used Up (0 left)"
+            ? "Free Passes Used Up"
             : "今日免费额度不足",
             isPresented: $showQuotaExhaustedAlert) {
             Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
@@ -208,8 +229,19 @@ struct VideoDetailView: View {
             }
         } message: {
             Text(isGlobalEnglishMode
-                ? "You've used all your free passes for today. Come back tomorrow for more, or subscribe now for unlimited access."
-                : "您今天的免费额度已用完，订阅后即可无限畅享所有视频。")
+                ? "You've used all your passes for now. Come back tomorrow for more free daily passes, or subscribe for unlimited access."
+                : "您的免费点数已用完，明天可再领取每日免费点数，订阅后即可无限畅享所有视频。")
+        }
+        // ⭐ 新人礼包欢迎弹窗
+        .alert(isGlobalEnglishMode ? "Welcome Gift 🎉" : "新人礼包 🎉",
+            isPresented: $showBonusWelcome) {
+            Button(isGlobalEnglishMode ? "Awesome" : "好的") {
+                quotaManager.clearBonusWelcome()
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "As a new member you've received \(bonusWelcomeAmount) welcome passes, plus \(quotaManager.dailyQuota) free passes every day. Welcome passes are used first!"
+                : "欢迎光临！已一次性赠送你 \(bonusWelcomeAmount) 个免费点数，另外每天还可免费领取 \(quotaManager.dailyQuota) 点。")
         }
         .alert(isGlobalEnglishMode ? "Sign in to Watch Free" : "登录后免费观看",
             isPresented: $showLoginAlert) {
@@ -219,16 +251,34 @@ struct VideoDetailView: View {
             }
         } message: {
             Text(isGlobalEnglishMode
-                ? "Sign in (free, no purchase needed) to unlock your free daily passes."
-                : "登录后即可获得每日免费观看点数，登录无需付费。")
+                ? "Sign in (free, no purchase needed) to get a welcome gift plus free daily passes."
+                : "登录后即可领取新人礼包和每日免费观看点数，登录无需付费。")
         }
         .onChange(of: authManager.isLoggedIn) { loggedIn in
             if loggedIn {
                 Task { await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
             }
         }
+        // ⭐ 监听礼包发放（会员不弹礼包，直接清除）
+        .onChange(of: quotaManager.pendingBonusWelcome) { v in
+            guard v > 0 else { return }
+            if authManager.isSubscribed {
+                quotaManager.clearBonusWelcome()          // 会员随便看，无需礼包
+            } else {
+                bonusWelcomeAmount = v
+                showBonusWelcome = true
+            }
+        }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
+            if quotaManager.pendingBonusWelcome > 0 {
+                if authManager.isSubscribed {
+                    quotaManager.clearBonusWelcome()      // ⭐ 会员不弹礼包
+                } else {
+                    bonusWelcomeAmount = quotaManager.pendingBonusWelcome
+                    showBonusWelcome = true
+                }
+            }
             if loadedChannels.isEmpty {
                 let channels = await dataManager.fetchPlaylist(url: item.url)
                 await MainActor.run {
@@ -236,14 +286,140 @@ struct VideoDetailView: View {
                     isLoadingPlaylist = false
                 }
             }
+            await loadSeasonSiblingsIfNeeded()
         }
     }
-    
-    // MARK: - 导航栏标题（过长自动两行）
+
+    // MARK: - ⭐ 加载同系列其它季
+    private func loadSeasonSiblingsIfNeeded() async {
+        guard seasonSiblings.isEmpty,
+              let info = videoSeasonInfo(from: item.name),
+              !info.base.isEmpty else { return }
+
+        let uid = FreeQuotaManager.currentUserId(auth: authManager)
+        let results = await dataManager.search(keyword: info.base, userId: uid)
+
+        // 只保留同一基础名且能解析出季号的条目
+        let sameSeries = results.filter { cand in
+            guard let ci = videoSeasonInfo(from: cand.name) else { return false }
+            return ci.base == info.base
+        }
+        // 去重 + 保证当前季在列表内
+        var seen = Set<String>()
+        var unique = sameSeries.filter { seen.insert($0.url).inserted }
+        if !unique.contains(where: { $0.url == item.url }) {
+            unique.append(item)
+        }
+        let sorted = unique.sorted {
+            (videoSeasonInfo(from: $0.name)?.season ?? 0) < (videoSeasonInfo(from: $1.name)?.season ?? 0)
+        }
+        await MainActor.run {
+            seasonSiblings = sorted.count > 1 ? sorted : []
+        }
+    }
+
+    // MARK: - ⭐ 各季切换区块
+    @ViewBuilder
+    private var seasonSection: some View {
+        if seasonSiblings.count > 1 {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.stack.3d.up.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.accentColor)
+                    Text(isGlobalEnglishMode ? "All Seasons" : "选择季")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.primary)
+                    Text("\(seasonSiblings.count)")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.accentColor))
+                }
+                .padding(.horizontal, 16)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(seasonSiblings, id: \.url) { s in
+                            let isCurrent = (s.url == item.url)
+                            Button {
+                                if !isCurrent {
+                                    selectedSeasonItem = s
+                                    navigateToSeason = true
+                                }
+                            } label: {
+                                seasonChip(for: s, isCurrent: isCurrent)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isCurrent)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
+        }
+    }
+
+    private func seasonLabel(for s: OVideoItem) -> String {
+        if let info = videoSeasonInfo(from: s.name) {
+            return isGlobalEnglishMode ? "S\(info.season)" : "第\(info.season)季"
+        }
+        return s.name
+    }
+
+    private func seasonChip(for s: OVideoItem, isCurrent: Bool) -> some View {
+        VStack(spacing: 6) {
+            Group {
+                if let name = s.image, !name.isEmpty, let url = OVideoAPI.coverURL(for: name) {
+                    CachedAsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let img):
+                            img.resizable().scaledToFill()
+                        default:
+                            ZStack {
+                                Color.gray.opacity(0.12)
+                                Image(systemName: "film").foregroundColor(.secondary.opacity(0.5))
+                            }
+                        }
+                    }
+                } else {
+                    ZStack {
+                        Color.gray.opacity(0.12)
+                        Image(systemName: "film").foregroundColor(.secondary.opacity(0.5))
+                    }
+                }
+            }
+            .frame(width: 72, height: 100)
+            .clipped()
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isCurrent ? Color.accentColor : Color.white.opacity(0.15),
+                            lineWidth: isCurrent ? 2 : 1)
+            )
+            .overlay(alignment: .bottomLeading) {
+                if isCurrent {
+                    Text(isGlobalEnglishMode ? "Now" : "当前")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.accentColor))
+                        .padding(4)
+                }
+            }
+
+            Text(seasonLabel(for: s))
+                .font(.system(size: 11, weight: isCurrent ? .bold : .medium))
+                .foregroundColor(isCurrent ? .accentColor : .secondary)
+                .lineLimit(1)
+        }
+        .frame(width: 72)
+    }
+
+    // MARK: - 导航栏标题
     private var navTitleView: some View {
         let hasInfo = (item.info != nil && !item.info!.isEmpty)
         let combined = hasInfo ? "\(item.name) · \(item.info!)" : item.name
-        // 阈值：中英文混排时 14 个字符大致是单行能容纳的上限，可按需微调
         let isLong = combined.count > 14
 
         return Group {
@@ -296,15 +472,13 @@ struct VideoDetailView: View {
     // MARK: - 2. 头部海报与元数据
     private var headerSection: some View {
         HStack(alignment: .top, spacing: 18) {
-            // 3D 质感海报
             Group {
                 if let imageName = item.image, !imageName.isEmpty,
                    let url = OVideoAPI.coverURL(for: imageName) {
                     CachedAsyncImage(url: url) { phase in
                         switch phase {
                         case .success(let img):
-                            img.resizable()
-                               .scaledToFill()
+                            img.resizable().scaledToFill()
                         default:
                             ZStack {
                                 Color.gray.opacity(0.1)
@@ -332,20 +506,17 @@ struct VideoDetailView: View {
                     .stroke(Color.white.opacity(0.15), lineWidth: 1)
             )
             
-            // 影片元数据
             VStack(alignment: .leading, spacing: 8) {
                 VStack(alignment: .leading, spacing: 5) {
                     if let alias = item.alias, !alias.isEmpty {
                         infoRow(label: isGlobalEnglishMode ? "Alias" : "又名", value: alias)
                     }
-                    // 导演（支持 "、" 分隔的多人）
                     if let director = item.director, !director.isEmpty {
                         let directors = director.split(separator: "、")
                                                 .map { $0.trimmingCharacters(in: .whitespaces) }
                                                 .filter { !$0.isEmpty }
                         clickableNamesRow(label: isGlobalEnglishMode ? "Director" : "导演", names: directors)
                     }
-                    // 主演（前两位）
                     if !item.starringCast.isEmpty {
                         clickableNamesRow(label: isGlobalEnglishMode ? "Starring" : "主演", names: item.starringCast)
                     }
@@ -361,27 +532,21 @@ struct VideoDetailView: View {
                     }
                 }
                 
-                // 评分标签显示逻辑（弱化颜色纯度，改用更优雅的低饱和度配色）
                 if let ratings = item.ratings {
-                    // 过滤掉 value 为空的数据
                     let validRatings = ratings.filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }
-                    
                     if !validRatings.isEmpty {
                         HStack(spacing: 8) {
                             ForEach(validRatings.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
                                 let color = ratingColor(for: key)
                                 HStack(spacing: 4) {
-                                    Text(key)
-                                        .font(.system(size: 9, weight: .medium))
-                                    Text(value)
-                                        .font(.system(size: 11, weight: .bold))
+                                    Text(key).font(.system(size: 9, weight: .medium))
+                                    Text(value).font(.system(size: 11, weight: .bold))
                                 }
-                                .foregroundColor(color.opacity(0.85)) // 稍微降低饱和度
+                                .foregroundColor(color.opacity(0.85))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(color.opacity(0.06)) // 减弱背景色
+                                    RoundedRectangle(cornerRadius: 6).fill(color.opacity(0.06))
                                 )
                             }
                         }
@@ -395,14 +560,13 @@ struct VideoDetailView: View {
         .padding(.top, 16)
     }
     
-    // MARK: - 3. 播放列表与"洽谈中"无链接提醒
+    // MARK: - 3. 播放列表
     private var playlistSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Divider()
                 .background(Color.secondary.opacity(0.1))
                 .padding(.horizontal, 16)
 
-            // ⭐ 标题行：右侧放「正序/倒序」「批量缓存/缓存」
             HStack(spacing: 8) {
                 Text(isGlobalEnglishMode ? "Episodes" : "播放列表")
                     .font(.system(size: 17, weight: .bold))
@@ -411,7 +575,6 @@ struct VideoDetailView: View {
                 Spacer()
 
                 if !isLoadingPlaylist && !sortedPlaylist.isEmpty {
-                    // 正序 / 倒序切换（仅多集影片显示）
                     if isMultiEpisodeVideo {
                         Button {
                             withAnimation(.easeInOut(duration: 0.2)) {
@@ -439,7 +602,6 @@ struct VideoDetailView: View {
                         }
                     }
 
-                    // 缓存（单集显示「缓存」，多集显示「批量缓存」）
                     Button {
                         showBatchDownloadSheet = true
                     } label: {
@@ -471,7 +633,6 @@ struct VideoDetailView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 28)
             } else if sortedPlaylist.isEmpty {
-                // 无链接洽谈中提示卡片
                 VStack(spacing: 12) {
                     Image(systemName: "hourglass.badge.plus")
                         .font(.system(size: 36))
@@ -487,17 +648,14 @@ struct VideoDetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 28)
                 .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.secondary.opacity(0.06))
+                    RoundedRectangle(cornerRadius: 16).fill(Color.secondary.opacity(0.06))
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.orange.opacity(0.15), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 16).stroke(Color.orange.opacity(0.15), lineWidth: 1)
                 )
                 .padding(.horizontal, 16)
 
             } else {
-                // 线路选择 Tab（FlowLayout 自动换行，不抢横向手势，左滑返回正常）
                 FlowLayout(spacing: 8) {
                     ForEach(Array(sortedPlaylist.enumerated()), id: \.offset) { idx, ch in
                         Button {
@@ -527,7 +685,6 @@ struct VideoDetailView: View {
                 }
                 .padding(.horizontal, 16)
 
-                // 剧集网格
                 if selectedChannelIndex < sortedPlaylist.count {
                     let channel = sortedPlaylist[selectedChannelIndex]
                     let sortedEps = channel.sortedEpisodes(ascending: isEpisodeAscending)
@@ -563,7 +720,6 @@ struct VideoDetailView: View {
                                         )
 
                                     if cachedOriginalURLs.contains(episode.url) {
-                                        // ⭐ 已下载：蓝色下载角标
                                         Image(systemName: "arrow.down.circle.fill")
                                             .font(.system(size: 8))
                                             .foregroundColor(.white)
@@ -603,14 +759,13 @@ struct VideoDetailView: View {
         switch decideVideoAccess(episodeKey: episode.url, auth: authManager, quota: quotaManager) {
         case .allowed:
             navigateToPlayer = true
-        case .needLogin:                 // ⭐ 新增
+        case .needLogin:
             showLoginAlert = true
         case .needConsume(let r):
             pendingEpisode = episode
             consumeRemaining = r
             showConsumeConfirm = true
         case .exhausted:
-            // ⭐ 修改：先弹"今日额度用完"提示，而不是直接进订阅页
             showQuotaExhaustedAlert = true
         }
     }
@@ -626,11 +781,11 @@ struct VideoDetailView: View {
         case .quotaExceeded:
             showSubscriptionSheet = true
         case .failed:
-            showSubscriptionSheet = true   // 网络异常兜底，也可改成 toast 提示
+            showSubscriptionSheet = true
         }
     }
     
-    // MARK: - 4. 详情介绍块（演员与简介）
+    // MARK: - 4. 详情介绍块
     private var detailsSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             if !item.otherCast.isEmpty || (item.intro != nil && !item.intro!.isEmpty) {
@@ -639,7 +794,6 @@ struct VideoDetailView: View {
                     .padding(.horizontal, 16)
             }
             
-            // 其他演员 - 使用新的区块样式
             if !item.otherCast.isEmpty {
                 clickableNamesBlock(
                     title: isGlobalEnglishMode ? "Other Cast" : "其他演员", 
@@ -647,21 +801,18 @@ struct VideoDetailView: View {
                 )
             }
             
-            // 剧情简介
             if let intro = item.intro, !intro.isEmpty {
                 sectionBlock(title: isGlobalEnglishMode ? "Synopsis" : "剧情简介", content: intro)
             }
         }
     }
 
-    // MARK: - 可点击人名区块（弱化背景与颜色，使其不喧宾夺主）
     private func clickableNamesBlock(title: String, names: [String]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.system(size: 14, weight: .bold))
                 .foregroundColor(.primary)
             
-            // 使用 FlowLayout 来容纳多个标签，允许换行
             FlowLayout(spacing: 6) {
                 ForEach(names, id: \.self) { name in
                     let cleaned = cleanName(name)
@@ -671,28 +822,26 @@ struct VideoDetailView: View {
                     } label: {
                         Text(cleaned)
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.accentColor) // ⭐ 调整为蓝色，增强可点击感知
+                            .foregroundColor(.accentColor)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.accentColor.opacity(0.08)) // ⭐ 调整为淡蓝色背景
+                                RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.08))
                             )
                     }
-                    .buttonStyle(.plain) // 确保按钮样式不影响布局
+                    .buttonStyle(.plain)
                 }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.secondary.opacity(0.03))
+            RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.03))
         )
         .padding(.horizontal, 16)
     }
 
-    // MARK: - 5. 辅助视图组件
+    // MARK: - 5. 辅助视图
     private func infoRow(label: String, value: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Text("\(label):")
@@ -720,21 +869,18 @@ struct VideoDetailView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.secondary.opacity(0.03))
+            RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.03))
         )
         .padding(.horizontal, 16)
     }
     
-    // MARK: - 评分颜色辅助
     private func ratingColor(for key: String) -> Color {
         let k = key.lowercased()
         if k.contains("豆瓣") { return .green }
         if k.contains("imdb") { return .orange }
-        return .secondary // 默认使用次要灰色
+        return .secondary
     }
     
-    // MARK: - 可点击人名行（弱化颜色）
     private func clickableNamesRow(label: String, names: [String]) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Text("\(label):")
@@ -744,7 +890,6 @@ struct VideoDetailView: View {
             
             FlowLayout(spacing: 6) {
                 ForEach(names, id: \.self) { name in
-                    // ⭐ 修改：对名字进行中英文清洗，提取出最核心的中文或英文
                     let cleaned = cleanName(name)
                     Button {
                         searchKeyword = cleaned
@@ -752,12 +897,11 @@ struct VideoDetailView: View {
                     } label: {
                         Text(cleaned)
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.accentColor) // ⭐ 调整为蓝色，增强可点击感知
+                            .foregroundColor(.accentColor)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color.accentColor.opacity(0.08)) // ⭐ 调整为淡蓝色背景
+                                RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.08))
                             )
                     }
                     .buttonStyle(.plain)
@@ -772,50 +916,44 @@ struct BatchDownloadView: View {
     let channel: OVideoChannel
     let channelDisplayName: String
     let isAscending: Bool
-    /// 下载成功发起后回调（用于父级跳转到缓存管理页）
     let onStartDownloads: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var authManager: AuthManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @ObservedObject private var downloadManager = HLSDownloadManager.shared
-    @ObservedObject private var quotaManager = FreeQuotaManager.shared   // ⭐ 新增
-    @ObservedObject private var network = NetworkMonitor.shared   // ⭐ 新增
-    @State private var showCellularAlert = false                  // ⭐ 新增
-    @State private var pendingCellularBatch: [(name: String, url: String)] = []  // ⭐ 新增
+    @ObservedObject private var quotaManager = FreeQuotaManager.shared
+    @ObservedObject private var network = NetworkMonitor.shared
+    @State private var showCellularAlert = false
+    @State private var pendingCellularBatch: [(name: String, url: String)] = []
 
     @State private var selectedURLs: Set<String> = []
     @State private var isProcessing = false
     @State private var processedCount = 0
     @State private var showSubscriptionSheet = false
-    @State private var showQuotaExhaustedAlert = false   // ⭐ 新增：额度不足提示
+    @State private var showQuotaExhaustedAlert = false
 
     @State private var pendingBatch: [(name: String, url: String)] = []
     @State private var batchConsumeCount = 0
     @State private var showBatchConsumeConfirm = false
 
-    // ⭐ 剧集状态枚举
     private enum EpisodeStatus {
-        case available    // 可下载
-        case downloading  // 已在下载队列（含暂停）
-        case cached       // 已缓存完成
+        case available
+        case downloading
+        case cached
     }
 
     private var episodes: [(name: String, url: String)] {
         channel.sortedEpisodes(ascending: isAscending)
     }
 
-    // ⭐ 核心：根据 cacheMetadata.title 反查「已占用」的标题集合
-    // key = 标题（"片名 · 集名"），value = 状态
     private var occupiedStatusByTitle: [String: EpisodeStatus] {
         var map: [String: EpisodeStatus] = [:]
-        // 1) 下载队列中（含进行中/暂停）
         for url in downloadManager.downloadProgress.keys {
             if let t = downloadManager.cacheMetadata[url]?.title {
                 map[t] = .downloading
             }
         }
-        // 2) 已缓存完成（优先级更高，覆盖 downloading）
         for url in downloadManager.localBookmarks.keys {
             if let t = downloadManager.cacheMetadata[url]?.title {
                 map[t] = .cached
@@ -824,22 +962,18 @@ struct BatchDownloadView: View {
         return map
     }
 
-    // ⭐ 某一集的预期标题（与单集/批量下载写入的标题格式保持一致）
     private func expectedTitle(for ep: (name: String, url: String)) -> String {
         "\(item.name) · \(ep.name)"
     }
 
-    // ⭐ 查询某一集的状态
     private func status(for ep: (name: String, url: String)) -> EpisodeStatus {
         occupiedStatusByTitle[expectedTitle(for: ep)] ?? .available
     }
 
-    // ⭐ 仅「可下载」的剧集
     private var selectableEpisodes: [(name: String, url: String)] {
         episodes.filter { status(for: $0) == .available }
     }
 
-    // ⭐ 全选判断只针对可下载剧集
     private var allSelected: Bool {
         !selectableEpisodes.isEmpty && selectedURLs.count == selectableEpisodes.count
     }
@@ -857,12 +991,11 @@ struct BatchDownloadView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         headerCard
                         episodeGrid
-                        Spacer(minLength: 120) // 给底部悬浮栏留空间
+                        Spacer(minLength: 120)
                     }
                     .padding(.top, 12)
                 }
 
-                // 底部悬浮下载栏
                 VStack {
                     Spacer()
                     bottomBar
@@ -884,7 +1017,6 @@ struct BatchDownloadView: View {
                             if allSelected {
                                 selectedURLs.removeAll()
                             } else {
-                                // ⭐ 只全选「可下载」的剧集
                                 selectedURLs = Set(selectableEpisodes.map { $0.url })
                             }
                         }
@@ -894,43 +1026,37 @@ struct BatchDownloadView: View {
                              : (isGlobalEnglishMode ? "Select All" : "全选"))
                             .font(.system(size: 14, weight: .medium))
                     }
-                    // ⭐ 没有任何可下载剧集时禁用全选
                     .disabled(selectableEpisodes.isEmpty)
                 }
             }
             .sheet(isPresented: $showSubscriptionSheet) {
                 SubscriptionView()
             }
-            // ⭐ 新增：批量消耗确认窗（根据数量动态文案）
-            .alert(isGlobalEnglishMode
-                ? "Use Free Passes (\(quotaManager.remaining) left)"
-                : "今日免费赠送还剩\(quotaManager.remaining)点",
+            // ⭐ 批量消耗确认（文案更清晰）
+            .alert(isGlobalEnglishMode ? "Use Free Passes" : "使用免费点数",
                 isPresented: $showBatchConsumeConfirm) {
                 Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
                 Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
                     Task { await confirmBatchDownload() }
                 }
             } message: {
-                Text(isGlobalEnglishMode
-                    ? "This will use \(batchConsumeCount) passes."
-                    : "当前操作将消耗 \(batchConsumeCount) 点")
+                Text((isGlobalEnglishMode
+                    ? "This will use \(batchConsumeCount) passes (welcome passes used first).\n"
+                    : "本次操作将消耗 \(batchConsumeCount) 点\n")
+                    + quotaManager.remainingSummary(english: isGlobalEnglishMode))
             }
-
-            // ⭐ 新增：额度不足提示窗（和详情页保持一致）
-            .alert(isGlobalEnglishMode
-                ? "Free Passes Used Up (\(quotaManager.remaining) left)"
-                : "今日免费赠送仅剩\(quotaManager.remaining)点",
+            // ⭐ 额度不足提示
+            .alert(isGlobalEnglishMode ? "Not Enough Passes" : "免费点数不足",
                 isPresented: $showQuotaExhaustedAlert) {
                 Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
                 Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
                     showSubscriptionSheet = true
                 }
             } message: {
-                Text(isGlobalEnglishMode
-                    ? "You need \(batchConsumeCount) passes but only have \(quotaManager.remaining) left. Come back tomorrow for more, or subscribe now for unlimited access."
-                    : "当前操作需消耗 \(batchConsumeCount) 点。订阅后即可无限畅享所有视频。")
+                Text((isGlobalEnglishMode
+                    ? "You need \(batchConsumeCount) passes. \(quotaManager.remainingSummary(english: true)). Subscribe for unlimited access."
+                    : "本次操作需消耗 \(batchConsumeCount) 点，当前\(quotaManager.remainingSummary(english: false))。订阅后即可无限畅享所有视频。"))
             }
-            // ⭐ 新增：批量下载蜂窝提醒（每次都提醒）
             .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示",
                 isPresented: $showCellularAlert) {
                 Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {
@@ -948,7 +1074,6 @@ struct BatchDownloadView: View {
         }
     }
 
-    // MARK: - 头部信息卡
     private var headerCard: some View {
         HStack(spacing: 14) {
             coverThumb
@@ -963,7 +1088,6 @@ struct BatchDownloadView: View {
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.accentColor.opacity(0.12)))
 
-                // ⭐ 文案区分「可缓存」和「已被占用」
                 let occupiedCount = episodes.count - selectableEpisodes.count
                 if occupiedCount > 0 {
                     Text(isGlobalEnglishMode
@@ -983,8 +1107,7 @@ struct BatchDownloadView: View {
         }
         .padding(14)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.ultraThinMaterial)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -1014,7 +1137,6 @@ struct BatchDownloadView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    // MARK: - 剧集网格
     private var episodeGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 10)], spacing: 10) {
             ForEach(episodes, id: \.url) { ep in
@@ -1036,16 +1158,13 @@ struct BatchDownloadView: View {
                 else { selectedURLs.insert(ep.url) }
             }
         } label: {
-            HStack(alignment: .top, spacing: 8) {   // ⭐ .top 保证图标与文本顶部对齐
-                // 左侧图标
+            HStack(alignment: .top, spacing: 8) {
                 Group {
                     switch st {
                     case .cached:
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
+                        Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
                     case .downloading:
-                        Image(systemName: "arrow.down.circle.fill")
-                            .foregroundColor(.orange)
+                        Image(systemName: "arrow.down.circle.fill").foregroundColor(.orange)
                     case .available:
                         Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                             .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.5))
@@ -1053,17 +1172,15 @@ struct BatchDownloadView: View {
                 }
                 .font(.system(size: 18))
 
-                // ⭐ 垂直布局：标题 + 状态标签
                 VStack(alignment: .leading, spacing: 4) {
                     Text(ep.name)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(isOccupied ? .secondary : .primary)
-                        .lineLimit(2)                    // ⭐ 核心1：允许两行
-                        .minimumScaleFactor(0.8)         // ⭐ 核心2：空间不够时自动缩字
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    // ⭐ 核心3：状态标签单独放一行，右对齐
                     if st != .available {
                         HStack {
                             Spacer(minLength: 0)
@@ -1099,7 +1216,6 @@ struct BatchDownloadView: View {
         .disabled(isOccupied)
     }
 
-    // MARK: - 底部下载栏
     private var bottomBar: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
@@ -1148,7 +1264,6 @@ struct BatchDownloadView: View {
         .padding(.bottom, 12)
     }
 
-    // MARK: - 处理中遮罩
     private var processingOverlay: some View {
         ZStack {
             Color.black.opacity(0.35).ignoresSafeArea()
@@ -1162,54 +1277,43 @@ struct BatchDownloadView: View {
             }
             .padding(28)
             .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.black.opacity(0.55))
+                RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.black.opacity(0.55))
             )
         }
     }
 
-    // MARK: - 下载逻辑
     private func startBatchDownload() {
-        // 移除原来的 guard authManager.canAccessVideoContent() ...
-        
         let selected = episodes.filter {
             selectedURLs.contains($0.url) && status(for: $0) == .available
         }
         guard !selected.isEmpty else { return }
 
-        // 订阅用户直接下载
         if authManager.isSubscribed {
             performDownloadsWithNetworkCheck(selected)
             return
         }
 
-        // 需要新消耗点数的集（未解锁的）
         let newOnes = selected.filter { !quotaManager.isUnlocked($0.url) }
         if newOnes.isEmpty {
             performDownloadsWithNetworkCheck(selected)
             return
         }
 
-        // 记录本点需要消耗的数量，给提示文案用
         batchConsumeCount = newOnes.count
 
-        // 额度不够 → 先弹"额度不足"提示，而不是直接进订阅页
         if quotaManager.remaining < newOnes.count {
             showQuotaExhaustedAlert = true
             return
         }
 
-        // 额度足够 → 弹确认窗
         pendingBatch = selected
         showBatchConsumeConfirm = true
     }
 
-    // ⭐ 新增：用户确认后调用
     private func confirmBatchDownload() async {
         let selected = pendingBatch
         guard !selected.isEmpty else { return }
         
-        // 对未解锁的逐个消耗
         let uid = FreeQuotaManager.currentUserId(auth: authManager)
         let newOnes = selected.filter { !FreeQuotaManager.shared.isUnlocked($0.url) }
         for ep in newOnes {
@@ -1223,7 +1327,6 @@ struct BatchDownloadView: View {
         }
     }
 
-    // ⭐ 把原来的下载逻辑抽成 performDownloads
     private func performDownloads(_ selected: [(name: String, url: String)]) {
         isProcessing = true
         processedCount = 0
@@ -1240,7 +1343,7 @@ struct BatchDownloadView: View {
                             seriesTitle: item.name,
                             episodeName: ep.name,
                             episodeKey: ep.url,
-                            sourceURL: item.url            // ⭐ 新增
+                            sourceURL: item.url
                         )
                         processedCount += 1
                     }
@@ -1256,7 +1359,6 @@ struct BatchDownloadView: View {
         }
     }
     
-    // ⭐ 新增：下载前先做蜂窝检查
     private func performDownloadsWithNetworkCheck(_ selected: [(name: String, url: String)]) {
         if !network.isWiFi {
             pendingCellularBatch = selected
@@ -1264,5 +1366,33 @@ struct BatchDownloadView: View {
         } else {
             performDownloads(selected)
         }
+    }
+}
+
+// MARK: - 修复：横向 ScrollView 不拦截左边缘返回手势
+extension UINavigationController: UIGestureRecognizerDelegate {
+    override open func viewDidLoad() {
+        super.viewDidLoad()
+        interactivePopGestureRecognizer?.delegate = self
+    }
+    
+    public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        // 根视图不允许返回
+        if viewControllers.count <= 1 {
+            return false
+        }
+        
+        // 关键：只在【左边缘】触发返回，ScrollView 中间滑动不受影响
+        if gestureRecognizer == interactivePopGestureRecognizer {
+            let location = gestureRecognizer.location(in: view)
+            return location.x <= 20 // 仅屏幕左侧 20pt 区域触发返回
+        }
+        
+        return true
+    }
+    
+    // 禁止 ScrollView 手势与返回手势同时生效，确保边缘滑动优先返回
+    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        return false
     }
 }
