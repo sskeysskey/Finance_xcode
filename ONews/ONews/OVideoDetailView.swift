@@ -25,18 +25,91 @@ func chineseNumeralToInt(_ raw: String) -> Int? {
     return val
 }
 
-// 从片名解析 (基础名, 季号)，如 "龙之家族 第一季" → ("龙之家族", 1)
+// 罗马数字转整数（I V X L 组合）
+func romanNumeralToInt(_ raw: String) -> Int? {
+    let map: [Character: Int] = ["I":1,"V":5,"X":10,"L":50,"C":100,"D":500,"M":1000]
+    let chars = Array(raw.uppercased())
+    guard !chars.isEmpty else { return nil }
+    var total = 0, prev = 0
+    for ch in chars.reversed() {
+        guard let v = map[ch] else { return nil }
+        if v < prev { total -= v } else { total += v; prev = v }
+    }
+    return total > 0 ? total : nil
+}
+
+// 从片名解析 (基础名, 季/部号)。支持：
+//   第X季 / 洛奇2 / 洛奇4：最后的决战 / 冲上云霄II / 绝望一
+//   无任何标记 → 视为第 1 部（base 为整名），以便与后续续集归为同系列
 func videoSeasonInfo(from name: String) -> (base: String, season: Int)? {
+    let trimmed = name.trimmingCharacters(in: .whitespaces)
+    guard !trimmed.isEmpty else { return nil }
+
+    if let r = seasonByExplicitMarker(trimmed) { return r }   // 1. 第X季
+    if let r = seasonByRomanSuffix(trimmed)    { return r }   // 2. 冲上云霄II
+    if let r = seasonByArabicSuffix(trimmed)   { return r }   // 3. 洛奇2 / 洛奇4：xxx
+    if let r = seasonByChineseSuffix(trimmed)  { return r }   // 4. 绝望一
+    return (trimmed, 1)                                       // 5. 无标记 → 第1部
+}
+
+// 1. 第X季
+private func seasonByExplicitMarker(_ name: String) -> (base: String, season: Int)? {
     let pattern = "第\\s*([0-9零一二三四五六七八九十百]+)\\s*季"
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
     let full = NSRange(name.startIndex..., in: name)
     guard let match = regex.firstMatch(in: name, range: full),
           let numRange = Range(match.range(at: 1), in: name),
-          let matchRange = Range(match.range, in: name) else { return nil }
-    guard let season = chineseNumeralToInt(String(name[numRange])) else { return nil }
+          let matchRange = Range(match.range, in: name),
+          let season = chineseNumeralToInt(String(name[numRange])) else { return nil }
     var base = name
     base.removeSubrange(matchRange)
     base = base.trimmingCharacters(in: .whitespaces)
+    return (base, season)
+}
+
+// 2. 结尾罗马数字：冲上云霄II
+private func seasonByRomanSuffix(_ name: String) -> (base: String, season: Int)? {
+    let pattern = "^(.*?)\\s*([IVXL]{1,7})$"
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let full = NSRange(name.startIndex..., in: name)
+    guard let match = regex.firstMatch(in: name, range: full),
+          let baseRange = Range(match.range(at: 1), in: name),
+          let romanRange = Range(match.range(at: 2), in: name) else { return nil }
+    let base = String(name[baseRange]).trimmingCharacters(in: .whitespaces)
+    guard !base.isEmpty else { return nil }
+    // base 结尾若是 ASCII 字母，多半是英文单词末尾（如 MIX），放弃
+    if let last = base.last, last.isLetter, last.isASCII { return nil }
+    guard let season = romanNumeralToInt(String(name[romanRange])),
+          season >= 1, season <= 39 else { return nil }
+    return (base, season)
+}
+
+// 3. 结尾阿拉伯数字（可带副标题）：洛奇2 / 洛奇4：最后的决战
+private func seasonByArabicSuffix(_ name: String) -> (base: String, season: Int)? {
+    let pattern = "^(\\D+?)([0-9]{1,3})(?:[：:\\s\\-—·].*)?$"
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let full = NSRange(name.startIndex..., in: name)
+    guard let match = regex.firstMatch(in: name, range: full),
+          let baseRange = Range(match.range(at: 1), in: name),
+          let numRange = Range(match.range(at: 2), in: name) else { return nil }
+    let base = String(name[baseRange]).trimmingCharacters(in: .whitespaces)
+    guard !base.isEmpty, let season = Int(String(name[numRange])),
+          season >= 1, season <= 99 else { return nil }
+    return (base, season)
+}
+
+// 4. 结尾中文数字：绝望一 / 绝望二
+private func seasonByChineseSuffix(_ name: String) -> (base: String, season: Int)? {
+    let numerals = "零一二三四五六七八九十"
+    let pattern = "^(.*?[^\(numerals)])([\(numerals)]{1,3})$"
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let full = NSRange(name.startIndex..., in: name)
+    guard let match = regex.firstMatch(in: name, range: full),
+          let baseRange = Range(match.range(at: 1), in: name),
+          let numRange = Range(match.range(at: 2), in: name) else { return nil }
+    let base = String(name[baseRange]).trimmingCharacters(in: .whitespaces)
+    guard !base.isEmpty, let season = chineseNumeralToInt(String(name[numRange])),
+          season >= 1, season <= 99 else { return nil }
     return (base, season)
 }
 
@@ -83,17 +156,31 @@ struct VideoDetailView: View {
     @State private var selectedSeasonItem: OVideoItem? = nil
     @State private var navigateToSeason = false
 
-    private var sortedPlaylist: [OVideoChannel] {
-        let validURLs: Set<String> = { return Set<String>() }()
+    // 计算某线路"去重后的实际集数"：把 粤语01/国语01 之类同集号的语种变体算作 1 集
+    private func distinctEpisodeCount(_ channel: OVideoChannel) -> Int {
+        var seen = Set<String>()
+        for key in channel.episodes.keys {
+            let digits = key.filter { $0.isNumber }
+            if digits.isEmpty {
+                seen.insert(key)                 // 无数字(正片/HD等)按原名去重
+            } else if let n = Int(digits) {
+                seen.insert("n\(n)")             // "01"/"1" 归一为同一集
+            } else {
+                seen.insert(digits)
+            }
+        }
+        return seen.count
+    }
 
-        let indexedChannels = loadedChannels.enumerated().map { (index, channel) -> (index: Int, channel: OVideoChannel, validCount: Int, qualityScore: Int) in
-            let validCount = channel.episodes.values.filter { url in
-                validURLs.isEmpty ? true : validURLs.contains(url)
-            }.count
+    private var sortedPlaylist: [OVideoChannel] {
+        let indexedChannels = loadedChannels.enumerated().map {
+            (index, channel) -> (index: Int, channel: OVideoChannel,
+                                distinctCount: Int, totalCount: Int, qualityScore: Int) in
+            let distinctCount = distinctEpisodeCount(channel)   // 实际集数（去重语种）
+            let totalCount = channel.episodes.count             // 总链接数（作次级依据）
 
             var qualityScore = 1
             let episodeKeys = channel.episodes.keys
-            
             let hasLowQuality = episodeKeys.contains { key in
                 let k = key.uppercased()
                 return k.contains("TC") || k.contains("TS") || k.contains("HC") || k.contains("抢先")
@@ -104,14 +191,15 @@ struct VideoDetailView: View {
             }
             if hasLowQuality { qualityScore = 0 }
             else if hasHighQuality { qualityScore = 2 }
-            
-            return (index, channel, validCount, qualityScore)
+
+            return (index, channel, distinctCount, totalCount, qualityScore)
         }
-        
+
         let sortedIndexed = indexedChannels.sorted { a, b in
-            if a.validCount != b.validCount { return a.validCount > b.validCount }
-            if a.qualityScore != b.qualityScore { return a.qualityScore > b.qualityScore }
-            return a.index < b.index
+            if a.distinctCount != b.distinctCount { return a.distinctCount > b.distinctCount } // 1. 实际集数
+            if a.totalCount   != b.totalCount     { return a.totalCount   > b.totalCount }     // 2. 总链接数
+            if a.qualityScore != b.qualityScore   { return a.qualityScore > b.qualityScore }   // 3. 画质
+            return a.index < b.index                                                           // 4. 原始顺序
         }
         return sortedIndexed.map { $0.channel }
     }

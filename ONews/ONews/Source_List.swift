@@ -106,6 +106,9 @@ struct UserProfileView: View {
     // 【新增】获取 ResourceManager
     @EnvironmentObject var resourceManager: ResourceManager
     @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var predictionSyncManager: PredictionSyncManager
+    @State private var showPrediction = false
+    @State private var predictionDefaultSource = "polymarket"
     // 【新增】为了让界面随语言刷新
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false 
     
@@ -181,6 +184,33 @@ struct UserProfileView: View {
                                     Text(isGlobalEnglishMode ? "Upgrade to Premium" : "升级专业版")
                                         .foregroundColor(.primary)
                                         .fontWeight(.medium)
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                }
+                            }
+                        }
+                    }
+
+                    // 【新增】预测市场入口（从首页迁移到此）
+                    if predictionSyncManager.hasPolymarketAvailable || predictionSyncManager.hasKalshiAvailable {
+                        Section {
+                            Button {
+                                predictionDefaultSource = predictionSyncManager.hasPolymarketAvailable ? "polymarket" : "kalshi"
+                                showPrediction = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "chart.bar.xaxis.ascending")
+                                        .foregroundColor(.purple)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(isGlobalEnglishMode ? "Prediction Markets" : "预测市场")
+                                            .foregroundColor(.primary)
+                                            .fontWeight(.medium)
+                                        Text(isGlobalEnglishMode ? "Polymarket & Kalshi mirror" : "全球预测市场镜像站")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
                                     Spacer()
                                     Image(systemName: "chevron.right")
                                         .font(.caption)
@@ -274,6 +304,18 @@ struct UserProfileView: View {
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(Localized.close) { dismiss() }
+                    }
+                }
+                .fullScreenCover(isPresented: $showPrediction) {
+                    NavigationStack {
+                        PredictionEntryView(initialSource: predictionDefaultSource)
+                            .toolbar {
+                                ToolbarItem(placement: .navigationBarLeading) {
+                                    Button(isGlobalEnglishMode ? "Close" : "关闭") {
+                                        showPrediction = false
+                                    }
+                                }
+                            }
                     }
                 }
                 // 退出登录弹窗
@@ -1090,17 +1132,17 @@ struct SourceListView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 16) {
-                        // 双卡片布局：ONews + Prediction
-                        HStack(spacing: 12) {
-                            // --- 右侧：Prediction 卡片 ---
-                            predictionCard
-                            
-                            // --- 左侧：ONews ALL 卡片 (缩窄版) ---
-                            onewsAllCard
+                        // 1. 影视频道（通栏，置顶）
+                        if (resourceManager.showVideoModule || authManager.isPermanentVIP) && !authManager.isVideoModuleBlocked {
+                            videoModuleCard
+                                .padding(.horizontal, 16)
                         }
-                        .padding(.horizontal, 16)
 
-                        // 更新时间条 (放在双卡片下方)
+                        // 2. 汇聚全部新闻源（通栏，扁平）
+                        onewsAllCard
+                            .padding(.horizontal, 16)
+
+                        // 3. 更新时间条
                         if !resourceManager.serverUpdateTime.isEmpty {
                             HStack {
                                 Text(formatUpdateTime(resourceManager.serverUpdateTime))
@@ -1111,22 +1153,13 @@ struct SourceListView: View {
                             .padding(.horizontal, 24)
                             .transition(.opacity)
                         }
-                        
-                        if (resourceManager.showVideoModule || authManager.isPermanentVIP) && !authManager.isVideoModuleBlocked {
-                            videoModuleCard
-                                .padding(.horizontal, 16)
-                                .padding(.top, 1)
-                        }
-                        
-                        // 3. 分源列表
+
+                        // 4. 分源列表（与原来一致）
                         VStack(spacing: 1) {
                             ForEach(viewModel.sources) { source in
                                 NavigationLink(value: NavigationTarget.source(source.name)) {
                                     HStack(spacing: 15) {
-                                        
-                                        
                                         SourceIconView(sourceName: source.name)
-                                        
                                         Text(isGlobalEnglishMode ? source.name_en : source.name)
                                             .font(.body.weight(.medium))
                                             .foregroundColor(.primary)
@@ -1145,37 +1178,34 @@ struct SourceListView: View {
                                                 .font(.caption)
                                                 .foregroundColor(.secondary.opacity(0.5))
                                         }
-                                        // 【修改】高级透明播放按钮
                                         Button(action: {
                                             Task { await handlePlaySource(source.name) }
                                         }) {
                                             Image(systemName: "play.fill")
                                                 .font(.system(size: 14, weight: .bold))
-                                                .symbolRenderingMode(.hierarchical) // 让图标根据层级自动调整透明度
-                                                .foregroundStyle(.primary) // 自动适应深浅模式
+                                                .symbolRenderingMode(.hierarchical)
+                                                .foregroundStyle(.primary)
                                                 .padding(8)
                                                 .background(Circle().fill(Color.secondary.opacity(0.12)))
                                         }
-                                        .buttonStyle(PlainButtonStyle()) // 阻止触发外层的 NavigationLink
+                                        .buttonStyle(PlainButtonStyle())
                                     }
                                     .padding(.vertical, 12)
                                     .padding(.horizontal, 16)
                                     .background(Color.cardBackground)
                                 }
-                                
+
                                 if source.id != viewModel.sources.last?.id {
                                     Divider()
-                                        // 【修改】因为左侧多了一个播放按钮，调整分割线的左边距以对齐文字
                                         .padding(.leading, 110)
                                         .background(Color.cardBackground)
                                 }
                             }
                         }
-                        .cornerRadius(16) // 列表圆角
+                        .cornerRadius(16)
                         .padding(.horizontal, 16)
                         .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-                        
-                        // 底部留白
+
                         Spacer().frame(height: 40)
                     }
                     .padding(.top, 10)
@@ -1186,79 +1216,65 @@ struct SourceListView: View {
     
     // MARK: - 右侧 ONews ALL 卡片
     private var onewsAllCard: some View {
-        // 注意：这里仍然保留 NavigationLink，以便点击卡片空白处也能跳转
         NavigationLink(value: NavigationTarget.allArticles) {
-            VStack(alignment: .leading, spacing: 10) {
-                // Image(systemName: "square.stack.3d.up.fill")
-                //     .font(.title2)
-                //     .foregroundColor(.white)
-                
-                // Text(Localized.allArticles)
-                //     .font(.headline.bold())
-                //     .foregroundColor(.white)
-                
-                Text(Localized.allArticlesDesc)
-                    .font(.system(size: 15))
-                    .foregroundColor(.white.opacity(0.75))
-                    .lineLimit(2)
-                
-                Spacer()
-                
-                // 未读数
-                HStack(alignment: .lastTextBaseline, spacing: 3) {
-                    Text("\(viewModel.totalUnreadCount)")
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
+            VStack(alignment: .leading, spacing: 12) {
+                // 第一行：左标题 + 右未读数
+                HStack(alignment: .center) {
+                    Text(Localized.allArticlesDesc)   // “汇聚全部新闻源”
+                        .font(.system(size: 16, weight: .bold))
                         .foregroundColor(.white)
-                    Text(Localized.unread)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.white.opacity(0.7))
-                        .padding(.bottom, 3)
-                }
-                // 【修改】将按钮放入一个 HStack 中
-                HStack(spacing: 8) {
-                    // 1. 文本阅读按钮 (点击直接跳转)
-                    Button(action: {
-                        // 使用全局导航路径跳转
-                        navPath.append(NavigationTarget.allArticles)
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "text.book.closed.fill")
-                                .font(.system(size: 10))
-                            Text(isGlobalEnglishMode ? "Read" : "阅读")
-                                .font(.system(size: 11, weight: .bold))
-                        }
-                        .foregroundColor(.blue)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(Color.white)
-                        .cornerRadius(16)
+                    Spacer()
+                    HStack(alignment: .lastTextBaseline, spacing: 3) {
+                        Text("\(viewModel.totalUnreadCount)")
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        Text(Localized.unread)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.white.opacity(0.7))
+                            .padding(.bottom, 2)
                     }
-                    .buttonStyle(PlainButtonStyle()) // 必须添加，防止触发父级 NavigationLink
-                    
-                    // 2. 语音播放按钮
-                
-                    // 播放按钮
+                }
+
+                // 第二行：文本阅读 + 音频播放
+                HStack(spacing: 10) {
+                    Spacer()
                     Button(action: {
                         Task { await handlePlayAll() }
                     }) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 5) {
                             Image(systemName: "play.fill")
-                                .font(.system(size: 10))
-                            Text(isGlobalEnglishMode ? "Play" : "音频")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.system(size: 11))
+                            Text(isGlobalEnglishMode ? "Play" : "音频播放")
+                                .font(.system(size: 12, weight: .bold))
                         }
                         .foregroundColor(.blue)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
                         .background(Color.white)
                         .cornerRadius(16)
                     }
-                    .buttonStyle(PlainButtonStyle()) // 必须添加
+                    .buttonStyle(PlainButtonStyle())
+
+                    Button(action: {
+                        navPath.append(NavigationTarget.allArticles)
+                    }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "text.book.closed.fill")
+                                .font(.system(size: 11))
+                            Text(isGlobalEnglishMode ? "Read" : "文本阅读")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.white)
+                        .cornerRadius(16)
+                    }
+                    .buttonStyle(PlainButtonStyle())
                 }
             }
-            .padding(18)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 150)
             .background(
                 LinearGradient(
                     gradient: Gradient(colors: [Color.blue, Color.purple]),
@@ -1268,110 +1284,6 @@ struct SourceListView: View {
             )
             .cornerRadius(18)
             .shadow(color: .blue.opacity(0.25), radius: 8, x: 0, y: 4)
-        }
-        .buttonStyle(ScaleButtonStyle())
-    }
-    
-    // MARK: - 左侧 Prediction 卡片
-    private var predictionCard: some View {
-        // ✅ 根据服务器可用性决定默认跳转和显示
-        let hasPoly = predictionSyncManager.hasPolymarketAvailable
-        let hasKal = predictionSyncManager.hasKalshiAvailable
-        // 默认优先 polymarket；若只有 kalshi 则跳 kalshi；两者都没有兜底 polymarket
-        let defaultSource: String = hasPoly ? "polymarket" : (hasKal ? "kalshi" : "polymarket")
-        
-        return NavigationLink(value: NavigationTarget.predictionEntry(defaultSource)) {
-            VStack(alignment: .leading, spacing: 8) {
-                // Image(systemName: "chart.bar.xaxis.ascending")
-                //     .font(.title)
-                //     .foregroundColor(.white)
-                
-                // Text(isGlobalEnglishMode ? "Prediction Markets" : "预测市场")
-                //     .font(.headline.bold())
-                //     .foregroundColor(.white)
-                
-                // ✅ 副标题：根据可用性动态显示
-                VStack(alignment: .leading, spacing: 2) {
-                    if hasPoly {
-                        Text(isGlobalEnglishMode ? "Polymarket Mirror Site" : "全球第一 Polymarket 镜像站")
-                            .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.75))
-                            .lineLimit(1)
-                    }
-                    
-                    if hasKal {
-                        Text(isGlobalEnglishMode ? "Kalshi.com Mirror Site" : "全美第一 kalshi.com 镜像站")
-                            .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.75))
-                            .lineLimit(1)
-                    }
-                }
-                
-                Spacer()
-                
-                // 数据统计
-                let totalItems = predictionSyncManager.polymarketItems.count
-                    + predictionSyncManager.kalshiItems.count
-                
-                HStack(alignment: .lastTextBaseline, spacing: 3) {
-                    Text("\(totalItems)")
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                    Text(isGlobalEnglishMode ? "topics" : "话题")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.white.opacity(0.7))
-                        .padding(.bottom, 3)
-                }
-                
-                // ✅ 按钮：根据可用性动态显示
-                HStack(spacing: 6) {
-                    if hasPoly {
-                        Button(action: {
-                            navPath.append(NavigationTarget.predictionEntry("polymarket"))
-                        }) {
-                            HStack(spacing: 2) {
-                                Text("Polymarket")
-                                    .font(.system(size: 10, weight: .bold))
-                            }
-                            .foregroundColor(.blue)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 7)
-                            .background(Color.white)
-                            .cornerRadius(12)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-                    
-                    if hasKal {
-                        Button(action: {
-                            navPath.append(NavigationTarget.predictionEntry("kalshi"))
-                        }) {
-                            HStack(spacing: 2) {
-                                Text("Kalshi")
-                                    .font(.system(size: 10, weight: .bold))
-                            }
-                            .foregroundColor(.blue)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 7)
-                            .background(Color.white)
-                            .cornerRadius(12)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 150)
-            .background(
-                LinearGradient(
-                    gradient: Gradient(colors: [Color.indigo, Color.purple]),
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .cornerRadius(18)
-            .shadow(color: .indigo.opacity(0.25), radius: 8, x: 0, y: 4)
         }
         .buttonStyle(ScaleButtonStyle())
     }
