@@ -298,10 +298,9 @@ struct IndicesContentView: View {
                                 // 期权大单
                                 Button {
                                     FinanceAnalytics.shared.track(cardKey: "OptionBigOrder", cardName: "期权大单", authManager: authManager)
-                                    if usageManager.canProceed(authManager: authManager, action: .viewBigOrders) {
+                                    PointsCoordinator.shared.attempt(action: .viewBigOrders, itemKey: "OptionBigOrder",
+                                        displayName: "期权大单", authManager: authManager) {
                                         self.navigateToBigOrders = true
-                                    } else {
-                                        self.showSubscriptionSheet = true
                                     }
                                 } label: {
                                     CompactSectorCard(sectorName: "OptionBigOrder", icon: getIcon(for: "OptionBigOrder"), baseColor: .indigo, isSpecial: true, customGradient: [.blue, .purple])
@@ -370,11 +369,10 @@ struct IndicesContentView: View {
             if let groupData = dataService.earningHistoryData[groupName], !groupData.isEmpty {
                 Button {
                     FinanceAnalytics.shared.track(cardKey: groupName, cardName: dataService.groupDisplayMap[groupName] ?? groupName, authManager: authManager)
-                    if usageManager.canProceed(authManager: authManager, action: .openSector) {
+                    PointsCoordinator.shared.attempt(action: .openSector, itemKey: groupName,
+                        displayName: dataService.groupDisplayMap[groupName] ?? groupName, authManager: authManager) {
                         self.selectedHistoryGroup = groupName
                         self.navigateToHistoryDetail = true
-                    } else {
-                        self.showSubscriptionSheet = true
                     }
                 } label: {
                     CompactSectorCard(
@@ -392,11 +390,10 @@ struct IndicesContentView: View {
         } else if groupName == "52NewLow" {
             Button {
                 FinanceAnalytics.shared.track(cardKey: "52NewLow", cardName: dataService.groupDisplayMap["52NewLow"] ?? "52周新低", authManager: authManager)
-                if usageManager.canProceed(authManager: authManager, action: .openSpecialList) {
+                PointsCoordinator.shared.attempt(action: .openSpecialList, itemKey: "52NewLow",
+                    displayName: dataService.groupDisplayMap["52NewLow"] ?? "52周新低", authManager: authManager) {
                     self.weekLowSectorsData = weekLowSectors
                     self.navigateToWeekLow = true
-                } else {
-                    self.showSubscriptionSheet = true
                 }
             } label: {
                 CompactSectorCard(sectorName: groupName, icon: getIcon(for: groupName), baseColor: .blue, isSpecial: false)
@@ -404,10 +401,9 @@ struct IndicesContentView: View {
         } else if groupName == "TenYearHigh" {
             Button {
                 FinanceAnalytics.shared.track(cardKey: "TenYearHigh", cardName: dataService.groupDisplayMap["TenYearHigh"] ?? "10年新高", authManager: authManager)
-                if usageManager.canProceed(authManager: authManager, action: .openSpecialList) {
+                PointsCoordinator.shared.attempt(action: .openSpecialList, itemKey: "TenYearHigh",
+                    displayName: dataService.groupDisplayMap["TenYearHigh"] ?? "10年新高", authManager: authManager) {
                     self.navigateToTenYearHigh = true
-                } else {
-                    self.showSubscriptionSheet = true
                 }
             } label: {
                 CompactSectorCard(sectorName: groupName, icon: getIcon(for: groupName), baseColor: .blue, isSpecial: false)
@@ -425,17 +421,15 @@ struct IndicesContentView: View {
     }
     
     private func handleSectorClick(_ sector: IndicesSector) {
-        // 【新增】统计点击
         FinanceAnalytics.shared.track(
             cardKey: sector.name,
             cardName: dataService.groupDisplayMap[sector.name] ?? sector.name,
             authManager: authManager
         )
-        if usageManager.canProceed(authManager: authManager, action: .openSector) {
+        PointsCoordinator.shared.attempt(action: .openSector, itemKey: sector.name,
+            displayName: dataService.groupDisplayMap[sector.name] ?? sector.name, authManager: authManager) {
             self.selectedSector = sector
             self.navigateToSector = true
-        } else {
-            self.showSubscriptionSheet = true
         }
     }
     
@@ -848,10 +842,9 @@ struct SymbolItemView: View {
     
     var body: some View {
         Button(action: {
-            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+            PointsCoordinator.shared.attempt(action: .viewChart, itemKey: symbol.symbol,
+                displayName: "查看 \(symbol.name) 图表", authManager: authManager) {
                 isNavigationActive = true
-            } else {
-                showSubscriptionSheet = true
             }
         }) {
             VStack(alignment: .leading, spacing: 8) {
@@ -1165,10 +1158,9 @@ struct StrategySymbolRow: View {
         .padding(12)
         .contentShape(Rectangle())
         .onTapGesture {
-            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+            PointsCoordinator.shared.attempt(action: .viewChart, itemKey: cleanSymbol,
+                displayName: "查看 \(symbol) 图表", authManager: authManager) {
                 navigateToChart = true
-            } else {
-                showSubscriptionSheet = true
             }
         }
         .navigationDestination(isPresented: $navigateToChart) {

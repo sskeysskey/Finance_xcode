@@ -845,10 +845,9 @@ struct OptionsListView: View {
                     }
                     
                     Button(action: {
-                        if usageManager.canProceed(authManager: authManager, action: .viewOptionsRank) {
+                        PointsCoordinator.shared.attempt(action: .viewOptionsRank, itemKey: "big_orders",
+                            displayName: "期权大单榜单", authManager: authManager) {
                             self.navigateToBigOrders = true
-                        } else {
-                            self.showSubscriptionSheet = true
                         }
                     }) {
                         HStack(spacing: 4) {
@@ -894,22 +893,20 @@ struct OptionsListView: View {
     }
     
     private func handleSelection(_ symbol: String) {
-        if usageManager.canProceed(authManager: authManager, action: .viewOptionsDetail) {
+        PointsCoordinator.shared.attempt(action: .viewOptionsDetail, itemKey: symbol,
+            displayName: "查看 \(symbol) 期权详情", authManager: authManager) {
             self.selectedSymbol = symbol
             self.navigateToDetail = true
-        } else {
-            self.showSubscriptionSheet = true
         }
     }
-    
+
     private func handleLongPress(_ symbol: String) {
-        if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+        PointsCoordinator.shared.attempt(action: .viewChart, itemKey: symbol,
+            displayName: "查看 \(symbol) 图表", authManager: authManager) {
             self.selectedSymbol = symbol
             self.navigateToChart = true
             let impact = UIImpactFeedbackGenerator(style: .medium)
             impact.impactOccurred()
-        } else {
-            self.showSubscriptionSheet = true
         }
     }
 
@@ -1096,10 +1093,9 @@ struct OptionsDetailView: View {
             
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
-                    if usageManager.canProceed(authManager: authManager, action: .viewChart) { 
-                        navigateToChart = true 
-                    } else {
-                        showSubscriptionSheet = true
+                    PointsCoordinator.shared.attempt(action: .viewChart, itemKey: symbol,
+                        displayName: "查看 \(symbol) 股价图表", authManager: authManager) {
+                        navigateToChart = true
                     }
                 }) {
                     Text("切股价")
@@ -1332,11 +1328,20 @@ struct OptionsRankView: View {
     }
 
     private func handleSelection(_ symbol: String) {
-        if usageManager.canProceed(authManager: authManager, action: .viewOptionsDetail) {
+        PointsCoordinator.shared.attempt(action: .viewOptionsDetail, itemKey: symbol,
+            displayName: "查看 \(symbol) 期权详情", authManager: authManager) {
             self.selectedSymbol = symbol
             self.navigateToDetail = true
-        } else {
-            self.showSubscriptionSheet = true
+        }
+    }
+
+    private func handleLongPress(_ symbol: String) {
+        PointsCoordinator.shared.attempt(action: .viewChart, itemKey: symbol,
+            displayName: "查看 \(symbol) 图表", authManager: authManager) {
+            self.selectedSymbol = symbol
+            self.navigateToChart = true
+            let impact = UIImpactFeedbackGenerator(style: .medium)
+            impact.impactOccurred()
         }
     }
     
@@ -1345,17 +1350,6 @@ struct OptionsRankView: View {
             return String(format: "%.0fB", cap / 1_000_000_000)
         } else {
             return String(format: "%.0fM", cap / 1_000_000)
-        }
-    }
-    
-    private func handleLongPress(_ symbol: String) {
-        if usageManager.canProceed(authManager: authManager, action: .viewChart) {
-            self.selectedSymbol = symbol
-            self.navigateToChart = true
-            let impact = UIImpactFeedbackGenerator(style: .medium)
-            impact.impactOccurred()
-        } else {
-            self.showSubscriptionSheet = true
         }
     }
 }
@@ -1602,10 +1596,9 @@ struct OptionBigOrdersView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
-                    if usageManager.canProceed(authManager: authManager, action: .viewOptionsRank) {
+                    PointsCoordinator.shared.attempt(action: .viewOptionsRank, itemKey: "options_rank",
+                        displayName: "期权榜单", authManager: authManager) {
                         self.navigateToRank = true
-                    } else {
-                        self.showSubscriptionSheet = true
                     }
                 }) {
                     Text("期权榜单")
@@ -1625,11 +1618,10 @@ struct OptionBigOrdersView: View {
     }
     
     private func handleSelection(_ symbol: String) {
-        if usageManager.canProceed(authManager: authManager, action: .viewOptionsDetail) {
+        PointsCoordinator.shared.attempt(action: .viewOptionsDetail, itemKey: symbol,
+            displayName: "查看 \(symbol) 期权详情", authManager: authManager) {
             self.selectedSymbol = symbol
             self.navigateToDetail = true
-        } else {
-            self.showSubscriptionSheet = true
         }
     }
 }

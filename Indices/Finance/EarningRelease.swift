@@ -203,13 +203,10 @@ struct EarningReleaseView: View {
     private func sectionRow(for item: EarningRelease) -> some View {
         // 【修改】使用 Button 替代 NavigationLink
         Button(action: {
-            // 【修改】使用 .viewChart
-            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+            PointsCoordinator.shared.attempt(action: .viewChart, itemKey: item.symbol,
+                displayName: "查看 \(item.symbol) 图表", authManager: authManager) {
                 selectedItem = item
                 isNavigationActive = true
-            } else {
-                // 【核心修改】直接弹出订阅页
-                showSubscriptionSheet = true
             }
         }) {
             VStack(alignment: .leading, spacing: 4) {

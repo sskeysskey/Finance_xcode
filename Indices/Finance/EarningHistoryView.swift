@@ -243,10 +243,9 @@ struct HistorySymbolRow: View {
         .padding(12)
         .contentShape(Rectangle())
         .onTapGesture {
-            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+            PointsCoordinator.shared.attempt(action: .viewChart, itemKey: cleanSymbol,
+                displayName: "查看 \(symbol) 图表", authManager: authManager) {
                 navigateToChart = true
-            } else {
-                showSubscriptionSheet = true
             }
         }
         .navigationDestination(isPresented: $navigateToChart) {

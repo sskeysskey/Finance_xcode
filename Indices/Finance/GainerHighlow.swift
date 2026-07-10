@@ -47,7 +47,6 @@ struct MarketItemRow<T: MarketItem>: View {
     @EnvironmentObject var usageManager: UsageManager
     
     @State private var isNavigationActive = false
-    @State private var showSubscriptionSheet = false
 
     private var earningTrend: EarningTrend {
         dataService.earningTrends[item.symbol.uppercased()] ?? .insufficientData
@@ -56,12 +55,9 @@ struct MarketItemRow<T: MarketItem>: View {
     var body: some View {
         // 【修改】使用 Button 替代 NavigationLink
         Button(action: {
-            // 【修复报错】添加 action 参数 .viewChart
-            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+            PointsCoordinator.shared.attempt(action: .viewChart, itemKey: item.symbol,
+                displayName: "查看 \(item.rawSymbol) 图表", authManager: authManager) {
                 isNavigationActive = true
-            } else {
-                // 【核心修改】直接弹出订阅页，不再判断是否登录
-                showSubscriptionSheet = true
             }
         }) {
             VStack(alignment: .leading, spacing: 5) {
@@ -88,8 +84,6 @@ struct MarketItemRow<T: MarketItem>: View {
         .navigationDestination(isPresented: $isNavigationActive) {
             ChartView(symbol: item.symbol, groupName: item.groupName)
         }
-        // 【修改】移除了 LoginView 的 sheet
-        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .onAppear {
             // 当单个 item 出现时，如果数据还未加载，可以触发一次
             if earningTrend == .insufficientData {
@@ -234,12 +228,10 @@ struct CustomTabBar: View {
     // 封装按钮逻辑
     private func tabButton(title: String, icon: String, color: Color, destination: TabDestination) -> some View {
         Button(action: {
-            // 【新增】统计点击
             FinanceAnalytics.shared.track(cardKey: title, cardName: title, authManager: authManager)
-            if usageManager.canProceed(authManager: authManager, action: .openList) {
+            PointsCoordinator.shared.attempt(action: .openList, itemKey: title,
+                displayName: "\(title)榜单", authManager: authManager) {
                 self.activeTab = destination
-            } else {
-                self.showSubscriptionSheet = true
             }
         }) {
             VStack(spacing: 4) {
@@ -357,10 +349,9 @@ struct ETFIndicesRow: View {
     
     var body: some View {
         Button(action: {
-            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+            PointsCoordinator.shared.attempt(action: .viewChart, itemKey: item.symbol,
+                displayName: "查看 \(item.symbol) 图表", authManager: authManager) {
                 isNavigationActive = true
-            } else {
-                showSubscriptionSheet = true
             }
         }) {
             VStack(alignment: .leading, spacing: 5) {
@@ -499,10 +490,9 @@ struct VolumeItemRow: View {
     
     var body: some View {
         Button(action: {
-            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+            PointsCoordinator.shared.attempt(action: .viewChart, itemKey: item.symbol,
+                displayName: "查看 \(item.symbol) 图表", authManager: authManager) {
                 isNavigationActive = true
-            } else {
-                showSubscriptionSheet = true
             }
         }) {
             VStack(alignment: .leading, spacing: 6) {
@@ -686,13 +676,10 @@ struct HighLowListView: View {
     private func rowView(for item: HighLowItem) -> some View {
         // 【修改】使用 Button 替代 NavigationLink
         Button(action: {
-            // 【修复报错】添加 action 参数 .viewChart
-            if usageManager.canProceed(authManager: authManager, action: .viewChart) {
+            PointsCoordinator.shared.attempt(action: .viewChart, itemKey: item.symbol,
+                displayName: "查看 \(item.symbol) 图表", authManager: authManager) {
                 selectedItem = item
                 isNavigationActive = true
-            } else {
-                // 【核心修改】直接弹出订阅页
-                showSubscriptionSheet = true
             }
         }) {
             VStack(alignment: .leading, spacing: 4) {

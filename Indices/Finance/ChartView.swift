@@ -574,11 +574,7 @@ struct ChartView: View {
                 
                 // 2. 比对 (改为 Button + 权限检查)
                 Button(action: {
-                    if usageManager.canProceed(authManager: authManager, action: .compare) {
-                        navigateToCompare = true
-                    } else {
-                        showSubscriptionSheet = true
-                    }
+                    navigateToCompare = true
                 }) {
                     Text("比对")
                         .font(.system(size: 22, weight: .medium))
@@ -588,10 +584,9 @@ struct ChartView: View {
                 
                 // 3. 相似 (改为 Button + 权限检查)
                 Button(action: {
-                    if usageManager.canProceed(authManager: authManager, action: .openList) {
+                    PointsCoordinator.shared.attempt(action: .openList, itemKey: "similar_\(symbol)",
+                        displayName: "查看 \(symbol) 的相似股票", authManager: authManager) {
                         navigateToSimilar = true
-                    } else {
-                        showSubscriptionSheet = true
                     }
                 }) {
                     Text("相似")
@@ -603,12 +598,9 @@ struct ChartView: View {
                 // 【新增】期权按钮逻辑
                 if dataService.optionsData.keys.contains(symbol.uppercased()) {
                     Button(action: {
-                        // 【核心修改】点击 ChartView 里的期权按钮，扣除 10 点
-                        // 现在 usageManager 和 authManager 已经定义，可以正常调用了
-                        if usageManager.canProceed(authManager: authManager, action: .viewOptionsDetail) {
+                        PointsCoordinator.shared.attempt(action: .viewOptionsDetail, itemKey: symbol,
+                            displayName: "查看 \(symbol) 期权详情", authManager: authManager) {
                             navigateToOptionsDetail = true
-                        } else {
-                             showSubscriptionSheet = true 
                         }
                     }) {
                         Text("期权")

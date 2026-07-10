@@ -174,22 +174,18 @@ struct CompareView: View {
     }
     
     private func startComparison() {
-        // 【核心修改】
-        // 这里使用 .compare 动作。
-        // 只有当用户点击这个按钮，且通过了检查，才会扣除点数。
-        // 首页点击进入 CompareView 页面时不扣点（因为 SearchContentView 里只是纯导航，没调用 UsageManager）。
-        guard usageManager.canProceed(authManager: authManager, action: .compare) else {
-            showSubscriptionSheet = true
-            return
-        }
-        
         errorMessage = nil
         let trimmedSymbols = symbols.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         guard !trimmedSymbols.isEmpty else { errorMessage = "请至少输入一个股票代码"; showAlert = true; return }
         if trimmedSymbols.count > maxSymbols { errorMessage = "最多只能比较 \(maxSymbols) 个股票代码"; showAlert = true; return }
         guard startDate <= endDate else { errorMessage = "开始日期必须早于或等于结束日期"; showAlert = true; return }
-        symbols = trimmedSymbols.map { formatSymbol($0) }
-        navigateToComparison = true
+
+        let key = trimmedSymbols.map { $0.uppercased() }.sorted().joined(separator: "_")
+        PointsCoordinator.shared.attempt(action: .compare, itemKey: key,
+            displayName: "对比: \(trimmedSymbols.joined(separator: ", "))", authManager: authManager) {
+            self.symbols = trimmedSymbols.map { self.formatSymbol($0) }
+            self.navigateToComparison = true
+        }
     }
 }
 

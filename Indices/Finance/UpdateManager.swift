@@ -9,20 +9,20 @@ struct VersionResponse: Codable {
     let server_date: String?
     let min_app_version: String?
     let store_url: String?
-    
+
     let daily_free_limit: Int?
-    // 【新增】扣点配置字典
     let cost_config: [String: Int]?
-    // 【修改点 1】新增策略分组配置字段
+    // 【新增】
+    let bonus_points: Int?
+    let sector_cost_overrides: [String: Int]?
+
     let strategy_groups: [String]?
     let group_display_names: [String: String]?
-    
+
     let Eco_Data: String?
     let Intro_Symbol: String?
     let option_cap_limit: Double?
-    
-    let notification: String? // 【新增】通知字段
-    
+    let notification: String?
     let files: [FileInfo]
 }
 
@@ -232,6 +232,16 @@ class UpdateManager: ObservableObject {
             if let costs = serverVersionResponse.cost_config {
                 UsageManager.shared.updateCosts(costs)
                 print("UpdateManager: 已更新扣点规则: \(costs)")
+            }
+
+            // 【新增】赠送点数配置
+            if let bonus = serverVersionResponse.bonus_points {
+                UsageManager.shared.updateBonus(bonus)
+            }
+            // 【新增】分组独立扣点
+            if let overrides = serverVersionResponse.sector_cost_overrides {
+                UsageManager.shared.updateSectorOverrides(overrides)
+                print("UpdateManager: 已更新分组扣点覆盖: \(overrides)")
             }
 
             // 【新增】更新期权市值阀值

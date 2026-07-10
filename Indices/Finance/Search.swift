@@ -154,27 +154,21 @@ struct SearchContentView: View {
             }
             
             // 3. 财报按钮
-            ToolButton(
-                title: "财报",
-                icon: "calendar",
-                color: .orange
-            ) {
+            ToolButton(title: "财报", icon: "calendar", color: .orange) {
                 FinanceAnalytics.shared.track(cardKey: "财报", cardName: "财报", authManager: authManager)
-                if usageManager.canProceed(authManager: authManager, action: .openEarnings) {
+                PointsCoordinator.shared.attempt(action: .openEarnings, itemKey: nil,
+                    displayName: "财报发布日历", authManager: authManager) {
                     navigateToEarnings = true
-                } else {
-                    showSubscriptionSheet = true
                 }
             }
             
             // 4. 【新增】复盘按钮
-            ToolButton(
-                title: "复盘",
-                icon: "clock.arrow.circlepath",
-                color: .purple
-            ) {
+            ToolButton(title: "复盘", icon: "clock.arrow.circlepath", color: .purple) {
                 FinanceAnalytics.shared.track(cardKey: "复盘", cardName: "复盘", authManager: authManager)
-                navigateToHistory = true
+                PointsCoordinator.shared.attempt(action: .openHistory, itemKey: nil,
+                    displayName: "复盘历史 (多组共振)", authManager: authManager) {
+                    navigateToHistory = true
+                }
             }
         }
         .padding(.horizontal, 16)
@@ -528,44 +522,34 @@ struct SearchView: View {
 
     // 【核心修改】处理结果选择，加入权限判断
     private func handleResultSelection(result: SearchResult) {
-        // 1. 检查权限 (点击结果查看图表)
-        // 修复：添加 action: .viewChart 参数
-        guard usageManager.canProceed(authManager: authManager, action: .viewChart) else {
-            showSubscriptionSheet = true
-            return
+        PointsCoordinator.shared.attempt(action: .viewChart, itemKey: result.symbol,
+            displayName: "查看 \(result.symbol) 图表", authManager: authManager) {
+            self.openResult(result)
         }
-        
-        // 【新增】在这里也可以记一次数
-        // 这代表用户通过搜索找到了想要的东西，并准备跳转去看了
+    }
+
+    // 真正的打开逻辑（不扣点，供已扣点/自动打开场景直接调用）
+    private func openResult(_ result: SearchResult) {
         ReviewManager.shared.recordInteraction()
-        
-        // 2. 正常逻辑
         if let groupName = viewModel.dataService.getCategory(for: result.symbol) {
-            // 【修改点】：使用 Task 替代 DispatchQueue.global().async
-            // 因为 fetchHistoricalData 现在是 async 函数
             Task {
                 let data = await DatabaseManager.shared.fetchHistoricalData(
                     symbol: result.symbol,
                     tableName: groupName,
                     dateRange: .timeRange(.oneMonth)
                 )
-                
-                // UI 更新必须在主线程 (Task 在 View 中通常默认在 MainActor，但显式调用更安全)
                 await MainActor.run {
                     if data.isEmpty {
-                        // 如果没有价格数据，但有description数据
                         if getDescriptions(for: result.symbol) != nil {
                             selectedSymbolForDescription = SelectedSymbol(result: result, category: "Description")
                         }
                     } else {
-                        // 有价格数据，通过导航打开ChartView
                         selectedSymbolForChart = SelectedSymbol(result: result, category: groupName)
                         showChartView = true
                     }
                 }
             }
         } else {
-            // 如果在分类中找不到，但可能有description
             if getDescriptions(for: result.symbol) != nil {
                 selectedSymbolForDescription = SelectedSymbol(result: result, category: "Description")
             }
@@ -592,51 +576,54 @@ struct SearchView: View {
     func startSearch() {
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        
-        // 【核心逻辑】
-        // 1. 先检查是否有足够的点数进行搜索 (performDeduction: false，先不扣)
-        if !usageManager.canProceed(authManager: authManager, action: .search, performDeduction: false) {
-            showSubscriptionSheet = true
+
+        // VIP / 今天搜过这个词 / 0点 → 直接搜，不扣不弹
+        if PointsCoordinator.shared.isFree(action: .search, itemKey: trimmed, authManager: authManager) {
+            executeSearch(trimmed, shouldDeduct: false)
             return
         }
-        
+
+        let cost = usageManager.cost(for: .search, itemKey: nil)
+        if !usageManager.hasEnough(cost) {
+            PointsCoordinator.shared.authManagerRef = authManager
+            PointsCoordinator.shared.presentInsufficient(cost: cost)
+            return
+        }
+
+        PointsCoordinator.shared.presentConfirm(cost: cost, title: "搜索 \"\(trimmed)\"") {
+            self.executeSearch(trimmed, shouldDeduct: true)
+        }
+    }
+
+    private func executeSearch(_ trimmed: String, shouldDeduct: Bool) {
         isSearchFieldFocused = false
         isLoading = true
         showSearchHistory = false
 
         viewModel.performSearch(query: trimmed) { groupedResults in
             DispatchQueue.main.async {
-                // 2. 搜索完成，如果有结果，则扣点
-                if !groupedResults.isEmpty {
-                    self.usageManager.deduct(action: .search)
+                // 有结果才扣点，并标记该词今天已解锁
+                if shouldDeduct && !groupedResults.isEmpty {
+                    self.usageManager.commitDeduction(action: .search, itemKey: trimmed)
                 }
-                
+
                 withAnimation {
-                    // 1. 先赋值
                     self.groupedSearchResults = groupedResults
                     self.isLoading = false
-                    
-                    // 2. 初始化折叠状态
                     for group in groupedResults {
                         if self.collapsedGroups[group.category] == nil {
                             self.collapsedGroups[group.category] = false
                         }
                     }
                 }
-                
-                // 3. 自动判断首个结果
-                if
-                    let firstGroup = groupedResults.first,
-                    // 记得 results 本来就是按 score 排好序的
-                    let firstEntry = firstGroup.results.first,
-                    trimmed.uppercased() == firstEntry.result.symbol.uppercased()
-                {
-                    // 4. 直接打开 chart 或 description
-                    self.handleResultSelection(result: firstEntry.result)
+
+                // 首个结果精确命中 → 直接打开（已计过费，不再走扣点入口）
+                if let firstGroup = groupedResults.first,
+                   let firstEntry = firstGroup.results.first,
+                   trimmed.uppercased() == firstEntry.result.symbol.uppercased() {
+                    self.openResult(firstEntry.result)
                     return
                 }
-                
-                // 如果不一致，就正常停留在列表
             }
         }
     }

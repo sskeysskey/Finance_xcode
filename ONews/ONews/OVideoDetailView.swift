@@ -318,7 +318,7 @@ struct VideoDetailView: View {
         }
     }
 
-    // MARK: - ⭐ 各季切换区块
+    // MARK: - ⭐ 各季切换区块（改为换行显示，避免横向滑动拦截边缘返回手势）
     @ViewBuilder
     private var seasonSection: some View {
         if seasonSiblings.count > 1 {
@@ -338,24 +338,23 @@ struct VideoDetailView: View {
                 }
                 .padding(.horizontal, 16)
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(seasonSiblings, id: \.url) { s in
-                            let isCurrent = (s.url == item.url)
-                            Button {
-                                if !isCurrent {
-                                    selectedSeasonItem = s
-                                    navigateToSeason = true
-                                }
-                            } label: {
-                                seasonChip(for: s, isCurrent: isCurrent)
+                // ⭐ 用 FlowLayout 换行：季数少时一行，多时自动换行
+                FlowLayout(spacing: 12) {
+                    ForEach(seasonSiblings, id: \.url) { s in
+                        let isCurrent = (s.url == item.url)
+                        Button {
+                            if !isCurrent {
+                                selectedSeasonItem = s
+                                navigateToSeason = true
                             }
-                            .buttonStyle(.plain)
-                            .disabled(isCurrent)
+                        } label: {
+                            seasonChip(for: s, isCurrent: isCurrent)
                         }
+                        .buttonStyle(.plain)
+                        .disabled(isCurrent)
                     }
-                    .padding(.horizontal, 16)
                 }
+                .padding(.horizontal, 16)
             }
         }
     }
@@ -1366,33 +1365,5 @@ struct BatchDownloadView: View {
         } else {
             performDownloads(selected)
         }
-    }
-}
-
-// MARK: - 修复：横向 ScrollView 不拦截左边缘返回手势
-extension UINavigationController: UIGestureRecognizerDelegate {
-    override open func viewDidLoad() {
-        super.viewDidLoad()
-        interactivePopGestureRecognizer?.delegate = self
-    }
-    
-    public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        // 根视图不允许返回
-        if viewControllers.count <= 1 {
-            return false
-        }
-        
-        // 关键：只在【左边缘】触发返回，ScrollView 中间滑动不受影响
-        if gestureRecognizer == interactivePopGestureRecognizer {
-            let location = gestureRecognizer.location(in: view)
-            return location.x <= 20 // 仅屏幕左侧 20pt 区域触发返回
-        }
-        
-        return true
-    }
-    
-    // 禁止 ScrollView 手势与返回手势同时生效，确保边缘滑动优先返回
-    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        return false
     }
 }

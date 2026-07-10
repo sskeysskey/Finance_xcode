@@ -1475,13 +1475,17 @@ class DataService: ObservableObject {
         }
     }
     
+    // func getCategory(for symbol: String) -> String? {
+    //     for (category, symbols) in sectorsData {
+    //         if symbols.map({ $0.uppercased() }).contains(symbol.uppercased()) {
+    //             return category
+    //         }
+    //     }
+    //     return nil
+    // }
+    
     func getCategory(for symbol: String) -> String? {
-        for (category, symbols) in sectorsData {
-            if symbols.map({ $0.uppercased() }).contains(symbol.uppercased()) {
-                return category
-            }
-        }
-        return nil
+        return symbolCategoryMap[symbol.uppercased()]
     }
     
     // MARK: - 合并 Compare_All：同时生成两种映射

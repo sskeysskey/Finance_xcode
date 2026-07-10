@@ -834,33 +834,33 @@ struct MainContentView: View {
                     ToolbarItem(placement: .principal) {
                         if !authManager.isSubscribed {
                             HStack(spacing: 6) {
-                                // 图标：使用小闪电或票据图标
-                                Image(systemName: "bolt.shield.fill") // 或者 "ticket.fill"
+                                Image(systemName: "bolt.shield.fill")
                                     .font(.system(size: 10))
                                     .foregroundColor(.orange)
-                                
-                                // 文字：计算剩余额度
-                                let remaining = max(0, usageManager.maxFreeLimit - usageManager.dailyCount)
-                                Text("今日免费点数 \(remaining)")
-                                    .font(.system(size: 13, weight: .medium)) // 使用更小的字体
+
+                                Text("点数\(usageManager.remainingTotal)")
+                                    .font(.system(size: 13, weight: .medium))
                                     .foregroundColor(.primary)
+
+                                // 有赠送点数时额外标出
+                                if usageManager.bonusRemaining > 0 {
+                                    Text("赠\(usageManager.bonusRemaining)")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(Color.green.opacity(0.15))
+                                        .foregroundColor(.green)
+                                        .clipShape(Capsule())
+                                }
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(
-                                // 背景：磨砂玻璃质感的胶囊形状
                                 Capsule()
                                     .fill(Color(.tertiarySystemFill))
-                                    // 可选：添加一点极细的边框让它更精致
-                                    .overlay(
-                                        Capsule().stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
-                                    )
+                                    .overlay(Capsule().stroke(Color.primary.opacity(0.1), lineWidth: 0.5))
                             )
-                            // 强制不截断，优先压缩间距
                             .fixedSize(horizontal: true, vertical: false)
-                        } else {
-                            // 如果是会员，可以留空，或者显示一个精致的 App Logo / 名称
-                            // Text("Finance").font(.headline)
                         }
                     }
                     ToolbarItem(placement: .navigationBarTrailing) {
@@ -925,6 +925,10 @@ struct MainContentView: View {
                 }
             }
             .environmentObject(dataService)
+            .onAppear {
+                // 【新增】让协调器持有 authManager 引用
+                PointsCoordinator.shared.authManagerRef = authManager
+            }
             
             // 【核心修复】添加 .task 修饰符
             // 这保证了 View 一初始化就执行，专门解决冷启动问题
@@ -950,6 +954,10 @@ struct MainContentView: View {
                 UpdateOverlayView(updateManager: updateManager)
                 Spacer()
             }
+
+            // 【新增】点数确认/不足弹窗浮层（在强制更新之下、其它之上）
+            PointsOverlayView()
+                .zIndex(998)
             
             // 【新增】强制更新拦截层 (放在最下面，即最顶层)
             if updateManager.showForceUpdate {
