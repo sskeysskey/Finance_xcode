@@ -11,25 +11,29 @@ final class PointsCoordinator: ObservableObject {
     @Published var confirmTitle = ""
     @Published var confirmRemaining = 0
     @Published var confirmUsingBonus = false
-    // 【新增】数据是否过期（今日尚未更新）
     @Published var confirmDataStale = false
-    // 【新增】当前数据的时间戳文字（用于提醒展示）
     @Published var confirmDataTimestamp = ""
     private var confirmAction: (() -> Void)?
 
-    // 点数不足弹窗
+    // 点数不足 / 登录门禁弹窗
     @Published var showInsufficientSheet = false
     @Published var insufficientCost = 0
     @Published var insufficientRemaining = 0
+    @Published var insufficientNeedLogin = false
+
+    // 结算中 / 错误
+    @Published var isProcessing = false
+    @Published var showErrorSheet = false
+    @Published var errorText = ""
+
+    // 邀请 / 登录页面（由 MainContentView 绑定 sheet）
+    @Published var showInviteSheet = false
+    @Published var showLoginSheet = false
 
     weak var authManagerRef: AuthManager?
-
     private let usage = UsageManager.shared
 
     /// 通用扣点入口
-    /// - VIP / 今日已解锁 / 免费动作 → 直接执行 onSuccess
-    /// - 点数够 → 弹确认框，确认后扣点并执行
-    /// - 点数不够 → 弹"点数不足→去订阅"过渡框
     func attempt(action: UsageAction,
                  itemKey: String? = nil,
                  displayName: String,
@@ -38,63 +42,82 @@ final class PointsCoordinator: ObservableObject {
         self.authManagerRef = authManager
 
         if authManager.isSubscribed { onSuccess(); return }
-        if usage.isUnlocked(action: action, itemKey: itemKey) { onSuccess(); return }
 
         let cost = usage.cost(for: action, itemKey: itemKey)
         if cost <= 0 { onSuccess(); return }
+        if usage.isUnlocked(action: action, itemKey: itemKey) { onSuccess(); return }
+
+        // 免费点数只发给登录用户 → 未登录直接引导
+        if !authManager.isLoggedIn {
+            presentInsufficient(cost: cost, needLogin: true)
+            return
+        }
 
         if usage.hasEnough(cost) {
             presentConfirm(cost: cost, title: displayName) { [weak self] in
-                self?.usage.commitDeduction(action: action, itemKey: itemKey)
-                onSuccess()
+                guard let self = self else { return }
+                self.isProcessing = true
+                Task {
+                    let result = await self.usage.consume(action: action, itemKey: itemKey)
+                    self.isProcessing = false
+                    switch result {
+                    case .success, .alreadyUnlocked, .free:
+                        onSuccess()
+                    case .insufficient:
+                        self.presentInsufficient(cost: cost, needLogin: false)
+                    case .notLoggedIn:
+                        self.presentInsufficient(cost: cost, needLogin: true)
+                    case .networkError:
+                        self.presentError("网络异常，扣点失败，请稍后再试")
+                    }
+                }
             }
         } else {
-            presentInsufficient(cost: cost)
+            presentInsufficient(cost: cost, needLogin: false)
         }
     }
 
-    /// 判断某项今天是否免费（VIP / 已解锁 / 0 点动作）
     func isFree(action: UsageAction, itemKey: String?, authManager: AuthManager) -> Bool {
         if authManager.isSubscribed { return true }
-        if usage.isUnlocked(action: action, itemKey: itemKey) { return true }
         if usage.cost(for: action, itemKey: itemKey) <= 0 { return true }
+        if usage.isUnlocked(action: action, itemKey: itemKey) { return true }
         return false
     }
 
-    // MARK: - 【新增】判断当日数据是否尚未更新
-    /// 以 version 中的 Eco_Data 时间戳为准（DataService.ecoDataTimestamp）
-    /// 只要数据日期早于系统当天，即认为"今日数据尚未更新"
+    // MARK: - 数据是否过期
     private func isDataStale() -> Bool {
         guard let ts = DataService.shared.ecoDataTimestamp, !ts.isEmpty else { return false }
-        // ts 形如 "2026-07-08 10:03"，只取日期部分做比较
         let datePart = ts.split(separator: " ").first.map(String.init) ?? ts
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.locale = Locale(identifier: "en_US_POSIX")
         guard let dataDate = formatter.date(from: datePart) else { return false }
-
         let cal = Calendar.current
-        // 数据日期的“当天零点”严格早于系统“今天零点” → 说明今天的数据还没更新
         return cal.startOfDay(for: dataDate) < cal.startOfDay(for: Date())
     }
 
-    // MARK: - 低层接口（供搜索等特殊场景）
+    // MARK: - 低层接口
     func presentConfirm(cost: Int, title: String, onConfirm: @escaping () -> Void) {
         self.confirmCost = cost
         self.confirmTitle = title
         self.confirmRemaining = usage.remainingTotal
         self.confirmUsingBonus = usage.bonusRemaining > 0
-        // 【新增】计算数据是否过期，并记录时间戳
         self.confirmDataStale = isDataStale()
         self.confirmDataTimestamp = DataService.shared.ecoDataTimestamp ?? ""
         self.confirmAction = onConfirm
         self.showConfirmSheet = true
     }
 
-    func presentInsufficient(cost: Int) {
+    func presentInsufficient(cost: Int, needLogin: Bool = false) {
         self.insufficientCost = cost
         self.insufficientRemaining = usage.remainingTotal
+        self.insufficientNeedLogin = needLogin
         self.showInsufficientSheet = true
+    }
+
+    func presentError(_ msg: String) {
+        self.errorText = msg
+        self.showErrorSheet = true
     }
 
     func confirmYes() {
@@ -117,10 +140,24 @@ final class PointsCoordinator: ObservableObject {
         }
     }
 
+    func openInvite() {
+        showInsufficientSheet = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            self.showInviteSheet = true
+        }
+    }
+
+    func goLogin() {
+        showInsufficientSheet = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            self.showLoginSheet = true
+        }
+    }
+
     func dismissInsufficient() { showInsufficientSheet = false }
 }
 
-// MARK: - 全局弹窗浮层（挂在根 ZStack）
+// MARK: - 全局弹窗浮层
 struct PointsOverlayView: View {
     @ObservedObject var coordinator = PointsCoordinator.shared
 
@@ -128,9 +165,48 @@ struct PointsOverlayView: View {
         ZStack {
             if coordinator.showConfirmSheet { confirmDialog }
             if coordinator.showInsufficientSheet { insufficientDialog }
+            if coordinator.showErrorSheet { errorDialog }
+            if coordinator.isProcessing { processingOverlay }
         }
         .animation(.easeInOut(duration: 0.2), value: coordinator.showConfirmSheet)
         .animation(.easeInOut(duration: 0.2), value: coordinator.showInsufficientSheet)
+        .animation(.easeInOut(duration: 0.2), value: coordinator.showErrorSheet)
+        .animation(.easeInOut(duration: 0.2), value: coordinator.isProcessing)
+    }
+
+    private var processingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.35).ignoresSafeArea()
+            VStack(spacing: 14) {
+                ProgressView().scaleEffect(1.3).tint(.white)
+                Text("处理中...").font(.footnote).foregroundColor(.white)
+            }
+            .padding(24)
+            .background(Color.black.opacity(0.6))
+            .cornerRadius(14)
+        }
+    }
+
+    private var errorDialog: some View {
+        ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea()
+                .onTapGesture { coordinator.showErrorSheet = false }
+            VStack(spacing: 0) {
+                Image(systemName: "wifi.exclamationmark")
+                    .font(.system(size: 42)).foregroundStyle(.orange).padding(.top, 24)
+                Text("操作失败").font(.headline).padding(.top, 12)
+                Text(coordinator.errorText)
+                    .font(.subheadline).foregroundColor(.secondary)
+                    .multilineTextAlignment(.center).padding(.horizontal, 20).padding(.top, 8)
+                Divider().padding(.top, 18)
+                Button(action: { coordinator.showErrorSheet = false }) {
+                    Text("知道了").fontWeight(.bold).frame(maxWidth: .infinity).padding(.vertical, 14)
+                }
+            }
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .cornerRadius(18).padding(.horizontal, 60).shadow(radius: 20)
+            .transition(.scale.combined(with: .opacity))
+        }
     }
 
     private var confirmDialog: some View {
@@ -139,21 +215,12 @@ struct PointsOverlayView: View {
                 .onTapGesture { coordinator.confirmNo() }
             VStack(spacing: 0) {
                 Image(systemName: "bolt.circle.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(.orange)
-                    .padding(.top, 24)
-
-                Text("确认消耗点数")
-                    .font(.headline)
-                    .padding(.top, 12)
-
+                    .font(.system(size: 44)).foregroundStyle(.orange).padding(.top, 24)
+                Text("确认消耗点数").font(.headline).padding(.top, 12)
                 Text(coordinator.confirmTitle)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 6)
+                    .font(.subheadline).foregroundColor(.secondary)
+                    .multilineTextAlignment(.center).lineLimit(2)
+                    .padding(.horizontal, 20).padding(.top, 6)
 
                 HStack(spacing: 4) {
                     Text("本次消耗")
@@ -162,34 +229,21 @@ struct PointsOverlayView: View {
                     Text("\(coordinator.confirmRemaining)").fontWeight(.bold).foregroundColor(.blue)
                     Text("点")
                 }
-                .font(.footnote)
-                .padding(.top, 14)
+                .font(.footnote).padding(.top, 14)
 
                 Text(coordinator.confirmUsingBonus ? "将优先扣除赠送点数 · 今日再次访问此项免费"
                                                    : "今日再次访问此项将不再扣点")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 6)
+                    .font(.caption2).foregroundColor(.secondary)
+                    .multilineTextAlignment(.center).padding(.horizontal, 16).padding(.top, 6)
 
-                // MARK: - 【新增】数据尚未更新的醒目提醒条
                 if coordinator.confirmDataStale {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                            .font(.system(size: 15))
-                            .padding(.top, 1)
-
+                            .foregroundColor(.orange).font(.system(size: 15)).padding(.top, 1)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("今日数据尚未更新")
-                                .font(.caption)
-                                .fontWeight(.bold)
-                                .foregroundColor(.orange)
-
+                            Text("今日数据尚未更新").font(.caption).fontWeight(.bold).foregroundColor(.orange)
                             Text(dataStaleMessage)
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
+                                .font(.caption2).foregroundColor(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .multilineTextAlignment(.leading)
                         }
@@ -197,26 +251,19 @@ struct PointsOverlayView: View {
                     }
                     .padding(10)
                     .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.orange.opacity(0.12))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color.orange.opacity(0.35), lineWidth: 0.5)
-                            )
+                        RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.12))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.orange.opacity(0.35), lineWidth: 0.5))
                     )
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
+                    .padding(.horizontal, 16).padding(.top, 14)
                 }
 
                 Divider().padding(.top, 18)
                 HStack(spacing: 0) {
                     Button(action: { coordinator.confirmNo() }) {
-                        Text("取消").frame(maxWidth: .infinity).padding(.vertical, 14)
-                            .foregroundColor(.secondary)
+                        Text("取消").frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.secondary)
                     }
                     Divider().frame(height: 46)
                     Button(action: { coordinator.confirmYes() }) {
-                        // 数据过期时弱化“确认”，用文字引导用户再想想
                         Text(coordinator.confirmDataStale ? "仍要查看" : "确认")
                             .fontWeight(.bold).frame(maxWidth: .infinity).padding(.vertical, 14)
                             .foregroundColor(coordinator.confirmDataStale ? .orange : .blue)
@@ -224,60 +271,64 @@ struct PointsOverlayView: View {
                 }
             }
             .background(Color(UIColor.secondarySystemGroupedBackground))
-            .cornerRadius(18)
-            .padding(.horizontal, 50)
-            .shadow(radius: 20)
+            .cornerRadius(18).padding(.horizontal, 50).shadow(radius: 20)
             .transition(.scale.combined(with: .opacity))
         }
     }
 
-    // 【新增】拼装提醒文案
     private var dataStaleMessage: String {
         let base = "当前显示的仍是上一交易日的数据，今天的新数据一般在上午更新。建议数据更新后再查看，以免白白消耗点数。"
-        if coordinator.confirmDataTimestamp.isEmpty {
-            return base
-        } else {
-            return "数据截至 \(coordinator.confirmDataTimestamp)。\(base)"
-        }
+        return coordinator.confirmDataTimestamp.isEmpty ? base
+             : "数据截至 \(coordinator.confirmDataTimestamp)。\(base)"
     }
 
     private var insufficientDialog: some View {
         ZStack {
             Color.black.opacity(0.45).ignoresSafeArea()
             VStack(spacing: 0) {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .font(.system(size: 44))
-                    .foregroundStyle(.red)
-                    .padding(.top, 24)
+                Image(systemName: coordinator.insufficientNeedLogin ? "person.crop.circle.badge.plus" : "gift.fill")
+                    .font(.system(size: 44)).foregroundStyle(.orange).padding(.top, 24)
 
-                Text("今日点数不足")
-                    .font(.headline)
-                    .padding(.top, 12)
+                Text(coordinator.insufficientNeedLogin ? "登录后免费领取点数" : "今日点数不足")
+                    .font(.headline).padding(.top, 12)
 
-                Text("本次需要 \(coordinator.insufficientCost) 点，当前仅剩 \(coordinator.insufficientRemaining) 点。\n订阅专业版即可无限畅享全部功能。")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 8)
+                Text(coordinator.insufficientNeedLogin
+                     ? "登录后每天可领取免费点数，还能参与「邀请中大奖」，邀请好友双方各得 30 天会员！"
+                     : "本次需要 \(coordinator.insufficientCost) 点，当前仅剩 \(coordinator.insufficientRemaining) 点。\n不想花钱？邀请好友即可白拿会员！")
+                    .font(.subheadline).foregroundColor(.secondary)
+                    .multilineTextAlignment(.center).padding(.horizontal, 20).padding(.top, 8)
 
-                Divider().padding(.top, 18)
+                // 主推：邀请中大奖
+                Button(action: { coordinator.openInvite() }) {
+                    HStack {
+                        Image(systemName: "party.popper.fill")
+                        Text("邀请中大奖 · 免费领会员").fontWeight(.bold)
+                    }
+                    .foregroundColor(.white).frame(maxWidth: .infinity).padding(.vertical, 13)
+                    .background(LinearGradient(colors: [.pink, .orange], startPoint: .leading, endPoint: .trailing))
+                    .cornerRadius(12)
+                }
+                .padding(.horizontal, 20).padding(.top, 18)
+
+                Divider().padding(.top, 16)
                 HStack(spacing: 0) {
                     Button(action: { coordinator.dismissInsufficient() }) {
-                        Text("再等等").frame(maxWidth: .infinity).padding(.vertical, 14)
-                            .foregroundColor(.secondary)
+                        Text("再等等").frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.secondary)
                     }
                     Divider().frame(height: 46)
-                    Button(action: { coordinator.goSubscribe() }) {
-                        Text("去订阅").fontWeight(.bold).frame(maxWidth: .infinity).padding(.vertical, 14)
-                            .foregroundColor(.orange)
+                    if coordinator.insufficientNeedLogin {
+                        Button(action: { coordinator.goLogin() }) {
+                            Text("去登录").fontWeight(.bold).frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.blue)
+                        }
+                    } else {
+                        Button(action: { coordinator.goSubscribe() }) {
+                            Text("去订阅").fontWeight(.bold).frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.blue)
+                        }
                     }
                 }
             }
             .background(Color(UIColor.secondarySystemGroupedBackground))
-            .cornerRadius(18)
-            .padding(.horizontal, 50)
-            .shadow(radius: 20)
+            .cornerRadius(18).padding(.horizontal, 40).shadow(radius: 20)
             .transition(.scale.combined(with: .opacity))
         }
     }

@@ -328,6 +328,7 @@ struct UserProfileView: View {
     @StateObject private var networkMonitor = NetworkMonitor.shared
     
     @State private var showDownloadAlert = false
+    @State private var showInvite = false
     @Environment(\.dismiss) var dismiss
     
     // Toast 状态
@@ -467,6 +468,25 @@ struct UserProfileView: View {
                         }
                         .padding(.vertical, 4)
                     }
+
+                    // 【新增】邀请中大奖入口
+                    Section {
+                        Button {
+                            showInvite = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "gift.fill").foregroundColor(.pink)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("邀请好友 · 中大奖")
+                                        .foregroundColor(.primary).fontWeight(.medium)
+                                    Text("邀请成功，双方各得 30 天会员")
+                                        .font(.caption).foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
+                            }
+                        }
+                    }
                     
                     // 3. 支持与反馈
                     Section(header: Text("支持与反馈")) {
@@ -589,6 +609,7 @@ struct UserProfileView: View {
                     secondaryButton: .cancel(Text("取消"))
                 )
             }
+            .sheet(isPresented: $showInvite) { InviteView() }
         }
     }
     
@@ -697,6 +718,14 @@ struct MainContentView: View {
     // 【新增】我们需要观察 UsageManager 来更新标题
     @EnvironmentObject var usageManager: UsageManager
     
+    @ObservedObject private var pointsCoordinator = PointsCoordinator.shared
+    @State private var showInvitePrompt = false
+    @State private var pendingInviteCode: String? = nil
+    @State private var invitePromptCode = ""
+    @State private var showInviteSuccessAlert = false
+    @State private var inviteSuccessMessage = ""
+    private let invitePromptShownKey = "FinanceInvitePromptShown"
+
     @State private var showLoginSheet = false
     // 【修改点】删除本地的 showSubscriptionSheet 变量，直接绑定 authManager 的状态
     // @State private var showSubscriptionSheet = false
@@ -852,6 +881,14 @@ struct MainContentView: View {
                                         .foregroundColor(.green)
                                         .clipShape(Capsule())
                                 }
+                                Button {
+                                    pointsCoordinator.openInvite()
+                                } label: {
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(.orange)
+                                }
+                                .buttonStyle(BorderlessButtonStyle())
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
@@ -935,12 +972,14 @@ struct MainContentView: View {
             .task {
                 print("MainContentView .task triggered (Cold Start)")
                 await handleInitialDataLoad()
+                maybeShowInvitePrompt()   // 【新增】
             }
             // 保留 onChange 以处理从后台切回前台的情况
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 // 当 App 变为活跃状态时（例如首次启动，或从后台返回，或关闭系统弹窗后）
                 if newPhase == .active {
                     print("App is now active (ScenePhase). Checking data...")
+                    UsageManager.shared.refresh()
                     Task {
                         await handleInitialDataLoad()
                     }
@@ -1062,9 +1101,49 @@ struct MainContentView: View {
             // 建议：加上这个可以让弹窗在 iPad 上或其他场景下展示得更自然（可选）
             .presentationDetents([.large]) 
         }
-
-        // 【修改点】删除原有的 .onChange 监听，因为我们已经直接绑定了状态
-        // .onChange(of: authManager.showSubscriptionSheet) { _, val in showSubscriptionSheet = val }
+        // 【新增】邀请中心
+        .sheet(isPresented: $pointsCoordinator.showInviteSheet) { InviteView() }
+        // 【新增】点数弹窗里的“去登录”
+        .sheet(isPresented: $pointsCoordinator.showLoginSheet) { LoginView() }
+        // 【新增】首启邀请码输入弹窗
+        .sheet(isPresented: $showInvitePrompt) {
+            InviteRedeemPromptView(
+                code: $invitePromptCode,
+                onConfirm: {
+                    let code = invitePromptCode.trimmingCharacters(in: .whitespacesAndNewlines)
+                    showInvitePrompt = false
+                    guard !code.isEmpty else { return }
+                    if authManager.isLoggedIn {
+                        redeemInvite(code)
+                    } else {
+                        pendingInviteCode = code
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            showLoginSheet = true
+                        }
+                    }
+                },
+                onSkip: { showInvitePrompt = false }
+            )
+            .presentationDetents([.fraction(0.55)])
+        }
+        // 【新增】邀请成功提示
+        .alert("🎉 恭喜领取成功！", isPresented: $showInviteSuccessAlert) {
+            Button("好的", role: .cancel) { }
+        } message: {
+            Text(inviteSuccessMessage)
+        }
+        // 【新增】登录成功后自动兑换待处理的邀请码
+        .onChange(of: authManager.isLoggedIn) { _, newVal in
+            if newVal {
+                if showLoginSheet { showLoginSheet = false }
+                if let code = pendingInviteCode {
+                    pendingInviteCode = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        redeemInvite(code)
+                    }
+                }
+            }
+        }
     }
 
     // 统一的数据加载逻辑
@@ -1129,6 +1208,34 @@ struct MainContentView: View {
                 // 也可以尝试加载一下 (万一有部分数据)
                 dataService.loadData()
                 await MainActor.run { isDataReady = true }
+            }
+        }
+    }
+
+    private func maybeShowInvitePrompt() {
+        // 仅首次启动引导一次；已兑换过则不再弹
+        guard !UserDefaults.standard.bool(forKey: invitePromptShownKey) else { return }
+        if usageManager.hasRedeemedInvite { return }
+        UserDefaults.standard.set(true, forKey: invitePromptShownKey)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            self.showInvitePrompt = true
+        }
+    }
+
+    private func redeemInvite(_ code: String) {
+        Task {
+            do {
+                let days = try await authManager.redeemFriendInviteCode(code)
+                await usageManager.refreshQuota()
+                await MainActor.run {
+                    inviteSuccessMessage = "你和好友都已获得 \(days) 天专业版会员！"
+                    showInviteSuccessAlert = true
+                }
+            } catch {
+                await MainActor.run {
+                    inviteSuccessMessage = "邀请码兑换失败：\(error.localizedDescription)"
+                    showInviteSuccessAlert = true
+                }
             }
         }
     }

@@ -124,6 +124,27 @@ struct SubscriptionView: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
+
+                // 【新增】邀请中大奖入口
+                Button(action: {
+                    dismiss()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        PointsCoordinator.shared.openInvite()
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "gift.fill")
+                        Text("不想付费？邀请好友免费领会员")
+                            .fontWeight(.bold)
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.caption)
+                    }
+                    .foregroundColor(.white)
+                    .padding()
+                    .background(LinearGradient(colors: [.pink, .orange], startPoint: .leading, endPoint: .trailing))
+                    .cornerRadius(12)
+                }
+                .buttonStyle(PlainButtonStyle())
                 
                 Spacer()
                     

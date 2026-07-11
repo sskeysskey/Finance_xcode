@@ -1217,13 +1217,12 @@ struct SourceListView: View {
     // MARK: - 右侧 ONews ALL 卡片
     private var onewsAllCard: some View {
         NavigationLink(value: NavigationTarget.allArticles) {
-            VStack(alignment: .leading, spacing: 12) {
-                // 第一行：左标题 + 右未读数
-                HStack(alignment: .center) {
+            HStack(alignment: .center, spacing: 1) {
+                // 左侧：标题 + 未读（上下两行）
+                VStack(alignment: .leading, spacing: 6) {
                     Text(Localized.allArticlesDesc)   // “汇聚全部新闻源”
                         .font(.system(size: 16, weight: .bold))
                         .foregroundColor(.white)
-                    Spacer()
                     HStack(alignment: .lastTextBaseline, spacing: 3) {
                         Text("\(viewModel.totalUnreadCount)")
                             .font(.system(size: 28, weight: .bold, design: .rounded))
@@ -1234,17 +1233,18 @@ struct SourceListView: View {
                             .padding(.bottom, 2)
                     }
                 }
-
-                // 第二行：文本阅读 + 音频播放
+                
+                Spacer()
+                
+                // 右侧：两个按钮同一行
                 HStack(spacing: 10) {
-                    Spacer()
                     Button(action: {
                         Task { await handlePlayAll() }
                     }) {
                         HStack(spacing: 5) {
                             Image(systemName: "play.fill")
                                 .font(.system(size: 11))
-                            Text(isGlobalEnglishMode ? "Play" : "音频播放")
+                            Text(isGlobalEnglishMode ? "Play" : "音频播报")
                                 .font(.system(size: 12, weight: .bold))
                         }
                         .foregroundColor(.blue)
@@ -1272,6 +1272,7 @@ struct SourceListView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
+                .fixedSize() // 自动适配按钮宽度，不压缩文字
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)

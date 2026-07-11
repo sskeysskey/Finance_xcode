@@ -104,6 +104,45 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
 
+    // MARK: - 好友邀请码（拉新奖励，与后门 redeemInviteCode 分开）
+    struct FriendRedeemResponse: Codable {
+        let status: String?
+        let reward_days: Int?
+        let is_subscribed: Bool?
+        let subscription_expires_at: String?
+        let error: String?
+    }
+
+    /// 兑换好友邀请码，成功后返回奖励天数
+    func redeemFriendInviteCode(_ code: String) async throws -> Int {
+        guard let userId = userIdentifier, isLoggedIn else {
+            throw NSError(domain: "AuthError", code: 401,
+                          userInfo: [NSLocalizedDescriptionKey: "请先登录后再使用邀请码"])
+        }
+        let url = URL(string: "\(serverBaseURL)/invite/redeem")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["user_id": userId, "invite_code": code])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let decoded = try? JSONDecoder().decode(FriendRedeemResponse.self, from: data)
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+
+        if http.statusCode == 200, let d = decoded, d.status == "success" {
+            await MainActor.run {
+                self.isSubscribed = true
+                self.subscriptionExpiryDate = d.subscription_expires_at
+                self.saveSubscriptionCache(isSubscribed: true, expiryDate: d.subscription_expires_at)
+            }
+            return d.reward_days ?? 30
+        } else {
+            let msg = decoded?.error ?? "邀请码验证失败"
+            throw NSError(domain: "Server", code: http.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: msg])
+        }
+    }
+
     // 检查钥匙串中的用户状态
     private func checkUserInKeychain() {
         do {
@@ -112,6 +151,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                 self.userIdentifier = userId
                 self.isLoggedIn = true
                 print("AuthManager: 本地已登录，User ID: \(userId)")
+                UsageManager.shared.setCurrentUser(userId, isLoggedIn: true)
                 
                 // 【优化点 1】立即加载上次缓存的订阅状态
                 // 这样用户一打开 App 就能看到皇冠，不用等待网络请求
@@ -131,6 +171,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                 }
             } else {
                 self.isLoggedIn = false
+                UsageManager.shared.setCurrentUser(nil, isLoggedIn: false)
                 // 即使未登录，也要检查本地是否有有效的 StoreKit 权限（匿名购买的情况）
                 Task {
                     await updateSubscriptionStatus()
@@ -160,6 +201,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     func signOut() {
         // 1. 仅清除“账号相关”的状态
         self.isLoggedIn = false
+        UsageManager.shared.setCurrentUser(nil, isLoggedIn: false)
         self.userIdentifier = nil
         self.subscriptionExpiryDate = nil // 清除服务器下发的过期时间
         
@@ -443,6 +485,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
                     await MainActor.run {
                         self.userIdentifier = userId
                         self.isLoggedIn = true
+                        UsageManager.shared.setCurrentUser(userId, isLoggedIn: true)
                         self.isLoggingIn = true // 保持 loading 状态直到服务器返回
                     }
                     
