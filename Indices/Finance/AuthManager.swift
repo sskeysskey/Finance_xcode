@@ -104,16 +104,16 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
 
-    // MARK: - 好友邀请码（拉新奖励，与后门 redeemInviteCode 分开）
+    // MARK: - 好友邀请码（拉新奖励：一次性发放点数，与后门 redeemInviteCode 分开）
     struct FriendRedeemResponse: Codable {
         let status: String?
-        let reward_days: Int?
-        let is_subscribed: Bool?
-        let subscription_expires_at: String?
+        let reward_points: Int?
+        let bonus_remaining: Int?
+        let remaining_total: Int?
         let error: String?
     }
 
-    /// 兑换好友邀请码，成功后返回奖励天数
+    /// 兑换好友邀请码，成功后返回本次获得的点数
     func redeemFriendInviteCode(_ code: String) async throws -> Int {
         guard let userId = userIdentifier, isLoggedIn else {
             throw NSError(domain: "AuthError", code: 401,
@@ -130,12 +130,9 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
 
         if http.statusCode == 200, let d = decoded, d.status == "success" {
-            await MainActor.run {
-                self.isSubscribed = true
-                self.subscriptionExpiryDate = d.subscription_expires_at
-                self.saveSubscriptionCache(isSubscribed: true, expiryDate: d.subscription_expires_at)
-            }
-            return d.reward_days ?? 30
+            // 奖励是一次性赠送点数，刷新配额以更新点数显示
+            await UsageManager.shared.refreshQuota()
+            return d.reward_points ?? 0
         } else {
             let msg = decoded?.error ?? "邀请码验证失败"
             throw NSError(domain: "Server", code: http.statusCode,

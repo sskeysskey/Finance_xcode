@@ -1,6 +1,6 @@
 import SwiftUI
 
-// 邀请中心（个人中心 / 点数不足 / banner“+” 都用它）
+// 邀请中心（个人中心 / 点数不足 / banner"+" 都用它）
 struct InviteView: View {
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
@@ -18,7 +18,7 @@ struct InviteView: View {
     // 分享文案
     private var shareText: String {
         let code = usageManager.inviteCode
-        return "我在用【美股精灵】看美股数据，用我的邀请码 \(code) 注册就能领取 30 天专业版会员，你我都有奖！下载：https://apps.apple.com/cn/app/id6754904170"
+        return "我在用【美股精灵】看美股数据，用我的邀请码 \(code) 注册就能领取 \(usageManager.inviteRewardPoints) 点免费点数，你我都有奖！下载：https://apps.apple.com/cn/app/id6754904170"
     }
 
     var body: some View {
@@ -75,10 +75,10 @@ struct InviteView: View {
                 .font(.system(size: 70))
                 .foregroundStyle(.linearGradient(colors: [.pink, .orange], startPoint: .topLeading, endPoint: .bottomTrailing))
                 .shadow(color: .pink.opacity(0.3), radius: 10, y: 5)
-            Text("邀请好友 · 双方各得 30 天会员")
+            Text("邀请好友 · 双方各得 \(usageManager.inviteRewardPoints) 点")
                 .font(.title3.bold())
                 .multilineTextAlignment(.center)
-            Text("好友越多，免费会员越久！")
+            Text("好友越多，免费点数越多！")
                 .font(.subheadline).foregroundColor(.secondary)
         }
         .padding(.top, 10)
@@ -142,7 +142,7 @@ struct InviteView: View {
             Image(systemName: "person.2.fill").foregroundColor(.green)
             Text("已成功邀请")
             Text("\(usageManager.inviteRewardCount)").fontWeight(.bold).foregroundColor(.green)
-            Text("位好友 · 累计获得 \(usageManager.inviteRewardCount * 30) 天会员")
+            Text("位好友 · 累计获得 \(usageManager.inviteRewardCount * usageManager.inviteRewardPoints) 点")
                 .font(.footnote).foregroundColor(.secondary)
             Spacer()
         }
@@ -155,7 +155,7 @@ struct InviteView: View {
     private var redeemCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("填写好友的邀请码").font(.headline)
-            Text("输入后你和好友都将立即获得 30 天专业版会员（每位用户仅可填写一次）")
+            Text("输入后你和好友都将立即获得 \(usageManager.inviteRewardPoints) 点免费点数（每位用户仅可填写一次）")
                 .font(.caption).foregroundColor(.secondary)
             HStack {
                 TextField("请输入邀请码", text: $codeInput)
@@ -189,7 +189,7 @@ struct InviteView: View {
     private var redeemedCard: some View {
         HStack {
             Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
-            Text("你已使用过邀请码，快去邀请好友赚取更多会员吧！")
+            Text("你已使用过邀请码，快去邀请好友赚取更多点数吧！")
                 .font(.subheadline).foregroundColor(.secondary)
             Spacer()
         }
@@ -203,8 +203,8 @@ struct InviteView: View {
             Text("活动规则").font(.headline)
             ruleRow("1", "把你的邀请码分享给好友")
             ruleRow("2", "好友下载 App 并登录后，在首页或个人中心填入你的邀请码")
-            ruleRow("3", "你和好友立即各得 30 天专业版会员（可叠加到现有会员时长）")
-            ruleRow("4", "邀请人数不限，邀请越多，免费会员越久")
+            ruleRow("3", "你和好友立即各得 \(usageManager.inviteRewardPoints) 点赠送点数")
+            ruleRow("4", "邀请人数不限，邀请越多，免费点数越多")
         }
         .padding(18)
         .background(Color(UIColor.secondarySystemGroupedBackground))
@@ -229,13 +229,13 @@ struct InviteView: View {
         isRedeeming = true
         Task {
             do {
-                let days = try await authManager.redeemFriendInviteCode(code)
+                let points = try await authManager.redeemFriendInviteCode(code)
                 await usageManager.refreshQuota()
                 await MainActor.run {
                     isRedeeming = false
                     redeemSucceeded = true
                     resultTitle = "🎉 恭喜领取成功！"
-                    resultMessage = "你和好友都已获得 \(days) 天专业版会员！现在可无限畅享全部功能。"
+                    resultMessage = "你和好友都已获得 \(points) 点免费点数！可用于解锁各项功能。"
                     showResult = true
                     codeInput = ""
                 }
@@ -255,8 +255,16 @@ struct InviteView: View {
 // 首页首启弹出的邀请码输入弹窗
 struct InviteRedeemPromptView: View {
     @Binding var code: String
+    var rewardPoints: Int = 300              // 【新增】动态奖励点数
     var onConfirm: () -> Void
     var onSkip: () -> Void
+    var onLearnMore: () -> Void   // 没有邀请码 -> 打开完整活动详情
+
+    @State private var showEmptyHint = false
+
+    private var isEmpty: Bool {
+        code.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 20) {
@@ -268,7 +276,7 @@ struct InviteRedeemPromptView: View {
 
             Text("有邀请码吗？")
                 .font(.title2.bold())
-            Text("填入好友的邀请码，立即领取 30 天专业版会员！")
+            Text("填入好友的邀请码，立即领取 \(rewardPoints) 点免费点数！")
                 .font(.subheadline).foregroundColor(.secondary)
                 .multilineTextAlignment(.center).padding(.horizontal)
 
@@ -281,16 +289,44 @@ struct InviteRedeemPromptView: View {
                 .background(Color(UIColor.tertiarySystemFill))
                 .cornerRadius(12)
                 .padding(.horizontal)
+                .onChange(of: code) { _, _ in
+                    if showEmptyHint { withAnimation { showEmptyHint = false } }
+                }
 
-            Button(action: onConfirm) {
-                Text("立即领取")
-                    .fontWeight(.bold).foregroundColor(.white)
+            if showEmptyHint {
+                Text("请先输入邀请码再领取哦～")
+                    .font(.caption).foregroundColor(.orange)
+                    .transition(.opacity)
+            }
+
+            Button(action: {
+                if isEmpty {
+                    withAnimation { showEmptyHint = true }
+                } else {
+                    onConfirm()
+                }
+            }) {
+                Text("确定")
+                    .fontWeight(.bold).foregroundColor(.secondary)
                     .frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(LinearGradient(colors: [.pink, .orange], startPoint: .leading, endPoint: .trailing))
+                    .background(
+                        Group {
+                            if isEmpty {
+                                Color.gray.opacity(0.4)
+                            } else {
+                                LinearGradient(colors: [.pink, .orange], startPoint: .leading, endPoint: .trailing)
+                            }
+                        }
+                    )
                     .cornerRadius(14)
             }
             .padding(.horizontal)
-            .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty)
+
+            Button(action: onLearnMore) {
+                Text("没有邀请码？了解活动详情 ›")
+                    .font(.subheadline)
+                    .foregroundColor(.blue)
+            }
 
             Button("暂不需要", action: onSkip)
                 .font(.subheadline).foregroundColor(.secondary)

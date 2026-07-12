@@ -324,6 +324,7 @@ struct ToastView: View {
 // MARK: - 用户个人中心视图
 struct UserProfileView: View {
     @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var usageManager: UsageManager   // 【新增】
     @StateObject private var updateManager = UpdateManager.shared
     @StateObject private var networkMonitor = NetworkMonitor.shared
     
@@ -479,7 +480,7 @@ struct UserProfileView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("邀请好友 · 中大奖")
                                         .foregroundColor(.primary).fontWeight(.medium)
-                                    Text("邀请成功，双方各得 30 天会员")
+                                    Text("邀请成功，双方各得 \(usageManager.inviteRewardPoints) 点")
                                         .font(.caption).foregroundColor(.secondary)
                                 }
                                 Spacer()
@@ -724,6 +725,7 @@ struct MainContentView: View {
     @State private var invitePromptCode = ""
     @State private var showInviteSuccessAlert = false
     @State private var inviteSuccessMessage = ""
+    @State private var inviteResultTitle = "🎉 恭喜领取成功！"
     private let invitePromptShownKey = "FinanceInvitePromptShown"
 
     @State private var showLoginSheet = false
@@ -870,17 +872,6 @@ struct MainContentView: View {
                                 Text("点数\(usageManager.remainingTotal)")
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundColor(.primary)
-
-                                // 有赠送点数时额外标出
-                                if usageManager.bonusRemaining > 0 {
-                                    Text("赠\(usageManager.bonusRemaining)")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 1)
-                                        .background(Color.green.opacity(0.15))
-                                        .foregroundColor(.green)
-                                        .clipShape(Capsule())
-                                }
                                 Button {
                                     pointsCoordinator.openInvite()
                                 } label: {
@@ -935,6 +926,10 @@ struct MainContentView: View {
                                 Task {
                                     DatabaseManager.shared.reconnectToLatestDatabase()
                                     let _ = await updateManager.checkForUpdates(isManual: true)
+                                    // 【新增】重新校验会员/订阅状态，确保拉新奖励等服务器端变更能被同步
+                                    await authManager.updateSubscriptionStatus()
+                                    await authManager.checkServerSubscriptionStatus()
+                                    await usageManager.refreshQuota()
                                     print("User triggered refresh: Forcing data reload.")
                                     dataService.forceReloadData()
                                     await MainActor.run {
@@ -976,12 +971,14 @@ struct MainContentView: View {
             }
             // 保留 onChange 以处理从后台切回前台的情况
             .onChange(of: scenePhase) { oldPhase, newPhase in
-                // 当 App 变为活跃状态时（例如首次启动，或从后台返回，或关闭系统弹窗后）
                 if newPhase == .active {
                     print("App is now active (ScenePhase). Checking data...")
                     UsageManager.shared.refresh()
                     Task {
                         await handleInitialDataLoad()
+                        // 【新增】回前台刷新会员状态
+                        await authManager.updateSubscriptionStatus()
+                        await authManager.checkServerSubscriptionStatus()
                     }
                 }
             }
@@ -1109,6 +1106,7 @@ struct MainContentView: View {
         .sheet(isPresented: $showInvitePrompt) {
             InviteRedeemPromptView(
                 code: $invitePromptCode,
+                rewardPoints: usageManager.inviteRewardPoints,   // 【新增】
                 onConfirm: {
                     let code = invitePromptCode.trimmingCharacters(in: .whitespacesAndNewlines)
                     showInvitePrompt = false
@@ -1122,12 +1120,18 @@ struct MainContentView: View {
                         }
                     }
                 },
-                onSkip: { showInvitePrompt = false }
+                onSkip: { showInvitePrompt = false },
+                onLearnMore: {                          // 【新增】
+                    showInvitePrompt = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        pointsCoordinator.openInvite()  // 打开顶部"+"那个完整邀请页
+                    }
+                }
             )
-            .presentationDetents([.fraction(0.55)])
+            .presentationDetents([.fraction(0.62)])     // 【修改】0.55 -> 0.62
         }
         // 【新增】邀请成功提示
-        .alert("🎉 恭喜领取成功！", isPresented: $showInviteSuccessAlert) {
+        .alert(inviteResultTitle, isPresented: $showInviteSuccessAlert) {
             Button("好的", role: .cancel) { }
         } message: {
             Text(inviteSuccessMessage)
@@ -1225,15 +1229,17 @@ struct MainContentView: View {
     private func redeemInvite(_ code: String) {
         Task {
             do {
-                let days = try await authManager.redeemFriendInviteCode(code)
+                let points = try await authManager.redeemFriendInviteCode(code)
                 await usageManager.refreshQuota()
                 await MainActor.run {
-                    inviteSuccessMessage = "你和好友都已获得 \(days) 天专业版会员！"
+                    inviteResultTitle = "🎉 恭喜领取成功！"
+                    inviteSuccessMessage = "你和好友都已获得 \(points) 点免费点数！"
                     showInviteSuccessAlert = true
                 }
             } catch {
                 await MainActor.run {
-                    inviteSuccessMessage = "邀请码兑换失败：\(error.localizedDescription)"
+                    inviteResultTitle = "领取失败"
+                    inviteSuccessMessage = error.localizedDescription
                     showInviteSuccessAlert = true
                 }
             }

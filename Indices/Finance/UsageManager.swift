@@ -39,6 +39,7 @@ class UsageManager: ObservableObject {
     @Published var inviteCode: String = ""
     @Published var inviteRewardCount: Int = 0
     @Published var hasRedeemedInvite: Bool = false
+    @Published var inviteRewardPoints: Int = 300   // 邀请奖励点数（服务器下发）
 
     // 登录状态（由 AuthManager 同步进来）
     @Published var isLoggedIn: Bool = false
@@ -114,6 +115,7 @@ class UsageManager: ObservableObject {
             let invite_reward_count: Int?
             let has_redeemed_invite: Bool?
             let unlocked_keys: [String]?
+            let invite_reward_points: Int?
         }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
@@ -124,6 +126,7 @@ class UsageManager: ObservableObject {
             self.inviteCode = s.invite_code ?? ""
             self.inviteRewardCount = s.invite_reward_count ?? 0
             self.hasRedeemedInvite = s.has_redeemed_invite ?? false
+            self.inviteRewardPoints = s.invite_reward_points ?? self.inviteRewardPoints
             self.unlockedKeys = Set(s.unlocked_keys ?? [])
         } catch {
             // 网络失败保持旧值即可

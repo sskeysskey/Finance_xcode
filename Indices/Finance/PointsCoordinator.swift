@@ -289,20 +289,27 @@ struct PointsOverlayView: View {
                 Image(systemName: coordinator.insufficientNeedLogin ? "person.crop.circle.badge.plus" : "gift.fill")
                     .font(.system(size: 44)).foregroundStyle(.orange).padding(.top, 24)
 
-                Text(coordinator.insufficientNeedLogin ? "登录后免费领取点数" : "今日点数不足")
+                Text(coordinator.insufficientNeedLogin ? "登录即可免费领取大量点数" : "今日点数不足")
                     .font(.headline).padding(.top, 12)
 
                 Text(coordinator.insufficientNeedLogin
-                     ? "登录后每天可领取免费点数，还能参与「邀请中大奖」，邀请好友双方各得 30 天会员！"
-                     : "本次需要 \(coordinator.insufficientCost) 点，当前仅剩 \(coordinator.insufficientRemaining) 点。\n不想花钱？邀请好友即可白拿会员！")
+                    ? "浏览该功能需要消耗点数。登录后即可一次性获赠大量免费点数，每天打卡还有免费点数赠送；除此以外，如果参与「邀请中大奖」活动，参与双方都将各获得大量免费点数！"
+                    : "本次需要 \(coordinator.insufficientCost) 点，当前仅剩 \(coordinator.insufficientRemaining) 点。\n不想花钱？邀请好友即可白拿海量点数！")
                     .font(.subheadline).foregroundColor(.secondary)
                     .multilineTextAlignment(.center).padding(.horizontal, 20).padding(.top, 8)
 
-                // 主推：邀请中大奖
-                Button(action: { coordinator.openInvite() }) {
+                // 主推按钮：未登录 -> 去登录领点数；已登录 -> 邀请中大奖
+                Button(action: {
+                    if coordinator.insufficientNeedLogin {
+                        coordinator.goLogin()
+                    } else {
+                        coordinator.openInvite()
+                    }
+                }) {
                     HStack {
-                        Image(systemName: "party.popper.fill")
-                        Text("邀请中大奖 · 免费领会员").fontWeight(.bold)
+                        Image(systemName: coordinator.insufficientNeedLogin ? "person.fill.checkmark" : "party.popper.fill")
+                        Text(coordinator.insufficientNeedLogin ? "登录 · 免费领取点数" : "邀请中大奖 · 免费领点数")
+                            .fontWeight(.bold)
                     }
                     .foregroundColor(.white).frame(maxWidth: .infinity).padding(.vertical, 13)
                     .background(LinearGradient(colors: [.pink, .orange], startPoint: .leading, endPoint: .trailing))
@@ -317,8 +324,9 @@ struct PointsOverlayView: View {
                     }
                     Divider().frame(height: 46)
                     if coordinator.insufficientNeedLogin {
-                        Button(action: { coordinator.goLogin() }) {
-                            Text("去登录").fontWeight(.bold).frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.blue)
+                        // 未登录：次要入口引导去了解邀请活动
+                        Button(action: { coordinator.openInvite() }) {
+                            Text("了解活动").fontWeight(.bold).frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.blue)
                         }
                     } else {
                         Button(action: { coordinator.goSubscribe() }) {
