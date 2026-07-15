@@ -637,6 +637,13 @@ struct ArticleListView: View {
                     )
                 }
 
+                // 【新增】在导航栏中间显示免费点数胶囊
+                ToolbarItem(placement: .principal) {
+                    if !authManager.isSubscribed {
+                        NewsPointsPill()
+                    }
+                }
+
                 // 【新增】中英切换按钮 (放在刷新按钮之前或之后)
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: {
@@ -766,6 +773,13 @@ struct ArticleListView: View {
                 if newValue == true && self.showLoginSheet {
                     self.showLoginSheet = false
                 }
+                if newValue == true {
+                    Task {
+                        await NewsQuotaManager.shared.refresh(
+                            userId: NewsQuotaManager.currentUserId(auth: authManager)
+                        )
+                    }
+                }
             }
         }
     }
@@ -773,13 +787,14 @@ struct ArticleListView: View {
     private func handleArticleTap(_ item: ArticleItem, autoPlay: Bool = false) async {
         let article = item.article
         
-        // 1. 订阅检查
-        if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
-            showSubscriptionSheet = true
+        // 1. 点数/订阅门禁
+        if !NewsPointsCoordinator.canAccess(article, auth: authManager, viewModel: viewModel) {
+            NewsPointsCoordinator.shared.attemptUnlockArticle(article, auth: authManager, viewModel: viewModel) {
+                Task { await self.handleArticleTap(item, autoPlay: autoPlay) }
+            }
             return
         }
-        
-        // 【修改】使用全局 navPath 进行跳转
+
         let proceedToArticle = {
             await MainActor.run {
                 appNavPath?.wrappedValue.append(NavigationTarget.articleDetail(article, self.sourceName, "source", autoPlay))
@@ -1088,6 +1103,13 @@ struct AllArticlesListView: View {
                 )
             }
 
+            // 【新增】在导航栏中间显示免费点数胶囊
+            ToolbarItem(placement: .principal) {
+                if !authManager.isSubscribed {
+                    NewsPointsPill()
+                }
+            }
+
             // 【新增】中英切换按钮 (放在刷新按钮之前或之后)
             ToolbarItem(placement: .topBarTrailing) {
                 Button(action: {
@@ -1110,21 +1132,6 @@ struct AllArticlesListView: View {
                     }
                     .frame(width: 24, height: 24)
                 }
-            }
-            
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    // 【核心修改】点击刷新时，同时同步资源和用户状态
-                    Task { 
-                        await syncResources(isManual: true) 
-                        await authManager.checkServerSubscriptionStatus()
-                    }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .foregroundColor(.primary)
-                }
-                .disabled(resourceManager.isSyncing)
-                .accessibilityLabel(Localized.refresh)
             }
             
             ToolbarItem(placement: .topBarTrailing) {
@@ -1216,6 +1223,13 @@ struct AllArticlesListView: View {
             if newValue == true && self.showLoginSheet {
                 self.showLoginSheet = false
             }
+            if newValue == true {
+                Task {
+                    await NewsQuotaManager.shared.refresh(
+                        userId: NewsQuotaManager.currentUserId(auth: authManager)
+                    )
+                }
+            }
         }
     }
     
@@ -1223,13 +1237,14 @@ struct AllArticlesListView: View {
         let article = item.article
         guard let sourceName = item.sourceName else { return }
         
-        // 1. 订阅检查
-        if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
-            showSubscriptionSheet = true
+        // 1. 点数/订阅门禁
+        if !NewsPointsCoordinator.canAccess(article, auth: authManager, viewModel: viewModel) {
+            NewsPointsCoordinator.shared.attemptUnlockArticle(article, auth: authManager, viewModel: viewModel) {
+                Task { await self.handleArticleTap(item, autoPlay: autoPlay) }
+            }
             return
         }
-        
-        // 【修改】使用全局 navPath 进行跳转
+
         let proceedToArticle = {
             await MainActor.run {
                 appNavPath?.wrappedValue.append(NavigationTarget.articleDetail(article, sourceName, "all", autoPlay))

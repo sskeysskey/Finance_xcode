@@ -1046,7 +1046,7 @@ struct VideoPlayerPageView: View {
         return s
     }
 
-    // ⭐ 加载超时看门狗：15 秒还没出帧就弹反馈修复
+    // ⭐ 加载超时看门狗：20 秒还没出帧就弹反馈修复
     private func scheduleLoadTimeout() {
         loadTimeoutWork?.cancel()
         let work = DispatchWorkItem {
@@ -1056,7 +1056,7 @@ struct VideoPlayerPageView: View {
             }
         }
         loadTimeoutWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: work)
     }
 
     // 播放器主区
@@ -1648,7 +1648,7 @@ struct CachedVideoPlayerView: View {
             if isCachedLoading { showRepairSheet = true }
         }
         loadTimeoutWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: work)
     }
 
     // ⭐ 重试当前集（本地优先，否则在线重新解析）

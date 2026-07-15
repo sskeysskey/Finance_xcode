@@ -72,7 +72,7 @@ struct Localized {
     static var errSessionFailed: String { tr("音频会话激活失败", "Audio session failed") }
     
     // MARK: - 欢迎页 (WelcomeView)
-    static var welcomeInstruction: String { tr("点击右下角按钮\n定制您的专属\n新闻源和影视源", "Tap the button below\nto customize your news feed") }
+    static var welcomeInstruction: String { tr("点击右下角按钮\n定制您专属的\n新闻源 或 影视源", "Tap the button below\nto customize your news feed") }
     static var upToDateMessage: String { tr("请点击右下角“+”按钮来选择您喜欢的影视新闻源。", "Connection is OK. Tap the '+' button to select your news sources.") }
 
     // MARK: - 主页 / 列表页
@@ -84,7 +84,7 @@ struct Localized {
     static var searchResults: String { tr("搜索结果", "Results") }
     static var noMatch: String { tr("未找到匹配的文章", "No matches found") }
     static var noMore: String { tr("该分组内已无更多文章", "No more articles in this group") }
-    static var needSubscription: String { tr("需订阅", "Premium") }
+    static var needSubscription: String { tr("需订阅或点数", "Premium or Points") }
     static var contentMatch: String { tr("正文匹配", "Content Match") }
     static var markAllAsRead: String {isEnglish ? "Mark All as Read" : "全部设为已读"}
     static var markAllAsReadConfirm: String {isEnglish ? "This will mark all articles in the current list as read." : "这将把当前列表中所有文章标记为已读。"}
@@ -135,7 +135,7 @@ struct Localized {
     static var weChatNotInstalled: String { tr("未安装微信", "WeChat not installed") }
     
     // MARK: - 登录与个人中心
-    static var loginAccount: String { tr("登录账户", "Sign In") }
+    static var loginAccount: String { tr("登录", "Sign In") }
     static var logout: String { tr("退出登录", "Sign Out") }
     static var feedback: String { tr("问题反馈", "Feedback") }
     static var profileTitle: String { tr("账户", "Account") }
@@ -143,7 +143,7 @@ struct Localized {
     static var freeUser: String { tr("免费版用户", "Free User") }
     static var validUntil: String { tr("有效期至", "Valid until") }
     static var notLoggedIn: String { tr("未登录", "Not Logged In") }
-    static var loginWelcome: String { tr("登录【国外消息】", "Login to ONews") }
+    static var loginWelcome: String { tr("登录【国外消息和视频】", "Login to ONews") }
     static var loginDesc: String { tr("成功登录后\n即使更换设备\n也可以同步您的订阅状态", "Sync your subscriptions\nacross devices\nafter logging in") }
     static var later: String { tr("稍后再说", "Not Now") }
     
@@ -160,13 +160,27 @@ struct Localized {
     static var subTitle: String { tr("订阅后即可畅享🥲", "Recent news requires Pro🥲") }
     static var subDesc: String { tr("每月仅需一份早餐钱😓", "Unlock full access with Pro.\nOr enjoy older news (3+ days) for free forever.") }
     static var planFree: String { tr("【当前】免费版", "[Current] Free Plan") }
-    static var planFreeDetail: String { tr("每天会赠送免费视频额度，3天前的新闻免费阅读", "Access articles older than 3 days") }
+    static var planFreeDetail: String { tr("3天前的新闻免费阅读，每日打卡还会赠送免费点数。", "Access articles older than 3 days") }
     static var planFreeDetailSubbed: String { tr("可免费浏览 全部 视频和新闻", "Access ALL articles") }
     static var planPro: String { tr("尊贵 VIP 套餐", "Pro Plan") }
-    static var planProDesc: String { tr("解锁全部视频和最新资讯，与世界同频", "Unlock latest news and Prediction Data instantly") }
-    static var pricePerMonth: String { tr("¥12/月", "$1.99/mo") }
+    static var planProDesc: String { tr("解锁所有视频和最新资讯，感受全球的脉动，与世界同频！", "Unlock latest news and Prediction Data instantly") }
+    // Localized 内静态属性，返回视图，不再返回String
+    static var pricePerMonthView: some View {
+        HStack(alignment: .bottom, spacing: 6) {
+            // 划掉原价 ¥18
+            Text(tr("¥18/月", "$2.99/mo"))
+                .font(.subheadline)
+                .foregroundColor(.gray)
+                .strikethrough(color: .gray) // 删除线
+            
+            // 现价 ¥12/月
+            Text(tr("¥12", "$1.99"))
+                .font(.title2.bold())
+                .foregroundColor(.orange)
+        }
+    }
     static var currentProUser: String { tr("您当前是尊贵的专业版用户", "You are currently a Pro member") }
-    static var freePlanFootnote: String { tr("如果不选择付费，您仍可以享用三天前的文章和每日赠送的免费视频点数。", "If you don't upgrade, you can still enjoy articles older than 3 days for free.") }
+    static var freePlanFootnote: String { tr("如果实在不想付费，您仍可以免费享用三天前的文章和每日赠送的免费新闻&视频点数。", "If you don't upgrade, you can still enjoy articles older than 3 days for free.") }
     static var restorePurchase: String { tr("恢复购买", "Restore Purchase") }
     static var terms: String { tr("使用条款 (EULA)", "Terms of Use") }
     static var privacy: String { tr("隐私政策", "Privacy Policy") }
@@ -185,7 +199,7 @@ struct Localized {
 
      // MARK: - 资源同步状态 (ResourceManager)
     static var syncStarting: String { tr("启动中...", "Starting...") }
-    static var fetchingManifest: String { tr("正在获取新闻列表...", "Fetching news list...") }
+    static var fetchingManifest: String { tr("正在获取资源列表...", "Fetching news list...") }
     static var cleaningOldResources: String { tr("正在清理旧资源...", "Cleaning old resources...") }
     static var downloadingData: String { tr("正在加载数据...", "Loading Data and Files...") }
     static var downloadingFiles: String { tr("正在下载文件...", "Downloading files...") }

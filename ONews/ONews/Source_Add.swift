@@ -47,6 +47,9 @@ struct AddSourceView: View {
 
     // 视频订阅选择
     @State private var selectedVideoKeys: Set<String> = []
+    
+    // 一键全选全部按钮显隐标记
+    @State private var showSelectAllTotalBtn = true
 
     @ObservedObject private var subscriptionManager = SubscriptionManager.shared
 
@@ -83,6 +86,22 @@ struct AddSourceView: View {
 
     private var hasAnySelection: Bool {
         !subscriptionManager.subscribedSourceIDs.isEmpty || !selectedVideoKeys.isEmpty
+    }
+
+    // 是否所有视频、所有新闻全部勾选完成
+    private var isAllSourcesSelected: Bool {
+        let allVideoIds = videoCategories.map(\.key)
+        let allVideoSelected = selectedVideoKeys.count == allVideoIds.count && !allVideoIds.isEmpty
+        
+        let allNewsIds = allAvailableSources.map(\.id)
+        let allNewsSelected = subscriptionManager.subscribedSourceIDs.count == allNewsIds.count && !allNewsIds.isEmpty
+        
+        // 如果视频模块关闭（无视频分类），只判断新闻全选；否则两者都要全选
+        if videoCategories.isEmpty {
+            return allNewsSelected
+        } else {
+            return allVideoSelected && allNewsSelected
+        }
     }
 
     var body: some View {
@@ -147,6 +166,13 @@ struct AddSourceView: View {
         .onAppear {
             loadSelectedVideoKeys()
             loadAvailableSources()
+        }
+        // 新增下面两行监听
+        .onChange(of: selectedVideoKeys) { _ in
+            showSelectAllTotalBtn = !isAllSourcesSelected
+        }
+        .onChange(of: subscriptionManager.subscribedSourceIDs) { _ in
+            showSelectAllTotalBtn = !isAllSourcesSelected
         }
     }
 
@@ -213,10 +239,27 @@ struct AddSourceView: View {
         .buttonStyle(PlainButtonStyle())
     }
 
-    // MARK: - 底部栏（只保留"完成"）
+    // MARK: - 底部栏（新增一键全选全部按钮）
     private var bottomBar: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 12) {
             Divider()
+            
+            // 新增：一键全选全部按钮，全部选中后自动消失
+            if showSelectAllTotalBtn {
+                Button(action: selectAllTotal) {
+                    Text(isGlobalEnglishMode ? "Select All Sources" : "一键选择全部")
+                        .font(.system(size: 25, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 46)
+                        .background(Color.indigo)
+                        .cornerRadius(14)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.horizontal, 16)
+            }
+            
+            // 原有完成按钮
             Button(action: handleConfirm) {
                 Text(hasAnySelection ? Localized.finishSetup : Localized.selectAtLeastOne)
                     .font(.headline)
@@ -227,7 +270,8 @@ struct AddSourceView: View {
                     .cornerRadius(16)
             }
             .disabled(!hasAnySelection)
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
             .background(Material.regular)
         }
     }
@@ -275,6 +319,18 @@ struct AddSourceView: View {
     private func selectNoneNews() {
         haptic()
         withAnimation(.spring()) { subscriptionManager.removeAll(allAvailableSources.map { $0.id }) }
+    }
+
+    // MARK: - 全局一键全选（视频+新闻）
+    private func selectAllTotal() {
+    haptic(.heavy)
+    withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+        // 全选视频
+        selectedVideoKeys.formUnion(videoCategories.map { $0.key })
+        // 全选新闻
+        subscriptionManager.subscribeToAll(allAvailableSources.map { $0.id })
+    }
+    saveSelectedVideoKeys()
     }
 
     // MARK: - 子视图：加载 / 错误

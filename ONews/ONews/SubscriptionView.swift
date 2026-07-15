@@ -119,19 +119,16 @@ struct SubscriptionView: View {
                         }
                         Spacer()
                         VStack(alignment: .trailing) {
-                            // 【修改】价格双语化
-                            Text(Localized.pricePerMonth)
-                                .font(.title2.bold())
-                                .foregroundColor(.green)        // ← 绿色价格
+                            // 新版划掉原价价格视图
+                            Localized.pricePerMonthView
                         }
                     }
                     .padding()
-                    // 【修改】使用卡片背景色
                     .background(Color.cardBackground)
                     .cornerRadius(12)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.green, lineWidth: 2)  // ← 始终绿色边框
+                            .stroke(Color.orange, lineWidth: 2)
                     )
                     .shadow(color: Color.black.opacity(0.05), radius: 5)
                 }

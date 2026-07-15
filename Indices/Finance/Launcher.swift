@@ -865,10 +865,6 @@ struct MainContentView: View {
                     ToolbarItem(placement: .principal) {
                         if !authManager.isSubscribed {
                             HStack(spacing: 6) {
-                                Image(systemName: "bolt.shield.fill")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(.orange)
-
                                 Text("点数\(usageManager.remainingTotal)")
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundColor(.primary)
@@ -891,6 +887,7 @@ struct MainContentView: View {
                             .fixedSize(horizontal: true, vertical: false)
                         }
                     }
+                    
                     ToolbarItem(placement: .navigationBarTrailing) {
                         HStack(spacing: 12) { // 稍微调整间距
                                 
@@ -901,9 +898,7 @@ struct MainContentView: View {
                                 showNewsPromoSheet = true
                             } label: {
                                 HStack(spacing: 4) {
-                                    // Image(systemName: "flame.fill") // 加个小火苗图标增加紧迫感/热度
-                                    //     .font(.caption)
-                                    Text("新闻")
+                                    Text("新闻&影视")
                                         .font(.system(size: 14, weight: .bold))
                                 }
                                 .padding(.vertical, 6)
@@ -967,7 +962,6 @@ struct MainContentView: View {
             .task {
                 print("MainContentView .task triggered (Cold Start)")
                 await handleInitialDataLoad()
-                maybeShowInvitePrompt()   // 【新增】
             }
             // 保留 onChange 以处理从后台切回前台的情况
             .onChange(of: scenePhase) { oldPhase, newPhase in
@@ -1216,16 +1210,6 @@ struct MainContentView: View {
         }
     }
 
-    private func maybeShowInvitePrompt() {
-        // 仅首次启动引导一次；已兑换过则不再弹
-        guard !UserDefaults.standard.bool(forKey: invitePromptShownKey) else { return }
-        if usageManager.hasRedeemedInvite { return }
-        UserDefaults.standard.set(true, forKey: invitePromptShownKey)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            self.showInvitePrompt = true
-        }
-    }
-
     private func redeemInvite(_ code: String) {
         Task {
             do {
@@ -1312,7 +1296,7 @@ struct NewsPromoView: View {
                                 )
                                 .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
 
-                            Text("全球财经要闻·中英双语\n支持语音播放")
+                            Text("全球财经要闻·中英双语\n最新电影|美剧|韩剧|综艺|动漫")
                                 .font(.system(size: 28, weight: .heavy))
                                 .foregroundColor(.primary)
                                 .multilineTextAlignment(.center) // ✅ 加这一行
@@ -1321,13 +1305,13 @@ struct NewsPromoView: View {
 
                         // 3. 媒体品牌墙 (视觉化展示)
                         VStack(spacing: 10) {
-                            Text("汇聚国际一线媒体精华")
+                            Text("汇聚国际一线媒体和最新影视剧资源")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                                 .textCase(.uppercase)
                             
                             // 使用流式布局或简单的多行排列
-                            let brands = ["纽约时报", "伦敦金融时报", "华尔街日报", "Bloomberg彭博社", "法广头条", "经济学人", "路透社", "日经新闻", "华盛顿邮报", "..."]
+                            let brands = ["纽约时报", "伦敦金融时报", "华尔街日报", "Bloomberg彭博社", "法广头条", "经济学人", "路透社", "日经新闻", "华盛顿邮报", "最新电影", "美剧", "韩剧", "国外综艺", "动漫"]
                             
                             FlowLayoutView(items: brands)
                         }
@@ -1338,7 +1322,7 @@ struct NewsPromoView: View {
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: "sparkles")
                                     .foregroundColor(.orange)
-                                Text("原版内容，中英双语，AI总结翻译，原版配图，语音播放....欢迎尝试")
+                                Text("原版内容，中英双语，原版配图，最新影视，韩日泰泰剧，追剧首选，最新动漫和国外综艺....欢迎尝试")
                             }
                             .font(.subheadline)
                             .foregroundColor(.secondary)

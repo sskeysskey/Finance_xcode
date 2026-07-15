@@ -294,6 +294,9 @@ struct UserProfileView: View {
                                 HStack {
                                     Image(systemName: "trash.fill")
                                     Text(isGlobalEnglishMode ? "Delete Account" : "删除账号")
+                                    Spacer()
+                                    Text("版本")
+                                    Text("v\(appVersion)").foregroundColor(.secondary)
                                 }
                             }
                         }
@@ -427,6 +430,10 @@ struct UserProfileView: View {
         }
     }
     
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+    }
+
     // 【新增】执行删除账号
     private func performAccountDeletion() {
         isDeletingAccount = true
@@ -555,7 +562,6 @@ struct UserStatusToolbarItem: View {
                 .foregroundColor(.primary)
             } else {
                 HStack(spacing: 6) {
-                    Image(systemName: "person.circle")
                     Text(Localized.loginAccount) // 【双语化】
                         .font(.caption.bold())
                 }
@@ -695,6 +701,12 @@ struct SourceListView: View {
                         showProfileSheet: $showProfileSheet
                     )
                 }
+
+                ToolbarItem(placement: .principal) {
+                    if !authManager.isSubscribed {
+                        NewsPointsPill()
+                    }
+                }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 16) {
@@ -738,10 +750,11 @@ struct SourceListView: View {
                         Button {
                             // 【核心修改】点击刷新时，同时同步资源和用户状态
                             Task { 
-                                // 1. 同步新闻内容
                                 await syncResources(isManual: true) 
-                                // 2. 同步用户订阅状态 (手动重试机制)
                                 await authManager.checkServerSubscriptionStatus()
+                                let uid = FreeQuotaManager.currentUserId(auth: authManager)
+                                await FreeQuotaManager.shared.refresh(userId: uid)
+                                await NewsQuotaManager.shared.refresh(userId: uid)
                             }
                         } label: {
                             Image(systemName: "arrow.clockwise")
@@ -788,6 +801,14 @@ struct SourceListView: View {
             Task { await WishReplyManager.shared.refresh(userId: authManager.userIdentifier) }
             // 【新增】拉取举报的未读回复
             Task { await ReportReplyManager.shared.refresh(userId: authManager.userIdentifier) }
+            // 刷新点数
+            Task { await FreeQuotaManager.shared.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
+            // 刷新分离后的新闻点数
+            Task {
+                    await NewsQuotaManager.shared.refresh(
+                        userId: NewsQuotaManager.currentUserId(auth: authManager)
+                    )
+                }
         }
         .sheet(isPresented: $showAddSourceSheet, onDismiss: { viewModel.loadNews() }) {
             NavigationView {
@@ -873,10 +894,16 @@ struct SourceListView: View {
             .presentationDetents([.fraction(0.30)]) // 只占据底部 30%
             .presentationDragIndicator(.hidden)
         }
-        // ⚠️ 修复 Bug：移除了冗余的 .onChange(of: authManager.showSubscriptionSheet)
         .onChange(of: authManager.isLoggedIn, perform: { newValue in
             if newValue == true && self.showLoginSheet {
                 self.showLoginSheet = false
+            }
+            if newValue == true {
+                Task {
+                    let uid = FreeQuotaManager.currentUserId(auth: authManager)
+                    await FreeQuotaManager.shared.refresh(userId: uid)
+                    await NewsQuotaManager.shared.refresh(userId: uid)
+                }
             }
         })
         .overlay(
@@ -1334,86 +1361,55 @@ struct SourceListView: View {
     // 【修改】更新函数签名，增加 isFromAll 参数来区分播放/阅读上下文
     private func handleArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool), autoPlay: Bool = false, isFromAll: Bool = false) async {
         let article = item.article
-        let sourceName = item.sourceName // 这是当前文章所属的源名称
-        
-        // ⚠️ 修复 Bug：将 showSubscriptionSheet 替换为 authManager.showSubscriptionSheet
-        if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: article.timestamp) {
-            authManager.showSubscriptionSheet = true
+        if !NewsPointsCoordinator.canAccess(article, auth: authManager, viewModel: viewModel) {
+            NewsPointsCoordinator.shared.attemptUnlockArticle(article, auth: authManager, viewModel: viewModel) {
+                Task { await self.proceedArticleTap(item, autoPlay: autoPlay, isFromAll: isFromAll) }
+            }
             return
         }
-        
-        // 【修改】根据 isFromAll 决定传递给详情页的上下文标识 contextStr
+        await proceedArticleTap(item, autoPlay: autoPlay, isFromAll: isFromAll)
+    }
+
+    private func proceedArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool), autoPlay: Bool, isFromAll: Bool) async {
+        let article = item.article
+        let sourceName = item.sourceName
         let contextStr = isFromAll ? "all" : sourceName
-        
+
         let prepareNavigation = {
             await MainActor.run {
                 self.navPath.append(NavigationTarget.articleDetail(article, sourceName, contextStr, autoPlay))
             }
         }
 
-        // 3. 检查是否有图片需要下载
-        guard !article.images.isEmpty else {
-            await prepareNavigation()
-            return
-        }
-        
-        // 2. 检查图片是否已在本地存在
+        guard !article.images.isEmpty else { await prepareNavigation(); return }
+
         let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
-            timestamp: article.timestamp,
-            imageNames: article.images
-        )
-        
-        // 3. 如果图片已存在，直接进
-        if imagesAlreadyExist {
-            await prepareNavigation()
-            return
-        }
-        
-        // 4. 如果图片不存在，开始下载流程
+            timestamp: article.timestamp, imageNames: article.images)
+        if imagesAlreadyExist { await prepareNavigation(); return }
+
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
             downloadProgressText = Localized.imagePrepare
         }
-        
         do {
-            // 尝试下载
             try await resourceManager.downloadImagesForArticle(
-                timestamp: article.timestamp,
-                imageNames: article.images,
+                timestamp: article.timestamp, imageNames: article.images,
                 progressHandler: { current, total in
-                    // 这个闭包会在主线程上被调用，可以直接更新UI状态
                     self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
-                    // 【双语化】已下载 x / y
                     self.downloadProgressText = "\(Localized.imageDownloaded) \(current) / \(total)"
-                }
-            )
-            
-            // 下载成功
+                })
             await MainActor.run { isDownloadingImages = false }
             await prepareNavigation()
-            
         } catch {
-            // 【核心修改】下载失败时的降级处理
             await MainActor.run {
-                // 无论什么错误，先关闭遮罩
                 isDownloadingImages = false
-                
-                // 判断是否为网络错误
                 let isNetworkError = (error as? URLError)?.code == .notConnectedToInternet ||
                                      (error as? URLError)?.code == .timedOut ||
                                      (error as? URLError)?.code == .networkConnectionLost ||
                                      (error as? URLError)?.code == .cannotConnectToHost
-
-                if isNetworkError {
-                    print("网络不可用，进入离线阅读模式")
-                    // 网络错误：直接进入文章（降级）
-                    Task { await prepareNavigation() }
-                } else {
-                    // 其他错误（如服务器文件丢失）：弹窗提示
-                    errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)"
-                    showErrorAlert = true
-                }
+                if isNetworkError { Task { await prepareNavigation() } }
+                else { errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)"; showErrorAlert = true }
             }
         }
     }

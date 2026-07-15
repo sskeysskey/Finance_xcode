@@ -278,26 +278,16 @@ struct ArticleContainerView: View {
 
     // 【修改】新增 triggerViewTrack 和 triggerListenTrack 参数，用于在切换到下一篇时进行排重打点
     private func switchToNextArticle(shouldAutoplayNext: Bool, triggerViewTrack: Bool = false, triggerListenTrack: Bool = false) async {
-        
-        // 【新增】在这里调用 ReviewManager
-        // 逻辑：用户决定看下一篇，说明刚刚这就这篇看完了/听完了，记录一次有效交互
         ReviewManager.shared.recordInteraction()
-
-        if shouldAutoplayNext {
-            audioPlayerManager.prepareForNextTransition()
-        }
-        
+        if shouldAutoplayNext { audioPlayerManager.prepareForNextTransition() }
         _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
-        
+
         let sourceNameToSearch: String?
         switch navigationContext {
         case .fromSource(let name): sourceNameToSearch = name
         case .fromAllArticles: sourceNameToSearch = nil
         }
-        
-        // 【优化】寻找下一篇文章的操作虽然很快，但在极大数据量下可能微卡
-        // 由于 viewModel 是 MainActor，我们直接调用即可。
-        // 关键在于：获取到 next 之后，不要立即做太重的同步操作
+
         guard let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch) else {
             await MainActor.run {
                 showToast { shouldShow in self.showNoNextToast = shouldShow }
@@ -305,117 +295,85 @@ struct ArticleContainerView: View {
             }
             return
         }
-        
-        // ... (图片下载逻辑保持不变) ...
-        // 这里的图片下载已经是异步的，不会卡顿
+
+        // 点数门禁：下一篇若为受限最新新闻且未解锁，先停音频并弹窗
+        if !NewsPointsCoordinator.canAccess(next.article, auth: authManager, viewModel: viewModel) {
+            await MainActor.run {
+                audioPlayerManager.stop()
+                NewsPointsCoordinator.shared.attemptUnlockArticle(next.article, auth: authManager, viewModel: viewModel) {
+                    Task {
+                        await self.performSwitchAfterUnlock(next: next,
+                                                            shouldAutoplayNext: shouldAutoplayNext,
+                                                            triggerViewTrack: triggerViewTrack,
+                                                            triggerListenTrack: triggerListenTrack)
+                    }
+                }
+            }
+            return
+        }
+
+        await performSwitchAfterUnlock(next: next,
+                                       shouldAutoplayNext: shouldAutoplayNext,
+                                       triggerViewTrack: triggerViewTrack,
+                                       triggerListenTrack: triggerListenTrack)
+    }
+
+    private func performSwitchAfterUnlock(next: (article: Article, sourceName: String),
+                                          shouldAutoplayNext: Bool,
+                                          triggerViewTrack: Bool,
+                                          triggerListenTrack: Bool) async {
+        // 图片预下载（保持原逻辑）
         if !next.article.images.isEmpty {
-             // ... 图片下载代码 ...
-             let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
-                timestamp: next.article.timestamp,
-                imageNames: next.article.images
-            )
-            
+            let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
+                timestamp: next.article.timestamp, imageNames: next.article.images)
             if !imagesAlreadyExist {
-                // 1. 设置下载状态的初始值
                 await MainActor.run {
                     isDownloadingImages = true
                     downloadProgress = 0.0
-                    downloadProgressText = Localized.imagePrepare // 使用词典：准备中
+                    downloadProgressText = Localized.imagePrepare
                 }
-                
                 do {
-                    // 2. 调用下载方法，并传入一个闭包来处理进度更新
                     try await resourceManager.downloadImagesForArticle(
-                        timestamp: next.article.timestamp,
-                        imageNames: next.article.images,
+                        timestamp: next.article.timestamp, imageNames: next.article.images,
                         progressHandler: { current, total in
-                            // 这个闭包会在 MainActor 上被调用，可以直接更新UI状态
                             self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
-                            // 【修改】使用词典拼接：已下载 X / Y
                             self.downloadProgressText = "\(Localized.imageDownloaded) \(current) / \(total)"
-                        }
-                    )
+                        })
                 } catch {
-                    await MainActor.run {
-                        isDownloadingImages = false
-                        // 移除这里的报错弹窗和音频停止逻辑
-                    }
-                    print("下一篇图片预下载失败，跳过等待继续切换: \(error.localizedDescription)")
-                    // 移除原来的 return，让程序继续往下执行切换文章的逻辑！
+                    await MainActor.run { isDownloadingImages = false }
+                    print("下一篇图片预下载失败，继续切换: \(error.localizedDescription)")
                 }
-
-                
-                // 3. 下载成功后，隐藏遮罩
-                await MainActor.run {
-                    isDownloadingImages = false
-                }
+                await MainActor.run { isDownloadingImages = false }
             }
         }
-        
-        // --- 【核心修改开始】 ---
-        
-        // 移除原有的 "shouldKeepEnglish" 强制切换逻辑
-        // 我们希望保留用户的“偏好设置”，即使当前文章没有英文，开关依然是开着的(只是显示中文)
-        // 这样下一篇如果有英文，依然会自动显示英文。
-        
+
         await MainActor.run {
-            // 使用 easeInOut 动画，配合 LazyVStack，切换应该是丝滑的
             withAnimation(.easeInOut(duration: 0.4)) {
                 self.currentArticle = next.article
                 self.currentSourceName = next.sourceName
             }
-            
-            // 【新增】切换成功后，根据触发源进行排重打点
             if triggerViewTrack {
-                NewsTrackingManager.shared.track(
-                    event: .view,
-                    article: next.article,
-                    sourceId: next.article.source_id
-                )
+                NewsTrackingManager.shared.track(event: .view, article: next.article, sourceId: next.article.source_id)
             }
             if triggerListenTrack {
-                NewsTrackingManager.shared.track(
-                    event: .listen,
-                    article: next.article,
-                    sourceId: next.article.source_id
-                )
+                NewsTrackingManager.shared.track(event: .listen, article: next.article, sourceId: next.article.source_id)
             }
         }
-        
+
         if shouldAutoplayNext {
             await MainActor.run {
-                // 自动播放时，确保播放器是展开的
                 self.isMiniPlayerCollapsed = false
-                
-                // 3. 根据全局 isEnglishMode 和当前文章是否有英文，决定播放语言
-                let rawText: String
-                let title: String
-                let language: String
-                
-                // 动态判断当前这篇新文章能不能播英文
-                let canPlayEnglish = self.isEnglishMode && 
-                                     (next.article.article_eng != nil && !next.article.article_eng!.isEmpty)
-                
-                if canPlayEnglish,
-                   let engText = next.article.article_eng, 
-                   let engTitle = next.article.topic_eng {
-                    // 播放英文
-                    rawText = engText
-                    title = engTitle
-                    language = "en-US"
+                let rawText: String; let title: String; let language: String
+                let canPlayEnglish = self.isEnglishMode &&
+                    (next.article.article_eng != nil && !next.article.article_eng!.isEmpty)
+                if canPlayEnglish, let engText = next.article.article_eng, let engTitle = next.article.topic_eng {
+                    rawText = engText; title = engTitle; language = "en-US"
                 } else {
-                    // 播放中文
-                    rawText = next.article.article
-                    title = next.article.topic
-                    language = "zh-CN"
+                    rawText = next.article.article; title = next.article.topic; language = "zh-CN"
                 }
-                
-                let paragraphs = rawText
-                    .components(separatedBy: .newlines)
+                let paragraphs = rawText.components(separatedBy: .newlines)
                     .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 let fullText = paragraphs.joined(separator: "\n\n")
-                
-                // 【修复】明确传入 "zh-CN"，确保逻辑一致
                 self.audioPlayerManager.startPlayback(text: fullText, title: title, language: language)
             }
         }

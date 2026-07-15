@@ -66,7 +66,8 @@ final class TrackingManager {
             "user_type": userType,
             "video_url": videoURL,
             "video_title": videoTitle,
-            "event_type": eventType
+            "event_type": eventType,
+            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""  // 【新增】
         ]
         if let source = source, !source.isEmpty {     // 【新增】仅在线播放会带 source
             body["source"] = source

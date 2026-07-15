@@ -53,7 +53,8 @@ final class FinanceAnalytics {
             "user_type": userType,
             "card_key": cardKey,
             "card_name": cardName,
-            "event_type": "click"
+            "event_type": "click",
+            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""  // 【新增】
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
         request.httpBody = data

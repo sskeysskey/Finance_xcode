@@ -122,6 +122,8 @@ struct VideoDetailView: View {
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     @AppStorage("OVideo_IsEpisodeAscending") private var isEpisodeAscending = true
+    @AppStorage("hasSeenPlaylistLineHint") private var hasSeenPlaylistLineHint = false
+    @State private var showLineHint = false
 
     @State private var selectedChannelIndex = 0
     @EnvironmentObject var authManager: AuthManager
@@ -372,6 +374,13 @@ struct VideoDetailView: View {
                 await MainActor.run {
                     loadedChannels = channels
                     isLoadingPlaylist = false
+                }
+            }
+            if !hasSeenPlaylistLineHint {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        showLineHint = true
+                    }
                 }
             }
             await loadSeasonSiblingsIfNeeded()
@@ -659,6 +668,19 @@ struct VideoDetailView: View {
                     .font(.system(size: 17, weight: .bold))
                     .foregroundColor(.primary)
 
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        showLineHint.toggle()
+                    }
+                    hasSeenPlaylistLineHint = true
+                } label: {
+                    Image(systemName: "questionmark.circle.fill")
+                        .font(.system(size: 17))
+                        .foregroundColor(.orange)
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .buttonStyle(.plain)
+
                 Spacer()
 
                 if !isLoadingPlaylist && !sortedPlaylist.isEmpty {
@@ -714,6 +736,41 @@ struct VideoDetailView: View {
                 }
             }
             .padding(.horizontal, 16)
+
+            if showLineHint {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "lightbulb.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.orange)
+                    Text(isGlobalEnglishMode
+                         ? "Try switching lines to find the fastest video source."
+                         : "尝试切换线路来匹配速度最快的视频源")
+                        .font(.system(size: 13))
+                        .foregroundColor(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button {
+                        withAnimation { showLineHint = false }
+                        hasSeenPlaylistLineHint = true
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 15))
+                            .foregroundColor(.secondary.opacity(0.7))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.orange.opacity(0.12))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                )
+                .padding(.horizontal, 16)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
 
             if isLoadingPlaylist {
                 ProgressView()

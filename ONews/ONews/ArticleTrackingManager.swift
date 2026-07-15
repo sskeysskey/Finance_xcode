@@ -75,7 +75,8 @@ final class NewsTrackingManager {
             "article_topic": articleTopic,
             "source_id": sourceId,
             "article_date": articleDate,
-            "event_type": eventType
+            "event_type": eventType,
+            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""  // 【新增】
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         _ = try? await URLSession.shared.data(for: req)

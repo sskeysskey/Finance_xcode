@@ -184,6 +184,9 @@ struct NewsReaderAppApp: App {
                     await FreeQuotaManager.shared.refresh(
                         userId: FreeQuotaManager.currentUserId(auth: authManager)
                     )
+                    await NewsQuotaManager.shared.refresh(
+                        userId: NewsQuotaManager.currentUserId(auth: authManager)
+                    )
                 }
                 
             } else if newPhase == .background {
@@ -204,51 +207,76 @@ struct NewsReaderAppApp: App {
     }
 }
 
-// 这是你的 MainAppView.swift 文件中的 body 部分
 struct MainAppView: View {
     @AppStorage("hasCompletedInitialSetup") private var hasCompletedInitialSetup = false
-    // 【新增】用户只勾选视频时的路由标记
     @AppStorage("prefersVideoHome") private var prefersVideoHome = false
-    
+
     @EnvironmentObject var resourceManager: ResourceManager
     @EnvironmentObject var newsViewModel: NewsViewModel
     @EnvironmentObject var authManager: AuthManager
-    
+    @ObservedObject private var pointsCoordinator = NewsPointsCoordinator.shared
+
+    // 【新增】防止首启弹窗重复触发
+    @State private var didTriggerInvitePrompt = false
+
+    private func triggerInviteIfNeeded(isNewUser: Bool) {
+        guard hasCompletedInitialSetup, !didTriggerInvitePrompt else { return }
+        didTriggerInvitePrompt = true
+        NewsPointsCoordinator.shared.maybeShowFirstLaunchInvitePrompt(
+            auth: authManager,
+            reviewMode: resourceManager.serverReviewMode,
+            isNewUser: isNewUser,
+            isVideoHome: prefersVideoHome)
+    }
+
     var body: some View {
         ZStack {
             if hasCompletedInitialSetup {
-                // 【修改】只勾视频的用户始终进入 VideoOnlyHomeView，由它内部决定显示视频还是"已关闭"提示
-                if prefersVideoHome {
-                    VideoOnlyHomeView()
-                } else {
-                    SourceListView()
-                }
+                if prefersVideoHome { VideoOnlyHomeView() } else { SourceListView() }
             } else {
                 WelcomeView(hasCompletedInitialSetup: $hasCompletedInitialSetup)
             }
-            
-            // 强制更新拦截层(自家版本升级)
+
             if resourceManager.showForceUpdate {
                 ForceUpdateView(storeURL: resourceManager.appStoreURL)
-                    .transition(.opacity)
-                    .zIndex(998)
+                    .transition(.opacity).zIndex(998)
             }
-            
-            // 【新增】App 搬家迁移层
-            if resourceManager.showMigrationSheet,
-               let config = resourceManager.activeMigration {
-                MigrationView(
-                    config: config,
-                    onDismiss: config.isForced ? nil : {
-                        resourceManager.dismissMigration()
-                    }
-                )
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-                .zIndex(999)
+            if resourceManager.showMigrationSheet, let config = resourceManager.activeMigration {
+                MigrationView(config: config,
+                              onDismiss: config.isForced ? nil : { resourceManager.dismissMigration() })
+                    .transition(.opacity.combined(with: .move(edge: .bottom))).zIndex(999)
             }
+
+            // 全局点数弹窗浮层（覆盖所有导航层）
+            NewsPointsOverlayView().zIndex(1000)
         }
         .animation(.easeInOut, value: resourceManager.showForceUpdate)
         .animation(.easeInOut, value: resourceManager.showMigrationSheet)
+        // 全局点数相关 sheet
+        .sheet(isPresented: $pointsCoordinator.showInviteSheet) { NewsInviteView() }
+        .sheet(isPresented: $pointsCoordinator.showLoginSheet) { LoginView() }
+        .sheet(isPresented: $pointsCoordinator.showSubscriptionSheet) { SubscriptionView() }
+        .sheet(isPresented: $pointsCoordinator.showVideoInviteSheet) { VideoInviteView() }
+        // 【新增】一打开就是主界面 → 老用户
+        .onAppear {
+            if hasCompletedInitialSetup { triggerInviteIfNeeded(isNewUser: false) }
+        }
+        // 【新增】刚完成引导 → 新用户
+        .onChange(of: hasCompletedInitialSetup) { done in
+            if done { triggerInviteIfNeeded(isNewUser: true) }
+        }
+        .onChange(of: authManager.isLoggedIn) { newVal in
+            if newVal {
+                Task {
+                    await FreeQuotaManager.shared.refresh(
+                        userId: FreeQuotaManager.currentUserId(auth: authManager)
+                    )
+                    await NewsQuotaManager.shared.refresh(
+                        userId: NewsQuotaManager.currentUserId(auth: authManager)
+                    )
+                }
+            }
+        }
     }
 }
 

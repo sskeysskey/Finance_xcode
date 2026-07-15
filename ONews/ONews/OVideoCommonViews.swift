@@ -274,8 +274,11 @@ struct VideoModuleView: View {
             }
         }
         .onAppear {
-            // 【新增】审核员进入视频模块时，限定只看老片（≤ 可配置年份）；其余用户为 nil 不限制
             dataManager.reviewMaxYear = resourceManager.effectiveReviewVideoMaxYear
+            // 只在"只看视频"的根首页触发一次邀请弹窗（从新闻跳进来的 showBackButton=true 不触发）
+            // if !showBackButton {
+            //     NewsPointsCoordinator.shared.maybeShowFirstLaunchInvitePrompt(auth: authManager)
+            // }
         }
         .task {
             await dataManager.bootstrap(userId: authManager.userIdentifier)
@@ -308,6 +311,9 @@ struct VideoModuleClosedView: View {
 // MARK: - 底部栏
 struct VideoBottomBar: View {
     @ObservedObject var dataManager: OVideoDataManager
+    @EnvironmentObject var authManager: AuthManager
+    @ObservedObject private var quota = FreeQuotaManager.shared
+    @ObservedObject private var pointsCoordinator = NewsPointsCoordinator.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     let isLoading: Bool
 
@@ -327,16 +333,42 @@ struct VideoBottomBar: View {
                 BarItemView(icon: "arrow.down.circle.fill", zh: "缓存", en: "Cache",
                             isEnglish: isGlobalEnglishMode)
             }.buttonStyle(.plain)
+
+            if !authManager.isSubscribed {
+                Button {
+                    pointsCoordinator.authRef = authManager
+                    if authManager.isLoggedIn {
+                        pointsCoordinator.showVideoInviteSheet = true
+                    } else {
+                        pointsCoordinator.showVideoLoginPrompt = true   // 复用新增的视频登录弹窗
+                    }
+                } label: {
+                    BarPointsItemView(points: quota.remaining, isEnglish: isGlobalEnglishMode)
+                }.buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 8)
         .padding(.top, 6)
         .padding(.bottom, 2)
-        .background(Color(UIColor.systemBackground)) // 跟随系统黑白背景
-        .overlay(alignment: .top) {
-            // 顶部细边框线
-            Color.primary.opacity(0.15).frame(height: 0.5)
-        }
+        .background(Color(UIColor.systemBackground))
+        .overlay(alignment: .top) { Color.primary.opacity(0.15).frame(height: 0.5) }
         .ignoresSafeArea(edges: .bottom)
+    }
+}
+
+private struct BarPointsItemView: View {
+    let points: Int
+    let isEnglish: Bool
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 24)).foregroundColor(.orange)
+            }
+            Text(isEnglish ? "Points \(points)" : "免费点数\(points)")
+                .font(.system(size: 12, weight: .medium)).foregroundColor(.primary)
+        }
+        .frame(maxWidth: .infinity).contentShape(Rectangle())
     }
 }
 
