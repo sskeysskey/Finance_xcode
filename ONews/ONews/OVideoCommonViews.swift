@@ -320,7 +320,7 @@ struct VideoBottomBar: View {
     var body: some View {
         HStack(spacing: 4) {
             NavigationLink { VideoFilterView(dataManager: dataManager) } label: {
-                BarItemView(icon: "line.3.horizontal.decrease.circle.fill", zh: "分类", en: "Filter",
+                BarItemView(icon: "line.3.horizontal.decrease.circle.fill", zh: "分类检索", en: "Filter",
                             isEnglish: isGlobalEnglishMode)
             }.buttonStyle(.plain)
 
@@ -330,7 +330,7 @@ struct VideoBottomBar: View {
             }.buttonStyle(.plain)
 
             NavigationLink { VideoCacheView() } label: {
-                BarItemView(icon: "arrow.down.circle.fill", zh: "缓存", en: "Cache",
+                BarItemView(icon: "arrow.down.circle.fill", zh: "下载管理", en: "Cache",
                             isEnglish: isGlobalEnglishMode)
             }.buttonStyle(.plain)
 

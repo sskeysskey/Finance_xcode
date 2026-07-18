@@ -45,7 +45,7 @@ struct DownloadMorePayload: Identifiable {
     let channel: OVideoChannel
 }
 
-// MARK: - 缓存播放跳转目标（用于门禁通过后再跳转）
+// MARK: - 下载播放跳转目标（用于门禁通过后再跳转）
 struct CachedPlayTarget: Identifiable {
     var id: String { primaryURL }
     let primaryURL: String          // 要播放的 url（也用于推导 episodeKey）
@@ -292,7 +292,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         cleanupTransient(urlString)
     }
 
-    // 🛠️ 修改后：彻底清除本地缓存（包含已完成的和未完成的局部包）
+    // 🛠️ 修改后：彻底清除本地下载（包含已完成的和未完成的局部包）
     func deleteDownload(urlString: String) {
         cancelledUrls.insert(urlString)
         
@@ -444,7 +444,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         }
 
         // ⚠️ 这里的 location 可能只是部分包(杀进程/网络中断都会触发本回调)
-        // 不能直接写 localBookmarks,否则 UI 会把它当成"已缓存",哪怕只下了 16%
+        // 不能直接写 localBookmarks,否则 UI 会把它当成"已下载",哪怕只下了 16%
         do {
             let bookmark = try location.bookmarkData(
                 options: .minimalBookmark,
@@ -515,7 +515,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             } else {
                 // 中断(杀进程/网络/系统投递的 cancel)
                 // 保留进度,标记暂停。pendingBookmarks 也保留:本进程内续传可能用得上
-                // 但绝对不进 localBookmarks → 不会被错误地归到"已缓存"
+                // 但绝对不进 localBookmarks → 不会被错误地归到"已下载"
                 self.isPaused[urlString]      = true
                 self.downloadSpeed[urlString] = 0
                 self.savePendingBookmarks()
@@ -627,7 +627,7 @@ func formatSpeed(_ bytesPerSec: Double) -> String {
     return String(format: "%.2f MB/s", mb)
 }
 
-// MARK: - 缓存卡片 (已集成高级缓存管理入口)
+// MARK: - 下载卡片 (已集成高级下载管理入口)
 struct CacheCard: View {
     let realURL: String
     let videoTitle: String
@@ -641,7 +641,7 @@ struct CacheCard: View {
     @ObservedObject private var network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
-    // ⭐ 新增：首次缓存的广告提示是否已确认（确认后永不再弹）
+    // ⭐ 新增：首次下载的广告提示是否已确认（确认后永不再弹）
     @AppStorage("hasAcknowledgedAdWarning") private var hasAcknowledgedAdWarning = false
     @State private var showAdWarningAlert = false
 
@@ -668,7 +668,7 @@ struct CacheCard: View {
                 idleRow
             }
             
-            // ⭐ 新增：高级感“查看全部缓存”入口
+            // ⭐ 新增：高级感“查看全部下载”入口
             Divider().opacity(0.3)
             cacheListNavigationRow
         }
@@ -696,9 +696,9 @@ struct CacheCard: View {
         } message: {
             Text(isGlobalEnglishMode 
                  ? "You are currently on a cellular network and 'Wi-Fi Only' is enabled. Do you want to disable 'Wi-Fi Only' and start downloading?" 
-                 : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 缓存”。是否关闭该限制并继续下载？")
+                 : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 下载”。是否关闭该限制并继续下载？")
         }
-        // ⭐ 新增：首次点击“缓存到本地”时的广告防骗提示
+        // ⭐ 新增：首次点击“下载到本地”时的广告防骗提示
         .alert(isGlobalEnglishMode ? "Notice" : "温馨提示", isPresented: $showAdWarningAlert) {
             Button(isGlobalEnglishMode ? "Got it" : "我知道了") {
                 hasAcknowledgedAdWarning = true
@@ -737,10 +737,10 @@ struct CacheCard: View {
         }
     }
 
-    // 已缓存
+    // 已下载
     private var downloadedRow: some View {
         HStack {
-            Label(isGlobalEnglishMode ? "Cached, available offline" : "已缓存，可离线播放",
+            Label(isGlobalEnglishMode ? "Cached, available offline" : "已下载，可离线播放",
                   systemImage: "checkmark.circle.fill")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.green)
@@ -861,42 +861,49 @@ struct CacheCard: View {
 
     // 未下载
     private var idleRow: some View {
-        Button {
-            guard hasAccess else {
-                // 未订阅且未解锁：看剩余点数决定弹什么
-                if FreeQuotaManager.shared.remaining > 0 {
-                    showSubscriptionSheet = true
-                } else {
-                    showSubscriptionSheet = true
+        HStack(spacing: 12) {
+            // 左侧提示文案
+            Text(isGlobalEnglishMode ? "Download to your phone for smoother playback" : "下载到手机，播放更流畅")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            
+            // 右侧下载按钮
+            Button {
+                guard hasAccess else {
+                    // 未订阅且未解锁：看剩余点数决定弹什么
+                    if FreeQuotaManager.shared.remaining > 0 {
+                        showSubscriptionSheet = true
+                    } else {
+                        showSubscriptionSheet = true
+                    }
+                    return
                 }
-                return
+                // ⭐ 首次下载：先弹「广告非平台植入」提示，确认后才真正进入下载流程
+                if !hasAcknowledgedAdWarning {
+                    showAdWarningAlert = true
+                    return
+                }
+                startDownloadFlow()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(isGlobalEnglishMode ? "Download" : "下载")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.vertical, 10)
+                .padding(.horizontal, 20)
+                .background(
+                    Capsule()
+                        .fill(LinearGradient(
+                            colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
+                            startPoint: .leading, endPoint: .trailing))
+                )
+                .shadow(color: Color.accentColor.opacity(0.3), radius: 6, y: 2)
             }
-            // ⭐ 首次缓存：先弹「广告非平台植入」提示，确认后才真正进入下载流程
-            if !hasAcknowledgedAdWarning {
-                showAdWarningAlert = true
-                return
-            }
-            startDownloadFlow()
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                Text(isGlobalEnglishMode ? "Download" : "缓存到本地")
-                    .font(.system(size: 13, weight: .semibold))
-            }
-            .foregroundColor(.white)
-            // 移除 .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .padding(.horizontal, 20) // 添加水平内边距，让按钮宽度根据内容自适应
-            .background(
-                Capsule()
-                    .fill(LinearGradient(
-                        colors: [Color.accentColor, Color.accentColor.opacity(0.8)],
-                        startPoint: .leading, endPoint: .trailing))
-            )
-            .shadow(color: Color.accentColor.opacity(0.3), radius: 6, y: 2)
+            .buttonStyle(PlainButtonStyle())
         }
-        .buttonStyle(PlainButtonStyle())
         .frame(maxWidth: .infinity, alignment: .center)
     }
     
@@ -914,8 +921,8 @@ struct CacheCard: View {
                 }
                 
                 HStack(spacing: 2) {
-                    Text(isGlobalEnglishMode ? "Manage Offline Cache" : "缓存下载管理")
-                        .font(.system(size: 14, weight: .bold))
+                    Text(isGlobalEnglishMode ? "Manage Offline Cache" : "下载管理")
+                        .font(.system(size: 16, weight: .bold))
                         .foregroundColor(.primary)
                     
                     Spacer()
@@ -928,11 +935,11 @@ struct CacheCard: View {
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.blue)
                     } else if cachedCount > 0 {
-                        Text(isGlobalEnglishMode ? "\(cachedCount) videos cached" : "已缓存 \(cachedCount) 个视频")
+                        Text(isGlobalEnglishMode ? "\(cachedCount) videos cached" : "已下载 \(cachedCount) 个视频")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.secondary)
                     } else {
-                        Text(isGlobalEnglishMode ? "View all cached content" : "查看所有已缓存内容")
+                        Text(isGlobalEnglishMode ? "View all cached content" : "查看所有已下载视频")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
@@ -975,7 +982,7 @@ struct NetworkBadge: View {
     }
 }
 
-// MARK: - 已缓存剧集分组模型
+// MARK: - 已下载剧集分组模型
 struct CachedSeriesGroup: Identifiable {
     let id: String                                       // = groupKey
     let seriesTitle: String
@@ -984,7 +991,7 @@ struct CachedSeriesGroup: Identifiable {
     let latestSavedAt: Date
 }
 
-// MARK: - 缓存管理
+// MARK: - 下载管理
 struct VideoCacheView: View {
     @StateObject private var downloadManager = HLSDownloadManager.shared
     @StateObject private var network = NetworkMonitor.shared
@@ -1080,14 +1087,14 @@ struct VideoCacheView: View {
                         }
                     }
 
-                    // 已缓存列表（按剧集分组）
+                    // 已下载列表（按剧集分组）
                     if !groupedCachedItems.isEmpty {
                         Section(header: sectionHeader(
-                            isGlobalEnglishMode ? "Cached" : "已缓存",
+                            isGlobalEnglishMode ? "Cached" : "已下载",
                             count: cachedCount,
                             icon: "checkmark.seal.fill",
                             color: .green,
-                            // subtitle: isGlobalEnglishMode ? "Subscription required for playback" : "订阅后即可无限畅享离线缓存视频"
+                            // subtitle: isGlobalEnglishMode ? "Subscription required for playback" : "订阅后即可无限畅享离线下载视频"
                         )) {
                             ForEach(groupedCachedItems) { group in
                                 if group.episodes.count == 1 {
@@ -1157,7 +1164,7 @@ struct VideoCacheView: View {
                 .background(Color.clear)
             }
         }
-        .navigationTitle(isGlobalEnglishMode ? "Offline Cache" : "离线缓存")
+        .navigationTitle(isGlobalEnglishMode ? "Offline Cache" : "下载管理 ")
         .navigationBarTitleDisplayMode(.inline)
         // ⭐ 程序化跳转：门禁通过后才进播放页
         .navigationDestination(isPresented: $navigateToCachedPlayer) {
@@ -1199,7 +1206,7 @@ struct VideoCacheView: View {
         } message: {
             Text(isGlobalEnglishMode
                  ? "You are currently on a cellular network and 'Wi-Fi Only' is enabled. Do you want to disable 'Wi-Fi Only' and resume downloading?"
-                 : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 缓存”。是否关闭该限制并继续下载？")
+                 : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 下载”。是否关闭该限制并继续下载？")
         }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
@@ -1208,7 +1215,7 @@ struct VideoCacheView: View {
 
     // MARK: - 门禁逻辑
     private func attemptPlayCached(_ target: CachedPlayTarget) {
-        // ⭐ 离线缓存视频：已下载即可免费播放，不再消耗点数，也不要求登录/订阅
+        // ⭐ 离线下载视频：已下载即可免费播放，不再消耗点数，也不要求登录/订阅
         cachedPlayTarget = target
         navigateToCachedPlayer = true
     }
@@ -1265,7 +1272,7 @@ struct VideoCacheView: View {
         .textCase(nil) // 避免 List Header 默认大写
     }
 
-    // 🛠️ 【修改】：支持传入 subtitle 副标题，用于显示“已缓存视频也需订阅才能播放”
+    // 🛠️ 【修改】：支持传入 subtitle 副标题，用于显示“已下载视频也需订阅才能播放”
     private func sectionHeader(_ title: String, count: Int,
                                icon: String, color: Color,
                                subtitle: String? = nil) -> some View {
@@ -1300,12 +1307,12 @@ struct VideoCacheView: View {
                     .font(.system(size: 50, weight: .light))
                     .foregroundColor(.accentColor)
             }
-            Text(isGlobalEnglishMode ? "No cached videos yet" : "还没有缓存的视频")
+            Text(isGlobalEnglishMode ? "No cached videos yet" : "去找一些喜欢的视频下载吧")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(.primary)
             Text(isGlobalEnglishMode
                  ? "Cached videos can be played offline anytime."
-                 : "缓存后即可离线随时观看")
+                 : "下载后即可随时离线观看，比如乘坐飞机前...")
                 .font(.system(size: 13))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -1459,13 +1466,13 @@ struct DownloadingCard: View {
         } message: {
             Text(isGlobalEnglishMode 
                  ? "You are currently on a cellular network and 'Wi-Fi Only' is enabled. Do you want to disable 'Wi-Fi Only' and resume downloading?" 
-                 : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 缓存”。是否关闭该限制并继续下载？")
+                 : "当前处于蜂窝移动网络，且已开启“仅 Wi-Fi 下载”。是否关闭该限制并继续下载？")
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
     }
 }
 
-// MARK: - 已缓存条目卡片
+// MARK: - 已下载条目卡片
 struct CachedItemCard: View {
     let meta: VideoCacheMetadata
     let url: String
@@ -1809,7 +1816,7 @@ struct VideoPlayHistoryView: View {
     }
 }
 
-// MARK: - 已缓存剧集分组卡片
+// MARK: - 已下载剧集分组卡片
 struct CachedSeriesCard: View {
     let group: CachedSeriesGroup
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
@@ -1825,7 +1832,7 @@ struct CachedSeriesCard: View {
                 HStack(spacing: 6) {
                     Image(systemName: "square.stack.3d.up.fill").foregroundColor(.accentColor)
                     Text(isGlobalEnglishMode ? "\(group.episodes.count) episodes cached"
-                                             : "已缓存 \(group.episodes.count) 集")
+                                             : "已下载 \(group.episodes.count) 集")
                         .foregroundColor(.accentColor)
                 }
                 .font(.system(size: 11, weight: .medium))
@@ -1888,7 +1895,7 @@ struct CachedSeriesCard: View {
     }
 }
 
-// MARK: - 已缓存剧集详情（列出该剧所有已缓存集数）
+// MARK: - 已下载剧集详情（列出该剧所有已下载集数）
 struct CachedSeriesDetailView: View {
     let groupKey: String
     let seriesTitle: String
@@ -2020,7 +2027,7 @@ struct CachedSeriesDetailView: View {
         } message: {
             Text(isGlobalEnglishMode
                  ? "Can't fetch more episodes for this older cache. Please re-enter from the video detail page to download more."
-                 : "该缓存较早，无法获取更多剧集信息。请从视频详情页重新进入以缓存更多。")
+                 : "该下载较早，无法获取更多剧集信息。请从视频详情页重新进入以下载更多。")
         }
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))

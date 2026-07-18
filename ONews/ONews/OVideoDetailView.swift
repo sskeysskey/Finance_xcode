@@ -718,8 +718,8 @@ struct VideoDetailView: View {
                             Image(systemName: "square.and.arrow.down.fill")
                                 .font(.system(size: 13))
                             Text(isMultiEpisodeVideo
-                                 ? (isGlobalEnglishMode ? "Batch" : "批量缓存")
-                                 : (isGlobalEnglishMode ? "Cache" : "缓存"))
+                                 ? (isGlobalEnglishMode ? "Batch" : "批量下载")
+                                 : (isGlobalEnglishMode ? "Cache" : "下载"))
                                 .font(.system(size: 12, weight: .bold))
                         }
                         .foregroundColor(.white)
@@ -1213,7 +1213,7 @@ struct BatchDownloadView: View {
             } message: {
                 Text(isGlobalEnglishMode
                     ? "You are on a cellular network. Downloading will use mobile data. Continue?"
-                    : "当前处于蜂窝网络，批量缓存将消耗流量，是否继续？")
+                    : "当前处于蜂窝网络，批量下载将消耗流量，是否继续？")
             }
         }
     }
@@ -1236,13 +1236,13 @@ struct BatchDownloadView: View {
                 if occupiedCount > 0 {
                     Text(isGlobalEnglishMode
                          ? "\(selectableEpisodes.count) selectable · \(occupiedCount) in cache/queue"
-                         : "可缓存 \(selectableEpisodes.count) 集 · \(occupiedCount) 集已在缓存/队列")
+                         : "可下载 \(selectableEpisodes.count) 集 · \(occupiedCount) 集已在下载/队列")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 } else {
                     Text(isGlobalEnglishMode
                          ? "\(episodes.count) episodes available"
-                         : "共 \(episodes.count) 集可缓存")
+                         : "共 \(episodes.count) 集可下载")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 }
@@ -1329,7 +1329,7 @@ struct BatchDownloadView: View {
                         HStack {
                             Spacer(minLength: 0)
                             if st == .cached {
-                                Text(isGlobalEnglishMode ? "Cached" : "已缓存")
+                                Text(isGlobalEnglishMode ? "Cached" : "已下载")
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundColor(.green)
                             } else if st == .downloading {

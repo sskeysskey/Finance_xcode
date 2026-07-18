@@ -160,7 +160,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         // ⭐ 全屏时用的原生加载指示器（挂在 contentOverlayView 上，会跟随进入全屏）
         private var loadingView: UIView?
 
-        // ⭐ 新增：卡顿自愈 watchdog（针对本地缓存横屏全屏偶发停住）
+        // ⭐ 新增：卡顿自愈 watchdog（针对本地下载横屏全屏偶发停住）
         private var stallWatchdog: Timer?
         private var lastWatchdogTime: Double = -1
         private var stalledTicks = 0
@@ -268,7 +268,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             didHandleReady = false
 
             let player = AVPlayer(url: url)
-            // ⭐ 关键修复(问题2)：本地缓存文件关闭「等待以减少卡顿」，
+            // ⭐ 关键修复(问题2)：本地下载文件关闭「等待以减少卡顿」，
             //    避免本地播放时 AVPlayer 进入假性 waiting 而停住；在线流仍保留以应对网络抖动。
             player.automaticallyWaitsToMinimizeStalling = !url.isFileURL
             player.allowsExternalPlayback = true
@@ -423,7 +423,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private func watchdogTick() {
             guard let player = player else { return }
 
-            // 仅对本地缓存文件启用卡顿检测；在线交给系统网络层
+            // 仅对本地下载文件启用卡顿检测；在线交给系统网络层
             guard url?.isFileURL == true else {
                 lastWatchdogTime = -1
                 stalledTicks = 0
@@ -483,7 +483,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                 // 缓冲足够却卡住：直接续播
                 player.play()
             } else if isLocal {
-                // 本地缓存却卡住：轻微回退触发重新解码/缓冲
+                // 本地下载却卡住：轻微回退触发重新解码/缓冲
                 let target = CMTime(seconds: max(0, cur - 1.0), preferredTimescale: 600)
                 player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                     self?.player?.play()
@@ -551,7 +551,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                     if r != 1.0 { player.rate = r }
                 }
             }
-            // ⭐ 本地缓存兜底：回前台后做一次延迟校验，若仍想播放但时间没前进
+            // ⭐ 本地下载兜底：回前台后做一次延迟校验，若仍想播放但时间没前进
             //    （渲染层在长时间后台/内存压力下可能失效导致黑屏），则彻底重建播放器。
             if url?.isFileURL == true, wasPlayingBeforeBackground {
                 let before = player.currentTime().seconds
@@ -912,18 +912,6 @@ struct VideoPlayerPageView: View {
                                     episodeKey: activeEpisodeURL,
                                     sourceURL: sourceURL)
                         }
-
-                        // ⭐ 在线播放页：保留错误链接举报入口
-                        if let real = realURL {
-                            ReportLinkCard(
-                                videoTitle: displayTitle,
-                                sourceURL: sourceURL ?? activeEpisodeURL,
-                                episodeURL: activeEpisodeURL,
-                                channelName: channelName,
-                                episodeName: activeEpisodeName,
-                                realURL: real
-                            )
-                        }
                     }
                     .padding(.top, 16)
                 }
@@ -1036,7 +1024,7 @@ struct VideoPlayerPageView: View {
         authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(activeEpisodeURL)
     }
 
-    // ⭐ 已缓存的"原始 url"集合（供选集弹窗显示蓝色已下载角标）
+    // ⭐ 已下载的"原始 url"集合（供选集弹窗显示蓝色已下载角标）
     private var cachedOriginalURLs: Set<String> {
         var s = Set<String>()
         for (key, meta) in downloadManager.cacheMetadata where downloadManager.localBookmarks[key] != nil {
@@ -1307,7 +1295,7 @@ struct VideoPlayerPageView: View {
     }
 }
 
-// MARK: - 离线缓存播放器（选集显示全部剧集）
+// MARK: - 离线下载播放器（选集显示全部剧集）
 struct CachedVideoPlayerView: View {
     let realURL: String
     let title: String
@@ -1484,7 +1472,7 @@ struct CachedVideoPlayerView: View {
                                 downloadManager.deleteDownload(urlString: cacheKey)
                                 dismiss()
                             } label: {
-                                Label(isGlobalEnglishMode ? "Delete Cache" : "删除缓存",
+                                Label(isGlobalEnglishMode ? "Delete Cache" : "删除视频",
                                     systemImage: "trash")
                                     .font(.system(size: 14, weight: .semibold))
                                     .foregroundColor(.red)
