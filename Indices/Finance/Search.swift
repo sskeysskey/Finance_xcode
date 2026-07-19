@@ -125,7 +125,8 @@ struct SearchContentView: View {
             ToolButton(
                 title: "对比",
                 icon: "chart.line.uptrend.xyaxis",
-                color: .blue
+                color: .blue,
+                cardKey: "CompareTool"
             ) {
                 FinanceAnalytics.shared.track(cardKey: "对比", cardName: "对比", authManager: authManager)
                 showCompare = true
@@ -153,17 +154,17 @@ struct SearchContentView: View {
                 .shadow(color: Color.blue.opacity(0.3), radius: 5, x: 0, y: 3)
             }
             
-            // 3. 财报按钮
-            ToolButton(title: "财报", icon: "calendar", color: .orange) {
+            // 3. 财报按钮（精选 cardKey = EarningCalendar）
+            ToolButton(title: "财报", icon: "calendar", color: .orange, cardKey: "EarningCalendar") {
                 FinanceAnalytics.shared.track(cardKey: "财报", cardName: "财报", authManager: authManager)
                 PointsCoordinator.shared.attempt(action: .openEarnings, itemKey: nil,
                     displayName: "财报发布日历", authManager: authManager) {
                     navigateToEarnings = true
                 }
             }
-            
-            // 4. 【新增】复盘按钮
-            ToolButton(title: "复盘", icon: "clock.arrow.circlepath", color: .purple) {
+
+            // 4. 复盘按钮（推荐 cardKey = HistoryRecap）
+            ToolButton(title: "复盘", icon: "clock.arrow.circlepath", color: .purple, cardKey: "HistoryRecap") {
                 FinanceAnalytics.shared.track(cardKey: "复盘", cardName: "复盘", authManager: authManager)
                 PointsCoordinator.shared.attempt(action: .openHistory, itemKey: nil,
                     displayName: "复盘历史 (多组共振)", authManager: authManager) {
@@ -196,12 +197,24 @@ struct SearchContentView: View {
     }
 }
 
-// 辅助组件：方形工具按钮
+// 辅助组件：方形工具按钮（新增精选/推荐角标逻辑）
 struct ToolButton: View {
     let title: String
     let icon: String
     let color: Color
+    let cardKey: String // 新增：对应featured_cards的key
     let action: () -> Void
+    
+    @EnvironmentObject var dataService: DataService
+    @State private var glow = false
+    
+    // 判断是否为精选卡片
+    private var featuredLabel: String? { dataService.featuredCards[cardKey] }
+    private var isFeatured: Bool { featuredLabel != nil }
+    private var badgeText: String {
+        if let label = featuredLabel, !label.isEmpty { return label }
+        return "精选"
+    }
     
     var body: some View {
         Button(action: action) {
@@ -215,8 +228,50 @@ struct ToolButton: View {
             .foregroundColor(color)
             .frame(width: 60, height: 56)
             .background(Color(UIColor.secondarySystemGroupedBackground))
+            // 精选卡片增加渐变描边
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        isFeatured
+                        ? AnyShapeStyle(LinearGradient(colors: [.yellow, .orange, .pink],
+                                                       startPoint: .topLeading, endPoint: .bottomTrailing))
+                        : AnyShapeStyle(Color.clear),
+                        lineWidth: isFeatured ? 2 : 0
+                    )
+            )
             .cornerRadius(12)
-            .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+            .shadow(
+                color: isFeatured ? Color.orange.opacity(glow ? 0.55 : 0.2) : Color.black.opacity(0.05),
+                radius: isFeatured ? (glow ? 8 : 3) : 2,
+                x: 0, y: 1
+            )
+        }
+        // 右上角角标悬浮层
+        .overlay(alignment: .topTrailing) {
+            if isFeatured {
+                HStack(spacing: 2) {
+                    Image(systemName: "star.fill").font(.system(size: 7))
+                    Text(badgeText).font(.system(size: 9, weight: .heavy))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(
+                    LinearGradient(colors: [.orange, .pink], startPoint: .leading, endPoint: .trailing)
+                )
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.6), lineWidth: 0.5))
+                .offset(x: 3, y: -5)
+                .shadow(color: .black.opacity(0.25), radius: 1, x: 0, y: 1)
+            }
+        }
+        .onAppear {
+            // 精选卡片开启呼吸发光动画
+            if isFeatured {
+                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                    glow = true
+                }
+            }
         }
     }
 }

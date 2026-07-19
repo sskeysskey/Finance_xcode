@@ -130,7 +130,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
     }
 
     class Coordinator: NSObject, AVPlayerViewControllerDelegate {
-        var parent: VideoPlayerView                    // ⭐ let -> var
+        var parent: VideoPlayerView
         private weak var controller: AVPlayerViewController?
         private weak var player: AVPlayer?
         private var url: URL?
@@ -140,13 +140,13 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private var keepUpObs: NSKeyValueObservation?
         private var bufferEmptyObs: NSKeyValueObservation?
         private var bufferFullObs: NSKeyValueObservation?
-        private var statusObs: NSKeyValueObservation?          // ⭐ 监听 item 是否就绪
+        private var statusObs: NSKeyValueObservation?
         private var rateObs: NSKeyValueObservation?
         private var defaultRateObs: NSKeyValueObservation?
         private var currentItemObs: NSKeyValueObservation?
         private var lastPersistedSeconds: Double = 0
 
-        // ⭐ 进度记忆 / 恢复相关
+        // 进度记忆 / 恢复相关
         private var periodicObs: Any?
         private var restoreTime: CMTime = .zero
         private var wasPlayingBeforeBackground = true
@@ -157,14 +157,28 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private var bufferingResetWork: DispatchWorkItem?
         private var targetOrientationMask: UIInterfaceOrientationMask?
         private var orientationWork: DispatchWorkItem?
-        // ⭐ 全屏时用的原生加载指示器（挂在 contentOverlayView 上，会跟随进入全屏）
         private var loadingView: UIView?
 
-        // ⭐ 新增：卡顿自愈 watchdog（针对本地下载横屏全屏偶发停住）
+        // 本地下载卡顿自愈 watchdog
         private var stallWatchdog: Timer?
         private var lastWatchdogTime: Double = -1
         private var stalledTicks = 0
-        private var stallRecoveryAttempts = 0   // ⭐ 自愈升级计数：多次轻量自愈无效则重建
+        private var stallRecoveryAttempts = 0
+
+        // ⭐⭐ 新增(问题2)：在线弱网自适应策略参数与状态
+        private static let startupPeakBitRate: Double = 1_800_000   // 快启动：限码率
+        private static let degradedPeakBitRate: Double = 800_000    // 弱网降级码率
+        private static let startupForwardBuffer: TimeInterval = 5   // 快启动：小前向缓冲
+        private static let steadyForwardBuffer: TimeInterval = 60   // 稳定后：大前向缓冲抗抖动
+        private var netWaitingTicks = 0          // 在线流连续 waiting 的秒数
+        private var stablePlayTicks = 0          // 连续正常播放的秒数
+        private var didLiftStartupCaps = false   // 是否已解除快启动限制
+        private var networkRetryCount = 0        // 失败自动重试计数
+        private let maxNetworkRetries = 2
+
+        // ⭐⭐ 新增(问题1)：AVKit 控制层卡死自愈
+        private var didScrubWhileBuffering = false   // 缓冲期间发生过 seek（用户拖进度条）
+        private var controlsResetScheduled = false
 
         var isFullScreen = false
         var isPiP = false
@@ -180,13 +194,13 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             if !parent.hasStartedPlaying {
                 parent.hasStartedPlaying = true
             }
-            updateLoadingOverlay()        // ⭐ 新增
+            updateLoadingOverlay()
         }
 
-        // MARK: ⭐ 全屏可见的加载指示器（放进 contentOverlayView，会跟随进入全屏）
+        // MARK: 全屏可见的加载指示器（放进 contentOverlayView，会跟随进入全屏）
         private func setupLoadingOverlay() {
             guard let controller = controller else { return }
-            controller.loadViewIfNeeded()                       // 确保 contentOverlayView 已就绪
+            controller.loadViewIfNeeded()
             guard let overlay = controller.contentOverlayView else { return }
 
             let isEnglish = UserDefaults.standard.bool(forKey: "isGlobalEnglishMode")
@@ -195,7 +209,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             box.translatesAutoresizingMaskIntoConstraints = false
             box.backgroundColor = UIColor.black.withAlphaComponent(0.55)
             box.layer.cornerRadius = 12
-            box.isUserInteractionEnabled = false                // ⭐ 不拦截播放/快进手势
+            box.isUserInteractionEnabled = false
             box.isHidden = true
 
             let spinner = UIActivityIndicatorView(style: .medium)
@@ -231,13 +245,12 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             loadingView = box
         }
 
-        // ⭐ 仅在全屏时显示（竖屏内嵌仍由 SwiftUI 的 PlayerLoadingIndicator 负责，避免重复转圈）
         private func updateLoadingOverlay() {
             let shouldShow = isFullScreen && (!parent.hasStartedPlaying || parent.isBuffering)
             loadingView?.isHidden = !shouldShow
         }
 
-        // MARK: 初始化（创建播放器 + 注册生命周期监听）
+        // MARK: 初始化
         func setup(controller: AVPlayerViewController, url: URL) {
             self.controller = controller
             self.url = url
@@ -248,12 +261,11 @@ struct VideoPlayerView: UIViewControllerRepresentable {
 
             configureAudioSession()
             buildPlayer(resumeTime: resume, autoPlay: true)
-            setupLoadingOverlay()          // ⭐ 新增：构建全屏可见的加载指示器
+            setupLoadingOverlay()
             registerLifecycleObservers()
             startStallWatchdog()
         }
 
-        // MARK: 音频会话（首次 & mediaServices 重启后都要配）
         private func configureAudioSession() {
             let session = AVAudioSession.sharedInstance()
             try? session.setCategory(.playback, mode: .moviePlayback)
@@ -267,10 +279,30 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             teardownPlayerObservers()
             didHandleReady = false
 
-            let player = AVPlayer(url: url)
-            // ⭐ 关键修复(问题2)：本地下载文件关闭「等待以减少卡顿」，
-            //    避免本地播放时 AVPlayer 进入假性 waiting 而停住；在线流仍保留以应对网络抖动。
-            player.automaticallyWaitsToMinimizeStalling = !url.isFileURL
+            // ⭐ 重建时重置弱网/控件自愈状态（注意：networkRetryCount 不在这里重置，
+            //    否则失败重试会变成无限循环；它只在稳定播放后归零）
+            didLiftStartupCaps = false
+            didScrubWhileBuffering = false
+            netWaitingTicks = 0
+            stablePlayTicks = 0
+
+            let isLocal = url.isFileURL
+            let asset = AVURLAsset(url: url)
+            let item = AVPlayerItem(asset: asset)
+
+            if !isLocal {
+                // ⭐⭐ 快启动模式(问题2)：
+                //    限码率 → ABR 一上来就选低档，弱网下更快出第一帧（多码率源有效，单码率源无副作用）；
+                //    小前向缓冲 → 不用攒太多数据就起播。
+                //    稳定播放约 8 秒后由 watchdog 调 liftStartupCapsIfNeeded() 放开限制并加大缓冲。
+                item.preferredPeakBitRate = Self.startupPeakBitRate
+                item.preferredForwardBufferDuration = Self.startupForwardBuffer
+                item.canUseNetworkResourcesForLiveStreamingWhilePaused = true
+            }
+
+            let player = AVPlayer(playerItem: item)
+            // 本地下载文件关闭「等待以减少卡顿」，避免假性 waiting；在线流保留以应对网络抖动
+            player.automaticallyWaitsToMinimizeStalling = !isLocal
             player.allowsExternalPlayback = true
             player.usesExternalPlaybackWhileExternalScreenIsActive = true
 
@@ -313,7 +345,6 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                                             options: [.new, .initial]) { [weak self] p, _ in
                 self?.attachItemObservers(item: p.currentItem)
             }
-            // ⭐ 每秒记录一次进度（内存 + 持久化）
             periodicObs = player.addPeriodicTimeObserver(
                 forInterval: CMTime(seconds: 1, preferredTimescale: 1),
                 queue: .main) { [weak self] time in
@@ -328,7 +359,6 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             statusObs?.invalidate(); statusObs = nil
             guard let item = item else { return }
 
-            // ⭐ 就绪后再 seek 到目标位置并起播（保证 seek 不被吞掉）
             statusObs = item.observe(\.status,
                                      options: [.new, .initial]) { [weak self] it, _ in
                 DispatchQueue.main.async {
@@ -337,9 +367,9 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                     case .readyToPlay:
                         self.handleReadyToPlay()
                     case .failed:
-                        // ⭐ 真正失败才报错，避免无限「缓冲中」
-                        self.parent.onPlaybackFailed?(
-                            it.error?.localizedDescription ?? "视频播放失败")
+                        // ⭐⭐ (问题2) 失败先带退避自动重试，重试用尽才真正报错
+                        self.attemptNetworkRetryOrFail(
+                            message: it.error?.localizedDescription)
                     default:
                         break
                     }
@@ -373,7 +403,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             let resume = { [weak self] in
                 guard let self = self, self.shouldAutoPlayWhenReady else { return }
                 if #available(iOS 16.0, *) {
-                    player.play()   // 使用 defaultRate
+                    player.play()
                 } else {
                     player.play()
                     let r = PlaybackSpeedStore.rate
@@ -393,10 +423,9 @@ struct VideoPlayerView: UIViewControllerRepresentable {
 
         private func recordProgress(_ time: CMTime) {
             guard let url = url, time.seconds.isFinite, time.seconds > 0 else { return }
-            markStartedPlaying()   // ⭐ 时间在走 = 已出帧，收掉「缓冲中」
+            markStartedPlaying()
             restoreTime = time
 
-            // ⭐ 磁盘写入节流：每累计 5 秒才落盘一次
             if abs(time.seconds - lastPersistedSeconds) >= 5 {
                 lastPersistedSeconds = time.seconds
                 PlaybackPositionStore.save(time.seconds, for: url)
@@ -410,7 +439,38 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             }
         }
 
-        // MARK: ⭐ 卡顿自愈 watchdog
+        // MARK: ⭐⭐ (问题2) 弱网自适应：解除快启动限制 / 降级码率
+        private func liftStartupCapsIfNeeded() {
+            guard !didLiftStartupCaps,
+                  url?.isFileURL == false,
+                  let item = player?.currentItem else { return }
+            didLiftStartupCaps = true
+            item.preferredPeakBitRate = 0                                  // 放开码率，允许升清晰度
+            item.preferredForwardBufferDuration = Self.steadyForwardBuffer // 大缓冲抗晚高峰抖动
+        }
+
+        private func degradeForWeakNetwork() {
+            guard url?.isFileURL == false, let item = player?.currentItem else { return }
+            item.preferredPeakBitRate = Self.degradedPeakBitRate
+            item.preferredForwardBufferDuration = Self.startupForwardBuffer
+            didLiftStartupCaps = false
+            stablePlayTicks = 0
+        }
+
+        // MARK: ⭐⭐ (问题2) 失败自动重试（带退避），重试用尽才报错
+        private func attemptNetworkRetryOrFail(message: String?) {
+            if url?.isFileURL == false, networkRetryCount < maxNetworkRetries {
+                networkRetryCount += 1
+                let delay = Double(networkRetryCount) * 1.5   // 1.5s → 3s
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.rebuildPreservingState()
+                }
+            } else {
+                parent.onPlaybackFailed?(message ?? "视频播放失败")
+            }
+        }
+
+        // MARK: 卡顿自愈 watchdog（本地 + ⭐ 在线两套策略）
         private func startStallWatchdog() {
             stallWatchdog?.invalidate()
             lastWatchdogTime = -1
@@ -422,15 +482,15 @@ struct VideoPlayerView: UIViewControllerRepresentable {
 
         private func watchdogTick() {
             guard let player = player else { return }
-
-            // 仅对本地下载文件启用卡顿检测；在线交给系统网络层
-            guard url?.isFileURL == true else {
-                lastWatchdogTime = -1
-                stalledTicks = 0
-                stallRecoveryAttempts = 0
-                return
+            if url?.isFileURL == true {
+                localWatchdogTick(player)
+            } else {
+                networkWatchdogTick(player)   // ⭐⭐ 新增：在线弱网 watchdog
             }
+        }
 
+        // 本地下载：原有逻辑不变
+        private func localWatchdogTick(_ player: AVPlayer) {
             let intendsToPlay = (player.timeControlStatus == .waitingToPlayAtSpecifiedRate)
                 || (player.timeControlStatus == .playing)
             guard intendsToPlay else {
@@ -443,20 +503,73 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             let now = player.currentTime().seconds
             if lastWatchdogTime >= 0, abs(now - lastWatchdogTime) < 0.05 {
                 stalledTicks += 1
-                if stalledTicks >= 2 {           // 连续 ~2 秒不前进 → 判定卡死
+                if stalledTicks >= 2 {
                     recoverFromStallIfNeeded()
                     stalledTicks = 0
                 }
             } else {
                 stalledTicks = 0
-                stallRecoveryAttempts = 0        // ⭐ 时间正常前进，重置升级计数
+                stallRecoveryAttempts = 0
             }
             lastWatchdogTime = now
         }
 
+        // ⭐⭐ (问题2) 在线流：分级自愈
+        private func networkWatchdogTick(_ player: AVPlayer) {
+            let status = player.timeControlStatus
+
+            if status == .playing {
+                netWaitingTicks = 0
+                stablePlayTicks += 1
+                if stablePlayTicks >= 8 {
+                    networkRetryCount = 0        // 稳定播放 → 重试计数归零
+                    liftStartupCapsIfNeeded()    // 稳定播放 → 放开码率 + 加大缓冲
+                }
+                return
+            }
+
+            stablePlayTicks = 0
+            guard status == .waitingToPlayAtSpecifiedRate else {
+                netWaitingTicks = 0
+                return
+            }
+
+            netWaitingTicks += 1
+
+            if netWaitingTicks == 6 {
+                // 等 6 秒还在转圈：压低码率档位，帮 ABR 尽快切低清晰度
+                degradeForWeakNetwork()
+            }
+            if netWaitingTicks == 10 {
+                // 等 10 秒：只要缓冲里有数据就强行起播，不等系统「攒够」
+                if let item = player.currentItem, !item.isPlaybackBufferEmpty {
+                    player.playImmediately(atRate: PlaybackSpeedStore.rate)
+                }
+            }
+            if netWaitingTicks >= 20 {
+                // 等 20 秒还起不来：整体重建（重建后自动回到低码率+小缓冲的快启动模式）
+                netWaitingTicks = 0
+                rebuildPreservingState()
+            }
+        }
+
         @objc private func handlePlaybackStalled() {
             DispatchQueue.main.async { [weak self] in
-                self?.recoverFromStallIfNeeded()
+                guard let self = self else { return }
+                if self.url?.isFileURL == true {
+                    self.recoverFromStallIfNeeded()
+                } else {
+                    // ⭐⭐ (问题2) 在线流播放中卡顿：先降级码率，稍后有缓冲就强行续播
+                    self.degradeForWeakNetwork()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self = self,
+                              let p = self.player,
+                              let item = p.currentItem else { return }
+                        if p.timeControlStatus != .playing, !item.isPlaybackBufferEmpty {
+                            p.playImmediately(atRate: PlaybackSpeedStore.rate)
+                        }
+                    }
+                }
             }
         }
 
@@ -468,8 +581,6 @@ struct VideoPlayerView: UIViewControllerRepresentable {
 
             let isLocal = url?.isFileURL ?? false
 
-            // ⭐ 自愈升级：连续多次轻量自愈仍无效，说明渲染层可能已失效（黑屏），
-            //    直接彻底重建播放器以恢复画面。
             stallRecoveryAttempts += 1
             if stallRecoveryAttempts >= 3 {
                 stallRecoveryAttempts = 0
@@ -480,13 +591,42 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             }
 
             if item.isPlaybackLikelyToKeepUp || item.isPlaybackBufferFull {
-                // 缓冲足够却卡住：直接续播
                 player.play()
             } else if isLocal {
-                // 本地下载却卡住：轻微回退触发重新解码/缓冲
                 let target = CMTime(seconds: max(0, cur - 1.0), preferredTimescale: 600)
                 player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                     self?.player?.play()
+                }
+            }
+        }
+
+        // MARK: ⭐⭐ (问题1) AVKit 控制层卡死自愈
+        //    缓冲期间发生 seek（用户拖进度条）→ timeJumped 打标记；
+        //    真正恢复播放后，关闭再打开 showsPlaybackControls，强制重建控制层。
+        @objc private func handleTimeJumped(_ note: Notification) {
+            guard let item = note.object as? AVPlayerItem,
+                  item === player?.currentItem else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, let p = self.player else { return }
+                if !self.parent.hasStartedPlaying
+                    || self.parent.isBuffering
+                    || p.timeControlStatus != .playing {
+                    self.didScrubWhileBuffering = true
+                }
+            }
+        }
+
+        private func resetControlsIfNeeded() {
+            guard didScrubWhileBuffering, !controlsResetScheduled else { return }
+            didScrubWhileBuffering = false
+            controlsResetScheduled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard let self = self else { return }
+                self.controlsResetScheduled = false
+                guard let c = self.controller, c.showsPlaybackControls else { return }
+                c.showsPlaybackControls = false
+                DispatchQueue.main.async {
+                    c.showsPlaybackControls = true
                 }
             }
         }
@@ -500,9 +640,24 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                            name: UIApplication.willEnterForegroundNotification, object: nil)
             nc.addObserver(self, selector: #selector(handleMediaServicesReset),
                            name: AVAudioSession.mediaServicesWereResetNotification, object: nil)
-            // ⭐ 新增：系统的卡顿通知，作为 watchdog 之外的另一条自愈触发途径
             nc.addObserver(self, selector: #selector(handlePlaybackStalled),
                            name: AVPlayerItem.playbackStalledNotification, object: nil)
+            // ⭐⭐ 新增(问题1)：seek 检测，用于控制层卡死自愈
+            nc.addObserver(self, selector: #selector(handleTimeJumped(_:)),
+                           name: AVPlayerItem.timeJumpedNotification, object: nil)
+            // ⭐⭐ 新增(问题2)：播放中途断流 → 自动重试
+            nc.addObserver(self, selector: #selector(handleFailedToPlayToEnd(_:)),
+                           name: AVPlayerItem.failedToPlayToEndTimeNotification, object: nil)
+        }
+
+        @objc private func handleFailedToPlayToEnd(_ note: Notification) {
+            guard let item = note.object as? AVPlayerItem,
+                  item === player?.currentItem else { return }
+            let msg = (note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?
+                .localizedDescription
+            DispatchQueue.main.async { [weak self] in
+                self?.attemptNetworkRetryOrFail(message: msg)
+            }
         }
 
         @objc private func handleEnterBackground() {
@@ -516,17 +671,13 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         }
 
         @objc private func handleEnterForeground() {
-            // ⭐ 回前台先校正方向：不在全屏就一定恢复竖屏锁，
-            //    修复「全屏→PiP→退后台→恢复」后卡横屏的问题。
             if !isFullScreen {
                 applyOrientation(fullScreen: false)
             }
 
-            // PiP 期间画面在小窗持续渲染，不存在黑屏，无需干预播放器重绑
             guard !isPiP else { return }
             guard let player = player, let controller = controller else { return }
 
-            // ……（下面保持原来的重绑/seek 逻辑不变）
             let item = player.currentItem
             let failed = (item == nil)
                 || (item?.status == .failed)
@@ -551,8 +702,6 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                     if r != 1.0 { player.rate = r }
                 }
             }
-            // ⭐ 本地下载兜底：回前台后做一次延迟校验，若仍想播放但时间没前进
-            //    （渲染层在长时间后台/内存压力下可能失效导致黑屏），则彻底重建播放器。
             if url?.isFileURL == true, wasPlayingBeforeBackground {
                 let before = player.currentTime().seconds
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
@@ -569,7 +718,6 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         }
 
         @objc private func handleMediaServicesReset() {
-            // mediaserverd 被重启：所有音视频对象失效，必须连音频会话一起重建
             configureAudioSession()
             rebuildPreservingState()
         }
@@ -582,7 +730,10 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 let status = player.timeControlStatus
-                if status == .playing { self.markStartedPlaying() }   // ⭐ 真正播放
+                if status == .playing {
+                    self.markStartedPlaying()
+                    self.resetControlsIfNeeded()   // ⭐⭐ (问题1) 恢复播放后自愈控制层
+                }
                 let waiting = (status == .waitingToPlayAtSpecifiedRate)
                 self.setBuffering(waiting)
             }
@@ -592,7 +743,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             if parent.isBuffering != value {
                 parent.isBuffering = value
             }
-            updateLoadingOverlay()        // ⭐ 新增
+            updateLoadingOverlay()
             bufferingResetWork?.cancel()
             if value {
                 let work = DispatchWorkItem { [weak self] in
@@ -629,10 +780,9 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             orientationWork?.cancel()
             stallWatchdog?.invalidate(); stallWatchdog = nil
 
-            loadingView?.removeFromSuperview()                  // ⭐ 新增
-            loadingView = nil                                   // ⭐ 新增
+            loadingView?.removeFromSuperview()
+            loadingView = nil
 
-            // ⭐ 非画中画时：彻底释放播放器 + 清掉锁屏「正在播放」信息
             if !isPiP {
                 player?.pause()
                 player?.replaceCurrentItem(with: nil)
@@ -648,7 +798,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                                 willBeginFullScreenPresentationWithAnimationCoordinator
                                 coordinator: UIViewControllerTransitionCoordinator) {
             isFullScreen = true
-            updateLoadingOverlay()                              // ⭐ 新增：刚进全屏立即判断是否要显示
+            updateLoadingOverlay()
             coordinator.animate(alongsideTransition: nil) { [weak self] context in
                 guard let self = self else { return }
                 if context.isCancelled {
@@ -658,7 +808,7 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                     self.isFullScreen = true
                     self.applyOrientation(fullScreen: true)
                 }
-                self.updateLoadingOverlay()                     // ⭐ 新增
+                self.updateLoadingOverlay()
             }
         }
 
@@ -674,25 +824,21 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                     self.isFullScreen = false
                     self.applyOrientation(fullScreen: false)
                 }
-                self.updateLoadingOverlay()                     // ⭐ 新增：退出全屏后收起原生指示器
+                self.updateLoadingOverlay()
             }
         }
 
         // MARK: 画中画代理
         func playerViewControllerWillStartPictureInPicture(_ playerViewController: AVPlayerViewController) {
             isPiP = true
-            // ⭐ 进入 PiP 系统会收起全屏界面。若此前处于横屏全屏，
-            //    必须同步作废全屏状态，否则回到 App 会卡在横屏。
             if isFullScreen {
                 isFullScreen = false
             }
-            AppDelegate.orientationLock = .portrait   // 仅复位锁；旋转留到回前台/active 时执行
+            AppDelegate.orientationLock = .portrait
         }
 
         func playerViewControllerDidStopPictureInPicture(_ playerViewController: AVPlayerViewController) {
             isPiP = false
-            // ⭐ PiP 结束（含自动结束）后，只要不在全屏就强制回竖屏。
-            //    这里 App 已 active，requestGeometryUpdate 能真正生效。
             if !isFullScreen {
                 DispatchQueue.main.async { [weak self] in
                     self?.applyOrientation(fullScreen: false)
@@ -700,8 +846,6 @@ struct VideoPlayerView: UIViewControllerRepresentable {
             }
         }
 
-        // ⭐ 处理 PiP 上的「恢复」按钮。
-        //    我们不恢复全屏，直接完成并保持竖屏内嵌，符合「上滑离开全屏」的预期。
         func playerViewController(_ playerViewController: AVPlayerViewController,
                                 restoreUserInterfaceForPictureInPictureStopWithCompletionHandler
                                 completionHandler: @escaping (Bool) -> Void) {
@@ -1243,11 +1387,21 @@ struct VideoPlayerPageView: View {
         hasStartedPlaying = false
         scheduleLoadTimeout()              // ⭐ 开始加载即挂超时看门狗
         do {
-            let url = try await OVideoAPI.resolveRealURL(episodeURL: activeEpisodeURL)
+            let url: String
+            do {
+                // 第一次请求解析真实地址
+                url = try await OVideoAPI.resolveRealURL(episodeURL: activeEpisodeURL)
+            } catch {
+                // 首次失败，等待1.5秒后重试一次
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                // 第二次重试请求，若再次失败会抛出错误到外层do-catch
+                url = try await OVideoAPI.resolveRealURL(episodeURL: activeEpisodeURL)
+            }
             self.realURL = url
             evaluateCellularGate(real: url)
             recordPlayback(real: url)
         } catch {
+            // 首次+重试全部失败，进入错误逻辑
             self.resolveError = error.localizedDescription
             self.showRepairSheet = true    // ⭐ 解析失败：弹反馈修复
             self.loadTimeoutWork?.cancel()

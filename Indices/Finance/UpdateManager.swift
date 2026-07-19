@@ -12,9 +12,10 @@ struct VersionResponse: Codable {
 
     let daily_free_limit: Int?
     let cost_config: [String: Int]?
-    // 【新增】
     let bonus_points: Int?
     let sector_cost_overrides: [String: Int]?
+    let featured_cards: [String: String]?
+    let is_free_access_day: Bool?   // 【新增】服务器权威的免点数日标志
 
     let strategy_groups: [String]?
     let group_display_names: [String: String]?
@@ -243,6 +244,11 @@ class UpdateManager: ObservableObject {
                 UsageManager.shared.updateSectorOverrides(overrides)
                 print("UpdateManager: 已更新分组扣点覆盖: \(overrides)")
             }
+            
+            // 【新增 需求4】更新特效标注卡片配置
+            DataService.shared.updateFeaturedCards(serverVersionResponse.featured_cards ?? [:])
+            // 【新增 需求1】更新服务器权威的免点数日标志
+            DataService.shared.updateFreeAccessDay(serverVersionResponse.is_free_access_day)
 
             // 【新增】更新期权市值阀值
             if let capLimit = serverVersionResponse.option_cap_limit {

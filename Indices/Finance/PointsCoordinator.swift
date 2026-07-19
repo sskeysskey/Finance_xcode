@@ -30,6 +30,10 @@ final class PointsCoordinator: ObservableObject {
     @Published var showInviteSheet = false
     @Published var showLoginSheet = false
 
+    // 【新增 需求2】旧数据免点日提示（每天只弹一次）
+    @Published var showFreeDayTip = false
+    private let freeDayTipDateKey = "FinanceFreeDayTipDate"
+
     weak var authManagerRef: AuthManager?
     private let usage = UsageManager.shared
 
@@ -46,6 +50,13 @@ final class PointsCoordinator: ObservableObject {
         let cost = usage.cost(for: action, itemKey: itemKey)
         if cost <= 0 { onSuccess(); return }
         if usage.isUnlocked(action: action, itemKey: itemKey) { onSuccess(); return }
+
+        // 【新增 需求2】旧数据免点日：周日/周一(北京)及美股节假日次日，直接免费放行
+        if isFreeDayNow() {
+            maybeShowFreeDayTip()
+            onSuccess()
+            return
+        }
 
         // 免费点数只发给登录用户 → 未登录直接引导
         if !authManager.isLoggedIn {
@@ -81,8 +92,31 @@ final class PointsCoordinator: ObservableObject {
         if authManager.isSubscribed { return true }
         if usage.cost(for: action, itemKey: itemKey) <= 0 { return true }
         if usage.isUnlocked(action: action, itemKey: itemKey) { return true }
+        if isFreeDayNow() { return true }
         return false
     }
+
+    /// 【需求1】优先用服务器权威判断，拿不到时才回退本地（离线场景）
+    private func isFreeDayNow() -> Bool {
+        if let serverFlag = DataService.shared.isFreeAccessDayServer {
+            return serverFlag
+        }
+        return TradingDateHelper.isFreeAccessDay()
+    }
+
+    // MARK: - 【新增 需求2】免点日提示（每天只弹一次）
+    private func maybeShowFreeDayTip() {
+        let today = TradingDateHelper.beijingTodayString()
+        let last = UserDefaults.standard.string(forKey: freeDayTipDateKey)
+        guard last != today else { return }
+        UserDefaults.standard.set(today, forKey: freeDayTipDateKey)
+        // 稍作延迟，让页面导航先开始，再弹出提示
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            self.showFreeDayTip = true
+        }
+    }
+
+    func dismissFreeDayTip() { showFreeDayTip = false }
 
     // MARK: - 数据是否过期
     private func isDataStale() -> Bool {
@@ -161,17 +195,49 @@ final class PointsCoordinator: ObservableObject {
 struct PointsOverlayView: View {
     @ObservedObject var coordinator = PointsCoordinator.shared
 
+    // 订阅按钮的呼吸动画
+    @State private var subShine = false
+
     var body: some View {
         ZStack {
             if coordinator.showConfirmSheet { confirmDialog }
             if coordinator.showInsufficientSheet { insufficientDialog }
             if coordinator.showErrorSheet { errorDialog }
+            if coordinator.showFreeDayTip { freeDayTipDialog }   // 【新增 需求2】
             if coordinator.isProcessing { processingOverlay }
         }
         .animation(.easeInOut(duration: 0.2), value: coordinator.showConfirmSheet)
         .animation(.easeInOut(duration: 0.2), value: coordinator.showInsufficientSheet)
         .animation(.easeInOut(duration: 0.2), value: coordinator.showErrorSheet)
+        .animation(.easeInOut(duration: 0.2), value: coordinator.showFreeDayTip)   // 【新增】
         .animation(.easeInOut(duration: 0.2), value: coordinator.isProcessing)
+    }
+
+    // MARK: - 【新增 需求2】免点日提示弹窗
+    private var freeDayTipDialog: some View {
+        ZStack {
+            Color.black.opacity(0.45).ignoresSafeArea()
+                .onTapGesture { coordinator.dismissFreeDayTip() }
+            VStack(spacing: 0) {
+                Image(systemName: "gift.fill")
+                    .font(.system(size: 44)).foregroundStyle(.green).padding(.top, 24)
+                Text("今日免费畅览").font(.headline).padding(.top, 12)
+                Text("今天美股休市（周末 / 节假日），数据与上一交易日相同、尚未更新。\n为避免浪费点数，今日全部内容均可免费查看，不消耗任何点数。")
+                    .font(.subheadline).foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 20).padding(.top, 8)
+                Divider().padding(.top, 18)
+                Button(action: { coordinator.dismissFreeDayTip() }) {
+                    Text("好的，开始免费查看")
+                        .fontWeight(.bold).frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .foregroundColor(.green)
+                }
+            }
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .cornerRadius(18).padding(.horizontal, 50).shadow(radius: 20)
+            .transition(.scale.combined(with: .opacity))
+        }
     }
 
     private var processingOverlay: some View {
@@ -282,6 +348,59 @@ struct PointsOverlayView: View {
              : "数据截至 \(coordinator.confirmDataTimestamp)。\(base)"
     }
 
+    // MARK: - 【需求3 重做】漂亮醒目的订阅按钮
+    private var subscribeButton: some View {
+        Button(action: { coordinator.goSubscribe() }) {
+            HStack(spacing: 10) {
+                Image(systemName: "crown.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(.yellow)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("升级专业版 · 免费畅看")
+                        .font(.system(size: 15, weight: .bold))
+                    Text("告别点数烦恼，一步到位")
+                        .font(.system(size: 11))
+                        .opacity(0.9)
+                }
+                Spacer()
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text("¥").font(.system(size: 13, weight: .bold))
+                    Text("6").font(.system(size: 24, weight: .heavy))
+                }
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity)
+            .background(
+                LinearGradient(colors: [Color.indigo, Color.blue, Color.cyan],
+                               startPoint: .leading, endPoint: .trailing)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.white.opacity(0.35), lineWidth: 1)
+            )
+            .overlay(alignment: .topTrailing) {
+                Text("超值")
+                    .font(.system(size: 10, weight: .heavy))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(LinearGradient(colors: [.pink, .red], startPoint: .leading, endPoint: .trailing))
+                    .clipShape(Capsule())
+                    .offset(x: 6, y: -8)
+                    .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+            }
+            .shadow(color: .blue.opacity(0.45), radius: subShine ? 12 : 6, x: 0, y: 4)
+            .scaleEffect(subShine ? 1.02 : 1.0)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: true)) {
+                subShine = true
+            }
+        }
+    }
+
     private var insufficientDialog: some View {
         ZStack {
             Color.black.opacity(0.45).ignoresSafeArea()
@@ -294,7 +413,7 @@ struct PointsOverlayView: View {
 
                 Text(coordinator.insufficientNeedLogin
                     ? "浏览该功能需要消耗点数。登录后即可一次性获赠大量免费点数，每天打卡还有免费点数赠送；除此以外，如果参与「邀请中大奖」活动，参与双方都将各获得大量免费点数！"
-                    : "本次需要 \(coordinator.insufficientCost) 点，当前仅剩 \(coordinator.insufficientRemaining) 点。\n不想花钱？邀请好友即可白拿海量点数！")
+                    : "本次需要 \(coordinator.insufficientCost) 点，当前仅剩 \(coordinator.insufficientRemaining) 点。")
                     .font(.subheadline).foregroundColor(.secondary)
                     .multilineTextAlignment(.center).padding(.horizontal, 20).padding(.top, 8)
 
@@ -309,6 +428,7 @@ struct PointsOverlayView: View {
                     HStack {
                         Image(systemName: coordinator.insufficientNeedLogin ? "person.fill.checkmark" : "party.popper.fill")
                         Text(coordinator.insufficientNeedLogin ? "登录 · 免费领取点数" : "邀请中大奖 · 免费领点数")
+                            .font(.subheadline) // 比默认body小一档
                             .fontWeight(.bold)
                     }
                     .foregroundColor(.white).frame(maxWidth: .infinity).padding(.vertical, 13)
@@ -317,21 +437,30 @@ struct PointsOverlayView: View {
                 }
                 .padding(.horizontal, 20).padding(.top, 18)
 
+                // 【需求3】已登录但点数不足时，显示醒目的订阅按钮
+                if !coordinator.insufficientNeedLogin {
+                    subscribeButton
+                        .padding(.horizontal, 20)
+                        .padding(.top, 12)
+                }
+
                 Divider().padding(.top, 16)
-                HStack(spacing: 0) {
-                    Button(action: { coordinator.dismissInsufficient() }) {
-                        Text("再等等").frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.secondary)
-                    }
-                    Divider().frame(height: 46)
-                    if coordinator.insufficientNeedLogin {
-                        // 未登录：次要入口引导去了解邀请活动
+
+                if coordinator.insufficientNeedLogin {
+                    HStack(spacing: 0) {
+                        Button(action: { coordinator.dismissInsufficient() }) {
+                            Text("再等等").frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.secondary)
+                        }
+                        Divider().frame(height: 46)
                         Button(action: { coordinator.openInvite() }) {
                             Text("了解活动").fontWeight(.bold).frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.blue)
                         }
-                    } else {
-                        Button(action: { coordinator.goSubscribe() }) {
-                            Text("去订阅").fontWeight(.bold).frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.blue)
-                        }
+                    }
+                } else {
+                    // 订阅按钮已单独醒目展示，这里只留一个低调的关闭入口
+                    Button(action: { coordinator.dismissInsufficient() }) {
+                        Text("再等等")
+                            .frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.secondary)
                     }
                 }
             }

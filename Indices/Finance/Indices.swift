@@ -66,6 +66,32 @@ struct TradingDateHelper {
 }
 
 extension TradingDateHelper {
+    /// 判断"北京时间今天"是否为免点数日
+    /// 逻辑：取今天(北京)往前推 1 天，若该日为周末(周六/周日)或美股节假日，
+    ///      说明昨晚美股未开盘 → 今日看到的仍是旧数据 → 免点数
+    static func isFreeAccessDay(reference date: Date = Date()) -> Bool {
+        var calendar = Calendar.current
+        if let tz = TimeZone(identifier: "Asia/Shanghai") { calendar.timeZone = tz }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+
+        guard let refDate = calendar.date(byAdding: .day, value: -1, to: date) else { return false }
+        let dateStr = formatter.string(from: refDate)
+        let weekday = calendar.component(.weekday, from: refDate)  // 1=周日, 7=周六
+        let isWeekend = (weekday == 1 || weekday == 7)
+        let isHoliday = holidays.contains(dateStr)
+        return isWeekend || isHoliday
+    }
+
+    /// 北京时间今天的日期字符串（用于"每日只弹一次提示"的判断）
+    static func beijingTodayString() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        return formatter.string(from: Date())
+    }
+
     static func getYesterday() -> Date {
         return Calendar.current.date(byAdding: .day, value: -1, to: Date())!
     }
@@ -245,7 +271,7 @@ struct IndicesContentView: View {
     @State private var navigateToBigOrders = false
     @State private var navigateToOptionsList = false
     
-    private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "Economic_All", "Economics", "Indices"])
+    private let economyGroupNames = Set(["Bonds", "Commodities", "Crypto", "Currencies", "Economic_All", "Economics", "Indices", "52NewLow"])
     private let weekLowGroupNames = Set([
         "Basic_Materials", "Communication_Services", "Consumer_Cyclical",
         "Consumer_Defensive", "Energy", "Financial_Services", "Healthcare",
@@ -280,7 +306,7 @@ struct IndicesContentView: View {
                                 title: "经济数据",
                                 icon: "globe.asia.australia.fill",
                                 color: .purple,
-                                trailingText: dataService.ecoDataTimestamp.map { "Updated：\($0)" }
+                                trailingText: dataService.ecoDataTimestamp.map { "更新日期：\($0)" }
                             )
                             LazyVGrid(columns: gridLayout, spacing: 10) {
                                 ForEach(economySectors) { sector in
@@ -289,12 +315,12 @@ struct IndicesContentView: View {
                                     }
                                 }
                                 // 期权异动
-                                Button {
-                                    FinanceAnalytics.shared.track(cardKey: "期权异动", cardName: "期权异动", authManager: authManager)
-                                    self.navigateToOptionsList = true
-                                } label: {
-                                    CompactSectorCard(sectorName: "期权异动", icon: "doc.text.magnifyingglass", baseColor: .purple, isSpecial: false, customGradient: [.purple, .blue])
-                                }
+                                // Button {
+                                //     FinanceAnalytics.shared.track(cardKey: "期权异动", cardName: "期权异动", authManager: authManager)
+                                //     self.navigateToOptionsList = true
+                                // } label: {
+                                //     CompactSectorCard(sectorName: "期权异动", icon: "doc.text.magnifyingglass", baseColor: .purple, isSpecial: false, customGradient: [.purple, .blue])
+                                // }
                                 // 期权大单
                                 Button {
                                     FinanceAnalytics.shared.track(cardKey: "OptionBigOrder", cardName: "期权大单", authManager: authManager)
@@ -304,6 +330,23 @@ struct IndicesContentView: View {
                                     }
                                 } label: {
                                     CompactSectorCard(sectorName: "OptionBigOrder", icon: getIcon(for: "OptionBigOrder"), baseColor: .indigo, isSpecial: true, customGradient: [.blue, .purple])
+                                }
+
+                                // ========== 新增 52周新低 卡片 ==========
+                                Button {
+                                    FinanceAnalytics.shared.track(cardKey: "52NewLow", cardName: dataService.groupDisplayMap["52NewLow"] ?? "52周新低", authManager: authManager)
+                                    PointsCoordinator.shared.attempt(action: .openSpecialList, itemKey: "52NewLow",
+                                        displayName: dataService.groupDisplayMap["52NewLow"] ?? "52周新低", authManager: authManager) {
+                                        self.weekLowSectorsData = weekLowSectors
+                                        self.navigateToWeekLow = true
+                                    }
+                                } label: {
+                                    // baseColor统一改为.purple，和经济板块风格一致
+                                    CompactSectorCard(
+                                        sectorName: "52NewLow",
+                                        icon: getIcon(for: "52NewLow"),
+                                        baseColor: .purple
+                                    )
                                 }
                             }
                         }
@@ -316,7 +359,7 @@ struct IndicesContentView: View {
                                 title: "每日荐股",
                                 icon: "star.fill",
                                 color: .blue,
-                                trailingText: dataService.introSymbolTimestamp.map { "Updated：\($0)" }
+                                trailingText: dataService.introSymbolTimestamp.map { "更新日期：\($0)" }
                             )
                             LazyVGrid(columns: gridLayout, spacing: 10) {
                                 // 过滤掉 OptionBigOrder 避免重复显示
@@ -386,17 +429,6 @@ struct IndicesContentView: View {
                                         ? [.blue, .purple] : nil
                     )
                 }
-            }
-        } else if groupName == "52NewLow" {
-            Button {
-                FinanceAnalytics.shared.track(cardKey: "52NewLow", cardName: dataService.groupDisplayMap["52NewLow"] ?? "52周新低", authManager: authManager)
-                PointsCoordinator.shared.attempt(action: .openSpecialList, itemKey: "52NewLow",
-                    displayName: dataService.groupDisplayMap["52NewLow"] ?? "52周新低", authManager: authManager) {
-                    self.weekLowSectorsData = weekLowSectors
-                    self.navigateToWeekLow = true
-                }
-            } label: {
-                CompactSectorCard(sectorName: groupName, icon: getIcon(for: groupName), baseColor: .blue, isSpecial: false)
             }
         } else if groupName == "TenYearHigh" {
             Button {
@@ -677,37 +709,87 @@ struct CompactSectorCard: View {
     let baseColor: Color
     var isSpecial: Bool = false
     var customGradient: [Color]? = nil
-    
+
     @EnvironmentObject var dataService: DataService
-    
+    @State private var glow = false
+
     private var displayName: String {
         if let remoteName = dataService.groupDisplayMap[sectorName] { return remoteName }
         return sectorName.replacingOccurrences(of: "_", with: " ")
     }
-    
+
+    // 【需求4】nil = 普通卡片；非 nil（含空串）= 需要特效
+    private var featuredLabel: String? { dataService.featuredCards[sectorName] }
+    private var isFeatured: Bool { featuredLabel != nil }
+    private var badgeText: String {
+        if let label = featuredLabel, !label.isEmpty { return label }
+        return "精选"
+    }
+
+    private var gradientColors: [Color] {
+        customGradient ?? (isSpecial ? [.purple, .blue] : [baseColor.opacity(0.8), baseColor.opacity(0.5)])
+    }
+
     var body: some View {
-        VStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 18)).foregroundColor(.white)
-            Text(displayName)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 4)
-        .frame(maxWidth: .infinity)
-        .frame(height: 65)
-        .background(
-            LinearGradient(
-                gradient: Gradient(colors: customGradient ?? (isSpecial ? [.purple, .blue] : [baseColor.opacity(0.8), baseColor.opacity(0.5)])),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 18)).foregroundColor(.white)
+                Text(displayName)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity)
+            .frame(height: 65)
+            .background(
+                LinearGradient(
+                    gradient: Gradient(colors: gradientColors),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
             )
-        )
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.2), lineWidth: 1))
-        .cornerRadius(12)
-        .shadow(color: baseColor.opacity(0.2), radius: 2, x: 0, y: 2)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        isFeatured
+                        ? AnyShapeStyle(LinearGradient(colors: [.yellow, .orange, .pink],
+                                                       startPoint: .topLeading, endPoint: .bottomTrailing))
+                        : AnyShapeStyle(Color.white.opacity(0.2)),
+                        lineWidth: isFeatured ? 2 : 1
+                    )
+            )
+            .cornerRadius(12)
+            .shadow(color: (isFeatured ? Color.orange : baseColor).opacity(isFeatured ? 0.55 : 0.2),
+                    radius: isFeatured ? (glow ? 8 : 3) : 2, x: 0, y: 2)
+
+            // 【需求4】右上角徽标
+            if isFeatured {
+                HStack(spacing: 2) {
+                    Image(systemName: "star.fill").font(.system(size: 7))
+                    Text(badgeText).font(.system(size: 9, weight: .heavy))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(
+                    LinearGradient(colors: [.orange, .pink], startPoint: .leading, endPoint: .trailing)
+                )
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.6), lineWidth: 0.5))
+                .offset(x: 3, y: -5)
+                .shadow(color: .black.opacity(0.25), radius: 1, x: 0, y: 1)
+            }
+        }
+        .onAppear {
+            if isFeatured {
+                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                    glow = true
+                }
+            }
+        }
     }
 }
 

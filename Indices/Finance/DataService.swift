@@ -259,6 +259,33 @@ class DataService: ObservableObject {
     // 【新增】缓存期权指标数据：Key=Symbol, Value=(IV, SumPrice)
     @Published var optionsMetricsCache: [String: (iv: String, sum: String)] = [:]
 
+    // MARK: - 【新增 需求4】特效标注卡片配置
+    @Published var featuredCards: [String: String] = [:]
+    private let featuredCardsKey = "FinanceFeaturedCards"
+    // MARK: - 【新增 需求1】服务器权威的免点数日标志（防改日期白嫖）
+    // nil 表示尚未从服务器获取到（离线/旧服务器），此时客户端回退本地计算
+    @Published var isFreeAccessDayServer: Bool? = nil
+
+    func updateFeaturedCards(_ cards: [String: String]) {
+        self.featuredCards = cards
+        if let data = try? JSONEncoder().encode(cards) {
+            UserDefaults.standard.set(data, forKey: featuredCardsKey)
+        }
+    }
+
+    func updateFreeAccessDay(_ isFree: Bool?) {
+        DispatchQueue.main.async {
+            self.isFreeAccessDayServer = isFree
+        }
+    }
+
+    private func loadFeaturedCards() {
+        if let data = UserDefaults.standard.data(forKey: featuredCardsKey),
+           let cached = try? JSONDecoder().decode([String: String].self, from: data) {
+            self.featuredCards = cached
+        }
+    }
+
     private init() {
         // 【修改点 3】初始化时从 UserDefaults 读取配置，同时读取到 orderedStrategyGroups】
         if let savedGroups = UserDefaults.standard.array(forKey: strategyGroupsKey) as? [String] {
@@ -272,6 +299,7 @@ class DataService: ObservableObject {
         // 【新增】初始化时读取时间戳缓存
         self.ecoDataTimestamp = UserDefaults.standard.string(forKey: ecoDataKey)
         self.introSymbolTimestamp = UserDefaults.standard.string(forKey: introSymbolKey)
+        loadFeaturedCards()   // 【新增 需求4】冷启动读取上次配置
     }
 
     // 【新增】内部状态，标记是否正在加载

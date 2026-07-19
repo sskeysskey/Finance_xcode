@@ -299,8 +299,6 @@ struct NewsPointsOverlayView: View {
                             Text("\(c.insufficientRemaining)").foregroundColor(.blue).fontWeight(.bold)
                             Text(" 点。").foregroundColor(.secondary)
                         }
-                        Text("不想付费？邀请好友即可白拿点数！")
-                            .foregroundColor(.secondary)
                     }
                     .font(.subheadline)
                     .multilineTextAlignment(.center)
