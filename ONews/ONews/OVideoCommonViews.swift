@@ -337,10 +337,11 @@ struct VideoBottomBar: View {
             if !authManager.isSubscribed {
                 Button {
                     pointsCoordinator.authRef = authManager
+                    // ⭐ 复用统一弹窗（视频上下文；主动点“+” → isShortage:false）
                     if authManager.isLoggedIn {
-                        pointsCoordinator.showVideoInviteSheet = true
+                        pointsCoordinator.presentInsufficient(needLogin: false, context: .video, isShortage: false)
                     } else {
-                        pointsCoordinator.showVideoLoginPrompt = true   // 复用新增的视频登录弹窗
+                        pointsCoordinator.presentInsufficient(needLogin: true, context: .video, isShortage: false)
                     }
                 } label: {
                     BarPointsItemView(points: quota.remaining, isEnglish: isGlobalEnglishMode)

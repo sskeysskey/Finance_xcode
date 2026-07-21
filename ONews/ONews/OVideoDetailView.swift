@@ -910,7 +910,8 @@ struct VideoDetailView: View {
             consumeRemaining = r
             showConsumeConfirm = true
         case .exhausted:
-            showQuotaExhaustedAlert = true
+            NewsPointsCoordinator.shared.authRef = authManager
+            NewsPointsCoordinator.shared.presentInsufficient(needLogin: false, context: .video)
         }
     }
 
