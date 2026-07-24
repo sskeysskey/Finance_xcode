@@ -46,6 +46,21 @@ final class NewsPointsCoordinator: ObservableObject {
         return NewsQuotaManager.shared.isNewsUnlocked(FreeQuotaManager.newsKey(article))
     }
 
+    // MARK: - 列表锁标志显示规则
+    /// 是否在列表/头部显示"锁"图标与"需要订阅"文字。
+    /// 规则：
+    ///  - 已订阅 → 不显示
+    ///  - 免费(老)新闻 → 不显示
+    ///  - 未登录 → 不显示
+    ///  - 已登录且剩余点数 > 0 → 不显示
+    ///  - 仅当"已登录 且 剩余点数为 0"时才显示
+    static func shouldShowLock(timestamp: String, auth: AuthManager, viewModel: NewsViewModel) -> Bool {
+        if auth.isSubscribed { return false }
+        if !viewModel.isTimestampLocked(timestamp: timestamp) { return false }
+        if !auth.isLoggedIn { return false }
+        return NewsQuotaManager.shared.remaining <= 0
+    }
+
     // MARK: - 尝试解锁一篇新闻
     func attemptUnlockArticle(_ article: Article,
                               auth: AuthManager,

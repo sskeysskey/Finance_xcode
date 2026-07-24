@@ -596,24 +596,29 @@ class ResourceManager: ObservableObject {
         }
     }
 
-    // MARK: - 批量离线下载所有图片
+    // MARK: - 批量离线下载所有图片（仅未读文章）
     func downloadAllOfflineImages(progressHandler: @escaping @MainActor (Int, Int) -> Void) async throws {
-        // ✅ 修复 2: 在主线程获取 URL，因为 documentsDirectory 是 @MainActor 隔离的
         let docDir = self.documentsDirectory
         
-        // 2. 遍历 JSON，解析出所有需要的图片
-        // ✅ 修复 3: 使用捕获列表 [docDir] 将 URL 传入后台任务
-        // ✅ 修复 4: 在后台任务中使用 FileManager.default，而不是 self.fileManager
+        // 遍历 JSON，解析出"未读文章"需要的图片（按时间从旧到新）
         let allImagesToDownload = await Task.detached(priority: .userInitiated) { [docDir] in
-            let fm = FileManager.default // 使用本地实例
+            let fm = FileManager.default
             var tasks: [(urlPath: String, localPath: URL)] = []
+            
+            // 【新增】读取已读记录（NewsViewModel 里存的 key 为 "readTopics"，字典 key = 文章 topic）
+            let readRecords = (UserDefaults.standard.dictionary(forKey: "readTopics") as? [String: Date]) ?? [:]
+            let readTopics = Set(readRecords.keys)
             
             // 获取本地所有 onews_*.json 文件
             guard let localFiles = try? fm.contentsOfDirectory(at: docDir, includingPropertiesForKeys: nil) else {
                 return tasks
             }
             
-            let jsonFiles = localFiles.filter { $0.lastPathComponent.starts(with: "onews_") && $0.pathExtension == "json" }
+            // 【修改】按文件名升序排序 → 时间戳从旧到新（onews_YYMMDD.json）
+            let jsonFiles = localFiles
+                .filter { $0.lastPathComponent.starts(with: "onews_") && $0.pathExtension == "json" }
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            
             let decoder = JSONDecoder()
             
             for fileURL in jsonFiles {
@@ -627,19 +632,24 @@ class ResourceManager: ObservableObject {
                 let timestamp = filename.replacingOccurrences(of: "onews_", with: "")
                 let directoryName = "news_images_\(timestamp)"
                 
-                // 扁平化所有文章的所有图片
+                // 扁平化所有文章
                 let allArticles = articlesMap.values.flatMap { $0 }
-                let allImageNames = allArticles.flatMap { $0.images }
                 
-                // 去重
-                let uniqueImages = Set(allImageNames)
+                // 【核心修改】只保留"未读"文章（topic 不在已读记录里）
+                let unreadArticles = allArticles.filter { !readTopics.contains($0.topic) }
                 
-                for imageName in uniqueImages {
+                // 收集未读文章的所有图片
+                let allImageNames = unreadArticles.flatMap { $0.images }
+                
+                // 【修改】保序去重（避免 Set 打乱"从旧到新"的顺序）
+                var seen = Set<String>()
+                for imageName in allImageNames {
                     let cleanName = imageName.trimmingCharacters(in: .whitespacesAndNewlines)
                     if cleanName.isEmpty { continue }
+                    if seen.contains(cleanName) { continue }
+                    seen.insert(cleanName)
                     
                     // 构造下载路径和本地保存路径
-                    // 服务器路径格式: news_images_260131/xxx.jpg
                     let downloadPath = "\(directoryName)/\(cleanName)"
                     let localDir = docDir.appendingPathComponent(directoryName)
                     let localFile = localDir.appendingPathComponent(cleanName)
@@ -654,15 +664,15 @@ class ResourceManager: ObservableObject {
             return tasks
         }.value // 等待后台任务完成
         
-        // 3. 开始下载
+        // 开始下载
         let total = allImagesToDownload.count
         if total == 0 {
-            print("所有图片均已离线缓存，无需下载。")
+            print("未读文章的图片均已离线缓存，无需下载。")
             progressHandler(0, 0)
             return
         }
         
-        print("开始离线下载，共缺 \(total) 张图片...")
+        print("开始离线下载未读文章图片，共缺 \(total) 张...")
         progressHandler(0, total)
         
         for (index, task) in allImagesToDownload.enumerated() {
@@ -674,18 +684,15 @@ class ResourceManager: ObservableObject {
                 let (tempURL, response) = try await urlSession.download(from: url)
                 
                 guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                    // 如果单张失败，打印日志但不中断整个流程
                     print("⚠️ 下载失败: \(task.urlPath)")
                     continue
                 }
                 
-                // 移动文件 (回到主线程操作文件是安全的，或者这里使用 fileManager 也可以，因为是串行)
                 if fileManager.fileExists(atPath: task.localPath.path) {
                     try fileManager.removeItem(at: task.localPath)
                 }
                 try fileManager.moveItem(at: tempURL, to: task.localPath)
                 
-                // 更新进度
                 progressHandler(index + 1, total)
                 
             } catch {

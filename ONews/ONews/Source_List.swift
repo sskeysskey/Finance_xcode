@@ -612,6 +612,7 @@ struct SourceListView: View {
     @State private var isDownloadingImages = false
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
+    @ObservedObject private var newsQuota = NewsQuotaManager.shared
     
     private var searchResults: [(article: Article, sourceName: String, sourceNameEN: String, isContentMatch: Bool)] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -1099,7 +1100,7 @@ struct SourceListView: View {
                                 // 【修改】传入 isFromAll: true，确保搜索结果中阅读/播放时在混合列表中轮询
                                 Task { await handleArticleTap(tapItem, autoPlay: false, isFromAll: true) }
                             }) {
-                                let isLocked = !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: item.article.timestamp)
+                                let isLocked = NewsPointsCoordinator.shouldShowLock(timestamp: item.article.timestamp, auth: authManager, viewModel: viewModel)
                                 
                                 ArticleRowCardView(
                                     article: item.article,

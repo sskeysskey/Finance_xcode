@@ -49,6 +49,7 @@ struct ArticleListContent: View {
     // 【新增】播放回调
     let onPlayTimestamp: (String) -> Void 
     let onArticleTap: (ArticleItem) async -> Void
+    @ObservedObject private var newsQuota = NewsQuotaManager.shared
     
     var groupedArticles: [String: [ArticleItem]] {
         let initial = Dictionary(grouping: items, by: { $0.article.timestamp })
@@ -84,8 +85,8 @@ struct ArticleListContent: View {
                     }
                 }
             } header: {
-                // 【修改】锁定条件：未订阅 且 时间戳被锁定
-                let isLocked = !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: timestamp)
+                // 【修改】锁只在"已登录且点数为0"时显示
+                let isLocked = NewsPointsCoordinator.shouldShowLock(timestamp: timestamp, auth: authManager, viewModel: viewModel)
                 TimestampHeader(
                     timestamp: timestamp,
                     count: groupedArticles[timestamp]?.count ?? 0,
@@ -108,6 +109,7 @@ struct SearchResultsList: View {
     // 【新增】
     let showEnglish: Bool
     let onArticleTap: (ArticleItem) async -> Void
+    @ObservedObject private var newsQuota = NewsQuotaManager.shared
     
     // 【优化】静态 formatter
     private static let parsingFormatter: DateFormatter = {
@@ -158,8 +160,8 @@ struct SearchResultsList: View {
                             Text("\(formatTimestamp(timestamp)) (\(groupedResults[timestamp]?.count ?? 0))")
                                 .font(.headline)
                                 .foregroundColor(.blue.opacity(0.85))
-                            // 【修改】锁定条件：未订阅 且 时间戳被锁定
-                            if !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: timestamp) {
+                            // 【修改】锁只在"已登录且点数为0"时显示
+                            if NewsPointsCoordinator.shouldShowLock(timestamp: timestamp, auth: authManager, viewModel: viewModel) {
                                 Image(systemName: "lock.fill")
                                     .foregroundColor(.yellow.opacity(0.8))
                                     .font(.footnote)
@@ -202,12 +204,13 @@ struct ArticleRowButton: View {
     
     // 1. 【新增】接收外部传入的状态
     let showEnglish: Bool
+    @ObservedObject private var newsQuota = NewsQuotaManager.shared
     
     var body: some View {
         Button(action: {
             Task { await onTap() }
         }) {
-            let isLocked = !authManager.isSubscribed && viewModel.isTimestampLocked(timestamp: item.article.timestamp)
+            let isLocked = NewsPointsCoordinator.shouldShowLock(timestamp: item.article.timestamp, auth: authManager, viewModel: viewModel)
             
             // 【修改】传入 showEnglish 参数
             ArticleRowCardView(
