@@ -83,7 +83,23 @@ class UsageManager: ObservableObject {
     func setCurrentUser(_ userId: String?, isLoggedIn: Bool) {
         self.currentUserId = userId
         self.isLoggedIn = isLoggedIn
+
+        // 【新增】把已登录的 Apple ID 桥接到 UserDefaults，
+        // 供 DatabaseManager / UpdateManager 在网络请求中携带鉴权参数
+        if let uid = userId, isLoggedIn,
+        !uid.isEmpty, !uid.hasPrefix("dev_"), uid != "guest_user" {
+            UserDefaults.standard.set(uid, forKey: UsageManager.authUserIdKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: UsageManager.authUserIdKey)
+        }
+
         Task { await refreshQuota() }
+    }
+
+    // 【新增】全局共享的登录 ID Key
+    nonisolated static let authUserIdKey = "FinanceAuthUserId"
+    nonisolated static var authedUserId: String? {
+        UserDefaults.standard.string(forKey: UsageManager.authUserIdKey)
     }
 
     func refresh() { Task { await refreshQuota() } }

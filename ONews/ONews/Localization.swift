@@ -98,7 +98,7 @@ struct Localized {
     // MARK: - 添加源页面
     static var addSourceTitle: String { tr("添加可选订阅源", "Add Sources") }
     static var availableSources: String { tr("可用新闻源", "Available Sources") }
-    static var fetchingSources: String { tr("正在获取最新源...", "Fetching sources...") }
+    static var fetchingSources: String { tr("正在获取最新订阅源...", "Fetching sources...") }
     static var addAll: String { tr("一键添加所有", "Add All") }
     static var finishSetup: String { tr("完成设置", "Finish") }
     static var selectAtLeastOne: String { tr("请至少选择一个", "Select at least one") }

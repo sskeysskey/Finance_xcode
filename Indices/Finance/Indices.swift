@@ -323,9 +323,9 @@ struct IndicesContentView: View {
                                 // }
                                 // 期权大单
                                 Button {
-                                    FinanceAnalytics.shared.track(cardKey: "OptionBigOrder", cardName: "期权大单", authManager: authManager)
                                     PointsCoordinator.shared.attempt(action: .viewBigOrders, itemKey: "OptionBigOrder",
                                         displayName: "期权大单", authManager: authManager) {
+                                        FinanceAnalytics.shared.track(cardKey: "OptionBigOrder", cardName: "期权大单", authManager: authManager)
                                         self.navigateToBigOrders = true
                                     }
                                 } label: {
@@ -334,19 +334,14 @@ struct IndicesContentView: View {
 
                                 // ========== 新增 52周新低 卡片 ==========
                                 Button {
-                                    FinanceAnalytics.shared.track(cardKey: "52NewLow", cardName: dataService.groupDisplayMap["52NewLow"] ?? "52周新低", authManager: authManager)
                                     PointsCoordinator.shared.attempt(action: .openSpecialList, itemKey: "52NewLow",
                                         displayName: dataService.groupDisplayMap["52NewLow"] ?? "52周新低", authManager: authManager) {
+                                        FinanceAnalytics.shared.track(cardKey: "52NewLow", cardName: dataService.groupDisplayMap["52NewLow"] ?? "52周新低", authManager: authManager)
                                         self.weekLowSectorsData = weekLowSectors
                                         self.navigateToWeekLow = true
                                     }
                                 } label: {
-                                    // baseColor统一改为.purple，和经济板块风格一致
-                                    CompactSectorCard(
-                                        sectorName: "52NewLow",
-                                        icon: getIcon(for: "52NewLow"),
-                                        baseColor: .purple
-                                    )
+                                    CompactSectorCard(sectorName: "52NewLow", icon: getIcon(for: "52NewLow"), baseColor: .purple)
                                 }
                             }
                         }
@@ -411,9 +406,9 @@ struct IndicesContentView: View {
         if historyBasedGroups.contains(groupName) {
             if let groupData = dataService.earningHistoryData[groupName], !groupData.isEmpty {
                 Button {
-                    FinanceAnalytics.shared.track(cardKey: groupName, cardName: dataService.groupDisplayMap[groupName] ?? groupName, authManager: authManager)
                     PointsCoordinator.shared.attempt(action: .openSector, itemKey: groupName,
                         displayName: dataService.groupDisplayMap[groupName] ?? groupName, authManager: authManager) {
+                        FinanceAnalytics.shared.track(cardKey: groupName, cardName: dataService.groupDisplayMap[groupName] ?? groupName, authManager: authManager)
                         self.selectedHistoryGroup = groupName
                         self.navigateToHistoryDetail = true
                     }
@@ -432,9 +427,9 @@ struct IndicesContentView: View {
             }
         } else if groupName == "TenYearHigh" {
             Button {
-                FinanceAnalytics.shared.track(cardKey: "TenYearHigh", cardName: dataService.groupDisplayMap["TenYearHigh"] ?? "10年新高", authManager: authManager)
                 PointsCoordinator.shared.attempt(action: .openSpecialList, itemKey: "TenYearHigh",
                     displayName: dataService.groupDisplayMap["TenYearHigh"] ?? "10年新高", authManager: authManager) {
+                    FinanceAnalytics.shared.track(cardKey: "TenYearHigh", cardName: dataService.groupDisplayMap["TenYearHigh"] ?? "10年新高", authManager: authManager)
                     self.navigateToTenYearHigh = true
                 }
             } label: {
@@ -453,13 +448,13 @@ struct IndicesContentView: View {
     }
     
     private func handleSectorClick(_ sector: IndicesSector) {
-        FinanceAnalytics.shared.track(
-            cardKey: sector.name,
-            cardName: dataService.groupDisplayMap[sector.name] ?? sector.name,
-            authManager: authManager
-        )
         PointsCoordinator.shared.attempt(action: .openSector, itemKey: sector.name,
             displayName: dataService.groupDisplayMap[sector.name] ?? sector.name, authManager: authManager) {
+            FinanceAnalytics.shared.track(
+                cardKey: sector.name,
+                cardName: dataService.groupDisplayMap[sector.name] ?? sector.name,
+                authManager: authManager
+            )
             self.selectedSector = sector
             self.navigateToSector = true
         }

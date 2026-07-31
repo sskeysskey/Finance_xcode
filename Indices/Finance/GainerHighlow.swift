@@ -228,9 +228,10 @@ struct CustomTabBar: View {
     // 封装按钮逻辑
     private func tabButton(title: String, icon: String, color: Color, destination: TabDestination) -> some View {
         Button(action: {
-            FinanceAnalytics.shared.track(cardKey: title, cardName: title, authManager: authManager)
+            // 【修复】埋点移入成功回调，被拦截的点击不再上报
             PointsCoordinator.shared.attempt(action: .openList, itemKey: title,
                 displayName: "\(title)榜单", authManager: authManager) {
+                FinanceAnalytics.shared.track(cardKey: title, cardName: title, authManager: authManager)
                 self.activeTab = destination
             }
         }) {

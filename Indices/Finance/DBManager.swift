@@ -16,6 +16,22 @@ final class DatabaseManager: @unchecked Sendable {
     // 【新增】SQLite 专属串行队列，防止 GCD 全局队列线程爆炸
     private let sqliteQueue = DispatchQueue(label: "com.finance.sqliteQueue", qos: .userInitiated)
     
+    // MARK: - 【新增】鉴权参数
+    private var authedUserId: String? {
+        UserDefaults.standard.string(forKey: UsageManager.authUserIdKey)
+    }
+
+    /// 统一构造带鉴权参数的 URL
+    private func authedURL(_ path: String, _ items: [URLQueryItem] = []) -> URL? {
+        guard var c = URLComponents(string: "\(serverBaseURL)\(path)") else { return nil }
+        var q = items
+        if let uid = authedUserId, !uid.isEmpty {
+            q.append(URLQueryItem(name: "user_id", value: uid))
+        }
+        c.queryItems = q
+        return c.url
+    }
+
     private init() {
         // 初始化时尝试连接一次
         reconnectToLatestDatabase()
@@ -80,6 +96,17 @@ final class DatabaseManager: @unchecked Sendable {
             }
         } else {
             print("DBManager: 🌐 本地数据不存在或已过期，使用【在线模式】。")
+        }
+    }
+
+    /// 【新增】主动关闭本地数据库连接（删除 .db 文件之前必须先调用，避免占用与野指针）
+    func closeDatabase() {
+        dbLock.lock()
+        defer { dbLock.unlock() }
+        if db != nil {
+            sqlite3_close(db)
+            db = nil
+            print("DBManager: 已关闭本地数据库连接，切回【在线模式】。")
         }
     }
     
@@ -256,7 +283,7 @@ final class DatabaseManager: @unchecked Sendable {
             return await fetchAllMarketCapDataLocal()
         }
         
-        guard let url = URL(string: "\(serverBaseURL)/query/market_cap") else { return [] }
+        guard let url = authedURL("/query/market_cap") else { return [] }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             return try JSONDecoder().decode([MarketCapInfo].self, from: data)
@@ -299,12 +326,11 @@ final class DatabaseManager: @unchecked Sendable {
             return await fetchLatestVolumeLocal(forSymbol: symbol, tableName: tableName)
         }
         
-        guard var components = URLComponents(string: "\(serverBaseURL)/query/latest_volume") else { return nil }
-        components.queryItems = [
+        guard let url = authedURL("/query/latest_volume", [
             URLQueryItem(name: "symbol", value: symbol),
             URLQueryItem(name: "table", value: tableName)
-        ]
-        guard let url = components.url else { return nil }
+        ]) else { return nil }
+
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             let response = try JSONDecoder().decode([String: Int64?].self, from: data)
@@ -343,8 +369,6 @@ final class DatabaseManager: @unchecked Sendable {
             return await fetchHistoricalDataLocal(symbol: symbol, tableName: tableName, dateRange: dateRange)
         }
         
-        guard var components = URLComponents(string: "\(serverBaseURL)/query/historical") else { return [] }
-        
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         
@@ -357,14 +381,12 @@ final class DatabaseManager: @unchecked Sendable {
             }
         }()
         
-        components.queryItems = [
+        guard let url = authedURL("/query/historical", [
             URLQueryItem(name: "symbol", value: symbol),
             URLQueryItem(name: "table", value: tableName),
             URLQueryItem(name: "start", value: formatter.string(from: startDate)),
             URLQueryItem(name: "end", value: formatter.string(from: endDate))
-        ]
-        
-        guard let url = components.url else { return [] }
+        ]) else { return [] }
         
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
@@ -491,9 +513,9 @@ final class DatabaseManager: @unchecked Sendable {
             return await fetchEarningDataLocal(forSymbol: symbol)
         }
         
-        guard var components = URLComponents(string: "\(serverBaseURL)/query/earning") else { return [] }
-        components.queryItems = [URLQueryItem(name: "symbol", value: symbol)]
-        guard let url = components.url else { return [] }
+        guard let url = authedURL("/query/earning", [
+            URLQueryItem(name: "symbol", value: symbol)
+        ]) else { return [] }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             return try JSONDecoder().decode([EarningData].self, from: data)
@@ -567,17 +589,14 @@ final class DatabaseManager: @unchecked Sendable {
             return await fetchClosingPriceLocal(forSymbol: symbol, onDate: date, tableName: tableName)
         }
         
-        guard var components = URLComponents(string: "\(serverBaseURL)/query/closing_price") else { return nil }
-        
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        
-        components.queryItems = [
+
+        guard let url = authedURL("/query/closing_price", [
             URLQueryItem(name: "symbol", value: symbol),
             URLQueryItem(name: "date", value: formatter.string(from: date)),
             URLQueryItem(name: "table", value: tableName)
-        ]
-        guard let url = components.url else { return nil }
+        ]) else { return nil }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             let response = try JSONDecoder().decode([String: Double?].self, from: data)
@@ -591,9 +610,9 @@ final class DatabaseManager: @unchecked Sendable {
             return await fetchOptionsSummaryLocal(forSymbol: symbol)
         }
         
-        guard var components = URLComponents(string: "\(serverBaseURL)/query/options_summary") else { return nil }
-        components.queryItems = [URLQueryItem(name: "symbol", value: symbol)]
-        guard let url = components.url else { return nil }
+        guard let url = authedURL("/query/options_summary", [
+            URLQueryItem(name: "symbol", value: symbol)
+        ]) else { return nil }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             return try JSONDecoder().decode(OptionsSummary.self, from: data)
@@ -648,9 +667,9 @@ final class DatabaseManager: @unchecked Sendable {
         }
         
         guard !symbols.isEmpty else { return [:] }
-        guard var components = URLComponents(string: "\(serverBaseURL)/query/options_summary") else { return [:] }
-        components.queryItems = [URLQueryItem(name: "symbols", value: symbols.joined(separator: ","))]
-        guard let url = components.url else { return [:] }
+        guard let url = authedURL("/query/options_summary", [
+            URLQueryItem(name: "symbols", value: symbols.joined(separator: ","))
+        ]) else { return [:] }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             return try JSONDecoder().decode([String: OptionsSummary].self, from: data)
@@ -676,9 +695,9 @@ final class DatabaseManager: @unchecked Sendable {
             return await fetchOptionsHistoryLocal(forSymbol: symbol)
         }
         
-        guard var components = URLComponents(string: "\(serverBaseURL)/query/options_price_history") else { return [] }
-        components.queryItems = [URLQueryItem(name: "symbol", value: symbol)]
-        guard let url = components.url else { return [] }
+        guard let url = authedURL("/query/options_price_history", [
+            URLQueryItem(name: "symbol", value: symbol)
+        ]) else { return [] }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             return try JSONDecoder().decode([OptionHistoryItem].self, from: data)
@@ -718,22 +737,13 @@ final class DatabaseManager: @unchecked Sendable {
     // 9. 获取期权榜单 (Options Rank)
     // 这是一个复杂的查询，包含自连接和跨表查询
     func fetchOptionsRankData(limit: Double) async -> (rankUp: [OptionRankItem], rankDown: [OptionRankItem])? {
-        // 注意：DataService 调用时会处理 JSON 解码，这里我们需要返回与 JSON 结构对应的对象，
-        // 或者直接返回 DataService 需要的 ([Item], [Item]) 元组。
-        // 为了保持接口一致，我们让 DBManager 直接返回元组。
-        
         if isOfflineMode {
             return await fetchOptionsRankDataLocal(limit: limit)
         }
         
-        // 在线模式：URL 请求返回的是 OptionRankResponse JSON
-        // 由于 DataService 里的 fetchOptionsRankData 是自己发请求的，
-        // 这里我们实际上是在为 DataService 提供底层支持。
-        // 如果 DataService 直接调用了 DBManager，那么我们需要在这里发请求。
-        // 假设 DataService 已经改成了调用 DBManager.shared.fetchOptionsRankData...
-        
-        let urlString = "\(serverBaseURL)/query/options_rank?limit=\(String(format: "%.0f", limit))"
-        guard let url = URL(string: urlString) else { return nil }
+        guard let url = authedURL("/query/options_rank", [
+            URLQueryItem(name: "limit", value: String(format: "%.0f", limit))
+        ]) else { return nil }
         
         do {
             let (data, _) = try await URLSession.shared.data(from: url)

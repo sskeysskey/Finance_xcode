@@ -324,7 +324,7 @@ struct ToastView: View {
 // MARK: - 用户个人中心视图
 struct UserProfileView: View {
     @EnvironmentObject var authManager: AuthManager
-    @EnvironmentObject var usageManager: UsageManager   // 【新增】
+    @EnvironmentObject var usageManager: UsageManager
     @StateObject private var updateManager = UpdateManager.shared
     @StateObject private var networkMonitor = NetworkMonitor.shared
     
@@ -335,7 +335,9 @@ struct UserProfileView: View {
     // Toast 状态
     @State private var toastMessage: String? = nil
     
-    // 【新增】删除账号相关状态
+    // 【新增】清除离线数据库确认
+    @State private var showDeleteDBConfirm = false
+    
     @State private var showDeleteAccountConfirmation = false
     @State private var isDeletingAccount = false
     @State private var deleteErrorMessage = ""
@@ -405,7 +407,10 @@ struct UserProfileView: View {
                     }
 
                     // 2. 离线数据
-                    Section(header: Text("离线数据")) {
+                    Section(
+                        header: Text("离线数据"),
+                        footer: Text("离线数据库每日更新，仅当天有效。App 启动时会自动删除过期的离线库以释放空间；需要离线使用（如乘飞机）请在当天重新下载。")
+                    ) {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
                                 VStack(alignment: .leading) {
@@ -468,9 +473,43 @@ struct UserProfileView: View {
                             }
                         }
                         .padding(.vertical, 4)
+                        
+                        // 【新增】占用空间 + 手动清除
+                        if updateManager.localDatabaseExists {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("占用空间")
+                                        .font(.subheadline)
+                                    Text(updateManager.localDBSizeText.isEmpty ? "计算中..." : updateManager.localDBSizeText)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Button {
+                                    showDeleteDBConfirm = true
+                                } label: {
+                                    Text("清除")
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.red)
+                                }
+                                .buttonStyle(BorderlessButtonStyle())
+                            }
+                        }
+                        
+                        // 【新增】自动清理提示
+                        if let tip = updateManager.lastCleanupFreedText {
+                            HStack(spacing: 6) {
+                                Image(systemName: "sparkles")
+                                    .foregroundColor(.green)
+                                    .font(.caption)
+                                Text(tip)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                     }
 
-                    // 【新增】邀请中大奖入口
                     Section {
                         Button {
                             showInvite = true
@@ -560,7 +599,20 @@ struct UserProfileView: View {
                         Button("关闭") { dismiss() }
                     }
                 }
-                // 【新增】删除账号确认弹窗
+                // 【新增】页面出现时刷新占用空间
+                .onAppear {
+                    updateManager.refreshLocalDBSize()
+                }
+                // 【新增】清除离线库确认
+                .alert("清除离线数据库", isPresented: $showDeleteDBConfirm) {
+                    Button("取消", role: .cancel) { }
+                    Button("清除", role: .destructive) {
+                        let freed = updateManager.deleteLocalDatabase()
+                        showToast(freed > 0 ? "已释放 \(FileManagerHelper.formatBytes(freed)) 空间" : "没有可清理的文件")
+                    }
+                } message: {
+                    Text("清除后将改用在线数据（需要联网）。若要离线使用，请重新下载。")
+                }
                 .alert("确认删除账号", isPresented: $showDeleteAccountConfirmation) {
                     Button("取消", role: .cancel) { }
                     Button("永久删除", role: .destructive) {
@@ -636,16 +688,21 @@ struct UserProfileView: View {
     
     private func getOfflineStatusText() -> String {
         if updateManager.isLocalDatabaseValid() {
-            return "已下载 (最新)"
-        } else if FileManagerHelper.fileExists(named: "Finance.db") {
-            return "已过期 (点击更新)"
+            return "已下载 (今日有效)"
+        } else if updateManager.localDatabaseExists {
+            return "已过期 (将自动清理，可重新下载)"
         } else {
-            return "未下载"
+            return "未下载 (当前使用在线数据)"
         }
     }
     
     // 【修改】处理下载点击
     private func handleDownloadClick() {
+        // 【新增】离线库仅登录用户可下载（服务端也已强制校验）
+        guard authManager.isLoggedIn else {
+            showToast("请先登录后再下载离线数据库")
+            return
+        }
         // 1. 检查网络
         if networkMonitor.isWifi {
             Task {
@@ -919,26 +976,26 @@ struct MainContentView: View {
                             // 2. 原有的刷新按钮 (保持逻辑不变)
                             Button {
                                 Task {
+                                    updateManager.cleanupStaleDatabaseIfNeeded()   // 【新增】
                                     DatabaseManager.shared.reconnectToLatestDatabase()
                                     let _ = await updateManager.checkForUpdates(isManual: true)
-                                    // 【新增】重新校验会员/订阅状态，确保拉新奖励等服务器端变更能被同步
                                     await authManager.updateSubscriptionStatus()
                                     await authManager.checkServerSubscriptionStatus()
                                     await usageManager.refreshQuota()
                                     print("User triggered refresh: Forcing data reload.")
                                     dataService.forceReloadData()
-                                    await MainActor.run {
-                                        self.isDataReady = true
-                                    }
+                                    await MainActor.run { self.isDataReady = true }
                                 }
                             } label: {
                                 Image(systemName: "arrow.clockwise")
                             }
                             .disabled(isUpdateInProgress)
 
-                            // 1. 【新增】顶部搜索按钮
+                            // 1. 顶部搜索按钮
                             Button {
-                                showSearchFromTop = true
+                                PointsCoordinator.shared.requireLogin(authManager: authManager) {
+                                    showSearchFromTop = true
+                                }
                             } label: {
                                 Image(systemName: "magnifyingglass")
                                     .font(.system(size: 18))
@@ -1146,8 +1203,9 @@ struct MainContentView: View {
 
     // 统一的数据加载逻辑
     private func handleInitialDataLoad() async {
-        // 0. 无论如何，先尝试连接本地数据库
-        // 这样 DBManager.shared.isOfflineMode 就会被正确设置
+        updateManager.cleanupStaleDatabaseIfNeeded()
+        
+        // 0-2. 再尝试连接本地数据库
         DatabaseManager.shared.reconnectToLatestDatabase()
         
         // 双重检查：如果数据已经完全加载（isDataReady 且 sectorsPanel 非空），则跳过
@@ -1177,7 +1235,7 @@ struct MainContentView: View {
             // 如果没网，UpdateManager 会在第一步直接 return false，毫无感知
             Task {
                 // 延迟一点点，让 UI 动画先跑完
-                try? await Task.sleep(nanoseconds: 1 * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 1 * 100_000_000)
                 
                 if await updateManager.checkForUpdates(isManual: false) {
                     print("Background update found. Reloading...")

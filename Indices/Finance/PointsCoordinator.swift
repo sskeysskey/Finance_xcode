@@ -30,12 +30,30 @@ final class PointsCoordinator: ObservableObject {
     @Published var showInviteSheet = false
     @Published var showLoginSheet = false
 
-    // 【新增 需求2】旧数据免点日提示（每天只弹一次）
+    // 旧数据免点日提示（每天只弹一次）
     @Published var showFreeDayTip = false
     private let freeDayTipDateKey = "FinanceFreeDayTipDate"
 
     weak var authManagerRef: AuthManager?
     private let usage = UsageManager.shared
+
+    // MARK: - 【新增】纯登录门禁：不扣点，但必须已登录（用于"对比 / 搜索"等入口）
+    func requireLogin(authManager: AuthManager, onSuccess: @escaping () -> Void) {
+        self.authManagerRef = authManager
+        if authManager.isSubscribed { onSuccess(); return }
+        if isLoggedInStrict(authManager) { onSuccess(); return }
+        presentInsufficient(cost: 0, needLogin: true)
+    }
+
+    /// 【新增】双重校验登录态：AuthManager 与 UsageManager 必须同时认为已登录
+    private func isLoggedInStrict(_ authManager: AuthManager) -> Bool {
+        guard authManager.isLoggedIn else { return false }
+        guard let uid = authManager.userIdentifier, !uid.isEmpty else { return false }
+        // dev_ / guest_ 前缀一律视为未登录（与服务器 is_real_login_user 保持一致）
+        if uid.hasPrefix("dev_") || uid == "guest_user" { return false }
+        guard usage.isLoggedIn else { return false }
+        return true
+    }
 
     /// 通用扣点入口
     func attempt(action: UsageAction,
@@ -45,22 +63,24 @@ final class PointsCoordinator: ObservableObject {
                  onSuccess: @escaping () -> Void) {
         self.authManagerRef = authManager
 
+        // 0. 订阅用户：无限制
         if authManager.isSubscribed { onSuccess(); return }
+
+        // 1. 【核心修复】未登录一律拦截 —— 必须排在 cost<=0 / 已解锁 / 免点日 之前
+        if !isLoggedInStrict(authManager) {
+            let c = usage.cost(for: action, itemKey: itemKey)
+            presentInsufficient(cost: max(c, 1), needLogin: true)
+            return
+        }
 
         let cost = usage.cost(for: action, itemKey: itemKey)
         if cost <= 0 { onSuccess(); return }
         if usage.isUnlocked(action: action, itemKey: itemKey) { onSuccess(); return }
 
-        // 【新增 需求2】旧数据免点日：周日/周一(北京)及美股节假日次日，直接免费放行
+        // 2. 旧数据免点日（只对已登录用户生效，且以服务器标志为准）
         if isFreeDayNow() {
             maybeShowFreeDayTip()
             onSuccess()
-            return
-        }
-
-        // 免费点数只发给登录用户 → 未登录直接引导
-        if !authManager.isLoggedIn {
-            presentInsufficient(cost: cost, needLogin: true)
             return
         }
 
@@ -90,27 +110,30 @@ final class PointsCoordinator: ObservableObject {
 
     func isFree(action: UsageAction, itemKey: String?, authManager: AuthManager) -> Bool {
         if authManager.isSubscribed { return true }
+        // 【核心修复】未登录永远不算"免费"
+        if !isLoggedInStrict(authManager) { return false }
         if usage.cost(for: action, itemKey: itemKey) <= 0 { return true }
         if usage.isUnlocked(action: action, itemKey: itemKey) { return true }
         if isFreeDayNow() { return true }
         return false
     }
 
-    /// 【需求1】优先用服务器权威判断，拿不到时才回退本地（离线场景）
+    /// 【核心修复】只信任服务器当日下发的免点日标志。
+    /// 拿不到时保守返回 false（宁可多扣点，也不能让改系统日期的人白嫖）。
     private func isFreeDayNow() -> Bool {
+        guard let auth = authManagerRef, isLoggedInStrict(auth) else { return false }
         if let serverFlag = DataService.shared.isFreeAccessDayServer {
             return serverFlag
         }
-        return TradingDateHelper.isFreeAccessDay()
+        return false
     }
 
-    // MARK: - 【新增 需求2】免点日提示（每天只弹一次）
+    // MARK: - 免点日提示（每天只弹一次）
     private func maybeShowFreeDayTip() {
         let today = TradingDateHelper.beijingTodayString()
         let last = UserDefaults.standard.string(forKey: freeDayTipDateKey)
         guard last != today else { return }
         UserDefaults.standard.set(today, forKey: freeDayTipDateKey)
-        // 稍作延迟，让页面导航先开始，再弹出提示
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             self.showFreeDayTip = true
         }
@@ -195,7 +218,6 @@ final class PointsCoordinator: ObservableObject {
 struct PointsOverlayView: View {
     @ObservedObject var coordinator = PointsCoordinator.shared
 
-    // 订阅按钮的呼吸动画
     @State private var subShine = false
 
     var body: some View {
@@ -203,17 +225,16 @@ struct PointsOverlayView: View {
             if coordinator.showConfirmSheet { confirmDialog }
             if coordinator.showInsufficientSheet { insufficientDialog }
             if coordinator.showErrorSheet { errorDialog }
-            if coordinator.showFreeDayTip { freeDayTipDialog }   // 【新增 需求2】
+            if coordinator.showFreeDayTip { freeDayTipDialog }
             if coordinator.isProcessing { processingOverlay }
         }
         .animation(.easeInOut(duration: 0.2), value: coordinator.showConfirmSheet)
         .animation(.easeInOut(duration: 0.2), value: coordinator.showInsufficientSheet)
         .animation(.easeInOut(duration: 0.2), value: coordinator.showErrorSheet)
-        .animation(.easeInOut(duration: 0.2), value: coordinator.showFreeDayTip)   // 【新增】
+        .animation(.easeInOut(duration: 0.2), value: coordinator.showFreeDayTip)
         .animation(.easeInOut(duration: 0.2), value: coordinator.isProcessing)
     }
 
-    // MARK: - 【新增 需求2】免点日提示弹窗
     private var freeDayTipDialog: some View {
         ZStack {
             Color.black.opacity(0.45).ignoresSafeArea()
@@ -348,7 +369,6 @@ struct PointsOverlayView: View {
              : "数据截至 \(coordinator.confirmDataTimestamp)。\(base)"
     }
 
-    // MARK: - 【需求3 重做】漂亮醒目的订阅按钮
     private var subscribeButton: some View {
         Button(action: { coordinator.goSubscribe() }) {
             HStack(spacing: 10) {
@@ -408,16 +428,15 @@ struct PointsOverlayView: View {
                 Image(systemName: coordinator.insufficientNeedLogin ? "person.crop.circle.badge.plus" : "gift.fill")
                     .font(.system(size: 44)).foregroundStyle(.orange).padding(.top, 24)
 
-                Text(coordinator.insufficientNeedLogin ? "登录即可免费领取大量点数" : "今日点数不足")
+                Text(coordinator.insufficientNeedLogin ? "登录后即可免费领取大量点数" : "今日点数不足")
                     .font(.headline).padding(.top, 12)
 
                 Text(coordinator.insufficientNeedLogin
-                    ? "浏览该功能需要消耗点数。登录后即可一次性获赠大量免费点数，每天打卡还有免费点数赠送；除此以外，如果参与「邀请中大奖」活动，参与双方都将各获得大量免费点数！"
+                    ? "该功能需要登录后使用。登录即可一次性获赠大量免费点数，每天打卡还有免费点数赠送；参与「邀请中大奖」活动，双方还将各获得大量免费点数！"
                     : "本次需要 \(coordinator.insufficientCost) 点，当前仅剩 \(coordinator.insufficientRemaining) 点。")
                     .font(.subheadline).foregroundColor(.secondary)
                     .multilineTextAlignment(.center).padding(.horizontal, 20).padding(.top, 8)
 
-                // 主推按钮：未登录 -> 去登录领点数；已登录 -> 邀请中大奖
                 Button(action: {
                     if coordinator.insufficientNeedLogin {
                         coordinator.goLogin()
@@ -427,8 +446,8 @@ struct PointsOverlayView: View {
                 }) {
                     HStack {
                         Image(systemName: coordinator.insufficientNeedLogin ? "person.fill.checkmark" : "party.popper.fill")
-                        Text(coordinator.insufficientNeedLogin ? "登录 · 免费领取点数" : "邀请中大奖 · 免费领点数")
-                            .font(.subheadline) // 比默认body小一档
+                        Text(coordinator.insufficientNeedLogin ? "立即登录 · 免费领取点数" : "邀请中大奖 · 免费领点数")
+                            .font(.subheadline)
                             .fontWeight(.bold)
                     }
                     .foregroundColor(.white).frame(maxWidth: .infinity).padding(.vertical, 13)
@@ -437,7 +456,6 @@ struct PointsOverlayView: View {
                 }
                 .padding(.horizontal, 20).padding(.top, 18)
 
-                // 【需求3】已登录但点数不足时，显示醒目的订阅按钮
                 if !coordinator.insufficientNeedLogin {
                     subscribeButton
                         .padding(.horizontal, 20)
@@ -457,7 +475,6 @@ struct PointsOverlayView: View {
                         }
                     }
                 } else {
-                    // 订阅按钮已单独醒目展示，这里只留一个低调的关闭入口
                     Button(action: { coordinator.dismissInsufficient() }) {
                         Text("再等等")
                             .frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.secondary)

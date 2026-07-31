@@ -30,14 +30,12 @@ struct VersionResponse: Codable {
 struct FileInfo: Codable, Hashable {
     let name: String
     let type: String
-    // updateType 不再需要 sync 逻辑，但为了兼容旧 JSON 结构可以保留定义
     let updateType: String?
 
-    // --- 新增此部分 ---
     enum CodingKeys: String, CodingKey {
         case name
         case type
-        case updateType = "update_type" // 将 JSON 中的 "update_type" 映射到 Swift 的 updateType 属性
+        case updateType = "update_type"
     }
 }
 
@@ -45,19 +43,16 @@ struct FileInfo: Codable, Hashable {
 enum UpdateState: Equatable {
     case idle
     case checking
-    // --- 修改此行：移除了 speed 参数 ---
     case downloadingFile(name: String, progress: Double, downloadedBytes: Int64, totalBytes: Int64)
     case downloading(progress: Double, total: Int)
     case updateCompleted
     case alreadyUpToDate
     case error(message: String)
     
-    // Equatable 的实现需要更新
     static func == (lhs: UpdateState, rhs: UpdateState) -> Bool {
         switch (lhs, rhs) {
         case (.idle, .idle): return true
         case (.checking, .checking): return true
-        // --- 修改此行：匹配新的 case 定义 ---
         case (let .downloadingFile(n1, p1, db1, tb1), let .downloadingFile(n2, p2, db2, tb2)):
             return n1 == n2 && p1 == p2 && db1 == db2 && tb1 == tb2
         case (let .downloading(p1, t1), let .downloading(p2, t2)):
@@ -75,11 +70,8 @@ enum UpdateState: Equatable {
 
 // MARK: - 网络错误类型枚举 (无修改)
 enum NetworkErrorType {
-    /// 客户端网络问题 (例如，未连接到互联网)
     case clientOffline
-    /// 服务器无法访问 (例如，IP错误、服务器关闭、超时)
     case serverUnreachable(String)
-    /// 数据解析失败 (例如，服务器返回了无效的JSON)
     case decodingFailed(String)
 }
 
@@ -89,12 +81,12 @@ enum ServerVersionResult {
     case failure(NetworkErrorType)
 }
 
-// MARK: - 【新增】数据库下载结果枚举
+// MARK: - 数据库下载结果枚举
 enum DBDownloadResult {
-    case success            // 下载成功
-    case skippedAlreadyLatest // 跳过：已经是最新
-    case failed             // 失败
-    case cancelled          // 【新增】用户取消
+    case success
+    case skippedAlreadyLatest
+    case failed
+    case cancelled
 }
 
 // MARK: - UpdateManager
@@ -104,52 +96,49 @@ class UpdateManager: ObservableObject {
     
     @Published var updateState: UpdateState = .idle
     
-    // 【新增】强制更新状态控制
     @Published var showForceUpdate: Bool = false
     @Published var appStoreURL: String = ""
     
-    // 【新增】数据库下载进度 (0.0 - 1.0)
     @Published var dbDownloadProgress: Double = 0.0
     @Published var isDownloadingDB: Bool = false
-    // 【新增】当前需要显示的通知
     @Published var activeNotification: String? = nil
-    // 【新增】记录已关闭通知的 Key
     private let dismissedNotificationKey = "FinanceDismissedNotificationContent"
     
-    // 服务器配置
+    // 【新增】离线数据库占用空间文案（个人中心展示）
+    @Published var localDBSizeText: String = ""
+    // 【新增】最近一次自动清理释放的空间文案（用于个人中心提示）
+    @Published var lastCleanupFreedText: String? = nil
+    
     private let serverBaseURL = "http://106.15.183.158:5001/api/Finance"
     private let localVersionKey = "FinanceAppLocalDataVersion"
     
-    // 【新增】本地数据库相关 Key
     private let dbDownloadDateKey = "FinanceDBDownloadDate"
     private let dbFilename = "Finance.db"
+    // 【新增】SQLite 可能生成的旁支文件，删除主库时必须一并清理
+    private var dbSidecarFiles: [String] {
+        [dbFilename + "-wal", dbFilename + "-shm", dbFilename + "-journal"]
+    }
     
-    // 【新增】网络监视器
     private let networkMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "UpdateManagerNetworkMonitor")
     @Published var isNetworkAvailable: Bool = true
     
-    // 【新增】下载任务控制相关
     private var currentDownloadTask: URLSessionDownloadTask?
-    // 【新增】用于保存断点续传的数据
     private var resumeData: Data?
-    // 【新增】对外暴露是否处于“暂停/有断点”状态
     var isPaused: Bool {
         return resumeData != nil
     }
     
     private init() {
-        // 【新增】启动监听
         networkMonitor.pathUpdateHandler = { [weak self] path in
             DispatchQueue.main.async {
-                // 只要有网（WiFi或蜂窝）都算可用
                 self?.isNetworkAvailable = path.status == .satisfied
             }
         }
         networkMonitor.start(queue: monitorQueue)
+        refreshLocalDBSize()
     }
     
-    // 【新增】版本号比对辅助方法
     private func isVersion(_ current: String, lessThan min: String) -> Bool {
         let currentParts = current.split(separator: ".").compactMap { Int($0) }
         let minParts = min.split(separator: ".").compactMap { Int($0) }
@@ -164,7 +153,6 @@ class UpdateManager: ObservableObject {
         return false
     }
     
-    // 【新增】处理通知的逻辑
     func updateNotificationStatus(serverMessage: String?) {
         guard let message = serverMessage, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             self.activeNotification = nil
@@ -180,7 +168,6 @@ class UpdateManager: ObservableObject {
         }
     }
 
-    // 【新增】用户点击关闭按钮时调用
     func dismissNotification() {
         guard let message = activeNotification else { return }
         UserDefaults.standard.set(message, forKey: dismissedNotificationKey)
@@ -190,15 +177,11 @@ class UpdateManager: ObservableObject {
     }
 
     func checkForUpdates(isManual: Bool = false) async -> Bool {
-        // 【核心修改】如果是自动检查（启动时）且没有网络，直接返回 false
-        // 这样就不会卡在 fetchServerVersion 的超时上
         if !isManual && !isNetworkAvailable {
             print("UpdateManager: 自动检查更新 - 检测到无网络，跳过网络请求，使用本地数据。")
             return false
         }
         
-        // 如果是手动刷新，我们允许它尝试，因为用户预期会有加载过程
-        // 或者也可以在这里弹窗提示
         if isManual && !isNetworkAvailable {
             self.updateState = .error(message: "当前无网络连接")
             resetStateAfterDelay()
@@ -223,50 +206,38 @@ class UpdateManager: ObservableObject {
                 UsageManager.shared.checkResetWithServerDate(serverDate)
             }
 
-            // 1. 更新每日免费限制
             if let limit = serverVersionResponse.daily_free_limit {
                 UsageManager.shared.updateLimit(limit)
                 print("UpdateManager: 已更新每日免费次数限制为 \(limit)")
             }
             
-            // 2. 更新扣点配置
             if let costs = serverVersionResponse.cost_config {
                 UsageManager.shared.updateCosts(costs)
                 print("UpdateManager: 已更新扣点规则: \(costs)")
             }
 
-            // 【新增】赠送点数配置
             if let bonus = serverVersionResponse.bonus_points {
                 UsageManager.shared.updateBonus(bonus)
             }
-            // 【新增】分组独立扣点
             if let overrides = serverVersionResponse.sector_cost_overrides {
                 UsageManager.shared.updateSectorOverrides(overrides)
                 print("UpdateManager: 已更新分组扣点覆盖: \(overrides)")
             }
             
-            // 【新增 需求4】更新特效标注卡片配置
             DataService.shared.updateFeaturedCards(serverVersionResponse.featured_cards ?? [:])
-            // 【新增 需求1】更新服务器权威的免点数日标志
             DataService.shared.updateFreeAccessDay(serverVersionResponse.is_free_access_day)
 
-            // 【新增】更新期权市值阀值
             if let capLimit = serverVersionResponse.option_cap_limit {
                 DataService.shared.updateOptionCapLimit(capLimit)
             }
             
-            // 【新增 2】更新策略分组配置
-            // 如果服务器返回了配置，就更新；否则保持默认
             if let strategies = serverVersionResponse.strategy_groups {
-                // 调用 DataService 更新配置并持久化
-                // 同时也把 display_names 传过去
                 DataService.shared.updateStrategyConfig(
                     groups: strategies, 
                     names: serverVersionResponse.group_display_names ?? [:]
                 )
             }
 
-            // 【新增】更新界面显示的时间戳
             DataService.shared.updateTimestamps(
                 eco: serverVersionResponse.Eco_Data,
                 intro: serverVersionResponse.Intro_Symbol
@@ -275,19 +246,21 @@ class UpdateManager: ObservableObject {
             let localVersion = UserDefaults.standard.string(forKey: localVersionKey) ?? "0.0"
             print("服务器版本: \(serverVersionResponse.version), 本地版本: \(localVersion)")
             
-            // 首次安装时，即使版本号相同，也需要下载/同步一次
             let isFirstTimeSetup = (UserDefaults.standard.string(forKey: localVersionKey) == nil)
             
             if isFirstTimeSetup || serverVersionResponse.version.compare(localVersion, options: .numeric) == .orderedDescending {
                 print("发现新版本，开始下载文件...")
                 
-                // 仅下载 JSON/Text 文件，不再处理 DB
                 let success = await downloadFiles(from: serverVersionResponse)
                 
                 if success {
                     cleanupOldFiles(keeping: serverVersionResponse.files)
                     UserDefaults.standard.set(serverVersionResponse.version, forKey: localVersionKey)
                     print("本地版本已更新至: \(serverVersionResponse.version)")
+                    
+                    // 【新增】数据版本已经变了 → 之前下载的离线库彻底失效，顺手清掉释放空间
+                    cleanupStaleDatabaseIfNeeded()
+                    
                     self.updateState = .updateCompleted
                     resetStateAfterDelay()
                     return true
@@ -307,10 +280,7 @@ class UpdateManager: ObservableObject {
                 return false
             }
 
-        // MARK: - 核心修改部分
-        // 这里是实现您需求的关键
         case .failure(let errorType):
-            // 只有在用户“手动”刷新时，才显示网络相关的错误提示
             if isManual {
                 let errorMessage: String
                 switch errorType {
@@ -325,9 +295,8 @@ class UpdateManager: ObservableObject {
                 self.updateState = .error(message: errorMessage)
                 resetStateAfterDelay()
             } else {
-                // 如果是应用启动时的“自动”检查，则静默失败，不打扰用户
                 print("后台自动检查更新失败，已静默处理。错误: \(errorType)")
-                self.updateState = .idle // 直接重置状态，UI上不会有任何提示
+                self.updateState = .idle
             }
             return false
         }
@@ -353,27 +322,20 @@ class UpdateManager: ObservableObject {
             
             let (data, response) = try await URLSession.shared.data(for: request)
             
-            // --- 新增：检查 HTTP 状态码 ---
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
                 print("服务器返回了非预期的状态码: \(statusCode)")
-                // 你可以认为这也是一种服务器无法访问的错误
                 return .failure(.serverUnreachable("服务器返回状态码 \(statusCode)"))
             }
-            // ---------------------------------
             
-            // 只有在状态码是 200 的情况下，才尝试解码
             let decodedResponse = try JSONDecoder().decode(VersionResponse.self, from: data)
             
-            // 【新增】在这里插入强制更新检查逻辑
             await MainActor.run {
-                // 【新增】更新通知状态
                 self.updateNotificationStatus(serverMessage: decodedResponse.notification)
                 
                 if let minVersion = decodedResponse.min_app_version,
                    let storeUrl = decodedResponse.store_url {
                     
-                    // 获取当前 App 版本 (Info.plist)
                     let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
                     
                     if self.isVersion(currentVersion, lessThan: minVersion) {
@@ -389,7 +351,6 @@ class UpdateManager: ObservableObject {
             return .success(decodedResponse)
             
         } catch {
-            // ... catch 块的逻辑保持不变
             if let urlError = error as? URLError {
                 switch urlError.code {
                 case .notConnectedToInternet, .networkConnectionLost:
@@ -404,8 +365,6 @@ class UpdateManager: ObservableObject {
                 }
             } else if error is DecodingError {
                 print("数据解析错误: \(error.localizedDescription)")
-                // 加上这一句，可以帮助调试
-                // if let responseString = String(data: data, encoding: .utf8) { print(responseString) }
                 return .failure(.decodingFailed(error.localizedDescription))
             } else {
                 print("未知网络错误: \(error.localizedDescription)")
@@ -421,7 +380,6 @@ class UpdateManager: ObservableObject {
         
         if allFiles.isEmpty { return true }
         
-        // 初始状态
         await MainActor.run {
             self.updateState = .downloading(progress: 0, total: totalTasks)
         }
@@ -429,7 +387,6 @@ class UpdateManager: ObservableObject {
         return await withTaskGroup(of: Bool.self, body: { group in
             for fileInfo in allFiles {
                 group.addTask {
-                    // 小文件继续使用旧的下载方法
                     return await self.downloadFile(named: fileInfo.name)
                 }
             }
@@ -437,7 +394,6 @@ class UpdateManager: ObservableObject {
             var allSuccess = true
             for await success in group {
                 completedTasks += 1
-                // 只有成功才算 true，但无论成功失败都要更新进度，避免进度条卡住
                 if !success {
                     allSuccess = false
                 }
@@ -452,18 +408,12 @@ class UpdateManager: ObservableObject {
     }
     
     private func downloadFile(named filename: String) async -> Bool {
-        // MARK: - 【优化方案一】针对特定大文件的增量更新策略
-        // 逻辑：只有 description_ 开头的文件，才检查本地是否存在。
-        // 如果存在且文件名（含时间戳）一致，说明无需更新，直接返回 true 跳过。
         if filename.hasPrefix("description_") {
             if FileManagerHelper.fileExists(named: filename) {
                 print("UpdateManager: [增量优化] \(filename) 已存在且未变更，跳过下载。")
                 return true
             }
         }
-        
-        // 对于其他文件（如 Sectors_All, version.json 等），
-        // 即使本地有同名文件，代码也会继续执行下方的下载逻辑，并覆盖旧文件。
         
         guard let url = URL(string: "\(serverBaseURL)/download?filename=\(filename)") else {
             print("无效的下载URL for \(filename)")
@@ -474,26 +424,22 @@ class UpdateManager: ObservableObject {
             print("正在下载最新数据: \(filename)")
             
             var request = URLRequest(url: url)
-            // 针对大文件稍微增加超时时间，或者保持 15s 也可以，取决于文件大小和网速
             request.timeoutInterval = 60 
-            request.cachePolicy = .reloadIgnoringLocalCacheData // 确保不读缓存，强制从服务器拉取
+            request.cachePolicy = .reloadIgnoringLocalCacheData
             
             let (data, response) = try await URLSession.shared.data(for: request)
             
-            // 检查 HTTP 状态码
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
                 print("下载 \(filename) 失败，HTTP状态码: \(httpResponse.statusCode)")
                 return false
             }
             
-            // 如果是目录类型，先创建目录
             if filename.hasSuffix("/") || filename.contains("/") {
                  let dirURL = FileManagerHelper.documentsDirectory.appendingPathComponent(filename).deletingLastPathComponent()
                  try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true, attributes: nil)
             }
             
             let destinationURL = FileManagerHelper.documentsDirectory.appendingPathComponent(filename)
-            // 写入文件（如果存在则覆盖）
             try data.write(to: destinationURL)
             print("成功保存: \(filename) 到 Documents")
             return true
@@ -507,18 +453,13 @@ class UpdateManager: ObservableObject {
     
     /// 检查本地数据库是否有效（存在且是今天下载的）
     func isLocalDatabaseValid() -> Bool {
-        // 1. 检查文件是否存在
         guard FileManagerHelper.fileExists(named: dbFilename) else { return false }
-        
-        // 2. 检查记录的下载日期
         guard let savedDateStr = UserDefaults.standard.string(forKey: dbDownloadDateKey) else { return false }
         
-        // 3. 获取今天的日期字符串
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         let todayStr = formatter.string(from: Date())
         
-        // 4. 比较
         return savedDateStr == todayStr
     }
     
@@ -527,7 +468,89 @@ class UpdateManager: ObservableObject {
         return FileManagerHelper.documentsDirectory.appendingPathComponent(dbFilename).path
     }
     
-    // MARK: - 【新增】取消数据库下载
+    // MARK: - 【新增】离线数据库空间管理
+    
+    /// 本地是否存在离线库文件（不判断新旧）
+    var localDatabaseExists: Bool {
+        FileManagerHelper.fileExists(named: dbFilename)
+    }
+    
+    /// 重新计算离线库占用空间（主库 + WAL/SHM 旁支文件）
+    func refreshLocalDBSize() {
+        var total = FileManagerHelper.fileSize(named: dbFilename)
+        for f in dbSidecarFiles { total += FileManagerHelper.fileSize(named: f) }
+        self.localDBSizeText = total > 0 ? FileManagerHelper.formatBytes(total) : ""
+    }
+    
+    /// 【核心】自动清理"过期"的离线数据库
+    /// 说明：客户端只会加载"当天下载"的库（见 isLocalDatabaseValid），
+    ///      因此任何非今天下载的 Finance.db 都是永远不会被使用的僵尸文件，直接删除即可。
+    @discardableResult
+    func cleanupStaleDatabaseIfNeeded() -> Bool {
+        // 正在下载中绝对不能动文件
+        if isDownloadingDB { return false }
+        // 有断点续传数据时也先不动（用户可能想继续下载）
+        if resumeData != nil { return false }
+        
+        guard FileManagerHelper.fileExists(named: dbFilename) else {
+            // 文件不存在却残留了日期标记 → 清掉，避免 isLocalDatabaseValid 误判
+            if UserDefaults.standard.string(forKey: dbDownloadDateKey) != nil {
+                UserDefaults.standard.removeObject(forKey: dbDownloadDateKey)
+            }
+            // 旁支文件也顺手清一下
+            for f in dbSidecarFiles { _ = FileManagerHelper.deleteFile(named: f) }
+            refreshLocalDBSize()
+            return false
+        }
+        
+        // 今天下载的 → 有效，保留
+        if isLocalDatabaseValid() {
+            refreshLocalDBSize()
+            return false
+        }
+        
+        let freed = deleteLocalDatabase(isAuto: true)
+        if freed > 0 {
+            self.lastCleanupFreedText = "已自动清理过期离线数据库，释放 \(FileManagerHelper.formatBytes(freed))"
+        }
+        return freed > 0
+    }
+    
+    /// 删除本地离线数据库（含 WAL/SHM），返回释放的字节数
+    @discardableResult
+    func deleteLocalDatabase(isAuto: Bool = false) -> Int64 {
+        // 1) 先断开 SQLite 连接（否则文件被占用，且后续查询会持有野指针）
+        DatabaseManager.shared.closeDatabase()
+        
+        // 2) 统计并删除主文件 + 旁支文件
+        var freed: Int64 = 0
+        var names = [dbFilename]
+        names.append(contentsOf: dbSidecarFiles)
+        for name in names {
+            let size = FileManagerHelper.fileSize(named: name)
+            if FileManagerHelper.deleteFile(named: name) { freed += size }
+        }
+        
+        // 3) 清理相关状态
+        UserDefaults.standard.removeObject(forKey: dbDownloadDateKey)
+        self.currentDownloadTask?.cancel()
+        self.currentDownloadTask = nil
+        self.resumeData = nil
+        self.dbDownloadProgress = 0.0
+        self.isDownloadingDB = false
+        refreshLocalDBSize()
+        objectWillChange.send()   // isPaused / localDatabaseExists 是计算属性，主动通知刷新
+        
+        // 4) 回到在线模式
+        DatabaseManager.shared.reconnectToLatestDatabase()
+        
+        if freed > 0 {
+            print("UpdateManager: \(isAuto ? "【自动】" : "【手动】")已删除离线数据库，释放 \(FileManagerHelper.formatBytes(freed))")
+        }
+        return freed
+    }
+    
+    // MARK: - 取消数据库下载
     func cancelDatabaseDownload() {
         guard isDownloadingDB, let task = currentDownloadTask else { return }
         
@@ -542,21 +565,15 @@ class UpdateManager: ObservableObject {
                     self.resumeData = data
                 }
                 
-                // 【关键】确保这里立即更新状态，UI 才会从“进度条”变回“继续按钮”
                 self.isDownloadingDB = false 
-                // 注意：不要把 progress 设为 0，保留当前进度给用户看
-                // self.dbDownloadProgress = 0.0 // <--- 这行代码建议注释掉或删除
-                
-                // 强制 UI 刷新 (因为 isPaused 是计算属性，依赖 resumeData)
                 self.objectWillChange.send() 
             }
         })
     }
     
-    // MARK: - 【修改】下载数据库（支持断点续传 + 优化配置）
+    // MARK: - 下载数据库（支持断点续传）
     @discardableResult
     func downloadDatabase(force: Bool = false) async -> DBDownloadResult {
-        // 1. 防重复检查
         if !force && isLocalDatabaseValid() {
             print("UpdateManager: 本地数据库已是最新，跳过。")
             return .skippedAlreadyLatest
@@ -564,33 +581,37 @@ class UpdateManager: ObservableObject {
         
         let fileURL = FileManagerHelper.documentsDirectory.appendingPathComponent(dbFilename)
         
-        // 如果是强制重新下载，且没有断点数据，才删除旧文件
+        // 【修改】强制重下且无断点数据 → 连带清掉旧库、WAL/SHM 和日期标记
         if force && resumeData == nil {
-            try? FileManager.default.removeItem(at: fileURL)
+            _ = deleteLocalDatabase(isAuto: true)
         }
         
         await MainActor.run {
             self.isDownloadingDB = true
-            // 如果有断点数据，进度条可能不会从0开始，但这取决于UI怎么画，这里置0比较安全
             if self.resumeData == nil {
                 self.dbDownloadProgress = 0.0
             }
         }
         
-        guard let url = URL(string: "\(serverBaseURL)/download?filename=\(dbFilename)") else {
+        // 【修复】服务端已要求登录才能下载离线库，必须携带 user_id
+        guard let uid = UsageManager.authedUserId,
+            let encUid = uid.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            print("UpdateManager: 未登录，禁止下载离线数据库")
+            await MainActor.run { self.isDownloadingDB = false }
+            return .failed
+        }
+        guard let url = URL(string: "\(serverBaseURL)/download?filename=\(dbFilename)&user_id=\(encUid)") else {
             print("UpdateManager: 无效的数据库下载 URL")
             await MainActor.run { self.isDownloadingDB = false }
-            return .failed // 【修改】返回失败
+            return .failed
         }
         
         var finalResult: DBDownloadResult = .failed
         
         do {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                // 创建 Delegate 实例
                 let delegate = DownloadDelegate(
                     onProgress: { progress in
-                        // 回调在 Session 队列，需切回主线程更新 UI
                         Task { @MainActor in
                             self.dbDownloadProgress = progress
                         }
@@ -606,8 +627,6 @@ class UpdateManager: ObservableObject {
                             return
                         }
                         do {
-                            // 移动临时文件到目标位置
-                            // 如果目标存在先删除（虽然上面删过了，但为了保险）
                             if FileManager.default.fileExists(atPath: fileURL.path) {
                                 try FileManager.default.removeItem(at: fileURL)
                             }
@@ -619,31 +638,26 @@ class UpdateManager: ObservableObject {
                     }
                 )
                 
-                // 【优化配置】
                 let config = URLSessionConfiguration.default
-                config.timeoutIntervalForResource = 1000 // 防止大文件慢速下载中断
-                config.waitsForConnectivity = true // 网络波动时等待而不是直接失败
+                config.timeoutIntervalForResource = 1000
+                config.waitsForConnectivity = true
                 
                 let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
                 
-                // 【核心修改：尝试恢复，失败则全新下载】
                 var taskCreated = false
                 
                 if let data = self.resumeData {
-                    // 尝试使用断点数据创建任务
                     let task = session.downloadTask(withResumeData: data)
-                    // 检查任务描述是否包含原来的 URL，简单的校验
                     if let originalRequest = task.originalRequest, originalRequest.url == url {
                         print("UpdateManager: 发现有效断点数据，正在恢复下载...")
                         self.currentDownloadTask = task
                         taskCreated = true
                     } else {
                         print("UpdateManager: 断点数据与当前 URL 不匹配或无效，丢弃。")
-                        self.resumeData = nil // 数据无效，丢弃
+                        self.resumeData = nil
                     }
                 }
                 
-                // 如果没有成功创建恢复任务（resumeData 为空或无效），则创建新任务
                 if !taskCreated {
                     print("UpdateManager: 开始全新下载...")
                     self.currentDownloadTask = session.downloadTask(with: url)
@@ -653,76 +667,60 @@ class UpdateManager: ObservableObject {
                 session.finishTasksAndInvalidate()
             }
             
-            // 下载成功后的逻辑
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyy-MM-dd"
             let todayStr = formatter.string(from: Date())
             UserDefaults.standard.set(todayStr, forKey: dbDownloadDateKey)
             
-            // 下载成功后，清除断点数据
             self.resumeData = nil
             
             print("UpdateManager: 数据库下载完成。")
-            DatabaseManager.shared.reconnectToLatestDatabase() // 假设你有这个单例
+            DatabaseManager.shared.reconnectToLatestDatabase()
+            refreshLocalDBSize()          // 【新增】刷新占用空间
+            self.lastCleanupFreedText = nil
             finalResult = .success
             
         } catch {
-            // 处理错误
             let nsError = error as NSError
             
-            // 处理用户取消
             if nsError.code == NSURLErrorCancelled {
                 print("UpdateManager: 下载任务已取消。")
                 finalResult = .cancelled
-            } 
-            // 【修改点 1】将 if let resumeData = ... 改为直接判断 != nil
-            // 原代码警告：Immutable value 'resumeData' was never used
+            }
             else if self.resumeData != nil, nsError.userInfo[NSURLErrorBackgroundTaskCancelledReasonKey] != nil {
                 print("UpdateManager: 断点续传数据似乎已过期或损坏，尝试重新下载...")
-                self.resumeData = nil // 清除坏数据
+                self.resumeData = nil
                 
-                // 递归调用自己，强制重新下载
                 Task {
-                    // 【修改点 2】将 let retryResult = ... 改为 _ = ...
-                    // 原代码警告：Initialization of immutable value 'retryResult' was never used
                     _ = await self.downloadDatabase(force: true)
                 }
-                // 这里标记为 failed，让本次调用结束，实际工作交给了上面的递归重试
                 finalResult = .failed 
             } else {
                 print("UpdateManager: 数据库下载失败: \(error)")
-                // 如果失败（非取消），也可以考虑保存 resumeData，但这需要从 error userInfo 中提取
-                // 这里简单处理，失败就失败了
                 finalResult = .failed
             }
         }
         
-        // 只有在非取消状态下，才重置 UI 状态
-        // 如果是取消，cancelDatabaseDownload 里的闭包会处理 UI
         if finalResult != .cancelled {
             await MainActor.run {
                 self.isDownloadingDB = false
-                // 如果成功，进度设为1；如果失败，设为0
                 self.dbDownloadProgress = finalResult == .success ? 1.0 : 0.0
                 self.currentDownloadTask = nil
+                self.refreshLocalDBSize()
             }
         }
         
         return finalResult
     }
     
-    // MARK: - 修改后的清理逻辑
+    // MARK: - 清理旧的按时间戳命名的数据文件
     private func cleanupOldFiles(keeping newFiles: [FileInfo]) {
         print("开始清理旧文件...")
-        // 包含所有新版本文件的文件名集合，包括像 Finance.db 这样的固定名称文件
         let newFileNames = Set(newFiles.map { $0.name })
         let fileManager = FileManager.default
         let documentsURL = FileManagerHelper.documentsDirectory
         
-        // 需要清理的文件的基本名称（不含时间戳的部分）
-        // 我们只对那些文件名里包含时间戳模式的文件进行“按前缀清理”
         let baseFileNamesToClean = Set(newFiles.compactMap { fileInfo -> String? in
-            // 如果文件是按时间戳管理的，才把它加入清理列表
             if fileInfo.name.range(of: "_\\d{6}\\.", options: .regularExpression) != nil {
                 return String(fileInfo.name.split(separator: "_").first ?? "")
             }
@@ -735,12 +733,10 @@ class UpdateManager: ObservableObject {
             for url in fileURLs {
                 let filename = url.lastPathComponent
                 
-                // 跳过不应该被自动清理的固定文件，比如 Finance.db
                 if !baseFileNamesToClean.contains(where: { filename.hasPrefix($0) }) {
                     continue
                 }
                 
-                // 如果一个带时间戳的文件，其完整文件名不在新版本文件列表中，则删除
                 if !newFileNames.contains(filename) {
                     try fileManager.removeItem(at: url)
                     print("已清理旧文件: \(filename)")
@@ -752,12 +748,11 @@ class UpdateManager: ObservableObject {
     }
 }
 
-// MARK: - 【修改】下载代理类 (增加节流逻辑)
+// MARK: - 下载代理类 (增加节流逻辑)
 class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
     let onProgress: (Double) -> Void
     let onCompletion: (URL?, Error?) -> Void
     
-    // 增加一个时间戳记录，用于节流
     private var lastUpdateTime: TimeInterval = 0
     
     init(onProgress: @escaping (Double) -> Void, onCompletion: @escaping (URL?, Error?) -> Void) {
@@ -765,16 +760,11 @@ class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
         self.onCompletion = onCompletion
     }
     
-    // 进度回调：系统底层每下载一块数据调用一次，效率极高
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         if totalBytesExpectedToWrite > 0 {
             let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
             
-            // 【核心优化】节流逻辑：
-            // 只有当距离上次更新超过 0.1 秒，或者进度已经完成 (1.0) 时，才回调 UI 更新。
-            // 这避免了高速下载时主线程被成千上万次 UI 刷新请求卡死。
             let now = Date().timeIntervalSince1970
-            // 0.1秒节流，避免UI卡顿
             if now - lastUpdateTime > 0.1 || progress >= 1.0 {
                 lastUpdateTime = now
                 onProgress(progress)
@@ -782,12 +772,10 @@ class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
         }
     }
     
-    // 下载完成回调：文件已下载到临时位置 location
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         onCompletion(location, nil)
     }
     
-    // 任务结束回调（处理错误）
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error = error {
             onCompletion(nil, error)
@@ -801,10 +789,41 @@ class FileManagerHelper {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
     
-    // 新增：检查文件是否存在
     static func fileExists(named filename: String) -> Bool {
         let url = documentsDirectory.appendingPathComponent(filename)
         return FileManager.default.fileExists(atPath: url.path)
+    }
+    
+    // 【新增】获取文件大小（字节）；不存在返回 0
+    static func fileSize(named filename: String) -> Int64 {
+        let url = documentsDirectory.appendingPathComponent(filename)
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let size = attrs[.size] as? Int64 {
+            return size
+        }
+        return 0
+    }
+    
+    // 【新增】删除文件（成功返回 true）
+    @discardableResult
+    static func deleteFile(named filename: String) -> Bool {
+        let url = documentsDirectory.appendingPathComponent(filename)
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        do {
+            try FileManager.default.removeItem(at: url)
+            return true
+        } catch {
+            print("FileManagerHelper: 删除 \(filename) 失败: \(error)")
+            return false
+        }
+    }
+    
+    // 【新增】字节数格式化
+    static func formatBytes(_ bytes: Int64) -> String {
+        let f = ByteCountFormatter()
+        f.allowedUnits = [.useMB, .useKB, .useGB]
+        f.countStyle = .file
+        return f.string(fromByteCount: bytes)
     }
     
     static func getLatestFileUrl(for baseName: String) -> URL? {

@@ -265,6 +265,9 @@ class DataService: ObservableObject {
     // MARK: - 【新增 需求1】服务器权威的免点数日标志（防改日期白嫖）
     // nil 表示尚未从服务器获取到（离线/旧服务器），此时客户端回退本地计算
     @Published var isFreeAccessDayServer: Bool? = nil
+    // 【新增】免点日标志按"北京自然日"持久化，避免冷启动窗口期被本地日期绕过
+    private let freeDayFlagKey = "FinanceFreeDayFlagValue"
+    private let freeDayFlagDateKey = "FinanceFreeDayFlagDate"
 
     func updateFeaturedCards(_ cards: [String: String]) {
         self.featuredCards = cards
@@ -276,6 +279,21 @@ class DataService: ObservableObject {
     func updateFreeAccessDay(_ isFree: Bool?) {
         DispatchQueue.main.async {
             self.isFreeAccessDayServer = isFree
+            if let v = isFree {
+                UserDefaults.standard.set(v, forKey: self.freeDayFlagKey)
+                UserDefaults.standard.set(TradingDateHelper.beijingTodayString(),
+                                        forKey: self.freeDayFlagDateKey)
+            }
+        }
+    }
+
+    /// 冷启动读取缓存：只有"缓存日期 == 北京今天"才认（否则返回 nil，保守收费）
+    private func loadFreeAccessDayCache() {
+        let savedDate = UserDefaults.standard.string(forKey: freeDayFlagDateKey)
+        if let d = savedDate, d == TradingDateHelper.beijingTodayString() {
+            self.isFreeAccessDayServer = UserDefaults.standard.bool(forKey: freeDayFlagKey)
+        } else {
+            self.isFreeAccessDayServer = nil
         }
     }
 
@@ -300,6 +318,7 @@ class DataService: ObservableObject {
         self.ecoDataTimestamp = UserDefaults.standard.string(forKey: ecoDataKey)
         self.introSymbolTimestamp = UserDefaults.standard.string(forKey: introSymbolKey)
         loadFeaturedCards()   // 【新增 需求4】冷启动读取上次配置
+        loadFreeAccessDayCache()   // 【新增】
     }
 
     // 【新增】内部状态，标记是否正在加载
@@ -381,9 +400,11 @@ class DataService: ObservableObject {
     func fetchOptionsRankData() async -> ([OptionRankItem], [OptionRankItem])? {
         // 【安全修复】先在主线程安全获取阀值
         let limit = await MainActor.run { self.optionCapLimit }
-        
-        let urlString = "\(DatabaseManager.shared.serverBaseURL)/query/options_rank?limit=\(String(format: "%.0f", limit))"
-        guard let url = URL(string: urlString) else { return nil }
+        var comp = URLComponents(string: "\(DatabaseManager.shared.serverBaseURL)/query/options_rank")!
+        var items = [URLQueryItem(name: "limit", value: String(format: "%.0f", limit))]
+        if let uid = UsageManager.authedUserId { items.append(URLQueryItem(name: "user_id", value: uid)) }
+        comp.queryItems = items
+        guard let url = comp.url else { return nil }
         
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
@@ -1465,6 +1486,7 @@ class DataService: ObservableObject {
                 self.globalTimeMarkers = finalGlobalTimeMarkers
                 self.symbolTimeMarkers = finalSymbolTimeMarkers
                 self.symbolTagsMap = finalSymbolTagsMap // 赋值给主线程
+                SearchIndexStore.shared.buildIfNeeded(from: loadedDescriptionData)   // 【新增，可选】
             }
         } catch {
             await MainActor.run {
