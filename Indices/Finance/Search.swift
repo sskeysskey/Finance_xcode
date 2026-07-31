@@ -92,7 +92,7 @@ struct SearchSuggestion: Identifiable, Sendable {
     let isETF: Bool
     let score: Int
     let field: SuggestionField
-    let matchedTag: String?      // 命中的那个标签（用于展示）
+    let matchedTags: [String]      // 【修改】支持多个命中的标签（用于展示）
     let marketCapText: String?   // 已格式化好的市值字符串
     let rawMarketCap: Double
     
@@ -222,7 +222,7 @@ final class SearchIndexStore: @unchecked Sendable {
             var minScore = Int.max
             var sumScore = 0
             var field: SuggestionField = .symbol
-            var matchedTag: String? = nil
+            var matchedTags = Set<String>() // 【修改】收集所有命中的标签
             var ok = true
             
             for (idx, token) in tokens.enumerated() {
@@ -233,7 +233,9 @@ final class SearchIndexStore: @unchecked Sendable {
                 }
                 if idx == 0 {
                     field = hit.field
-                    matchedTag = hit.matchedTag
+                }
+                if let tag = hit.matchedTag {
+                    matchedTags.insert(tag)
                 }
                 minScore = min(minScore, hit.score)
                 sumScore += hit.score
@@ -251,7 +253,7 @@ final class SearchIndexStore: @unchecked Sendable {
                 isETF: entry.isETF,
                 score: finalScore,
                 field: field,
-                matchedTag: matchedTag,
+                matchedTags: Array(matchedTags), // 【修改】传入数组
                 marketCapText: formatCap(cap),
                 rawMarketCap: cap
             ))
@@ -531,7 +533,6 @@ struct SearchView: View {
     @State private var selectedSymbol: SelectedSymbol? = nil
     @State private var isFirstAppear = true
     
-    // 【修改】改为 StateObject，避免 SwiftUI 重建 View 时反复创建 ViewModel
     @StateObject private var viewModel: SearchViewModel
     
     @FocusState private var isSearchFieldFocused: Bool
@@ -541,7 +542,6 @@ struct SearchView: View {
     @State private var clipboardContent: String = ""
     @State private var showClipboardBar: Bool = false
     
-    // 【新增】联想显示开关
     @State private var showSuggestions: Bool = false
     
     @State private var collapsedGroups: [MatchCategory: Bool] = [:]
@@ -551,8 +551,6 @@ struct SearchView: View {
     @EnvironmentObject var usageManager: UsageManager
     @State private var showSubscriptionSheet = false
     
-    /// 【可调】输入内容恰好等于某个 symbol 时，回车直接开图（省一次搜索扣点）。
-    /// 若想保持旧计费行为，把它改成 false。
     private let enableExactSymbolShortcut = true
     
     init(isSearchActive: Bool = false, dataService: DataService) {
@@ -678,7 +676,6 @@ struct SearchView: View {
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .onAppear {
-            // 冷启动时确保索引构建（数据已加载则立即建）
             viewModel.prepareIndex()
             if isSearchActive && isFirstAppear {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -722,7 +719,6 @@ struct SearchView: View {
                 .textInputAutocapitalization(.never)
                 .onChange(of: searchText) { _, newValue in
                     showClearButton = !newValue.isEmpty
-                    // 【核心】每次输入变化都推给 ViewModel（内部 debounce）
                     viewModel.queryChanged(newValue)
                     
                     if newValue.isEmpty {
@@ -784,14 +780,14 @@ struct SearchView: View {
         .padding(.top, 8)
     }
     
-    // MARK: - 【新增】联想结果列表
+    // MARK: - 联想结果列表
     private var suggestionList: some View {
         ScrollView {
             VStack(spacing: 0) {
                 ForEach(Array(viewModel.suggestions.enumerated()), id: \.element.id) { index, item in
                     SuggestionRow(
                         suggestion: item,
-                        query: viewModel.activeHighlightToken,
+                        queries: viewModel.activeHighlightTokens, // 【修改】传入所有 tokens
                         onTap: { handleSuggestionTap(item) },
                         onFill: {
                             searchText = item.symbol
@@ -805,7 +801,6 @@ struct SearchView: View {
                     }
                 }
                 
-                // 底部：查看全部结果（走完整搜索，会扣点）
                 Divider()
                 Button(action: {
                     isSearchFieldFocused = false
@@ -845,12 +840,10 @@ struct SearchView: View {
         return "查看全部匹配结果（消耗 \(cost) 点）"
     }
     
-    // MARK: - 【新增】点击联想项 → 直接进详情
     private func handleSuggestionTap(_ item: SearchSuggestion) {
         isSearchFieldFocused = false
         withAnimation { showSuggestions = false }
         
-        // 记录到搜索历史，便于下次直达
         viewModel.addSearchHistory(term: item.symbol)
         
         let data = viewModel.dataService.marketCapData[item.symbol.uppercased()]
@@ -925,7 +918,6 @@ struct SearchView: View {
         }
     }
 
-    // 真正的打开逻辑（不扣点）
     private func openResult(_ result: SearchResult) {
         ReviewManager.shared.recordInteraction()
         if let groupName = viewModel.dataService.getCategory(for: result.symbol) {
@@ -971,7 +963,6 @@ struct SearchView: View {
         let trimmed = searchText.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
         
-        // 【新增】输入即为完整代码时，直接开图（避免"搜索 + 图表"重复扣点）
         if enableExactSymbolShortcut,
            let exact = viewModel.exactSymbolSuggestion(for: trimmed) {
             handleSuggestionTap(exact)
@@ -1029,10 +1020,10 @@ struct SearchView: View {
     }
 }
 
-// MARK: - 【新增】联想结果行
+// MARK: - 联想结果行
 struct SuggestionRow: View {
     let suggestion: SearchSuggestion
-    let query: String
+    let queries: [String] // 【修改】接收多个关键字用于高亮
     let onTap: () -> Void
     let onFill: () -> Void
     
@@ -1048,25 +1039,30 @@ struct SuggestionRow: View {
             
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    highlighted(suggestion.symbol, query: query)
+                    highlighted(suggestion.symbol, queries: queries)
                         .font(.system(size: 16, weight: .bold))
                         .lineLimit(1)
                     
-                    highlighted(suggestion.name, query: query)
+                    highlighted(suggestion.name, queries: queries)
                         .font(.system(size: 13))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
                 
-                if let tag = suggestion.matchedTag, !tag.isEmpty {
-                    HStack(spacing: 4) {
-                        Image(systemName: "tag.fill")
-                            .font(.system(size: 8))
-                            .foregroundColor(.orange.opacity(0.8))
-                        highlighted(tag, query: query)
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                // 【修改】展示所有命中的标签
+                if !suggestion.matchedTags.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(suggestion.matchedTags, id: \.self) { tag in
+                            HStack(spacing: 4) {
+                                Image(systemName: "tag.fill")
+                                    .font(.system(size: 8))
+                                    .foregroundColor(.orange.opacity(0.8))
+                                highlighted(tag, queries: queries)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
                 } else if !suggestion.tags.isEmpty {
                     Text(suggestion.tags.prefix(3).joined(separator: ", "))
@@ -1099,18 +1095,52 @@ struct SuggestionRow: View {
         .onTapGesture { onTap() }
     }
     
-    /// 命中片段高亮
-    private func highlighted(_ source: String, query: String) -> Text {
-        guard !query.isEmpty,
-              let range = source.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) else {
-            return Text(source)
+    /// 【修改】支持多关键字片段高亮
+    private func highlighted(_ source: String, queries: [String]) -> Text {
+        guard !queries.isEmpty else { return Text(source) }
+        
+        // 找出所有需要高亮的区间
+        var ranges: [Range<String.Index>] = []
+        for query in queries {
+            guard !query.isEmpty else { continue }
+            var searchRange = source.startIndex..<source.endIndex
+            while let range = source.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange) {
+                ranges.append(range)
+                searchRange = range.upperBound..<source.endIndex
+            }
         }
-        let pre = String(source[source.startIndex..<range.lowerBound])
-        let mid = String(source[range])
-        let post = String(source[range.upperBound...])
-        return Text(pre)
-            + Text(mid).foregroundColor(.blue).fontWeight(.heavy)
-            + Text(post)
+        
+        guard !ranges.isEmpty else { return Text(source) }
+        
+        // 合并重叠区间
+        ranges.sort { $0.lowerBound < $1.lowerBound }
+        var mergedRanges: [Range<String.Index>] = []
+        for range in ranges {
+            if let last = mergedRanges.last, last.upperBound >= range.lowerBound {
+                let newUpperBound = max(last.upperBound, range.upperBound)
+                mergedRanges[mergedRanges.count - 1] = last.lowerBound..<newUpperBound
+            } else {
+                mergedRanges.append(range)
+            }
+        }
+        
+        // 拼接 Text
+        var resultText = Text("")
+        var currentIndex = source.startIndex
+        
+        for range in mergedRanges {
+            if currentIndex < range.lowerBound {
+                resultText = resultText + Text(source[currentIndex..<range.lowerBound])
+            }
+            resultText = resultText + Text(source[range]).foregroundColor(.blue).fontWeight(.heavy)
+            currentIndex = range.upperBound
+        }
+        
+        if currentIndex < source.endIndex {
+            resultText = resultText + Text(source[currentIndex..<source.endIndex])
+        }
+        
+        return resultText
     }
 }
 
@@ -1285,10 +1315,10 @@ class SearchViewModel: ObservableObject {
     @Published var isChartLoading: Bool = false
     @Published var groupedSearchResults: [GroupedSearchResults] = []
     
-    // 【新增】联想相关
     @Published var suggestions: [SearchSuggestion] = []
-    /// 用于 UI 高亮的 token（取输入的第一个词）
-    @Published var activeHighlightToken: String = ""
+    
+    // 【修改】保存所有输入的关键字，用于 UI 多词高亮
+    @Published var activeHighlightTokens: [String] = []
     
     var dataService: DataService
     private var cancellables = Set<AnyCancellable>()
@@ -1298,7 +1328,6 @@ class SearchViewModel: ObservableObject {
     private var suggestionToken: Int = 0
     private var marketCapSnapshot: [String: Double] = [:]
     
-    /// 联想最大条数
     private let suggestionLimit = 12
     
     init(dataService: DataService = DataService.shared) {
@@ -1309,7 +1338,6 @@ class SearchViewModel: ObservableObject {
             .assign(to: \.errorMessage, on: self)
             .store(in: &cancellables)
         
-        // 数据到位 → 构建索引
         dataService.$descriptionData
             .receive(on: DispatchQueue.main)
             .sink { data in
@@ -1317,7 +1345,6 @@ class SearchViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // 市值快照（用于联想排序与展示，避免后台线程读 @Published）
         dataService.$marketCapData
             .receive(on: DispatchQueue.main)
             .sink { [weak self] dict in
@@ -1326,7 +1353,6 @@ class SearchViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // 索引构建完成 → 重算当前输入
         SearchIndexStore.shared.didBuild
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -1334,7 +1360,6 @@ class SearchViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // 输入防抖
         querySubject
             .removeDuplicates()
             .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
@@ -1346,8 +1371,6 @@ class SearchViewModel: ObservableObject {
         loadSearchHistory()
     }
     
-    // MARK: - 【新增】联想入口
-    
     func prepareIndex() {
         SearchIndexStore.shared.buildIfNeeded(from: dataService.descriptionData)
         if marketCapSnapshot.isEmpty {
@@ -1355,13 +1378,13 @@ class SearchViewModel: ObservableObject {
         }
     }
     
-    /// View 每次输入变化调用
     func queryChanged(_ text: String) {
         lastQuery = text
-        let firstToken = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(separator: " ").first.map(String.init) ?? ""
-        if activeHighlightToken != firstToken {
-            activeHighlightToken = firstToken
+        // 【修改】切分所有关键字并保存
+        let tokens = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: " ").map(String.init).filter { !$0.isEmpty }
+        if activeHighlightTokens != tokens {
+            activeHighlightTokens = tokens
         }
         if text.trimmingCharacters(in: .whitespaces).isEmpty {
             suggestions = []
@@ -1383,7 +1406,6 @@ class SearchViewModel: ObservableObject {
         
         let entries = SearchIndexStore.shared.snapshot()
         guard !entries.isEmpty else {
-            // 索引还没建好，先尝试触发构建，didBuild 回来后会自动重算
             SearchIndexStore.shared.buildIfNeeded(from: dataService.descriptionData)
             return
         }
@@ -1404,23 +1426,21 @@ class SearchViewModel: ObservableObject {
         }
     }
     
-    /// 输入是否恰好等于某个 symbol（用于回车直达）
     func exactSymbolSuggestion(for query: String) -> SearchSuggestion? {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return nil }
         if let hit = suggestions.first(where: { $0.symbol.lowercased() == q }) {
             return hit
         }
-        // 联想还没算完时，直接扫索引兜底
         let entries = SearchIndexStore.shared.snapshot()
         guard let e = entries.first(where: { $0.lowerSymbol == q }) else { return nil }
         let cap = marketCapSnapshot[e.symbol.uppercased()] ?? 0
         return SearchSuggestion(symbol: e.symbol, name: e.name, tags: e.tags, isETF: e.isETF,
-                                score: 1000, field: .symbol, matchedTag: nil,
+                                score: 1000, field: .symbol, matchedTags: [], // 【修改】
                                 marketCapText: SearchIndexStore.formatCap(cap), rawMarketCap: cap)
     }
     
-    // MARK: - 完整搜索（原逻辑保持不变）
+    // MARK: - 完整搜索
     
     private func analyzeQueryConstraints(query: String) -> (skipDescription: Bool, forceExactMatch: Bool, allowFuzzy: Bool) {
         let length = query.count
