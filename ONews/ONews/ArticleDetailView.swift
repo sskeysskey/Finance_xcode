@@ -418,16 +418,15 @@ struct ArticleDetailView: View {
                         // 稍微给个过渡动画
                         .transition(.scale.combined(with: .opacity))
                     }
-                    // 【修改】使用独立的按钮组件，传入 manager
-                    AudioToolbarButton(
-                        audioPlayerManager: audioPlayerManager,
-                        onAudioToggle: onAudioToggle
-                    )
+                    
+                    // 【修改】将分享按钮提取到这里，替换原来的音频按钮
+                    Button(action: { showCustomShareSheet = true }) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
                     
                     Menu {
-                        Button(action: { showCustomShareSheet = true }) {
-                            Label(Localized.isEnglish ? "Share" : "分享", systemImage: "square.and.arrow.up")
-                        }
+                        // 分享已被移出
+                        
                         Button(action: { showFontAdjustment = true }) {
                             Label(Localized.isEnglish ? "Font Size" : "字体大小", systemImage: "textformat.size")
                         }

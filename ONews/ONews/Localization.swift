@@ -107,7 +107,7 @@ struct Localized {
     
     // MARK: - 详情页与分享
     static var originalLink: String { tr("原文链接", "Original Link") }
-    static var paragraphCopied: String { tr("选中段落已复制", "Paragraph copied") }
+    static var paragraphCopied: String { tr("已复制选中段落", "Paragraph copied") }
     static var unreadCount: String { tr("未读", "Unread") }
     static var imageLoadFailed: String { tr("图片加载失败", "Image load failed") }
     static var saveToAlbum: String { tr("已保存到相册", "Saved to Photos") }

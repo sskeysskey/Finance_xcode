@@ -842,8 +842,18 @@ struct SearchView: View {
     
     private func handleSuggestionTap(_ item: SearchSuggestion) {
         isSearchFieldFocused = false
-        withAnimation { showSuggestions = false }
         
+        // 【需求1修改】：注释或删除下面这行代码，不要把 showSuggestions 设为 false，
+        // 这样从图表页返回时，联想列表就会继续保持显示。
+        // withAnimation { showSuggestions = false }
+        
+        // 【需求2修改】：在存入股票代码之前，先把用户当前输入的搜索词也存入历史记录
+        let trimmedSearchText = searchText.trimmingCharacters(in: .whitespaces)
+        if !trimmedSearchText.isEmpty && trimmedSearchText.uppercased() != item.symbol.uppercased() {
+            viewModel.addSearchHistory(term: trimmedSearchText)
+        }
+        
+        // 原有的存入股票代码逻辑
         viewModel.addSearchHistory(term: item.symbol)
         
         let data = viewModel.dataService.marketCapData[item.symbol.uppercased()]
