@@ -691,23 +691,23 @@ struct VideoDetailView: View {
                             }
                         } label: {
                             HStack(spacing: 4) {
-                                Image(systemName: isEpisodeAscending ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+                                // 图标取反：当前正序 → 显示向下箭头（切换到倒序）；当前倒序 → 向上箭头（切换到正序）
+                                Image(systemName: isEpisodeAscending ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
                                     .font(.system(size: 13))
+                                // 文字取反
                                 Text(isEpisodeAscending
-                                    ? (isGlobalEnglishMode ? "Asc" : "正序")
-                                    : (isGlobalEnglishMode ? "Desc" : "倒序"))
+                                    ? (isGlobalEnglishMode ? "Desc" : "倒序")
+                                    : (isGlobalEnglishMode ? "Asc" : "正序"))
                                     .font(.system(size: 12, weight: .bold))
                             }
-                            .foregroundColor(.white)
+                            // ✅ 使用线路按钮一模一样样式：浅底色胶囊，accent文字，无渐变无阴影
+                            .foregroundColor(.accentColor)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
                             .background(
-                                Capsule().fill(
-                                    LinearGradient(colors: [Color.blue, Color.cyan],
-                                                startPoint: .topLeading, endPoint: .bottomTrailing)
-                                )
+                                Capsule()
+                                    .fill(Color.accentColor.opacity(0.12))
                             )
-                            .shadow(color: Color.blue.opacity(0.35), radius: 4, x: 0, y: 2)
                         }
                     }
 

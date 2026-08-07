@@ -5,7 +5,7 @@ struct EarningHistoryView: View {
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var usageManager: UsageManager
 
-    private let excludedGroups = ["season", "no_season", "_Tag_Blacklist"]
+    private let excludedGroups = ["no_season", "_Tag_Blacklist"]
 
     // MARK: - 计算多组共振（次数统计）数据
     private var frequencyData: [(count: Int, symbols: [String])] {
@@ -52,13 +52,15 @@ struct EarningHistoryView: View {
         let sourceGroups: Set<String> = [
             "Short", "Short_W", "Strategy12", "Strategy34", "OverSell_W",
             "PE_Deep", "PE_Deeper", "PE_W", "PE_valid", "PE_invalid",
-            "PE_Volume", "PE_Volume_up", "PE_Hot", "PE_Volume_high"
+            "PE_Volume", "PE_Volume_up", "PE_Hot", "PE_Volume_high", "season"
         ]
         
         // PE_Hot 的源头分组
+        // let peHotSources: Set<String> = [
+        //     "PE_Deep", "PE_Deeper", "PE_W", "OverSell_W",
+        //     "PE_valid", "PE_invalid", "season"
+        // ]
         let peHotSources: Set<String> = [
-            "PE_Deep", "PE_Deeper", "PE_W", "OverSell_W",
-            "PE_valid", "PE_invalid", "season"
         ]
         
         // 【新增】抄底的源头分组（对应 Python 的 pe_chaodi_sources）
