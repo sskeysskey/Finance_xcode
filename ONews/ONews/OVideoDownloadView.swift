@@ -56,31 +56,43 @@ struct CachedPlayTarget: Identifiable {
 }
 
 // =====================================================================
-// MARK: - 下载管理器（重写：身份校验 / 并发闸门 / 磁盘测速 / 自动重试）
+// MARK: - 下载管理器（v2：期望状态 + 自愈对账，保证恒定 3 并发）
 // =====================================================================
 final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDelegate {
     static let shared = HLSDownloadManager()
     private var downloadSession: AVAssetDownloadURLSession!
 
+    // MARK: - 对外发布状态（UI 依赖，签名保持不变）
     @Published var downloadProgress: [String: Double] = [:]
     @Published var downloadSpeed:    [String: Double] = [:]
     @Published var isPaused:         [String: Bool]   = [:]
-    /// ⭐ 新增：排队等待启动（并发闸门）
     @Published var isQueued:         [String: Bool]   = [:]
     @Published var localBookmarks:   [String: Data]   = [:]
     @Published var cacheMetadata:    [String: VideoCacheMetadata] = [:]
 
-    // ---- 任务管理 ----
-    private var activeTasks:   [String: AVAssetDownloadTask] = [:]
-    private var waitingQueue:  [String] = []
-    private var userPausedUrls: Set<String> = []
-    private var retryCounts:   [String: Int] = [:]
+    // MARK: - 调度核心
     private let maxConcurrent = 3
+    /// 已创建的 AVAssetDownloadTask（可能处于 running / suspended）
+    private var activeTasks:  [String: AVAssetDownloadTask] = [:]
+    /// ⭐ 真正在跑、占用并发名额的 URL（唯一的名额来源）
+    private var runningUrls:  Set<String> = []
+    /// 等待队列（有序、去重）
+    private var waitingQueue: [String] = []
+    /// 用户主动暂停（区别于系统/网络暂停）
+    private var userPausedUrls: Set<String> = []
 
-    // ---- 局部包（.movpkg）书签：willDownloadTo 就写入，用于测速 + 清理 ----
+    private var retryCounts:   [String: Int]    = [:]
+    private var stallRestarts: [String: Int]    = [:]
+    private var orderSeq:      [String: Int]    = [:]     // FIFO 稳定顺序
+    private var seqCounter = 0
+    private var usedPartial:   Set<String> = []           // 本次任务是否走的"续传"
+    private var taskStartProgress: [String: Double] = [:]
+    private var progressAtLastRecovery: [String: Double] = [:]
+
+    // 局部包（.movpkg）书签：willDownloadTo 就写入，用于测速 / 续传 / 清理
     private var pendingBookmarks: [String: Data] = [:]
 
-    // ---- 测速 ----
+    // MARK: - 测速
     private var speedEMA:       [String: Double] = [:]
     private var zeroSpeedTicks: [String: Int]    = [:]
     private var lastDiskBytes:  [String: Int64]  = [:]
@@ -89,6 +101,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
     private let sizeQueue = DispatchQueue(label: "ONews.HLSDiskSize", qos: .utility)
     private var isSampling = false
 
+    // MARK: - 持久化 key
     private let bookmarksKey = "ONews_SavedHLSBookmarks"
     private let metadataKey  = "ONews_VideoCacheMetadata"
     private let progressKey  = "ONews_DownloadProgress"
@@ -96,7 +109,9 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
     private let pendingKey   = "ONews_PendingHLSBookmarks"
 
     private var speedTimer: Timer?
+    private var tickCount = 0
     private var lastPersistTime = Date.distantPast
+    private var reconcileScheduled = false
 
     var backgroundCompletionHandler: (() -> Void)?
 
@@ -106,7 +121,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         downloadSession = AVAssetDownloadURLSession(
             configuration: config,
             assetDownloadDelegate: self,
-            delegateQueue: .main          // ⭐ 所有回调都在主线程
+            delegateQueue: .main          // 所有回调都在主线程
         )
         loadBookmarks()
         loadMetadata()
@@ -118,62 +133,240 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         observeAppLifecycle()
     }
 
-    // MARK: 主线程保护
+    // MARK: - 工具
     private func onMain(_ block: @escaping () -> Void) {
         if Thread.isMainThread { block() } else { DispatchQueue.main.async(execute: block) }
+    }
+    private func nextSeq() -> Int { seqCounter += 1; return seqCounter }
+
+    // =================================================================
+    // MARK: - ⭐⭐ 核心：对账 + 补位（幂等，可随便调）
+    // =================================================================
+    /// 合并同一 runloop 内的多次请求，避免批量操作时反复启停
+    private func scheduleReconcile() {
+        guard !reconcileScheduled else { return }
+        reconcileScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.reconcileScheduled = false
+            self.reconcile()
+        }
+    }
+
+    /// 唯一的调度真理：
+    /// 「应该下载」= downloadProgress 有值 && 未完成 && isPaused != true
+    /// 其中最多 maxConcurrent 个处于 running，其余全部进 waitingQueue
+    private func reconcile() {
+        // ---------- 1. 清理无效 / 已死任务 ----------
+        for url in Array(activeTasks.keys) {
+            guard let task = activeTasks[url] else { continue }
+            let stillNeeded = (downloadProgress[url] != nil) && (localBookmarks[url] == nil)
+            if !stillNeeded {
+                activeTasks.removeValue(forKey: url)   // 先摘身份，再 cancel（旧回调即判陈旧）
+                runningUrls.remove(url)
+                task.cancel()
+                continue
+            }
+            if task.state == .completed || task.state == .canceling {
+                activeTasks.removeValue(forKey: url)
+                runningUrls.remove(url)
+            }
+        }
+
+        // ---------- 2. 标记为暂停的，确保真的挂起并让出名额 ----------
+        for url in Array(activeTasks.keys) where isPaused[url] == true {
+            if let t = activeTasks[url], t.state == .running { t.suspend() }
+            runningUrls.remove(url)
+            if isQueued[url] == true { isQueued[url] = false }
+            if (downloadSpeed[url] ?? 0) != 0 { downloadSpeed[url] = 0 }
+        }
+
+        // ---------- 3. runningUrls 只保留"真的在跑"的 ----------
+        runningUrls = runningUrls.filter { url in
+            guard let t = activeTasks[url] else { return false }
+            return t.state == .running && isPaused[url] != true && localBookmarks[url] == nil
+        }
+        // 反向收编：任务在跑但没登记（例如后台回来、冷启收编）
+        for (url, t) in activeTasks
+        where t.state == .running && isPaused[url] != true && localBookmarks[url] == nil {
+            runningUrls.insert(url)
+        }
+
+        // ---------- 4. 重建等待队列（去重 + 剔除非法 + 补入遗漏） ----------
+        let desired = Set(downloadProgress.keys.filter {
+            localBookmarks[$0] == nil && isPaused[$0] != true
+        })
+        var seen = Set<String>()
+        waitingQueue = waitingQueue.filter { url in
+            guard desired.contains(url), !runningUrls.contains(url) else { return false }
+            return seen.insert(url).inserted
+        }
+        let missing = desired.subtracting(runningUrls).subtracting(waitingQueue)
+        if !missing.isEmpty {
+            waitingQueue.append(contentsOf: missing.sorted {
+                (orderSeq[$0] ?? Int.max, $0) < (orderSeq[$1] ?? Int.max, $1)
+            })
+        }
+
+        // ---------- 5. ⭐ 补位：始终把并发填满 ----------
+        var safety = 0
+        while runningUrls.count < maxConcurrent, !waitingQueue.isEmpty, safety < 128 {
+            safety += 1
+            let next = waitingQueue.removeFirst()
+            startOrResume(next)
+        }
+
+        // ---------- 6. 同步 UI 标记（只在值变化时写，避免无谓刷新） ----------
+        let queuedSet = Set(waitingQueue)
+        for url in downloadProgress.keys where localBookmarks[url] == nil {
+            let q = queuedSet.contains(url)
+            if (isQueued[url] ?? false) != q { isQueued[url] = q }
+            if runningUrls.contains(url), isPaused[url] == true { isPaused[url] = false }
+            if !runningUrls.contains(url), (downloadSpeed[url] ?? 0) != 0 { downloadSpeed[url] = 0 }
+        }
+        for url in Array(isQueued.keys)
+        where downloadProgress[url] == nil || localBookmarks[url] != nil {
+            isQueued.removeValue(forKey: url)
+        }
+
+        updateIdleTimer()
+    }
+
+    /// 启动或恢复一个任务（占用一个名额）
+    private func startOrResume(_ url: String) {
+        guard downloadProgress[url] != nil,
+              localBookmarks[url] == nil,
+              isPaused[url] != true else {
+            isQueued[url] = false
+            return
+        }
+        if let task = activeTasks[url] {
+            switch task.state {
+            case .suspended:                       // ⭐ 秒恢复，不用重下
+                task.resume()
+                runningUrls.insert(url)
+                isPaused[url] = false
+                isQueued[url] = false
+                resetSampling(url, bytes: task.countOfBytesReceived)
+                return
+            case .running:
+                runningUrls.insert(url)
+                isQueued[url] = false
+                return
+            default:
+                activeTasks.removeValue(forKey: url)
+                task.cancel()
+            }
+        }
+        beginTask(for: url)
+    }
+
+    private func beginTask(for urlString: String) {
+        guard let remote = URL(string: urlString) else {
+            isPaused[urlString] = true; isQueued[urlString] = false; return
+        }
+        guard downloadProgress[urlString] != nil, localBookmarks[urlString] == nil else { return }
+
+        let title = cacheMetadata[urlString]?.title ?? urlString
+        var task: AVAssetDownloadTask?
+        var resumedFromPartial = false
+
+        // ⭐ 优先用本地局部包续传（Apple 官方的 HLS 断点续传姿势）
+        if pendingBookmarks[urlString] != nil {
+            if let partial = getPendingLocalURL(for: urlString),
+               FileManager.default.fileExists(atPath: partial.path) {
+                task = downloadSession.makeAssetDownloadTask(
+                    asset: AVURLAsset(url: partial),
+                    assetTitle: title, assetArtworkData: nil, options: nil)
+                resumedFromPartial = (task != nil)
+            }
+            if task == nil {                       // 局部包不可用 → 清掉，从头来
+                purgeStalePartial(for: urlString)
+                downloadProgress[urlString] = 0
+            }
+        }
+        if task == nil {
+            if (downloadProgress[urlString] ?? 0) > 0, pendingBookmarks[urlString] == nil {
+                downloadProgress[urlString] = 0    // 无局部包只能重下，进度诚实归零
+            }
+            task = downloadSession.makeAssetDownloadTask(
+                asset: AVURLAsset(url: remote),
+                assetTitle: title, assetArtworkData: nil, options: nil)
+        }
+
+        guard let t = task else {                  // 创建失败：让出名额 + 稍后重试
+            isPaused[urlString] = true
+            isQueued[urlString] = false
+            runningUrls.remove(urlString)
+            scheduleAutoRetry(urlString, force: true)
+            return
+        }
+
+        t.taskDescription = urlString
+        activeTasks[urlString] = t
+        runningUrls.insert(urlString)
+        isPaused[urlString] = false
+        isQueued[urlString] = false
+        if resumedFromPartial { usedPartial.insert(urlString) } else { usedPartial.remove(urlString) }
+        taskStartProgress[urlString] = downloadProgress[urlString] ?? 0
+        resetSampling(urlString, bytes: 0)
+        t.resume()
+        savePersistedProgressIfNeeded()
+    }
+
+    private func resetSampling(_ url: String, bytes: Int64) {
+        lastSampleTime[url] = Date()
+        lastTaskBytes[url]  = bytes
+        lastDiskBytes.removeValue(forKey: url)
+        speedEMA[url]       = 0
+        zeroSpeedTicks[url] = 0
+        downloadSpeed[url]  = 0
     }
 
     // MARK: - 冷启动恢复
     private func handleColdLaunchRecovery() {
-        for urlString in downloadProgress.keys where localBookmarks[urlString] == nil {
-            isPaused[urlString]      = true
-            isQueued[urlString]      = false
-            downloadSpeed[urlString] = 0
+        for url in downloadProgress.keys.sorted() where localBookmarks[url] == nil {
+            if orderSeq[url] == nil { orderSeq[url] = nextSeq() }
+            isPaused[url]      = true          // 冷启统一暂停，等用户"一键继续"
+            isQueued[url]      = false
+            downloadSpeed[url] = 0
         }
         savePersistedProgress()
 
         downloadSession.getAllTasks { [weak self] tasks in
             guard let self = self else { return }
             self.onMain {
-                var aliveUrls = Set<String>()
                 for task in tasks {
-                    guard let dlTask = task as? AVAssetDownloadTask,
-                          let urlString = dlTask.taskDescription else {
-                        task.cancel(); continue
+                    guard let dl = task as? AVAssetDownloadTask,
+                          let url = dl.taskDescription else { task.cancel(); continue }
+                    if dl.state == .completed || dl.state == .canceling { continue }
+                    // 已完成 / 已被删除的残留任务 → 干掉
+                    if self.localBookmarks[url] != nil || self.downloadProgress[url] == nil {
+                        dl.cancel(); continue
                     }
-                    if self.downloadProgress[urlString] == nil &&
-                       self.localBookmarks[urlString]   == nil {
-                        dlTask.cancel(); continue
+                    if self.activeTasks[url] == nil {
+                        self.activeTasks[url] = dl          // 收编，后续可秒恢复
+                    } else if self.activeTasks[url] !== dl {
+                        dl.cancel()                         // 同 URL 幽灵任务
                     }
-                    if dlTask.state == .completed || dlTask.state == .canceling { continue }
-
-                    self.activeTasks[urlString] = dlTask
-                    aliveUrls.insert(urlString)
-                    if dlTask.state == .running { dlTask.suspend() }
+                    if dl.state == .running { dl.suspend() }
                 }
-
-                // 副防线：有局部包但 session 已无对应任务 → 清磁盘 + 进度归零
-                let orphanUrls = self.pendingBookmarks.keys.filter { !aliveUrls.contains($0) }
-                for urlString in orphanUrls {
-                    if self.localBookmarks[urlString] != nil { continue }
-                    self.purgeStalePartial(for: urlString)
-                    if self.downloadProgress[urlString] != nil {
-                        self.downloadProgress[urlString] = 0
-                    }
-                }
-                self.savePersistedProgress()
+                self.reconcile()
             }
         }
     }
 
-    // MARK: - 启动下载
+    // =================================================================
+    // MARK: - 对外 API
+    // =================================================================
     func startDownload(urlString: String, title: String, coverImage: String? = nil,
                        seriesTitle: String? = nil, episodeName: String? = nil,
                        episodeKey: String? = nil, sourceURL: String? = nil) {
         onMain {
             guard self.localBookmarks[urlString] == nil else { return }   // 已完成
             self.userPausedUrls.remove(urlString)
-            self.retryCounts[urlString] = 0
+            self.retryCounts[urlString]   = 0
+            self.stallRestarts[urlString] = 0
 
             if self.cacheMetadata[urlString] == nil {
                 self.cacheMetadata[urlString] = VideoCacheMetadata(
@@ -183,173 +376,85 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                 )
                 self.saveMetadata()
             }
-            if self.downloadProgress[urlString] == nil {
-                self.downloadProgress[urlString] = 0.0
-            }
+            if self.downloadProgress[urlString] == nil { self.downloadProgress[urlString] = 0.0 }
+            if self.orderSeq[urlString] == nil { self.orderSeq[urlString] = self.nextSeq() }
+
+            self.isPaused[urlString]      = false
             self.downloadSpeed[urlString] = 0
-            self.isPaused[urlString] = false
-
-            if self.activeTasks[urlString] != nil {   // 已经在跑
-                self.savePersistedProgress(); return
+            if !self.runningUrls.contains(urlString), !self.waitingQueue.contains(urlString) {
+                self.waitingQueue.append(urlString)
+                self.isQueued[urlString] = true
             }
-            self.enqueueOrStart(urlString)
             self.savePersistedProgress()
+            self.scheduleReconcile()      // ⭐ 由 reconcile 决定立刻跑还是排队
         }
     }
 
-    // MARK: - 并发闸门
-    private var runningCount: Int {
-        activeTasks.filter { isPaused[$0.key] != true }.count
-    }
-
-    private func enqueueOrStart(_ urlString: String) {
-        if runningCount >= maxConcurrent {
-            if !waitingQueue.contains(urlString) { waitingQueue.append(urlString) }
-            isQueued[urlString] = true
-            isPaused[urlString] = false
-            return
-        }
-        waitingQueue.removeAll { $0 == urlString }
-        isQueued[urlString] = false
-        beginTask(for: urlString)
-    }
-
-    private func beginTask(for urlString: String) {
-        guard let remote = URL(string: urlString) else { return }
-        let title = cacheMetadata[urlString]?.title ?? urlString
-        let asset = AVURLAsset(url: remote)
-        guard let task = downloadSession.makeAssetDownloadTask(
-            asset: asset, assetTitle: title, assetArtworkData: nil, options: nil
-        ) else {
-            // 创建失败 → 排队稍后重试
-            isPaused[urlString] = true
-            isQueued[urlString] = false
-            scheduleAutoRetry(urlString, force: true)
-            return
-        }
-        task.taskDescription = urlString
-        activeTasks[urlString] = task
-        isPaused[urlString] = false
-        isQueued[urlString] = false
-        lastSampleTime[urlString] = Date()
-        lastTaskBytes[urlString]  = 0
-        lastDiskBytes.removeValue(forKey: urlString)
-        speedEMA[urlString] = 0
-        task.resume()
-        savePersistedProgress()
-    }
-
-    private func pumpQueue() {
-        while runningCount < maxConcurrent, !waitingQueue.isEmpty {
-            let next = waitingQueue.removeFirst()
-            guard downloadProgress[next] != nil,
-                  localBookmarks[next] == nil,
-                  activeTasks[next] == nil,
-                  !userPausedUrls.contains(next) else {
-                isQueued[next] = false
-                continue
-            }
-            beginTask(for: next)
-        }
-    }
-
-    // MARK: - 暂停 / 继续
     func pauseDownload(urlString: String, byUser: Bool = true) {
         onMain {
             if byUser { self.userPausedUrls.insert(urlString) }
-            self.waitingQueue.removeAll { $0 == urlString }
+            self.isPaused[urlString] = true
             self.isQueued[urlString] = false
-            if let task = self.activeTasks[urlString] { task.suspend() }
-            self.isPaused[urlString]      = true
+            self.waitingQueue.removeAll { $0 == urlString }
+            self.runningUrls.remove(urlString)                 // ⭐ 立刻让出名额
+            if let t = self.activeTasks[urlString], t.state == .running { t.suspend() }
+
             self.downloadSpeed[urlString] = 0
             self.speedEMA[urlString]      = 0
+            self.zeroSpeedTicks[urlString] = 0
             self.lastDiskBytes.removeValue(forKey: urlString)
             self.lastTaskBytes.removeValue(forKey: urlString)
             self.lastSampleTime.removeValue(forKey: urlString)
+
             self.savePersistedProgress()
-            self.pumpQueue()
+            self.scheduleReconcile()                           // ⭐ 马上补位
         }
     }
 
     func resumeDownload(urlString: String) {
         onMain {
+            guard self.localBookmarks[urlString] == nil,
+                  self.downloadProgress[urlString] != nil else { return }
             self.userPausedUrls.remove(urlString)
-            self.retryCounts[urlString] = 0
-
-            if let task = self.activeTasks[urlString],
-               task.state != .completed, task.state != .canceling {
-                if self.runningCount >= self.maxConcurrent {
-                    if !self.waitingQueue.contains(urlString) { self.waitingQueue.append(urlString) }
-                    self.isQueued[urlString] = true
-                    self.isPaused[urlString] = false
-                    self.savePersistedProgress()
-                    return
-                }
-                task.resume()
-                self.isPaused[urlString]       = false
-                self.isQueued[urlString]       = false
-                self.lastSampleTime[urlString] = Date()
-                self.lastTaskBytes[urlString]  = task.countOfBytesReceived
-                self.lastDiskBytes.removeValue(forKey: urlString)
-                self.savePersistedProgress()
-            } else {
-                self.recreateAndResume(urlString: urlString)
+            self.retryCounts[urlString]   = 0
+            self.stallRestarts[urlString] = 0
+            self.isPaused[urlString] = false
+            if self.orderSeq[urlString] == nil { self.orderSeq[urlString] = self.nextSeq() }
+            // ⭐ 只表达"我想跑"，跑不跑、什么时候跑由 reconcile 统一决定
+            if !self.runningUrls.contains(urlString), !self.waitingQueue.contains(urlString) {
+                self.waitingQueue.append(urlString)
+                self.isQueued[urlString] = true
             }
+            self.savePersistedProgress()
+            self.scheduleReconcile()
         }
     }
 
-    private func recreateAndResume(urlString: String) {
-        // 先摘掉旧任务身份，后续旧回调一律判为「陈旧」
-        if let old = activeTasks.removeValue(forKey: urlString) { old.cancel() }
-        purgeStalePartial(for: urlString)
-
-        downloadProgress[urlString] = 0
-        lastDiskBytes.removeValue(forKey: urlString)
-        lastTaskBytes.removeValue(forKey: urlString)
-        speedEMA[urlString] = 0
-        zeroSpeedTicks[urlString] = 0
-        savePersistedProgress()
-
-        enqueueOrStart(urlString)
-        savePersistedProgress()
-    }
-
-    /// 把已无法续传的本地局部包从磁盘干净抹掉
-    private func purgeStalePartial(for urlString: String) {
-        if let bookmark = pendingBookmarks[urlString] {
-            var isStale = false
-            if let oldPartialURL = try? URL(resolvingBookmarkData: bookmark,
-                                            bookmarkDataIsStale: &isStale) {
-                do { try FileManager.default.removeItem(at: oldPartialURL) }
-                catch {
-                    let ns = error as NSError
-                    if !(ns.domain == NSCocoaErrorDomain && ns.code == NSFileNoSuchFileError) {
-                        print("⚠️ 清理旧局部包失败: \(error)")
-                    }
-                }
-            }
-        }
-        pendingBookmarks.removeValue(forKey: urlString)
-        savePendingBookmarks()
-    }
-
-    // MARK: - 取消 / 删除
     func cancelDownload(urlString: String) { deleteDownload(urlString: urlString) }
 
     func deleteDownload(urlString: String) {
         onMain {
             self.userPausedUrls.remove(urlString)
             self.waitingQueue.removeAll { $0 == urlString }
+            self.runningUrls.remove(urlString)
             self.retryCounts.removeValue(forKey: urlString)
+            self.stallRestarts.removeValue(forKey: urlString)
+            self.orderSeq.removeValue(forKey: urlString)
+            self.usedPartial.remove(urlString)
+            self.taskStartProgress.removeValue(forKey: urlString)
+            self.progressAtLastRecovery.removeValue(forKey: urlString)
 
-            // ⭐ 关键：同步摘除任务身份（原来的异步移除正是「取消后重下就乱套」的竞态窗口）
+            // 同步摘除任务身份（异步移除会造成"取消后重下就乱套"的竞态）
             let task = self.activeTasks.removeValue(forKey: urlString)
             task?.cancel()
 
-            // 保险：session 中同名任务全部取消
+            // 保险：清理 session 中同名幽灵任务；⭐ 但绝不误杀之后新建的任务
             self.downloadSession.getAllTasks { tasks in
-                for t in tasks {
-                    if let dl = t as? AVAssetDownloadTask, dl.taskDescription == urlString {
+                DispatchQueue.main.async {
+                    for t in tasks {
+                        guard let dl = t as? AVAssetDownloadTask,
+                              dl.taskDescription == urlString else { continue }
+                        if let cur = self.activeTasks[urlString], cur === dl { continue }
                         dl.cancel()
                     }
                 }
@@ -379,8 +484,40 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             self.savePendingBookmarks()
             self.saveMetadata()
             self.savePersistedProgress()
-            self.pumpQueue()
+            self.scheduleReconcile()      // ⭐ 删完立刻补位
         }
+    }
+
+    /// 把已无法续传的本地局部包从磁盘干净抹掉
+    private func purgeStalePartial(for urlString: String) {
+        if let bookmark = pendingBookmarks[urlString] {
+            var isStale = false
+            if let oldPartialURL = try? URL(resolvingBookmarkData: bookmark,
+                                            bookmarkDataIsStale: &isStale) {
+                do { try FileManager.default.removeItem(at: oldPartialURL) }
+                catch {
+                    let ns = error as NSError
+                    if !(ns.domain == NSCocoaErrorDomain && ns.code == NSFileNoSuchFileError) {
+                        print("⚠️ 清理旧局部包失败: \(error)")
+                    }
+                }
+            }
+        }
+        pendingBookmarks.removeValue(forKey: urlString)
+        savePendingBookmarks()
+    }
+
+    private func recreateAndResume(urlString: String) {
+        if let old = activeTasks.removeValue(forKey: urlString) { old.cancel() }
+        runningUrls.remove(urlString)
+        userPausedUrls.remove(urlString)
+        isPaused[urlString] = false
+        if orderSeq[urlString] == nil { orderSeq[urlString] = nextSeq() }
+        waitingQueue.removeAll { $0 == urlString }
+        waitingQueue.insert(urlString, at: 0)     // 重试优先补位
+        isQueued[urlString] = true
+        savePersistedProgress()
+        scheduleReconcile()
     }
 
     // MARK: - 本地路径
@@ -389,38 +526,76 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         var isStale = false
         return try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &isStale)
     }
-
     func getPendingLocalURL(for urlString: String) -> URL? {
         guard let bookmark = pendingBookmarks[urlString] else { return nil }
         var isStale = false
         return try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &isStale)
     }
-
     func displayedProgress(for urlString: String) -> Double { downloadProgress[urlString] ?? 0 }
     func displaySpeed(for urlString: String) -> Double { downloadSpeed[urlString] ?? 0 }
 
     // =================================================================
-    // MARK: - ⭐ 测速：以磁盘真实写入量为准（HLS 父任务字节数不可靠）
+    // MARK: - 定时器：测速 + 看门狗
     // =================================================================
     private func startSpeedTimer() {
         speedTimer?.invalidate()
-        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.sampleSpeed()
-        }
-        // ⭐ common 模式：列表滚动时也继续采样，避免速度「时有时无」
-        RunLoop.main.add(t, forMode: .common)
+        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.onTick() }
+        RunLoop.main.add(t, forMode: .common)    // 列表滚动时也继续
         speedTimer = t
     }
 
+    private func onTick() {
+        tickCount &+= 1
+        sampleSpeed()
+        if tickCount % 2  == 0 { reconcile() }           // ⭐ 每 2 秒自愈补位
+        if tickCount % 15 == 0 { auditSessionTasks() }   // ⭐ 每 15 秒与 session 对账
+    }
+
+    /// 和 URLSession 的真身对账：收编失联任务、清除幽灵任务、释放虚占名额
+    private func auditSessionTasks() {
+        guard !activeTasks.isEmpty || !waitingQueue.isEmpty else { return }
+        downloadSession.getAllTasks { [weak self] tasks in
+            guard let self = self else { return }
+            self.onMain {
+                var live = Set<String>()
+                for t in tasks {
+                    guard let dl = t as? AVAssetDownloadTask,
+                          let u = dl.taskDescription else { continue }
+                    if dl.state == .completed || dl.state == .canceling { continue }
+                    if let cur = self.activeTasks[u] {
+                        if cur === dl { live.insert(u) } else { dl.cancel() }
+                    } else if self.downloadProgress[u] != nil && self.localBookmarks[u] == nil {
+                        self.activeTasks[u] = dl        // 失联任务收编
+                        live.insert(u)
+                    } else {
+                        dl.cancel()
+                    }
+                }
+                // 我们以为活着、session 里其实已经没有的 → 清掉，名额还回来
+                for u in Array(self.activeTasks.keys) where !live.contains(u) {
+                    self.activeTasks.removeValue(forKey: u)
+                    self.runningUrls.remove(u)
+                    if self.localBookmarks[u] == nil, self.downloadProgress[u] != nil,
+                       self.isPaused[u] != true, !self.waitingQueue.contains(u) {
+                        self.waitingQueue.append(u)     // 重新排队，等待补位
+                    }
+                }
+                self.reconcile()
+            }
+        }
+    }
+
+    // =================================================================
+    // MARK: - 测速（以磁盘真实写入量为准）
+    // =================================================================
     private func sampleSpeed() {
         guard !isSampling else { return }
-
         var taskBytes: [String: Int64] = [:]
         var diskPaths: [String: URL]   = [:]
 
         for url in downloadProgress.keys {
             guard localBookmarks[url] == nil else { continue }
-            if isPaused[url] == true || isQueued[url] == true {
+            guard runningUrls.contains(url) else {
                 if (downloadSpeed[url] ?? 0) != 0 { downloadSpeed[url] = 0 }
                 speedEMA[url] = 0
                 continue
@@ -448,8 +623,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                                    now: Date) {
         let keys = Set(diskSizes.keys).union(taskBytes.keys)
         for u in keys {
-            guard isPaused[u] != true, isQueued[u] != true,
-                  localBookmarks[u] == nil else { continue }
+            guard runningUrls.contains(u), localBookmarks[u] == nil else { continue }
 
             let lastTime = lastSampleTime[u]
             var inst: Double? = nil
@@ -469,10 +643,8 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                 lastTaskBytes[u] = b
             }
             lastSampleTime[u] = now
-
             guard let v = inst else { continue }
 
-            // EMA 平滑，数值不再乱跳
             let prevEMA = speedEMA[u] ?? 0
             let ema = prevEMA <= 0 ? v : (prevEMA * 0.65 + v * 0.35)
             speedEMA[u] = ema
@@ -480,13 +652,36 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             if v <= 0 { zeroSpeedTicks[u] = (zeroSpeedTicks[u] ?? 0) + 1 }
             else       { zeroSpeedTicks[u] = 0 }
 
-            // 连续 6 秒没有新增字节才判定为「停滞」，避免闪断
-            if (zeroSpeedTicks[u] ?? 0) >= 6 {
+            let stalledTicks = zeroSpeedTicks[u] ?? 0
+            if stalledTicks >= 6 {
                 speedEMA[u] = 0
-                downloadSpeed[u] = 0
+                if (downloadSpeed[u] ?? 0) != 0 { downloadSpeed[u] = 0 }
             } else {
                 downloadSpeed[u] = ema
             }
+            // ⭐ 连续 90 秒没有任何新增字节 → 判定任务假死，重启并让出名额
+            if stalledTicks >= 90 { zeroSpeedTicks[u] = 0; handleStalled(u) }
+        }
+    }
+
+    private func handleStalled(_ url: String) {
+        guard localBookmarks[url] == nil, isPaused[url] != true else { return }
+        let n = stallRestarts[url] ?? 0
+        guard n < 3 else {
+            print("⛔️ 反复停滞，暂停该任务: \(url)")
+            pauseDownload(urlString: url, byUser: false)
+            return
+        }
+        stallRestarts[url] = n + 1
+        print("⏱ 下载停滞，重启任务(第 \(n + 1) 次): \(url)")
+        if let t = activeTasks.removeValue(forKey: url) { t.cancel() }
+        runningUrls.remove(url)
+        waitingQueue.removeAll { $0 == url }
+        waitingQueue.insert(url, at: 0)
+        isQueued[url] = true
+        reconcile()   // 先把名额让给别人，1.5s 后本任务再由 reconcile 拉起
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.reconcile()
         }
     }
 
@@ -521,18 +716,17 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
     }
 
     // =================================================================
-    // MARK: - AVAssetDownloadDelegate（全部带「任务身份校验」）
+    // MARK: - AVAssetDownloadDelegate（全部带任务身份校验）
     // =================================================================
     private func isCurrent(_ task: URLSessionTask, _ urlString: String) -> Bool {
         guard let cur = activeTasks[urlString] else { return false }
         return cur === task
     }
 
-    /// ⭐ 下载一开始就拿到最终落盘位置：既用于测速，也用于清理僵尸局部包
     func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask,
                     willDownloadTo location: URL) {
-        guard let urlString = assetDownloadTask.taskDescription else { return }
-        guard isCurrent(assetDownloadTask, urlString) else { return }
+        guard let urlString = assetDownloadTask.taskDescription,
+              isCurrent(assetDownloadTask, urlString) else { return }
         if let bm = try? location.bookmarkData(options: .minimalBookmark,
                                                includingResourceValuesForKeys: nil,
                                                relativeTo: nil) {
@@ -547,8 +741,8 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                     didLoad timeRange: CMTimeRange,
                     totalTimeRangesLoaded loadedTimeRanges: [NSValue],
                     timeRangeExpectedToLoad: CMTimeRange) {
-        guard let urlString = assetDownloadTask.taskDescription else { return }
-        guard isCurrent(assetDownloadTask, urlString) else { return }   // ⭐ 陈旧回调直接丢弃
+        guard let urlString = assetDownloadTask.taskDescription,
+              isCurrent(assetDownloadTask, urlString) else { return }   // 陈旧回调丢弃
 
         let expected = timeRangeExpectedToLoad.duration.seconds
         guard expected.isFinite, expected > 0 else { return }
@@ -556,8 +750,22 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         for value in loadedTimeRanges {
             percent += value.timeRangeValue.duration.seconds / expected
         }
-        let cur = downloadProgress[urlString] ?? 0
-        downloadProgress[urlString] = min(1.0, max(cur, percent))
+        percent = min(1.0, max(0.0, percent))
+        downloadProgress[urlString] = percent
+
+        // 有实质进展 → 重置重试/停滞计数（避免无限重试，也避免误判假死）
+        if percent > (progressAtLastRecovery[urlString] ?? 0) + 0.05 {
+            progressAtLastRecovery[urlString] = percent
+            retryCounts[urlString]   = 0
+            stallRestarts[urlString] = 0
+        }
+        // 自愈：任务在真跑却没登记名额
+        if assetDownloadTask.state == .running, isPaused[urlString] != true,
+           !runningUrls.contains(urlString) {
+            runningUrls.insert(urlString)
+            waitingQueue.removeAll { $0 == urlString }
+            isQueued[urlString] = false
+        }
         savePersistedProgressIfNeeded()
     }
 
@@ -566,7 +774,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         guard let urlString = assetDownloadTask.taskDescription else {
             try? FileManager.default.removeItem(at: location); return
         }
-        // ⭐ 陈旧任务（已取消/已被新任务替换）：只抹残留，绝不动当前状态
+        // 陈旧任务：只抹残留，绝不动当前状态
         guard isCurrent(assetDownloadTask, urlString) else {
             let curPending = getPendingLocalURL(for: urlString)?.standardizedFileURL
             if curPending != location.standardizedFileURL {
@@ -583,15 +791,13 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let urlString = task.taskDescription else { return }
+        guard let urlString = task.taskDescription else { scheduleReconcile(); return }
 
-        // ⭐ 陈旧任务的死亡回调：什么都不要动，否则会污染刚重建的新任务
-        guard isCurrent(task, urlString) else {
-            pumpQueue()
-            return
-        }
+        // 陈旧任务的死亡回调：不动状态，但要触发补位
+        guard isCurrent(task, urlString) else { scheduleReconcile(); return }
 
         activeTasks.removeValue(forKey: urlString)
+        runningUrls.remove(urlString)                       // ⭐ 名额立刻归还
         lastTaskBytes.removeValue(forKey: urlString)
         lastSampleTime.removeValue(forKey: urlString)
         downloadSpeed[urlString] = 0
@@ -605,7 +811,6 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                 localBookmarks[urlString] = bookmark
                 saveBookmarks()
             }
-
             let storedUserId = UserDefaults.standard.string(forKey: "current_user_id")
             let (finalUserId, finalUserType): (String, String) = {
                 if let uid = storedUserId, !uid.isEmpty {
@@ -627,23 +832,31 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             isPaused.removeValue(forKey: urlString)
             isQueued.removeValue(forKey: urlString)
             retryCounts.removeValue(forKey: urlString)
+            stallRestarts.removeValue(forKey: urlString)
+            orderSeq.removeValue(forKey: urlString)
+            waitingQueue.removeAll { $0 == urlString }
             lastDiskBytes.removeValue(forKey: urlString)
+            progressAtLastRecovery.removeValue(forKey: urlString)
         } else {
-            // 中断：保留进度，标记暂停
-            isPaused[urlString] = true
+            // 续传方案本身失效（毫无进展）→ 丢弃局部包，下次全新开始
+            let advanced = progress - (taskStartProgress[urlString] ?? 0)
+            if usedPartial.contains(urlString), advanced < 0.001, error != nil {
+                purgeStalePartial(for: urlString)
+                downloadProgress[urlString] = 0
+            }
+            isPaused[urlString] = true      // 让出名额，UI 显示"已暂停"
             isQueued[urlString] = false
             savePendingBookmarks()
             if let nsErr = error as NSError? {
                 print("⚠️ 下载中断 [\(urlString)]: domain=\(nsErr.domain) code=\(nsErr.code) progress=\(progress)")
             }
-            // ⭐ 批量下载「启动阶段就挂掉」的自动重试（progress 极低 且 非用户暂停）
-            if error != nil, !userPausedUrls.contains(urlString), progress < 0.02 {
-                scheduleAutoRetry(urlString)
-            }
+            if !userPausedUrls.contains(urlString) { scheduleAutoRetry(urlString) }
         }
+        usedPartial.remove(urlString)
+        taskStartProgress.removeValue(forKey: urlString)
 
         savePersistedProgress()
-        pumpQueue()
+        scheduleReconcile()                 // ⭐ 有人完成/失败 → 立刻补位
     }
 
     private func scheduleAutoRetry(_ urlString: String, force: Bool = false) {
@@ -655,11 +868,10 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             guard let self = self else { return }
             guard self.localBookmarks[urlString] == nil,
                   self.downloadProgress[urlString] != nil,
-                  self.activeTasks[urlString] == nil,
-                  !self.userPausedUrls.contains(urlString) else { return }
-            if !force, self.isPaused[urlString] != true { return }
+                  !self.userPausedUrls.contains(urlString),
+                  !self.runningUrls.contains(urlString) else { return }
+            if !force, self.isPaused[urlString] != true { self.scheduleReconcile(); return }
             print("🔁 自动重试下载: \(urlString) (第 \(retry + 1) 次)")
-            self.userPausedUrls.remove(urlString)
             self.recreateAndResume(urlString: urlString)
         }
     }
@@ -718,19 +930,21 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
     private func observeNetwork() {
         NetworkMonitor.shared.onSwitchedToCellular = { [weak self] in
             guard let self = self else { return }
-            let urls = Array(self.activeTasks.keys) + self.waitingQueue
-            for url in Set(urls) { self.pauseDownload(urlString: url, byUser: false) }
+            let urls = Set(self.runningUrls)
+                .union(self.waitingQueue)
+                .union(self.activeTasks.keys)
+            for url in urls { self.pauseDownload(urlString: url, byUser: false) }
             print("⚠️ 检测到 Wi-Fi → 蜂窝，已暂停所有下载")
         }
     }
 
-    // MARK: 前台下载防灭屏
     private func updateIdleTimer() {
-        let hasActiveDownload = downloadProgress.keys.contains { url in
-            localBookmarks[url] == nil && (isPaused[url] != true)
-        }
+        let hasActive = !runningUrls.isEmpty
         let isForeground = UIApplication.shared.applicationState != .background
-        UIApplication.shared.isIdleTimerDisabled = hasActiveDownload && isForeground
+        let shouldDisable = hasActive && isForeground
+        if UIApplication.shared.isIdleTimerDisabled != shouldDisable {
+            UIApplication.shared.isIdleTimerDisabled = shouldDisable
+        }
     }
 
     private func observeAppLifecycle() {
@@ -744,26 +958,38 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 
         NotificationCenter.default.addObserver(
             forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
-        ) { [weak self] _ in self?.updateIdleTimer() }
+        ) { [weak self] _ in
+            self?.updateIdleTimer()
+            self?.auditSessionTasks()       // ⭐ 回前台先和 session 对一次账
+        }
 
         NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
-        ) { [weak self] _ in self?.updateIdleTimer() }
+        ) { [weak self] _ in
+            self?.updateIdleTimer()
+            self?.scheduleReconcile()
+        }
     }
 }
 
 extension HLSDownloadManager {
     func activeTasksContains(_ url: String) -> Bool { downloadProgress[url] != nil }
 
-    /// 一键继续所有处于暂停状态的下载
+    /// 一键继续所有处于暂停状态的下载（按加入顺序，reconcile 只会放行 3 个）
     func resumeAllPausedDownloads() {
         let paused = downloadProgress.keys
             .filter { isPaused[$0] == true && localBookmarks[$0] == nil }
-            .sorted()
+            .sorted { (orderSeq[$0] ?? Int.max, $0) < (orderSeq[$1] ?? Int.max, $1) }
         for url in paused { resumeDownload(urlString: url) }
     }
 
-    /// ⭐ UI 分组用：同一部剧的下载归到一起（纯字符串派生，不改数据结构）
+    /// 一键全部暂停（可选，UI 想用就能用）
+    func pauseAllDownloads() {
+        let urls = downloadProgress.keys.filter { localBookmarks[$0] == nil && isPaused[$0] != true }
+        for url in urls { pauseDownload(urlString: url, byUser: true) }
+    }
+
+    /// UI 分组用：同一部剧的下载归到一起
     func downloadGroupKey(for url: String) -> String {
         if let meta = cacheMetadata[url] {
             if let s = meta.seriesTitle, !s.isEmpty { return "s:" + s }
