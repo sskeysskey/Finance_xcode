@@ -99,6 +99,10 @@ struct VideoPlayerView: UIViewControllerRepresentable {
     @Binding var isBuffering: Bool
     @Binding var hasStartedPlaying: Bool              // ⭐ 是否已真正出第一帧
     var onPlaybackFailed: ((String) -> Void)? = nil   // ⭐ 播放失败兜底，避免无限转圈
+    /// ⭐⭐ 新增：把 AVKit 全屏状态回传给 SwiftUI 层
+    /// 全屏是 AVPlayerViewController 自己 present 出来的独立 presentation，
+    /// 此时上层若再 present sheet 会失败并把整个界面卡死（横屏拧不回来）。
+    var onFullScreenChanged: ((Bool) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -180,7 +184,15 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         private var didScrubWhileBuffering = false   // 缓冲期间发生过 seek（用户拖进度条）
         private var controlsResetScheduled = false
 
-        var isFullScreen = false
+        var isFullScreen = false {
+            didSet {
+                guard oldValue != isFullScreen else { return }
+                let v = isFullScreen
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.onFullScreenChanged?(v)
+                }
+            }
+        }
         var isPiP = false
 
         init(_ parent: VideoPlayerView) { self.parent = parent }
@@ -671,12 +683,12 @@ struct VideoPlayerView: UIViewControllerRepresentable {
         }
 
         @objc private func handleEnterForeground() {
+            guard !isPiP else { return }
+            guard let player = player, let controller = controller else { return }
+
             if !isFullScreen {
                 applyOrientation(fullScreen: false)
             }
-
-            guard !isPiP else { return }
-            guard let player = player, let controller = controller else { return }
 
             let item = player.currentItem
             let failed = (item == nil)
@@ -689,8 +701,14 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                 return
             }
 
-            controller.player = nil
-            controller.player = player
+            // ⭐⭐ 全屏态下绝不重挂 player：
+            // controller.player = nil / = player 会重建 AVPlayerLayer，
+            // 在 AVKit 全屏 presentation 里极易把控制层搞失联 → 点哪都没反应。
+            if !isFullScreen {
+                controller.player = nil
+                controller.player = player
+            }
+
             let t = player.currentTime()
             player.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero)
             if wasPlayingBeforeBackground {
@@ -701,7 +719,11 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                     let r = PlaybackSpeedStore.rate
                     if r != 1.0 { player.rate = r }
                 }
+            } else {
+                // ⭐ 恢复时仍是暂停态 → 立刻把缓冲标记清掉
+                setBuffering(false)
             }
+
             if url?.isFileURL == true, wasPlayingBeforeBackground {
                 let before = player.currentTime().seconds
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
@@ -724,6 +746,9 @@ struct VideoPlayerView: UIViewControllerRepresentable {
 
         private func rebuildPreservingState() {
             buildPlayer(resumeTime: restoreTime, autoPlay: wasPlayingBeforeBackground)
+            // ⭐⭐ 重建后强制刷新 AVKit 控制层，避免控制层与新 player 失联导致点击无响应
+            didScrubWhileBuffering = true
+            resetControlsIfNeeded()
         }
 
         private func updateBuffering(from player: AVPlayer) {
@@ -732,25 +757,35 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                 let status = player.timeControlStatus
                 if status == .playing {
                     self.markStartedPlaying()
-                    self.resetControlsIfNeeded()   // ⭐⭐ (问题1) 恢复播放后自愈控制层
+                    self.resetControlsIfNeeded()
                 }
-                let waiting = (status == .waitingToPlayAtSpecifiedRate)
-                self.setBuffering(waiting)
+                // ⭐⭐ 关键修复：用户主动暂停时绝不能算「缓冲中」。
+                // 否则暂停 + 后台回来 → buffer 被清空 → isBuffering 永久 true
+                // → 上层 20 秒看门狗误判成「加载超时」，弹出反馈修复 sheet。
+                if status == .paused {
+                    self.setBuffering(false)
+                    return
+                }
+                self.setBuffering(status == .waitingToPlayAtSpecifiedRate)
             }
         }
 
         private func setBuffering(_ value: Bool) {
-            if parent.isBuffering != value {
-                parent.isBuffering = value
+            var v = value
+            // ⭐⭐ 双保险：只要播放器处于暂停态，一律不算缓冲
+            if v, let p = player, p.timeControlStatus == .paused { v = false }
+
+            if parent.isBuffering != v {
+                parent.isBuffering = v
             }
             updateLoadingOverlay()
             bufferingResetWork?.cancel()
-            if value {
+            if v {
                 let work = DispatchWorkItem { [weak self] in
-                    guard let self = self,
-                          let p = self.player else { return }
+                    guard let self = self, let p = self.player else { return }
                     if p.timeControlStatus != .waitingToPlayAtSpecifiedRate {
                         self.parent.isBuffering = false
+                        self.updateLoadingOverlay()
                     }
                 }
                 bufferingResetWork = work
@@ -790,6 +825,12 @@ struct VideoPlayerView: UIViewControllerRepresentable {
                 player = nil
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
                 try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+
+                // ⭐⭐ 终极兜底：无论之前状态如何，离开播放器一律解除横屏锁并请求转回竖屏，
+                // 防止「全屏 + 长时间后台 + 代理未回调」把设备永久锁死在横屏。
+                isFullScreen = false
+                AppDelegate.orientationLock = .portrait
+                performRotation(mask: .portrait)
             }
         }
 
@@ -964,6 +1005,10 @@ struct VideoPlayerPageView: View {
     @State private var showReportSheet = false         // ⭐ 手动点「反馈修复」→ 全屏直达提交
     @State private var loadTimeoutWork: DispatchWorkItem? = nil
 
+    // ⭐⭐ 全屏守卫：AVKit 全屏期间禁止 present sheet
+    @State private var isPlayerFullScreen = false
+    @State private var pendingRepairPrompt = false
+
     @State private var showEpisodeConsumeConfirm = false
     @State private var episodeConsumeRemaining = 0
     @State private var pendingEpisodeForSwitch: VideoEpisodeItem? = nil
@@ -1067,6 +1112,16 @@ struct VideoPlayerPageView: View {
             if started {
                 loadTimeoutWork?.cancel()
                 loadTimeoutWork = nil
+            }
+        }
+        // ⭐⭐ 退出全屏后，把之前被压住的「反馈修复」补弹出来
+        .onChange(of: isPlayerFullScreen) { full in
+            if !full, pendingRepairPrompt {
+                pendingRepairPrompt = false
+                AppDelegate.orientationLock = .portrait
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    showRepairSheet = true
+                }
             }
         }
         .task {
@@ -1178,13 +1233,22 @@ struct VideoPlayerPageView: View {
         return s
     }
 
+    /// ⭐⭐ 统一入口：全屏 / PiP 期间不弹 sheet，改为记标记，退出全屏后再弹
+    private func requestRepairSheet() {
+        if isPlayerFullScreen {
+            pendingRepairPrompt = true
+            return
+        }
+        AppDelegate.orientationLock = .portrait   // 保证 sheet 一定在竖屏下弹
+        showRepairSheet = true
+    }
+
     // ⭐ 加载超时看门狗：20 秒还没出帧就弹反馈修复
     private func scheduleLoadTimeout() {
         loadTimeoutWork?.cancel()
         let work = DispatchWorkItem {
-            // showLoadingIndicator 已包含「仍在加载 / 未出帧 / 无错误 / 非蜂窝拦截」判断
             if hasAccess, showLoadingIndicator {
-                showRepairSheet = true
+                requestRepairSheet()
             }
         }
         loadTimeoutWork = work
@@ -1227,9 +1291,12 @@ struct VideoPlayerPageView: View {
                                 isBuffering: $isBuffering,
                                 hasStartedPlaying: $hasStartedPlaying,
                                 onPlaybackFailed: { msg in
-                                    resolveError = msg          // 真失败才退回错误页
-                                    showRepairSheet = true      // ⭐ 同时弹反馈修复
-                                    loadTimeoutWork?.cancel()   // ⭐ 已失败，取消超时看门狗
+                                    resolveError = msg
+                                    requestRepairSheet()        // ⭐ 改这里
+                                    loadTimeoutWork?.cancel()
+                                },
+                                onFullScreenChanged: { full in  // ⭐ 新增
+                                    isPlayerFullScreen = full
                                 })
                     .id(playURL)
             }
@@ -1403,7 +1470,7 @@ struct VideoPlayerPageView: View {
         } catch {
             // 首次+重试全部失败，进入错误逻辑
             self.resolveError = error.localizedDescription
-            self.showRepairSheet = true    // ⭐ 解析失败：弹反馈修复
+            self.requestRepairSheet()          // ⭐ 由 showRepairSheet = true 改为这句
             self.loadTimeoutWork?.cancel()
         }
         isResolving = false
@@ -1485,6 +1552,10 @@ struct CachedVideoPlayerView: View {
     @State private var showReportSheet = false     // ⭐ 手动 → 全屏
     @State private var loadTimeoutWork: DispatchWorkItem? = nil
 
+    // ⭐⭐ 全屏守卫
+    @State private var isPlayerFullScreen = false
+    @State private var pendingRepairPrompt = false
+
     @State private var showEpisodePicker = false
     @State private var showLoginAlert = false
     @State private var showConsumeConfirm = false
@@ -1528,7 +1599,12 @@ struct CachedVideoPlayerView: View {
     // ⭐ 是否处于「仍在加载」状态（用于超时看门狗判断）
     private var isCachedLoading: Bool {
         if resolveError != nil { return false }
-        return isResolvingOnline || isBuffering
+        if isResolvingOnline { return true }
+        // ⭐⭐ 关键修复：本地下载文件不做「加载超时 → 反馈修复」。
+        // 本地文件根本不存在网络慢的问题，暂停/后台恢复会让 isBuffering 假性为 true，
+        // 之前正是这里 20 秒后强弹 sheet，叠加全屏 presentation 导致界面彻底卡死。
+        if let u = playURL, u.isFileURL { return false }
+        return isBuffering
     }
 
     var body: some View {
@@ -1547,8 +1623,11 @@ struct CachedVideoPlayerView: View {
                                         onPlaybackFailed: { msg in
                                             resolveError = msg
                                             self.playURL = nil
-                                            showRepairSheet = true      // ⭐
-                                            loadTimeoutWork?.cancel()   // ⭐
+                                            requestRepairSheet()        // ⭐
+                                            loadTimeoutWork?.cancel()
+                                        },
+                                        onFullScreenChanged: { full in  // ⭐
+                                            isPlayerFullScreen = full
                                         })
                             .id(playURL)
                         PlayerLoadingIndicator()
@@ -1564,7 +1643,7 @@ struct CachedVideoPlayerView: View {
                                 .multilineTextAlignment(.center).padding(.horizontal)
                             // ⭐ 错误页直接提供反馈修复入口
                             Button(isGlobalEnglishMode ? "Report" : "反馈修复") {
-                                showRepairSheet = true
+                                requestRepairSheet()
                             }
                             .padding(.horizontal, 16).padding(.vertical, 6)
                             .background(Color.orange.opacity(0.9))
@@ -1752,6 +1831,16 @@ struct CachedVideoPlayerView: View {
                 loadTimeoutWork = nil
             }
         }
+        // ⭐⭐ 退出全屏后补弹被压住的反馈修复
+        .onChange(of: isPlayerFullScreen) { full in
+            if !full, pendingRepairPrompt {
+                pendingRepairPrompt = false
+                AppDelegate.orientationLock = .portrait
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    showRepairSheet = true
+                }
+            }
+        }
         .onDisappear {
             loadTimeoutWork?.cancel()   // ⭐
             loadTimeoutWork = nil
@@ -1783,11 +1872,21 @@ struct CachedVideoPlayerView: View {
         .buttonStyle(PlainButtonStyle())
     }
 
+    /// ⭐⭐ 全屏 / PiP 期间禁止弹 sheet
+    private func requestRepairSheet() {
+        if isPlayerFullScreen {
+            pendingRepairPrompt = true
+            return
+        }
+        AppDelegate.orientationLock = .portrait
+        showRepairSheet = true
+    }
+
     // ⭐ 加载超时看门狗
     private func scheduleLoadTimeout() {
         loadTimeoutWork?.cancel()
         let work = DispatchWorkItem {
-            if isCachedLoading { showRepairSheet = true }
+            if isCachedLoading { requestRepairSheet() }
         }
         loadTimeoutWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 20, execute: work)
@@ -1816,7 +1915,7 @@ struct CachedVideoPlayerView: View {
         if playURL == nil {
             // ⭐ 连播放地址都构造不出来：直接判定无法播放，弹反馈修复
             resolveError = isGlobalEnglishMode ? "Unable to play" : "无法播放"
-            showRepairSheet = true
+            requestRepairSheet()
         } else {
             recordPlayback()
         }
@@ -1889,7 +1988,7 @@ struct CachedVideoPlayerView: View {
                     recordPlayback()
                 } else {
                     resolveError = isGlobalEnglishMode ? "Unable to play" : "无法播放"
-                    showRepairSheet = true   // ⭐ 解析失败：弹反馈修复
+                    requestRepairSheet()
                 }
             }
         }
