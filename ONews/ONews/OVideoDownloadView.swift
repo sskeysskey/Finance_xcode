@@ -1346,7 +1346,7 @@ struct CacheCard: View {
                  : "当前处于蜂窝移动网络，下载将消耗流量，是否继续？")
         }
         .alert(isGlobalEnglishMode ? "Notice" : "温馨提示", isPresented: $showAdWarningAlert) {
-            Button(isGlobalEnglishMode ? "Got it" : "我知道了") {
+            Button(isGlobalEnglishMode ? "Got it" : "我知道了，请继续下载") {
                 hasAcknowledgedAdWarning = true
                 startDownloadFlow()
             }

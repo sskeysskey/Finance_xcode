@@ -389,9 +389,15 @@ struct VideoSearchTabView: View {
         }
         .navigationTitle(isGlobalEnglishMode ? "Search" : "搜索")
         .navigationBarTitleDisplayMode(.inline)
+        // 【修改后】
         .onAppear {
             if isFirstAppear {
-                if autoFocus { focused = true }
+                if autoFocus {
+                    // 延时 0.25 秒，等待页面 Push 转场动画完成，确保键盘能稳定唤起并聚焦光标
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        focused = true
+                    }
+                }
                 isFirstAppear = false
             }
             if let initial = initialKeyword, !initial.isEmpty, keyword.isEmpty {

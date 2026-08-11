@@ -8,6 +8,8 @@ enum NavigationTarget: Hashable {
     // 【修改】Prediction 入口，增加一个可选参数用于指定初始栏目 ("polymarket" 或 "kalshi")
     case predictionEntry(String?)
     case videoModule   // 【新增】
+    // ✅新增：视频搜索页
+    case videoSearch
 }
 
 // 【新增】定义一个环境变量，用于跨视图传递 NavigationPath
@@ -787,6 +789,8 @@ struct SourceListView: View {
                     PredictionEntryView(initialSource: source)
                 case .videoModule:
                     VideoModuleView(showBackButton: true)
+                case .videoSearch: // 【新增】
+                    VideoSearchDestinationView()
                 }
             }
         }
@@ -1692,5 +1696,13 @@ struct ReportReplyBanner: View {
             }
         }
         .animation(.easeInOut, value: manager.pendingReplies.first?.id)
+    }
+}
+
+// 2. 在 Source_List.swift 文件末尾添加包装视图：
+struct VideoSearchDestinationView: View {
+    @EnvironmentObject var videoDataManager: OVideoDataManager
+    var body: some View {
+        VideoSearchTabView(dataManager: videoDataManager, autoFocus: true)
     }
 }

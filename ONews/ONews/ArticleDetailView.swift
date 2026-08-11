@@ -433,7 +433,7 @@ struct ArticleDetailView: View {
 
                         // 【新增】跳转视频首页
                         Button(action: {
-                            appNavPath?.wrappedValue.append(NavigationTarget.videoModule)
+                            appNavPath?.wrappedValue.append(NavigationTarget.videoSearch)
                         }) {
                             Label(Localized.isEnglish ? "Video Library" : "影视频道",
                                 systemImage: "play.rectangle.fill")
