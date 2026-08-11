@@ -431,9 +431,17 @@ struct ArticleDetailView: View {
                             Label(Localized.isEnglish ? "Font Size" : "字体大小", systemImage: "textformat.size")
                         }
 
-                        // 【新增】跳转视频首页
+                        // 【新增】跳转视频搜索
                         Button(action: {
                             appNavPath?.wrappedValue.append(NavigationTarget.videoSearch)
+                        }) {
+                            Label(Localized.isEnglish ? "Video Library" : "视频检索",
+                                systemImage: "magnifyingglass")
+                        }
+                        
+                        // 【新增】跳转视频搜索 
+                        Button(action: {
+                            appNavPath?.wrappedValue.append(NavigationTarget.videoModule)
                         }) {
                             Label(Localized.isEnglish ? "Video Library" : "影视频道",
                                 systemImage: "play.rectangle.fill")
