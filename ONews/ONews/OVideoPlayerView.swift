@@ -1513,6 +1513,15 @@ struct VideoPlayerPageView: View {
             channelName: channelName,
             sourceURL: sourceURL
         )
+
+        // 【新增】追剧：记录一次观看，并把当时的服务器集数作为基线
+        SeriesTrackManager.shared.recordWatch(
+            sourceURL: sourceURL,
+            title: seriesBaseTitle,
+            cover: coverImage,
+            episodeName: activeEpisodeName,
+            channelName: channelName
+        )
     }
 }
 
@@ -2045,6 +2054,15 @@ struct CachedVideoPlayerView: View {
             coverImage: downloadManager.cacheMetadata[activeKey]?.coverImage,
             channelName: channelName,
             sourceURL: sourceURL
+        )
+
+        // 【新增】追剧：离线观看也算
+        SeriesTrackManager.shared.recordWatch(
+            sourceURL: sourceURL,
+            title: baseTitle,
+            cover: downloadManager.cacheMetadata[activeKey]?.coverImage,
+            episodeName: activeName,
+            channelName: channelName
         )
     }
 }

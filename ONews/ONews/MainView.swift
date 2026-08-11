@@ -88,6 +88,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 await self.videoDataManager.loadFirstPageIfNeeded(
                     category: names[idx], sort: sort, userId: uid)
             }
+            await SeriesTrackManager.shared.refresh(force: true)
             print("📺 [预加载] 视频首页第一页已预热。")
         }
         
@@ -187,6 +188,7 @@ struct NewsReaderAppApp: App {
                     await NewsQuotaManager.shared.refresh(
                         userId: NewsQuotaManager.currentUserId(auth: authManager)
                     )
+                    await SeriesTrackManager.shared.refresh()   // 【新增】追剧刷新
                 }
                 
             } else if newPhase == .background {

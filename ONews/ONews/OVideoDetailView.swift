@@ -119,6 +119,7 @@ struct VideoDetailView: View {
     @ObservedObject var dataManager: OVideoDataManager
     var playSource: String = "unknown"
     @ObservedObject private var downloadManager = HLSDownloadManager.shared
+    @ObservedObject private var network = NetworkMonitor.shared          // ⭐ 单集直接下载：网络判断
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     @AppStorage("OVideo_IsEpisodeAscending") private var isEpisodeAscending = true
@@ -148,6 +149,12 @@ struct VideoDetailView: View {
     // 批量下载
     @State private var showBatchDownloadSheet = false
     @State private var navigateToCacheView = false
+
+    // ⭐ 单集直接下载相关状态
+    @State private var pendingDownloadEpisode: (name: String, url: String)? = nil
+    @State private var showDLConsumeConfirm = false
+    @State private var showDLQuotaExhausted = false
+    @State private var showDLCellularAlert = false
 
     @State private var selectedEpisode: (name: String, url: String)? = nil
     @State private var loadedChannels: [OVideoChannel] = []
@@ -276,6 +283,7 @@ struct VideoDetailView: View {
         .sheet(isPresented: $showSubscriptionSheet) {
             SubscriptionView()
         }
+        // ⭐ 批量下载：半屏（可上拖到全屏）
         .sheet(isPresented: $showBatchDownloadSheet) {
             if selectedChannelIndex < sortedPlaylist.count {
                 BatchDownloadView(
@@ -292,6 +300,8 @@ struct VideoDetailView: View {
                     }
                 )
                 .environmentObject(authManager)
+                .presentationDetents([.medium, .large])   // ⭐ 半屏 + 可拖全屏
+                .presentationDragIndicator(.visible)       // ⭐ 顶部拖动条
             }
         }
         .onDisappear {
@@ -321,6 +331,42 @@ struct VideoDetailView: View {
             Text(isGlobalEnglishMode
                 ? "You've used all your passes for now. Come back tomorrow for more free daily passes, or subscribe for unlimited access."
                 : "您的免费点数已用完，明天可再领取每日免费点数，订阅后即可无限畅享所有视频。")
+        }
+        // ⭐ 单集直接下载：点数确认
+        .alert(isGlobalEnglishMode ? "Use 1 Free Pass" : "使用免费点数",
+            isPresented: $showDLConsumeConfirm) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Confirm" : "确认使用") {
+                Task { await confirmDirectDownloadConsume() }
+            }
+        } message: {
+            Text(quotaManager.consumeSourceNote(english: isGlobalEnglishMode)
+                 + "\n"
+                 + quotaManager.remainingSummary(english: isGlobalEnglishMode))
+        }
+        // ⭐ 单集直接下载：额度不足
+        .alert(isGlobalEnglishMode ? "Not Enough Passes" : "免费点数不足",
+            isPresented: $showDLQuotaExhausted) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Subscribe" : "订阅") {
+                showSubscriptionSheet = true
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "You need 1 pass to download. Subscribe for unlimited access."
+                : "下载需消耗 1 点，当前额度不足。订阅后即可无限畅享所有视频。")
+        }
+        // ⭐ 单集直接下载：蜂窝网络提示
+        .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示",
+            isPresented: $showDLCellularAlert) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) {}
+            Button(isGlobalEnglishMode ? "Download Anyway" : "允许并下载") {
+                if let ep = pendingDownloadEpisode { performDirectDownload(ep) }
+            }
+        } message: {
+            Text(isGlobalEnglishMode
+                ? "You are on a cellular network. Downloading will use mobile data. Continue?"
+                : "当前处于蜂窝网络，下载将消耗流量，是否继续？")
         }
         // ⭐ 新人礼包欢迎弹窗
         .alert(isGlobalEnglishMode ? "Welcome Gift 🎉" : "新人礼包 🎉",
@@ -384,6 +430,105 @@ struct VideoDetailView: View {
                 }
             }
             await loadSeasonSiblingsIfNeeded()
+        }
+    }
+
+    // MARK: - ⭐ 下载按钮点击：单集直接下载 / 多集弹批量界面
+    private func handleDownloadTapped() {
+        guard selectedChannelIndex < sortedPlaylist.count else {
+            showBatchDownloadSheet = true
+            return
+        }
+        let channel = sortedPlaylist[selectedChannelIndex]
+        let eps = channel.sortedEpisodes(ascending: isEpisodeAscending)
+        let downloadable = eps.filter { !isEpisodeOccupied($0) }
+
+        // 当前线路只有一个可下载项 → 直接下载，不弹批量界面
+        if eps.count == 1, downloadable.count == 1 {
+            prepareDirectDownload(downloadable[0])
+        } else {
+            showBatchDownloadSheet = true
+        }
+    }
+
+    // 判断该集是否已在下载队列或已缓存（与 BatchDownloadView 判定逻辑一致）
+    private func isEpisodeOccupied(_ ep: (name: String, url: String)) -> Bool {
+        let title = "\(item.name) · \(ep.name)"
+        for url in downloadManager.downloadProgress.keys {
+            if downloadManager.cacheMetadata[url]?.title == title { return true }
+        }
+        for url in downloadManager.localBookmarks.keys {
+            if downloadManager.cacheMetadata[url]?.title == title { return true }
+        }
+        return false
+    }
+
+    // 单集直接下载：先做订阅/点数判断
+    private func prepareDirectDownload(_ ep: (name: String, url: String)) {
+        pendingDownloadEpisode = ep
+
+        if authManager.isSubscribed {
+            startDirectDownload(ep)
+            return
+        }
+        if quotaManager.isUnlocked(ep.url) {
+            startDirectDownload(ep)
+            return
+        }
+        if quotaManager.remaining < 1 {
+            showDLQuotaExhausted = true
+            return
+        }
+        showDLConsumeConfirm = true
+    }
+
+    // 确认消耗点数后下载
+    private func confirmDirectDownloadConsume() async {
+        guard let ep = pendingDownloadEpisode else { return }
+        let uid = FreeQuotaManager.currentUserId(auth: authManager)
+        if !quotaManager.isUnlocked(ep.url) {
+            _ = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
+                                          videoTitle: "\(item.name) · \(ep.name)")
+        }
+        await MainActor.run {
+            startDirectDownload(ep)
+        }
+    }
+
+    // 网络判断（非 WiFi 先提示）
+    private func startDirectDownload(_ ep: (name: String, url: String)) {
+        if !network.isWiFi {
+            pendingDownloadEpisode = ep
+            showDLCellularAlert = true
+        } else {
+            performDirectDownload(ep)
+        }
+    }
+
+    // 真正发起下载并跳转缓存页
+    private func performDirectDownload(_ ep: (name: String, url: String)) {
+        Task {
+            do {
+                let realURL = try await OVideoAPI.resolveRealURL(episodeURL: ep.url)
+                await MainActor.run {
+                    downloadManager.startDownload(
+                        urlString: realURL,
+                        title: "\(item.name) · \(ep.name)",
+                        coverImage: item.image,
+                        seriesTitle: item.name,
+                        episodeName: ep.name,
+                        episodeKey: ep.url,
+                        sourceURL: item.url
+                    )
+                }
+            } catch {
+                // 解析失败忽略，仍跳转缓存页（用户可在缓存页看到状态）
+            }
+            await MainActor.run {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    navigateToCacheView = true
+                }
+            }
         }
     }
 
@@ -712,7 +857,7 @@ struct VideoDetailView: View {
                     }
 
                     Button {
-                        showBatchDownloadSheet = true
+                        handleDownloadTapped()          // ⭐ 单集直接下载 / 多集弹界面
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "square.and.arrow.down.fill")

@@ -240,8 +240,10 @@ enum VideoCategoryTheme {
 struct VideoModuleView: View {
     @EnvironmentObject private var dataManager: OVideoDataManager
     @EnvironmentObject var authManager: AuthManager
-    @EnvironmentObject var resourceManager: ResourceManager   // 【新增】
+    @EnvironmentObject var resourceManager: ResourceManager
+    @ObservedObject private var seriesTrack = SeriesTrackManager.shared      // 【新增】
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    @AppStorage("OVideo_TrackNoAutoPopup") private var noAutoPopup = false   // 【新增】
 
     @AppStorage("OVideo_SortOption") private var sortOptionRaw: String = VideoSortOption.date.rawValue
     @AppStorage("OVideo_SelectedCategoryIndex") private var selectedCategoryIndex: Int = 0
@@ -263,7 +265,7 @@ struct VideoModuleView: View {
             VideoBrowseView(dataManager: dataManager,
                             selectedCategoryIndex: categoryIndexBinding,
                             sortOption: sortBinding,
-                            showBackButton: showBackButton)   // 【新增】
+                            showBackButton: showBackButton)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VideoBottomBar(dataManager: dataManager, isLoading: false)
                 }
@@ -273,16 +275,25 @@ struct VideoModuleView: View {
                     .transition(.opacity)
             }
         }
+        // 【新增】追剧半屏列表
+        .sheet(isPresented: $seriesTrack.showSheet) {
+            SeriesTrackListView()
+                .environmentObject(dataManager)
+                .environmentObject(authManager)
+                .environmentObject(resourceManager)
+        }
         .onAppear {
             dataManager.reviewMaxYear = resourceManager.effectiveReviewVideoMaxYear
-            // 只在"只看视频"的根首页触发一次邀请弹窗（从新闻跳进来的 showBackButton=true 不触发）
-            // if !showBackButton {
-            //     NewsPointsCoordinator.shared.maybeShowFirstLaunchInvitePrompt(auth: authManager)
-            // }
         }
         .task {
             await dataManager.bootstrap(userId: authManager.userIdentifier)
             await FreeQuotaManager.shared.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
+            // 【新增】刷新追剧状态 + 有未读时自动弹出
+            await seriesTrack.refresh()
+            if !noAutoPopup, seriesTrack.unseenCount > 0, !seriesTrack.showSheet {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                seriesTrack.showSheet = true
+            }
         }
     }
 }
@@ -314,6 +325,7 @@ struct VideoBottomBar: View {
     @EnvironmentObject var authManager: AuthManager
     @ObservedObject private var quota = FreeQuotaManager.shared
     @ObservedObject private var pointsCoordinator = NewsPointsCoordinator.shared
+    @ObservedObject private var seriesTrack = SeriesTrackManager.shared   // 【新增】
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     let isLoading: Bool
 
@@ -324,9 +336,13 @@ struct VideoBottomBar: View {
                             isEnglish: isGlobalEnglishMode)
             }.buttonStyle(.plain)
 
-            NavigationLink { VideoSearchTabView(dataManager: dataManager) } label: {
-                BarItemView(icon: "magnifyingglass.circle.fill", zh: "搜索", en: "Search",
-                            isEnglish: isGlobalEnglishMode)
+            // 【修改】原「搜索」→「追剧」，带未读角标
+            Button {
+                seriesTrack.showSheet = true
+            } label: {
+                BarItemView(icon: "bell.fill", zh: "追剧", en: "Follow",
+                            isEnglish: isGlobalEnglishMode,
+                            badge: seriesTrack.unseenCount)
             }.buttonStyle(.plain)
 
             NavigationLink { VideoCacheView() } label: {
@@ -378,15 +394,28 @@ private struct BarItemView: View {
     let zh: String
     let en: String
     let isEnglish: Bool
+    var badge: Int = 0          // 【新增】
 
     var body: some View {
         VStack(spacing: 4) {
-            // 纯图标，无背景色块，尺寸放大
-            Image(systemName: icon)
-                .font(.system(size: 24, weight: .regular)) // 图标更大
-                .foregroundColor(.primary) // 系统黑白
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: icon)
+                    .font(.system(size: 24, weight: .regular))
+                    .foregroundColor(.primary)
 
-            // 文字
+                if badge > 0 {
+                    Text(badge > 99 ? "99+" : "\(badge)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, badge > 9 ? 4 : 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.red))
+                        .overlay(Capsule().stroke(Color(UIColor.systemBackground), lineWidth: 1.5))
+                        .offset(x: 11, y: -6)
+                }
+            }
+            .frame(height: 26)
+
             Text(isEnglish ? en : zh)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.primary)
