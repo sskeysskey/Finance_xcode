@@ -821,38 +821,44 @@ struct ArticleListView: View {
             return
         }
         
-        // 5. 开始下载
+        // 5. 只下载「第一张」图片，下完立刻放行
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
             downloadProgressText = Localized.imagePrepare
         }
-        
+
+        let firstImage = article.images[0]  // 前面已 guard 非空，安全
+
         do {
             try await resourceManager.downloadImagesForArticle(
                 timestamp: article.timestamp,
-                imageNames: article.images,
+                imageNames: [firstImage],   // ⭐ 关键：只传第一张
                 progressHandler: { current, total in
                     self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
                     self.downloadProgressText = "\(Localized.imageDownloaded) \(current) / \(total)"
                 }
             )
-            
-            // 下载成功：停止转圈并跳转
-            await MainActor.run { isDownloadingImages = false }
-            await proceedToArticle()
-            
         } catch {
-            // 1. 在主线程停止转圈
-            await MainActor.run { isDownloadingImages = false }
-            
-            // 2. 不管是什么网络错误还是其他错误，只打印日志，不再弹窗拦截
-            print("图片预下载失败或损坏，强制进入详情页: \(error.localizedDescription)")
-            
-            // 3. 强制跳转
-            await proceedToArticle()
+            // 首图失败也不拦截，直接进
+            print("首图下载失败，仍进入详情页: \(error.localizedDescription)")
         }
 
+        // 6. 关闭遮罩并进入详情页
+        await MainActor.run { isDownloadingImages = false }
+        await proceedToArticle()
+
+        // 7. 后台按顺序继续下载剩余图片（会自动跳过已下载的首图）
+        if article.images.count > 1 {
+            let timestamp = article.timestamp
+            let allImages = article.images
+            Task {
+                try? await resourceManager.preDownloadImagesForArticleSilently(
+                    timestamp: timestamp,
+                    imageNames: allImages
+                )
+            }
+        }
     }
     
     // 【修改】新的自动展开逻辑：根据当前过滤后的文章数量动态决定
@@ -1271,37 +1277,44 @@ struct AllArticlesListView: View {
             return
         }
         
-        // 5. 开始下载
+        // 5. 只下载「第一张」图片，下完立刻放行
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
             downloadProgressText = Localized.imagePrepare
         }
+
+        let firstImage = article.images[0]  // 前面已 guard 非空，安全
+
         do {
             try await resourceManager.downloadImagesForArticle(
                 timestamp: article.timestamp,
-                imageNames: article.images,
+                imageNames: [firstImage],   // ⭐ 关键：只传第一张
                 progressHandler: { current, total in
                     self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
                     self.downloadProgressText = "\(Localized.imageDownloaded) \(current) / \(total)"
                 }
             )
-            
-            // 下载成功
-            await MainActor.run { isDownloadingImages = false }
-            await proceedToArticle()
-            
         } catch {
-            // 1. 在主线程停止转圈
-            await MainActor.run { isDownloadingImages = false }
-            
-            // 2. 不管是什么网络错误还是其他错误，只打印日志，不再弹窗拦截
-            print("图片预下载失败或损坏，强制进入详情页: \(error.localizedDescription)")
-            
-            // 3. 强制跳转
-            await proceedToArticle()
+            // 首图失败也不拦截，直接进
+            print("首图下载失败，仍进入详情页: \(error.localizedDescription)")
         }
 
+        // 6. 关闭遮罩并进入详情页
+        await MainActor.run { isDownloadingImages = false }
+        await proceedToArticle()
+
+        // 7. 后台按顺序继续下载剩余图片（会自动跳过已下载的首图）
+        if article.images.count > 1 {
+            let timestamp = article.timestamp
+            let allImages = article.images
+            Task {
+                try? await resourceManager.preDownloadImagesForArticleSilently(
+                    timestamp: timestamp,
+                    imageNames: allImages
+                )
+            }
+        }
     }
     
     // 【修改】新的自动展开逻辑

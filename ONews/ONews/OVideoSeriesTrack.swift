@@ -304,11 +304,15 @@ struct SeriesTrackListView: View {
                 footer
             }
             .background(Color(UIColor.systemGroupedBackground))
-            .navigationTitle(isGlobalEnglishMode ? "New Episodes" : "追剧更新")
+            .navigationTitle(isGlobalEnglishMode ? "New Episodes" : "您追的剧，有更新了！")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(isGlobalEnglishMode ? "Done" : "完成") { dismiss() }
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
                 }
             }
             .navigationDestination(for: OVideoItem.self) { item in

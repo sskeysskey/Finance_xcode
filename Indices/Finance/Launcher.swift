@@ -1026,7 +1026,14 @@ struct MainContentView: View {
                     print("App is now active (ScenePhase). Checking data...")
                     UsageManager.shared.refresh()
                     Task {
-                        await handleInitialDataLoad()
+                        // 数据尚未就绪（冷启动流程未完成）→ 走完整加载逻辑
+                        if !isDataReady || dataService.sectorsPanel == nil {
+                            await handleInitialDataLoad()
+                        } else {
+                            // 数据已就绪（从后台返回前台）→ 强制执行一次静默更新检查
+                            // 不再走 handleInitialDataLoad（它会因数据已加载而提前 return）
+                            await performForegroundUpdateCheck()
+                        }
                         // 【新增】回前台刷新会员状态
                         await authManager.updateSubscriptionStatus()
                         await authManager.checkServerSubscriptionStatus()
@@ -1199,6 +1206,30 @@ struct MainContentView: View {
                 }
             }
         }
+    }
+
+    /// 【新增】从后台返回前台时执行的静默更新检查（数据已就绪场景专用）
+    /// 与 handleInitialDataLoad 的关键区别：它不会因为"数据已加载"而提前 return，
+    /// 因此能保证每次回到前台/首页都真正向服务器检查一次更新。
+    private func performForegroundUpdateCheck() async {
+        print("Foreground update check triggered (returning from background).")
+
+        // 1. 清理过期离线库，并重连到最新可用数据库
+        updateManager.cleanupStaleDatabaseIfNeeded()
+        DatabaseManager.shared.reconnectToLatestDatabase()
+
+        // 2. 静默检查更新（isManual: false：无网时直接返回，不弹错误提示）
+        let updated = await updateManager.checkForUpdates(isManual: false)
+
+        // 3. 仅当确实下载到新版本时才刷新 UI 数据（避免无谓的重载）
+        if updated {
+            print("Foreground update found. Reloading data...")
+            DatabaseManager.shared.reconnectToLatestDatabase()
+            dataService.forceReloadData()
+        }
+
+        // 4. 刷新额度/点数
+        await usageManager.refreshQuota()
     }
 
     // 统一的数据加载逻辑
