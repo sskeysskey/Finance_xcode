@@ -499,10 +499,11 @@ struct SeriesTrackListView: View {
             }
             detent = .large                 // 跳详情页时自动展开为全屏，体验更好
             path.append(item)
-            // 稍后再"追平"，避免 push 动画期间列表突变
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                SeriesTrackManager.shared.markWatched(s.sourceURL)
-            }
+            // 不再自动追平：点击进详情页后仍保留在列表中，
+            // 仅通过"临时清除""取消追剧"或后续更新覆盖才移除。
+            // DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            //     SeriesTrackManager.shared.markWatched(s.sourceURL)
+            // }
         }
     }
 }
