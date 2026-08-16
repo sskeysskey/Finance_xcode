@@ -2,10 +2,36 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>fetch</string>
-		<string>processing</string>
-	</array>
+    <key>CFBundleDisplayName</key>
+    <string>国外视频</string>
+
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.entertainment</string>
+
+    <key>LSMinimumSystemVersion</key>
+    <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+
+    <!-- ==========================================================
+         ATS 配置（裸 IP + 明文 HTTP）
+
+         ⚠️ 关键规则：macOS 10.12+ / iOS 10+ 下，只要出现
+            NSAllowsLocalNetworking
+            NSAllowsArbitraryLoadsInWebContent
+            NSAllowsArbitraryLoadsForMedia
+         这三个 key 中的任意一个，NSAllowsArbitraryLoads 就会被
+         系统忽略（当作 NO）。所以这里【只能】留 NSAllowsArbitraryLoads，
+         一个别的都不许加。
+
+         ⚠️ NSExceptionDomains 不支持 IP 字面量（Apple 已确认，
+         多年未修），对 106.15.183.158 写例外完全无效，故整段删除。
+
+         上架说明：内容来自自有 HTTP 接口服务器（106.15.183.158:5001），
+         暂无法提供 TLS。（长期方案见文末）
+         ========================================================== -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
 </dict>
 </plist>

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- App Sandbox：上架 Mac App Store 必须为 true -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- 出网请求（Outgoing Connections / Client）—— 这一条缺了就什么都拉不到 -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- 下载目录若允许用户自选，需要这条；只写沙盒容器内则可删 -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <key>com.apple.developer.applesignin</key>
+    <array>
+        <string>Default</string>
+    </array>
+</dict>
+</plist>
