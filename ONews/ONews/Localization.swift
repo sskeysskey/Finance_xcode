@@ -28,7 +28,7 @@ struct Localized {
 
 
     // MARK: - 推广页 (Promo View)
-    static var promoTitle: String { tr("每日AI大模型算法荐股\n全球财经数据一站搞定", "AI-Powered Stock Picks\nGlobal Financial Data at Once") }
+    static var promoTitle: String { tr("每日AI大模型算法推荐优质股\n全球财经数据一站搞定", "AI-Powered Stock Picks\nGlobal Financial Data at Once") }
     static var promoFeature: String { tr("「美股精灵」 特色介绍：", "FEATURES OF 'STOCK GENIE':") }
     static var promoDesc: String { tr("业界首创财报和价格线完美结合。无论你是擅长抄底还是做空抑或追高，总有一种荐股分类适合你。通过期权数据对AI算法结果做二次验证，确保成功率...", "The first to combine earnings reports with price lines. Whether you're bottom-fishing or short-selling, we have the right strategy for you. Success rates are verified by AI and options data...") }
     static var downloadInStore: String { tr("跳转到商店页面下载", "Download on the App Store") }
