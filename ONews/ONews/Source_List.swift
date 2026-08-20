@@ -693,6 +693,8 @@ struct SourceListView: View {
                     sourceAndAllArticlesView
                 }
             }
+            // 【新增】在线客服悬浮按钮（仅首页显示，可长按拖动）
+            .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
             // 【修改】使用系统背景色
             .background(Color.viewBackground.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
@@ -800,6 +802,9 @@ struct SourceListView: View {
         .onAppear {
             viewModel.loadNews()
             Task { await syncResources() }
+            // 【新增】刷新在线客服未读数
+            Task { await SupportChatManager.shared.refresh(
+                userId: SupportIdentity.userId(appleId: authManager.userIdentifier)) }
             // ✅ 新增：启动时轻量级检查预测数据源可用性（不下载文件）
             Task { await predictionSyncManager.refreshAvailabilityFromServer() }
             // 【新增】拉取寻片请求的未读回复
@@ -1597,18 +1602,36 @@ struct WishReplyBanner: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .lineLimit(3)
                     }
-
-                    Spacer(minLength: 0)
-
-                    Button {
-                        Task { await manager.acknowledge(reply, userId: userId) }
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .padding(6)
-                            .background(Color.secondary.opacity(0.15))
-                            .clipShape(Circle())
+                    Spacer(minLength: 8)
+                    // ✅ 由 VStack 改为 HStack，横向：回复按钮在左，关闭叉在右
+                    HStack(spacing: 8) {
+                        // 回复按钮 → 打开在线客服并定位到该会话
+                        Button {
+                            SupportChatManager.shared.openChat(type: "wish")
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrowshape.turn.up.left.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text(isGlobalEnglishMode ? "Reply" : "回复")
+                                    .font(.system(size: 11, weight: .bold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(Capsule().fill(Color.blue))
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        
+                        Button {
+                            Task { await manager.acknowledge(reply, userId: userId) }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.secondary)
+                                .padding(6)
+                                .background(Color.secondary.opacity(0.15))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
                     }
                 }
                 .padding(12)
@@ -1666,18 +1689,36 @@ struct ReportReplyBanner: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .lineLimit(3)
                     }
-
-                    Spacer(minLength: 0)
-
-                    Button {
-                        Task { await manager.acknowledge(reply, userId: userId) }
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .padding(6)
-                            .background(Color.secondary.opacity(0.15))
-                            .clipShape(Circle())
+                    Spacer(minLength: 8)
+                    // ✅ VStack → HStack，回复按钮在左，关闭叉在右
+                    HStack(spacing: 8) {
+                        // 回复按钮 → 打开在线客服并定位到该会话
+                        Button {
+                            SupportChatManager.shared.openChat(type: "report")
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrowshape.turn.up.left.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text(isGlobalEnglishMode ? "Reply" : "回复")
+                                    .font(.system(size: 11, weight: .bold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(Capsule().fill(Color.blue))
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        
+                        Button {
+                            Task { await manager.acknowledge(reply, userId: userId) }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.secondary)
+                                .padding(6)
+                                .background(Color.secondary.opacity(0.15))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
                     }
                 }
                 .padding(12)

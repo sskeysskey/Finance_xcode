@@ -14,15 +14,25 @@ struct EarningHistoryView: View {
         // 【新增】记录名字里含 "抄底" 的 symbol（与 Python 的 symbols_with_chaodi 对应）
         var symbolsWithChaodi: Set<String> = []
         
+        // ========== 计算全局最新交易日 ==========
+        let validGroupsDates = dataService.earningHistoryData
+            .filter { groupEntry in
+                let g = groupEntry.key
+                return !excludedGroups.contains(g) && !g.hasSuffix("_backup")
+            }
+            .flatMap { $0.value.keys }
+        guard let globalLatest = validGroupsDates.max() else {
+            return []
+        }
+        
         // 1. 遍历所有分组
         for (group, dateMap) in dataService.earningHistoryData {
             if excludedGroups.contains(group) { continue }
+            if group.hasSuffix("_backup") { continue }
             if dateMap.isEmpty { continue }
             
-            // 2. 获取该分组的最新日期
-            let sortedDates = dateMap.keys.sorted(by: >)
-            guard let latestDate = sortedDates.first,
-                  let symbols = dateMap[latestDate] else { continue }
+            // 统一读取全局最新交易日的数据，分组没有该日期则跳过
+            guard let symbols = dateMap[globalLatest] else { continue }
             
             // 【新增】检测 "抄底" 标记
             for s in symbols {
@@ -48,12 +58,12 @@ struct EarningHistoryView: View {
         }
         
         // 定义需要特殊处理的源头分组和衍生分组
-        let supportLevelGroups: Set<String> = ["SupportLevel_Close", "SupportLevel_Over"]
-        let sourceGroups: Set<String> = [
-            "Short", "Short_W", "Strategy12", "Strategy34", "OverSell_W",
-            "PE_Deep", "PE_Deeper", "PE_W", "PE_valid", "PE_invalid",
-            "PE_Volume", "PE_Volume_up", "PE_Hot", "PE_Volume_high", "season"
-        ]
+        // let supportLevelGroups: Set<String> = ["SupportLevel_Close", "SupportLevel_Over"]
+        // let sourceGroups: Set<String> = [
+        //     "Short", "Short_W", "Strategy12", "Strategy34", "OverSell_W",
+        //     "PE_Deep", "PE_Deeper", "PE_W", "PE_valid", "PE_invalid",
+        //     "PE_Volume", "PE_Volume_up", "PE_Hot", "PE_Volume_high", "season"
+        // ]
         
         // PE_Hot 的源头分组
         // let peHotSources: Set<String> = [
@@ -84,13 +94,13 @@ struct EarningHistoryView: View {
             let count = effectiveGroups.count
             
             if count >= 2 {
-                if count == 2 {
-                    let hasSupport = !effectiveGroups.isDisjoint(with: supportLevelGroups)
-                    let hasSource = !effectiveGroups.isDisjoint(with: sourceGroups)
-                    if hasSupport && hasSource {
-                        continue
-                    }
-                }
+                // if count == 2 {
+                //     let hasSupport = !effectiveGroups.isDisjoint(with: supportLevelGroups)
+                //     let hasSource = !effectiveGroups.isDisjoint(with: sourceGroups)
+                //     if hasSupport && hasSource {
+                //         continue
+                //     }
+                // }
                 countToSymbols[count, default: []].append(sym)
             }
         }

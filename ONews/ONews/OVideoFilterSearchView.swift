@@ -356,7 +356,7 @@ struct VideoSearchTabView: View {
     // ⭐ 新增：寻片相关
     @State private var showWishSheet = false
 
-    private var userId: String? { authManager.userIdentifier }
+    private var userId: String? { SupportIdentity.userId(appleId: authManager.userIdentifier) }
     private var userType: String {
         guard let uid = userId, !uid.isEmpty else { return "device" }
         return (uid.hasPrefix("dev_") || uid == "guest_user") ? "device" : "apple"

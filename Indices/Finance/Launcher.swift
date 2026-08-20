@@ -860,6 +860,8 @@ struct MainContentView: View {
                         }
                     }
                 }
+                // 【新增】在线客服悬浮按钮
+                .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
                 // 👇 替换为这一行（保持 Inline 模式但不设文字）
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -1037,6 +1039,11 @@ struct MainContentView: View {
                         // 【新增】回前台刷新会员状态
                         await authManager.updateSubscriptionStatus()
                         await authManager.checkServerSubscriptionStatus()
+                    }
+                    // 【新增】刷新在线客服未读数
+                    Task {
+                        await SupportChatManager.shared.refresh(
+                            userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
                     }
                 }
             }

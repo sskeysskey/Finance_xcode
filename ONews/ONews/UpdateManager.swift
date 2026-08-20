@@ -316,6 +316,24 @@ class ResourceManager: ObservableObject {
             Localized.fallbackSource6
         ]
     }
+
+    // 【新增】欢迎页展示用：返回原始映射串（"中文|English"），由视图按语言拆分
+    func fetchShowcaseMappings() async -> (news: [String], video: [String]) {
+        _ = try? await getServerVersion()
+        let m = self.sourceMappings
+        let order = NewsViewModel.preferredSourceOrder
+        var news: [String] = []
+        for key in order {
+            if let v = m[key], !v.isEmpty { news.append(v) }
+        }
+        for (k, v) in m.sorted(by: { $0.key < $1.key }) where !order.contains(k) {
+            if !v.isEmpty { news.append(v) }
+        }
+        let video = showVideoModule
+            ? self.videoCategoryMappings.sorted(by: { $0.key < $1.key }).map { $0.value }
+            : []
+        return (news, video)
+    }
     
     // MARK: - 检查图片是否存在而不下载
     func checkIfImagesExistForArticle(timestamp: String, imageNames: [String]) -> Bool {

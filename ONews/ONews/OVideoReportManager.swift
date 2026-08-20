@@ -374,7 +374,7 @@ struct ReportSheet: View {
                 realURL: realURL,
                 reportType: selectedType.rawValue,
                 note: note,
-                userId: authManager.userIdentifier
+                userId: SupportIdentity.userId(appleId: authManager.userIdentifier)
             )
             await MainActor.run {
                 isSubmitting = false
