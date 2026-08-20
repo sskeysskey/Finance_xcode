@@ -718,32 +718,32 @@ struct NativeParagraphView: UIViewRepresentable {
     }
 }
 
-// MARK: - ArticleImageView (保持不变，或确保 ImageLoader 是异步的)
+// MARK: - ArticleImageView（带网络自愈）
 struct ArticleImageView: View {
     let imageName: String
     let timestamp: String
-    
-    // 【修改】声明时不立刻初始化，留给 init 处理
+
     @StateObject private var imageLoader: ImageLoader
     @State private var isShowingZoomView = false
-    // 【新增】引入全局的 ResourceManager，用于下载缺失或损坏的图片
     @EnvironmentObject var resourceManager: ResourceManager
     @AppStorage("imageCaptionFontSize") private var captionFontSize: Double = 12
-    
+
+    // 【新增】自愈状态
+    @State private var recoveryTask: Task<Void, Never>? = nil
+    @State private var isRecovering = false
+
     private let horizontalPadding: CGFloat = 20
+
     private var imagePath: String {
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
     }
-    
-    // 【新增】自定义初始化，提前注入图片路径查缓存
+
     init(imageName: String, timestamp: String) {
         self.imageName = imageName
         self.timestamp = timestamp
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let path = documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
-        
-        // 关键点：在 StateObject 创建之初，就去查内存缓存
         self._imageLoader = StateObject(wrappedValue: ImageLoader(imagePath: path))
     }
 
@@ -759,21 +759,28 @@ struct ArticleImageView: View {
                             .clipped()
                     }
                     .buttonStyle(PlainButtonStyle())
-                } else if imageLoader.isLoading {
-                    // 【优化】给 ProgressView 一个固定高度，防止 LazyVStack 布局抖动
-                    ProgressView()
-                        .frame(maxWidth: .infinity, minHeight: 200) 
-                        .background(Color(UIColor.secondarySystemBackground))
-                        .cornerRadius(12)
-                        .padding(.horizontal, horizontalPadding)
+
+                } else if imageLoader.isLoading || isRecovering {
+                    // 【修改】等待中的占位（含"等待网络"提示）
+                    VStack(spacing: 10) {
+                        ProgressView()
+                        Text(waitingHintText)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 200)
+                    .background(Color(UIColor.secondarySystemBackground))
+                    .cornerRadius(12)
+                    .padding(.horizontal, horizontalPadding)
+
                 } else {
-                    // 【优化】提供手动点击重试按钮
-                    Button(action: {
-                        Task { await fetchAndLoadImage() }
-                    }) {
+                    // 手动重试
+                    Button(action: { manualRetry() }) {
                         VStack(spacing: 8) {
-                            Image(systemName: "arrow.clockwise.circle.fill").font(.largeTitle).foregroundColor(.gray)
-                            Text("图片加载失败，点击重试").font(.caption).foregroundColor(.secondary)
+                            Image(systemName: "arrow.clockwise.circle.fill")
+                                .font(.largeTitle).foregroundColor(.gray)
+                            Text(Localized.isEnglish ? "Tap to retry" : "图片加载失败，点击重试")
+                                .font(.caption).foregroundColor(.secondary)
                         }
                         .frame(maxWidth: .infinity, minHeight: 200)
                         .background(Color(UIColor.secondarySystemBackground))
@@ -783,7 +790,7 @@ struct ArticleImageView: View {
                     .buttonStyle(PlainButtonStyle())
                 }
             }
-            
+
             if imageLoader.image != nil {
                 Text((imageName as NSString).deletingPathExtension)
                     .font(.system(size: captionFontSize))
@@ -797,44 +804,104 @@ struct ArticleImageView: View {
             ZoomableImageView(imageName: imageName, timestamp: timestamp, isPresented: $isShowingZoomView)
         }
         .padding(.vertical, 10)
-        .onAppear {
-            // 【修改】如果在 init 阶段就已经命中内存缓存，直接 return，啥也不用做！
-            if imageLoader.image != nil { return }
+        .animation(.easeIn(duration: 0.2), value: imageLoader.image == nil)
+        .onAppear { startInitialLoad() }
+        .onDisappear {
+            recoveryTask?.cancel()
+            recoveryTask = nil
+            isRecovering = false
+        }
+        // 【新增】网络恢复 → 立即重试
+        .onChange(of: resourceManager.isNetworkAvailable) { available in
+            if available && imageLoader.image == nil {
+                startRecovery()
+            }
+        }
+        // 【新增】后台队列下好这张图 → 立即加载显示
+        .onReceive(NotificationCenter.default.publisher(for: .articleImageDidDownload)) { note in
+            guard imageLoader.image == nil else { return }
+            guard let path = note.userInfo?["path"] as? String, path == imagePath else { return }
             Task {
-                // 1. 尝试从本地加载
-                let success = await imageLoader.load(from: imagePath)
-                // 2. 如果本地不存在或者文件损坏（返回false），自动触发一次修复下载
-                if !success {
-                    await fetchAndLoadImage()
+                if await imageLoader.load(from: imagePath) {
+                    recoveryTask?.cancel()
+                    isRecovering = false
                 }
             }
         }
+        // 【新增】App 回到前台 → 重试
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            if imageLoader.image == nil { startRecovery() }
+        }
     }
-    
-    // 执行修复并重新加载
-    private func fetchAndLoadImage() async {
-        imageLoader.isLoading = true
-        do {
-            // 【关键】如果本地存在文件但无法识别为图片（损坏的空文件），必须先删除它
-            // 否则 ResourceManager 的下载逻辑会误以为文件已存在而跳过下载
-            if FileManager.default.fileExists(atPath: imagePath) {
-                try? FileManager.default.removeItem(atPath: imagePath)
-            }
-            
-            // 触发下载单张图片
-            try await resourceManager.downloadImagesForArticle(
+
+    private var waitingHintText: String {
+        if !resourceManager.isNetworkAvailable {
+            return Localized.isEnglish ? "Waiting for network…" : "等待网络连接，图片将自动加载…"
+        }
+        return Localized.isEnglish ? "Loading image…" : "图片加载中…"
+    }
+
+    private func startInitialLoad() {
+        if imageLoader.image != nil { return }
+        Task {
+            let ok = await imageLoader.load(from: imagePath)
+            if !ok { startRecovery() }
+        }
+    }
+
+    /// 【核心】自愈循环：入队下载 + 递增间隔轮询，直到成功或次数用尽
+    private func startRecovery() {
+        guard imageLoader.image == nil else { return }
+        recoveryTask?.cancel()
+        isRecovering = true
+
+        recoveryTask = Task {
+            // 先把这张图插到下载队首
+            resourceManager.enqueueImageDownloads(
                 timestamp: timestamp,
                 imageNames: [imageName],
-                progressHandler: { _, _ in } // 单张图不需要更新UI进度条
+                priority: true
             )
-            
-            // 下载完成后，再次尝试加载到内存
-            _ = await imageLoader.load(from: imagePath)
-        } catch {
-            print("单张图片自愈修复失败: \(error)")
-            imageLoader.isLoading = false
-            imageLoader.isFailed = true
+
+            var delayMs: UInt64 = 600
+            for _ in 0..<25 {                     // 约 1~2 分钟内持续尝试
+                if Task.isCancelled { return }
+                try? await Task.sleep(for: .milliseconds(Int(delayMs)))
+                if Task.isCancelled { return }
+                if imageLoader.image != nil { isRecovering = false; return }
+
+                if FileManager.default.fileExists(atPath: imagePath) {
+                    if await imageLoader.load(from: imagePath) {
+                        isRecovering = false
+                        return
+                    } else {
+                        // 文件损坏/空文件：删掉重下
+                        try? FileManager.default.removeItem(atPath: imagePath)
+                    }
+                }
+
+                // 有网才继续催下载（队列内部会去重）
+                if resourceManager.isNetworkAvailable {
+                    resourceManager.enqueueImageDownloads(
+                        timestamp: timestamp,
+                        imageNames: [imageName],
+                        priority: true
+                    )
+                }
+
+                delayMs = min(delayMs * 2, 5000)   // 0.6s → 1.2s → 2.4s → 5s…
+            }
+            isRecovering = false
         }
+    }
+
+    private func manualRetry() {
+        // 若本地存在但无法解码，先删掉，否则下载逻辑会误判"已存在"
+        if FileManager.default.fileExists(atPath: imagePath),
+           UIImage(contentsOfFile: imagePath) == nil {
+            try? FileManager.default.removeItem(atPath: imagePath)
+        }
+        startRecovery()
     }
 }
 

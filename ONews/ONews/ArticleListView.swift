@@ -454,6 +454,9 @@ struct ArticleListView: View {
     @State private var showProfileSheet = false
     
     @State private var hasPerformedAutoExpansion = false
+
+    // 【新增】首图最多等待秒数
+    private var firstImageWaitTimeout: TimeInterval { 0.0 }
     
     // 【新增】获取当前应显示的标题
     private var displayTitle: String {
@@ -789,8 +792,8 @@ struct ArticleListView: View {
     
     private func handleArticleTap(_ item: ArticleItem, autoPlay: Bool = false) async {
         let article = item.article
-        
-        // 1. 点数/订阅门禁
+
+        // 1. 点数/订阅门禁（不变）
         if !NewsPointsCoordinator.canAccess(article, auth: authManager, viewModel: viewModel) {
             NewsPointsCoordinator.shared.attemptUnlockArticle(article, auth: authManager, viewModel: viewModel) {
                 Task { await self.handleArticleTap(item, autoPlay: autoPlay) }
@@ -800,65 +803,59 @@ struct ArticleListView: View {
 
         let proceedToArticle = {
             await MainActor.run {
-                appNavPath?.wrappedValue.append(NavigationTarget.articleDetail(article, self.sourceName, "source", autoPlay))
+                appNavPath?.wrappedValue.append(
+                    NavigationTarget.articleDetail(article, self.sourceName, "source", autoPlay)
+                )
             }
         }
-        
-        // 3. 无图直接跳转
+
+        // 2. 无图 → 直接进
         guard !article.images.isEmpty else {
             await proceedToArticle()
             return
         }
-        
-        // 4. 图片已存在直接跳转
-        let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
+
+        // 3. 图片全在本地 → 直接进
+        if resourceManager.checkIfImagesExistForArticle(
             timestamp: article.timestamp,
             imageNames: article.images
-        )
-        
-        if imagesAlreadyExist {
+        ) {
             await proceedToArticle()
             return
         }
-        
-        // 5. 只下载「第一张」图片，下完立刻放行
+
+        // 4. 【新增】完全没网 → 一秒都不等，直接进详情页（详情页会自愈）
+        if !resourceManager.isNetworkAvailable {
+            await proceedToArticle()
+            resourceManager.enqueueImageDownloads(timestamp: article.timestamp, imageNames: article.images)
+            return
+        }
+
+        // 5. 【核心修改】有网 → 最多等 2 秒首图，超时就放行
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
             downloadProgressText = Localized.imagePrepare
+            // 让进度条这 2 秒看起来有动静
+            withAnimation(.easeOut(duration: firstImageWaitTimeout)) { downloadProgress = 0.9 }
         }
 
-        let firstImage = article.images[0]  // 前面已 guard 非空，安全
+        await resourceManager.waitForImages(
+            timestamp: article.timestamp,
+            imageNames: [article.images[0]],
+            timeout: firstImageWaitTimeout
+        )
 
-        do {
-            try await resourceManager.downloadImagesForArticle(
-                timestamp: article.timestamp,
-                imageNames: [firstImage],   // ⭐ 关键：只传第一张
-                progressHandler: { current, total in
-                    self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
-                    self.downloadProgressText = "\(Localized.imageDownloaded) \(current) / \(total)"
-                }
-            )
-        } catch {
-            // 首图失败也不拦截，直接进
-            print("首图下载失败，仍进入详情页: \(error.localizedDescription)")
+        await MainActor.run {
+            downloadProgress = 1.0
+            isDownloadingImages = false
         }
 
-        // 6. 关闭遮罩并进入详情页
-        await MainActor.run { isDownloadingImages = false }
+        // 6. 无论首图有没有下到，都进详情页
         await proceedToArticle()
 
-        // 7. 后台按顺序继续下载剩余图片（会自动跳过已下载的首图）
-        if article.images.count > 1 {
-            let timestamp = article.timestamp
-            let allImages = article.images
-            Task {
-                try? await resourceManager.preDownloadImagesForArticleSilently(
-                    timestamp: timestamp,
-                    imageNames: allImages
-                )
-            }
-        }
+        // 7. 剩余图片（含没下完的首图）继续在后台串行下载，下好会自动刷新详情页
+        resourceManager.enqueueImageDownloads(timestamp: article.timestamp, imageNames: article.images)
     }
     
     // 【修改】新的自动展开逻辑：根据当前过滤后的文章数量动态决定
@@ -964,6 +961,8 @@ struct AllArticlesListView: View {
     
     private var totalUnreadCount: Int { viewModel.totalUnreadCount }
     private var totalReadCount: Int { viewModel.sources.flatMap { $0.articles }.filter { $0.isRead }.count }
+    // 【新增】首图最多等待秒数
+    private var firstImageWaitTimeout: TimeInterval { 0.0 }
     
     // 【修改】更新搜索逻辑
     private var searchResults: [ArticleItem] {
@@ -1245,8 +1244,8 @@ struct AllArticlesListView: View {
     private func handleArticleTap(_ item: ArticleItem, autoPlay: Bool = false) async {
         let article = item.article
         guard let sourceName = item.sourceName else { return }
-        
-        // 1. 点数/订阅门禁
+
+        // 1. 点数/订阅门禁（不变）
         if !NewsPointsCoordinator.canAccess(article, auth: authManager, viewModel: viewModel) {
             NewsPointsCoordinator.shared.attemptUnlockArticle(article, auth: authManager, viewModel: viewModel) {
                 Task { await self.handleArticleTap(item, autoPlay: autoPlay) }
@@ -1256,65 +1255,58 @@ struct AllArticlesListView: View {
 
         let proceedToArticle = {
             await MainActor.run {
-                appNavPath?.wrappedValue.append(NavigationTarget.articleDetail(article, sourceName, "all", autoPlay))
+                appNavPath?.wrappedValue.append(
+                    NavigationTarget.articleDetail(article, sourceName, "all", autoPlay)
+                )
             }
         }
-        
-        // 3. 无图直接跳转
+
+        // 2. 无图 → 直接进
         guard !article.images.isEmpty else {
             await proceedToArticle()
             return
         }
-        
-        // 4. 图片已存在直接跳转
-        let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
+
+        // 3. 图片全在本地 → 直接进
+        if resourceManager.checkIfImagesExistForArticle(
             timestamp: article.timestamp,
             imageNames: article.images
-        )
-        
-        if imagesAlreadyExist {
+        ) {
             await proceedToArticle()
             return
         }
-        
-        // 5. 只下载「第一张」图片，下完立刻放行
+
+        // 4. 没网 → 直接进
+        if !resourceManager.isNetworkAvailable {
+            await proceedToArticle()
+            resourceManager.enqueueImageDownloads(timestamp: article.timestamp, imageNames: article.images)
+            return
+        }
+
+        // 5. 最多等 2 秒首图
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
             downloadProgressText = Localized.imagePrepare
+            withAnimation(.easeOut(duration: firstImageWaitTimeout)) { downloadProgress = 0.9 }
         }
 
-        let firstImage = article.images[0]  // 前面已 guard 非空，安全
+        await resourceManager.waitForImages(
+            timestamp: article.timestamp,
+            imageNames: [article.images[0]],
+            timeout: firstImageWaitTimeout
+        )
 
-        do {
-            try await resourceManager.downloadImagesForArticle(
-                timestamp: article.timestamp,
-                imageNames: [firstImage],   // ⭐ 关键：只传第一张
-                progressHandler: { current, total in
-                    self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
-                    self.downloadProgressText = "\(Localized.imageDownloaded) \(current) / \(total)"
-                }
-            )
-        } catch {
-            // 首图失败也不拦截，直接进
-            print("首图下载失败，仍进入详情页: \(error.localizedDescription)")
+        await MainActor.run {
+            downloadProgress = 1.0
+            isDownloadingImages = false
         }
 
-        // 6. 关闭遮罩并进入详情页
-        await MainActor.run { isDownloadingImages = false }
+        // 6. 放行
         await proceedToArticle()
 
-        // 7. 后台按顺序继续下载剩余图片（会自动跳过已下载的首图）
-        if article.images.count > 1 {
-            let timestamp = article.timestamp
-            let allImages = article.images
-            Task {
-                try? await resourceManager.preDownloadImagesForArticleSilently(
-                    timestamp: timestamp,
-                    imageNames: allImages
-                )
-            }
-        }
+        // 7. 后台补齐剩余图片
+        resourceManager.enqueueImageDownloads(timestamp: article.timestamp, imageNames: article.images)
     }
     
     // 【修改】新的自动展开逻辑

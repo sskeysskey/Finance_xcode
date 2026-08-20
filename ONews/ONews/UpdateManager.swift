@@ -126,7 +126,6 @@ struct ServerVersion: Codable {
 
 @MainActor
 class ResourceManager: ObservableObject {
-    
     @Published var isSyncing = false
     // 初始值使用双语
     @Published var syncMessage = Localized.syncStarting 
@@ -213,6 +212,13 @@ class ResourceManager: ObservableObject {
 
     @Published var activeMigration: MigrationConfig? = nil
     @Published var showMigrationSheet: Bool = false
+
+    /// 待下载队列（保序）
+    private var pendingImageQueue: [(timestamp: String, name: String)] = []
+    /// 已进入队列的 key，用于去重："timestamp/imageName"
+    private var queuedImageKeys: Set<String> = []
+    /// 串行下载工作任务
+    private var imageWorkerTask: Task<Void, Never>? = nil
     
     private let serverBaseURL = "http://106.15.183.158:5001/api/ONews"
     // UserDefaults Key
@@ -233,7 +239,7 @@ class ResourceManager: ObservableObject {
         // 1. 请求超时时间：延长至 15 秒，给用户留出阅读并点击网络授权弹窗的时间
         configuration.timeoutIntervalForRequest = 15.0
         // 2. 资源超时时间：整个下载过程的时间
-        configuration.timeoutIntervalForResource = 60.0
+        configuration.timeoutIntervalForResource = 30.0
         // 3. 【关键】设置为 true。这样在首次弹网络授权框时，请求会挂起等待，用户点允许后自动继续，不会报错。
         configuration.waitsForConnectivity = true
         return URLSession(configuration: configuration)
@@ -358,6 +364,100 @@ class ResourceManager: ObservableObject {
         
         print("检查发现所有图片均已本地存在。")
         return true
+    }
+
+    /// 把图片丢进后台队列（立即返回，不阻塞调用方）。
+    /// - 已存在本地的、已在队列里的会自动跳过
+    /// - priority = true 时插到队首（用户正在等的首图）
+    func enqueueImageDownloads(timestamp: String, imageNames: [String], priority: Bool = false) {
+        let dirURL = documentsDirectory.appendingPathComponent("news_images_\(timestamp)")
+        try? fileManager.createDirectory(at: dirURL, withIntermediateDirectories: true)
+
+        var newItems: [(timestamp: String, name: String)] = []
+        for raw in imageNames {
+            let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            let key = "\(timestamp)/\(name)"
+            if queuedImageKeys.contains(key) { continue }
+            if fileManager.fileExists(atPath: dirURL.appendingPathComponent(name).path) { continue }
+            queuedImageKeys.insert(key)
+            newItems.append((timestamp: timestamp, name: name))
+        }
+
+        if !newItems.isEmpty {
+            if priority {
+                pendingImageQueue.insert(contentsOf: newItems, at: 0)
+            } else {
+                pendingImageQueue.append(contentsOf: newItems)
+            }
+        }
+        startImageWorkerIfNeeded()
+    }
+
+    private func startImageWorkerIfNeeded() {
+        guard imageWorkerTask == nil else { return }   // 已有 worker 在跑，它会自己捞新任务
+        guard !pendingImageQueue.isEmpty else { return }
+
+        imageWorkerTask = Task { @MainActor in
+            while !self.pendingImageQueue.isEmpty {
+                let item = self.pendingImageQueue.removeFirst()
+                let key = "\(item.timestamp)/\(item.name)"
+                let destURL = self.documentsDirectory
+                    .appendingPathComponent("news_images_\(item.timestamp)/\(item.name)")
+
+                // 已存在就跳过
+                if self.fileManager.fileExists(atPath: destURL.path) {
+                    self.queuedImageKeys.remove(key)
+                    NotificationCenter.default.post(
+                        name: .articleImageDidDownload,
+                        object: nil,
+                        userInfo: ["path": destURL.path]
+                    )
+                    continue
+                }
+
+                do {
+                    try await self.downloadImagesForArticle(
+                        timestamp: item.timestamp,
+                        imageNames: [item.name],
+                        progressHandler: { _, _ in }
+                    )
+                    self.queuedImageKeys.remove(key)
+                    // 👇 下好一张就广播，详情页对应的 ArticleImageView 会立刻显示
+                    NotificationCenter.default.post(
+                        name: .articleImageDidDownload,
+                        object: nil,
+                        userInfo: ["path": destURL.path]
+                    )
+                } catch {
+                    self.queuedImageKeys.remove(key)
+                    print("⚠️ [图片队列] 下载失败 \(item.name): \(error.localizedDescription)")
+                    // 断网时稍作等待，避免空转烧电
+                    if !self.isNetworkAvailable {
+                        try? await Task.sleep(for: .seconds(2))
+                    }
+                }
+            }
+            self.imageWorkerTask = nil
+        }
+    }
+
+    /// 【核心】最多等待 timeout 秒，等到就返回 true；超时立刻返回 false。
+    /// 注意：超时并**不会**取消下载，下载会继续在后台队列里跑完并写入磁盘。
+    @discardableResult
+    func waitForImages(timestamp: String, imageNames: [String], timeout: TimeInterval) async -> Bool {
+        // 先把任务插到队首启动
+        enqueueImageDownloads(timestamp: timestamp, imageNames: imageNames, priority: true)
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if checkIfImagesExistForArticle(timestamp: timestamp, imageNames: imageNames) {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(120))
+            if Task.isCancelled { break }
+        }
+        return checkIfImagesExistForArticle(timestamp: timestamp, imageNames: imageNames)
     }
 
     /// 在最多 timeout 秒内等待网络可用。
@@ -1120,4 +1220,9 @@ class ResourceManager: ObservableObject {
         }
         try fileManager.moveItem(at: tempURL, to: destinationURL)
     }
+}
+
+// MARK: - 【新增】单张图片下载完成通知
+extension Notification.Name {
+    static let articleImageDidDownload = Notification.Name("articleImageDidDownload")
 }
