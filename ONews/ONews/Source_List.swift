@@ -131,6 +131,15 @@ struct UserProfileView: View {
     @State private var bulkDownloadError = false
     @State private var bulkDownloadErrorMessage = ""
     @State private var showSuccessToast = false
+
+    // 【新增】在线客服
+    @ObservedObject private var supportManager = SupportChatManager.shared
+    @State private var showSupportChat = false
+
+    // 【新增】统一取客服用的 userId
+    private var supportUserId: String {
+        SupportIdentity.userId(appleId: authManager.userIdentifier)
+    }
     
     var body: some View {
         ZStack { // 使用 ZStack 以便显示遮罩
@@ -243,6 +252,54 @@ struct UserProfileView: View {
                     
                     // 支持与反馈部分
                     Section(header: Text(Localized.feedback)) {
+                        
+                        // ✅【新增】在线客服（带未读角标，点开与原悬浮球完全一致）
+                        Button {
+                            supportManager.pendingOpenType = nil   // 只打开列表，不定位特定会话
+                            showSupportChat = true
+                        } label: {
+                            HStack {
+                                ZStack {
+                                    Circle()
+                                        .fill(LinearGradient(colors: [.blue, .purple],
+                                                             startPoint: .topLeading,
+                                                             endPoint: .bottomTrailing))
+                                        .frame(width: 26, height: 26)
+                                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundColor(.white)
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(isGlobalEnglishMode ? "Online Support" : "在线客服")
+                                        .foregroundColor(.primary)
+                                        .fontWeight(.medium)
+                                    Text(isGlobalEnglishMode
+                                         ? "Playback, subscription, points, anything."
+                                         : "播放、订阅、点数、建议…任何问题都可以")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Spacer()
+                                
+                                // 未读角标
+                                if supportManager.unreadTotal > 0 {
+                                    Text(supportManager.unreadTotal > 99 ? "99+" : "\(supportManager.unreadTotal)")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Capsule().fill(Color.red))
+                                }
+                                
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        
+                        // 邮件反馈（原有）
                         Button {
                             let email = "728308386@qq.com"
                             if let url = URL(string: "mailto:\(email)") {
@@ -276,6 +333,20 @@ struct UserProfileView: View {
                         }
                     }
                     
+                    // ✅【修复】版本号独立成行（与「删除账号」彻底分开），且未登录也能看到
+                    Section(header: Text(isGlobalEnglishMode ? "About" : "关于")) {
+                        HStack {
+                            Image(systemName: "info.circle.fill")
+                                .foregroundColor(.gray)
+                            Text(isGlobalEnglishMode ? "Version" : "版本号")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Text("v\(appVersion)")
+                                .foregroundColor(.secondary)
+                                .monospacedDigit()
+                        }
+                    }
+                    
                     // 退出与删除账号部分
                     if authManager.isLoggedIn {
                         Section {
@@ -289,7 +360,7 @@ struct UserProfileView: View {
                                 }
                             }
                             
-                            // 【新增】解决 Guideline 5.1.1(v)：删除账号按钮
+                            // ✅【修复】删除账号：不再混入版本号
                             Button(role: .destructive) {
                                 showDeleteAccountConfirmation = true
                             } label: {
@@ -297,8 +368,6 @@ struct UserProfileView: View {
                                     Image(systemName: "trash.fill")
                                     Text(isGlobalEnglishMode ? "Delete Account" : "删除账号")
                                     Spacer()
-                                    Text("版本")
-                                    Text("v\(appVersion)").foregroundColor(.secondary)
                                 }
                             }
                         }
@@ -310,6 +379,14 @@ struct UserProfileView: View {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(Localized.close) { dismiss() }
                     }
+                }
+                // ✅【新增】在线客服窗（本地状态，避免和根首页的全局 sheet 冲突）
+                .sheet(isPresented: $showSupportChat) {
+                    SupportChatView(userId: supportUserId)
+                }
+                // ✅【新增】进入个人中心即刷新未读数
+                .task {
+                    await supportManager.refresh(userId: supportUserId)
                 }
                 .fullScreenCover(isPresented: $showPrediction) {
                     NavigationStack {
@@ -615,6 +692,8 @@ struct SourceListView: View {
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
     @ObservedObject private var newsQuota = NewsQuotaManager.shared
+    // 【新增】用于承接横幅「回复」等处调用 SupportChatManager.openChat(type:) 时的弹窗
+    @ObservedObject private var supportManager = SupportChatManager.shared
     
     private var searchResults: [(article: Article, sourceName: String, sourceNameEN: String, isContentMatch: Bool)] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -694,7 +773,8 @@ struct SourceListView: View {
                 }
             }
             // 【新增】在线客服悬浮按钮（仅首页显示，可长按拖动）
-            .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
+            // 后续如需在新闻首页恢复悬浮球，直接取消下面这行注释即可。
+            // .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
             // 【修改】使用系统背景色
             .background(Color.viewBackground.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
@@ -827,6 +907,10 @@ struct SourceListView: View {
             .environmentObject(resourceManager)
         }
         .sheet(isPresented: $showLoginSheet) { LoginView() }
+        // 【新增】接管全局 openChat(type:)：寻片/举报横幅的「回复」按钮依赖它
+        .sheet(isPresented: $supportManager.showChat) {
+            SupportChatView(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
+        }
         // ⚠️ 修复 Bug：直接绑定 authManager.showSubscriptionSheet，确保状态双向同步
         .sheet(isPresented: $authManager.showSubscriptionSheet) { SubscriptionView() }
         // 【新增】个人中心

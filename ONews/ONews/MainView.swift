@@ -285,6 +285,9 @@ struct MainAppView: View {
 // 【修改】只看视频的首页容器：无返回按钮；模块关闭时显示提示页
 struct VideoOnlyHomeView: View {
     @EnvironmentObject var resourceManager: ResourceManager
+    @EnvironmentObject var authManager: AuthManager               // 【新增】
+    @ObservedObject private var supportManager = SupportChatManager.shared  // 【新增】
+
     var body: some View {
         NavigationStack {
             if resourceManager.showVideoModule {
@@ -292,6 +295,10 @@ struct VideoOnlyHomeView: View {
             } else {
                 VideoModuleClosedView()
             }
+        }
+        // 【新增】接管全局 SupportChatManager.openChat(type:)（如举报/寻片回复等入口）
+        .sheet(isPresented: $supportManager.showChat) {
+            SupportChatView(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
         }
     }
 }

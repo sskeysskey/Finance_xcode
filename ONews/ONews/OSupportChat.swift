@@ -174,6 +174,10 @@ struct SupportBubbleOverlay: ViewModifier {
     @State private var dragBase: CGPoint? = nil
     @State private var isDragging = false
 
+    // 【新增】悬浮球自己的弹窗状态：不再直接绑定 manager.showChat，
+    // 避免「根首页的全局 sheet」与「悬浮球 sheet」同时触发导致冲突。
+    @State private var showChatLocal = false
+
     private let diameter: CGFloat = 52
 
     func body(content: Content) -> some View {
@@ -186,7 +190,8 @@ struct SupportBubbleOverlay: ViewModifier {
                 }
                 .ignoresSafeArea(.keyboard)
             )
-            .sheet(isPresented: $manager.showChat) {
+            // 【修改】改为本地状态
+            .sheet(isPresented: $showChatLocal) {
                 SupportChatView(userId: userId)
             }
             .task { await manager.refresh(userId: userId) }
@@ -225,7 +230,11 @@ struct SupportBubbleOverlay: ViewModifier {
         .scaleEffect(isDragging ? 1.14 : 1.0)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isDragging)
         .contentShape(Circle())
-        .onTapGesture { manager.openChat() }
+        .onTapGesture {
+            // 【修改】点击 = 打开列表（清掉可能残留的定位类型）
+            manager.pendingOpenType = nil
+            showChatLocal = true
+        }
         .simultaneousGesture(dragGesture(in: size))
         .accessibilityLabel("在线客服")
     }
@@ -294,7 +303,7 @@ struct SupportChatView: View {
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundColor(.primary)
                                 Text(en ? "Playback, subscription, points, anything."
-                                        : "播放、订阅、点数、建议…任何问题都可以")
+                                        : "找片、播放、订阅、点数、建议…任何问题都可以问")
                                     .font(.caption).foregroundColor(.secondary)
                             }
                             Spacer()

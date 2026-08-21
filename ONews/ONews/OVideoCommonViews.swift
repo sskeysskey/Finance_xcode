@@ -275,6 +275,8 @@ struct VideoModuleView: View {
                     .transition(.opacity)
             }
         }
+        // ✅【新增】在线客服悬浮按钮（从新闻首页迁移到视频首页，长按可拖动，功能完全一致）
+        .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
         // 【新增】追剧半屏列表
         .sheet(isPresented: $seriesTrack.showSheet) {
             SeriesTrackListView()
