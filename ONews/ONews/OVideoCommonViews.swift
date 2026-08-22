@@ -251,6 +251,8 @@ struct VideoModuleView: View {
 
     // 【新增】是否显示左上角返回按钮（只看视频的根视图传 false）
     var showBackButton: Bool = true
+    // 【需求3】区分「首次进入」与「从其他页面返回」
+    @State private var didAppearOnce = false
 
     private var sortBinding: Binding<VideoSortOption> {
         Binding(get: { VideoSortOption(rawValue: sortOptionRaw) ?? .date },
@@ -275,22 +277,34 @@ struct VideoModuleView: View {
                     .transition(.opacity)
             }
         }
-        // ✅【新增】在线客服悬浮按钮（从新闻首页迁移到视频首页，长按可拖动，功能完全一致）
+        // ✅ 在线客服悬浮按钮
         .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
-        // 【新增】追剧半屏列表
         .sheet(isPresented: $seriesTrack.showSheet) {
             SeriesTrackListView()
                 .environmentObject(dataManager)
                 .environmentObject(authManager)
                 .environmentObject(resourceManager)
         }
+        // ★★★【需求1】每次回到视频首页（从详情/播放器/搜索返回）都静默刷新 ★★★
         .onAppear {
             dataManager.reviewMaxYear = resourceManager.effectiveReviewVideoMaxYear
+            Task {
+                // 只拉 version.json（开关/审核年份/通知），不下载新闻 JSON，省流量
+                await resourceManager.refreshServerConfig(minInterval: 120)
+                await dataManager.silentRefreshCurrentSelection(
+                    userId: authManager.userIdentifier, minInterval: 45)
+                await seriesTrack.refresh()
+            }
+            // 【需求3】只有「返回」视频首页才算成功时刻；冷启动第一次不打扰
+            if didAppearOnce {
+                NotificationPermissionManager.shared.record(.videoHomeReturn)
+            } else {
+                didAppearOnce = true
+            }
         }
         .task {
             await dataManager.bootstrap(userId: authManager.userIdentifier)
             await FreeQuotaManager.shared.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
-            // 【新增】刷新追剧状态 + 有未读时自动弹出
             await seriesTrack.refresh()
             if !noAutoPopup, seriesTrack.unseenCount > 0, !seriesTrack.showSheet {
                 try? await Task.sleep(nanoseconds: 400_000_000)
@@ -748,6 +762,24 @@ struct VideoBrowseView: View {
         }
         // ⭐ 隐藏系统导航栏，把空间让给分类栏
         .toolbar(.hidden, for: .navigationBar)
+        // ★★★【需求1】切换栏目 / 切换排序时，静默刷新该栏目第一页
+        .onChange(of: selectedCategoryIndex) { idx in
+            guard idx >= 0, idx < dataManager.categoryNames.count else { return }
+            let cat = dataManager.categoryNames[idx]
+            Task {
+                await dataManager.silentRefreshFirstPage(
+                    category: cat, sort: sortOption, userId: userId, minInterval: 90)
+            }
+        }
+        .onChange(of: sortOption) { newSort in
+            let idx = selectedCategoryIndex
+            guard idx >= 0, idx < dataManager.categoryNames.count else { return }
+            let cat = dataManager.categoryNames[idx]
+            Task {
+                await dataManager.silentRefreshFirstPage(
+                    category: cat, sort: newSort, userId: userId, minInterval: 90)
+            }
+        }
     }
 
     // ⭐ 悬浮排序按钮（靠右，悬浮在卡片之上，会轻微遮挡下方卡片）

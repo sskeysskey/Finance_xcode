@@ -217,6 +217,9 @@ struct SubscriptionView: View {
                 }
             }
         }
+        // ★【需求3】订阅页/支付流程期间绝不弹通知预弹窗
+        .onAppear  { NotificationPermissionManager.shared.suppress(true) }
+        .onDisappear { NotificationPermissionManager.shared.suppress(false) }
         // 【修改】Alert 标题双语化
         .alert(Localized.paymentFailed, isPresented: $showError) {
             Button(Localized.confirm, role: .cancel) { }

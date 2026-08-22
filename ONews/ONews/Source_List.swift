@@ -673,6 +673,10 @@ struct SourceListView: View {
 
     // 【新增】全局导航路径
     @State private var navPath = NavigationPath()
+
+    // 【新增】导航深度追踪，用于"返回时静默刷新"
+    @State private var lastNavDepth = 0
+    @State private var didInitialSync = false
     
     @State private var showAddSourceSheet = false
     // 【新增】控制登录弹窗的显示
@@ -788,7 +792,8 @@ struct SourceListView: View {
                 }
 
                 ToolbarItem(placement: .principal) {
-                    if !authManager.isSubscribed {
+                    // 【修改】只有"已登录 且 未订阅"才显示点数胶囊
+                    if authManager.isLoggedIn && !authManager.isSubscribed {
                         NewsPointsPill()
                     }
                 }
@@ -881,24 +886,37 @@ struct SourceListView: View {
         .tint(.blue)
         .onAppear {
             viewModel.loadNews()
-            Task { await syncResources() }
-            // 【新增】刷新在线客服未读数
+
+            // ★★★【需求1】首启用带遮罩的正常同步；之后每次回到首页只做静默刷新 ★★★
+            if !didInitialSync {
+                didInitialSync = true
+                Task { await syncResources() }
+            } else {
+                Task { await resourceManager.silentRefresh(minInterval: 45, reason: "home-appear") }
+            }
+
             Task { await SupportChatManager.shared.refresh(
                 userId: SupportIdentity.userId(appleId: authManager.userIdentifier)) }
-            // ✅ 新增：启动时轻量级检查预测数据源可用性（不下载文件）
             Task { await predictionSyncManager.refreshAvailabilityFromServer() }
-            // 【新增】拉取寻片请求的未读回复
             Task { await WishReplyManager.shared.refresh(userId: authManager.userIdentifier) }
-            // 【新增】拉取举报的未读回复
             Task { await ReportReplyManager.shared.refresh(userId: authManager.userIdentifier) }
-            // 刷新点数
             Task { await FreeQuotaManager.shared.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
-            // 刷新分离后的新闻点数
+            Task { await NewsQuotaManager.shared.refresh(
+                userId: NewsQuotaManager.currentUserId(auth: authManager)) }
+        }
+        // ★★★【需求1】导航栈回退监听：回到大首页(0) / 回到列表页(1) 都静默刷新一次 ★★★
+        .onChange(of: navPath.count) { newDepth in
+            let isBack = newDepth < lastNavDepth
+            lastNavDepth = newDepth
+            guard isBack else { return }
+
             Task {
-                    await NewsQuotaManager.shared.refresh(
-                        userId: NewsQuotaManager.currentUserId(auth: authManager)
-                    )
-                }
+                await resourceManager.silentRefresh(minInterval: 45, reason: "nav-back(\(newDepth))")
+                await NewsQuotaManager.shared.refresh(
+                    userId: NewsQuotaManager.currentUserId(auth: authManager))
+            }
+            // 【需求3】返回列表/首页是"成功时刻"，允许弹通知预弹窗
+            NotificationPermissionManager.shared.record(newDepth == 0 ? .newsHomeReturn : .newsListReturn)
         }
         .sheet(isPresented: $showAddSourceSheet, onDismiss: { viewModel.loadNews() }) {
             NavigationView {

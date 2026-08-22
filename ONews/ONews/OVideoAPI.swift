@@ -14,14 +14,12 @@ enum OVideoAPI {
         return URL(string: "\(baseURL)/cover/\(encoded)")
     }
 
-    // 公共：构造带 query 的 URL
     private static func makeURL(_ path: String, _ items: [URLQueryItem]) -> URL? {
         guard var comps = URLComponents(string: "\(baseURL)/\(path)") else { return nil }
         comps.queryItems = items.isEmpty ? nil : items
         return comps.url
     }
 
-    // 分类名列表
     static func fetchCategories() async throws -> [String] {
         guard let url = makeURL("categories", []) else { throw URLError(.badURL) }
         var req = URLRequest(url: url); req.timeoutInterval = 12
@@ -29,7 +27,6 @@ enum OVideoAPI {
         return try JSONDecoder().decode(OVideoCategoriesResponse.self, from: data).categories
     }
 
-    // 首页分页列表
     static func fetchList(category: String, sort: VideoSortOption,
                         page: Int, pageSize: Int, userId: String?,
                         maxYear: Int? = nil) async throws -> OVideoListResponse {
@@ -41,11 +38,11 @@ enum OVideoAPI {
         if let y = maxYear { q.append(URLQueryItem(name: "max_year", value: String(y))) }
         guard let url = makeURL("list", q) else { throw URLError(.badURL) }
         var req = URLRequest(url: url); req.timeoutInterval = 15
+        req.cachePolicy = .reloadIgnoringLocalCacheData   // 【新增】避免拿到 URLCache 旧数据
         let (data, _) = try await URLSession.shared.data(for: req)
         return try JSONDecoder().decode(OVideoListResponse.self, from: data)
     }
 
-    // 筛选分页列表
     static func fetchFilter(category: String?, type: String?, year: Int?, region: String?,
                             sort: VideoSortOption, page: Int, pageSize: Int,
                             userId: String?, maxYear: Int? = nil) async throws -> OVideoListResponse {
@@ -64,7 +61,6 @@ enum OVideoAPI {
         return try JSONDecoder().decode(OVideoListResponse.self, from: data)
     }
 
-    // 筛选可选项
     static func fetchFilterOptions(userId: String?) async throws -> OVideoFilterOptionsResponse {
         var q: [URLQueryItem] = []
         if let uid = userId, !uid.isEmpty { q.append(URLQueryItem(name: "user_id", value: uid)) }
@@ -74,7 +70,6 @@ enum OVideoAPI {
         return try JSONDecoder().decode(OVideoFilterOptionsResponse.self, from: data)
     }
 
-    // 搜索
     static func search(keyword: String, userId: String?, maxYear: Int? = nil) async throws -> [OVideoItem] {
         var q = [URLQueryItem(name: "q", value: keyword)]
         if let uid = userId, !uid.isEmpty { q.append(URLQueryItem(name: "user_id", value: uid)) }
@@ -85,19 +80,17 @@ enum OVideoAPI {
         return try JSONDecoder().decode(OVideoListResponse.self, from: data).items
     }
 
-    // 详情播放列表（仅有效链接）
     static func fetchPlaylist(url itemURL: String) async throws -> [OVideoChannel] {
         guard let encoded = itemURL.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "\(baseURL)/playlist?url=\(encoded)") else { throw URLError(.badURL) }
         var req = URLRequest(url: url); req.timeoutInterval = 15
+        req.cachePolicy = .reloadIgnoringLocalCacheData   // 【新增】剧集列表必须最新
         let (data, _) = try await URLSession.shared.data(for: req)
         return try JSONDecoder().decode(OVideoPlaylistResponse.self, from: data).playlist
     }
 
     static func resolveRealURL(episodeURL: String) async throws -> String {
-        if episodeURL.lowercased().contains(".m3u8") {
-            return episodeURL
-        }
+        if episodeURL.lowercased().contains(".m3u8") { return episodeURL }
         guard let url = URL(string: "\(baseURL)/resolve") else { throw URLError(.badURL) }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -123,7 +116,6 @@ enum OVideoAPI {
         return result.real_url
     }
 
-    // 提交寻片/许愿请求
     static func submitWish(content: String, keyword: String?,
                            userId: String?, userType: String) async throws {
         guard let url = URL(string: "\(baseURL)/wish") else { throw URLError(.badURL) }
@@ -150,7 +142,6 @@ enum OVideoAPI {
         }
     }
 
-    // 【第二阶段】拉取我的未读回复
     static func fetchMyWishReplies(userId: String) async throws -> [WishReply] {
         guard let url = makeURL("wish/my_replies",
                                 [URLQueryItem(name: "user_id", value: userId)]) else {
@@ -161,7 +152,6 @@ enum OVideoAPI {
         return try JSONDecoder().decode(WishRepliesResponse.self, from: data).replies
     }
 
-    // 【第二阶段】标记回复已读
     static func ackWishReply(id: Int, userId: String) async {
         guard let url = URL(string: "\(baseURL)/wish/ack_reply") else { return }
         var req = URLRequest(url: url)
@@ -171,7 +161,6 @@ enum OVideoAPI {
         _ = try? await URLSession.shared.data(for: req)
     }
 
-    // 【举报回复】拉取我的未读回复
     static func fetchMyReportReplies(userId: String) async throws -> [ReportReply] {
         guard let url = makeURL("report/my_replies",
                                 [URLQueryItem(name: "user_id", value: userId)]) else {
@@ -182,7 +171,6 @@ enum OVideoAPI {
         return try JSONDecoder().decode(ReportRepliesResponse.self, from: data).replies
     }
 
-    // 【举报回复】标记回复已读
     static func ackReportReply(id: Int, userId: String) async {
         guard let url = URL(string: "\(baseURL)/report/ack_reply") else { return }
         var req = URLRequest(url: url)
@@ -193,12 +181,9 @@ enum OVideoAPI {
     }
 }
 
-// ⭐ 中英文混合人名清洗（详情页仍要用）
 func cleanName(_ rawName: String) -> String {
     let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return "" }
-    // 仅当字符串含有中文字符时，才尝试提取中文（含间隔号）部分；
-    // 纯外文人名（如 "Héctor·Muniente"）原样返回，避免只剩下一个「·」
     let hasChinese = trimmed.range(of: "[\u{4e00}-\u{9fa5}]", options: .regularExpression) != nil
     if hasChinese,
        let range = trimmed.range(of: "[\u{4e00}-\u{9fa5}·]+", options: .regularExpression) {
@@ -209,7 +194,7 @@ func cleanName(_ rawName: String) -> String {
     return trimmed
 }
 
-// MARK: - 寻片回复模型（第二阶段）
+// MARK: - 模型（未改动）
 struct WishRepliesResponse: Codable { let replies: [WishReply] }
 struct WishReply: Codable, Identifiable, Hashable {
     let id: Int
@@ -218,7 +203,6 @@ struct WishReply: Codable, Identifiable, Hashable {
     let replied_at: String?
 }
 
-// MARK: - 举报回复模型
 struct ReportRepliesResponse: Codable { let replies: [ReportReply] }
 struct ReportReply: Codable, Identifiable, Hashable {
     let id: Int
@@ -228,7 +212,6 @@ struct ReportReply: Codable, Identifiable, Hashable {
     let replied_at: String?
 }
 
-// MARK: - 响应模型
 struct OVideoCategoriesResponse: Codable { let categories: [String] }
 struct OVideoListResponse: Codable {
     let items: [OVideoItem]
@@ -242,7 +225,6 @@ struct OVideoFilterOptionsResponse: Codable {
 }
 struct OVideoPlaylistResponse: Codable { let playlist: [OVideoChannel] }
 
-// 旧结构保留（向后兼容，不再使用）
 struct OVideoResponse: Codable { let categories: [OVideoCategory] }
 struct OVideoCategory: Codable, Identifiable, Hashable {
     var id: String { name }
@@ -250,7 +232,6 @@ struct OVideoCategory: Codable, Identifiable, Hashable {
     let items: [OVideoItem]
 }
 
-// MARK: - 数据模型
 struct OVideoItem: Codable, Identifiable, Hashable {
     var id: String { url }
     let time: String?
@@ -267,7 +248,7 @@ struct OVideoItem: Codable, Identifiable, Hashable {
     let alias: String?
     let intro: String?
     let ratings: [String: String]?
-    let playlist: [OVideoChannel]?   // ⭐ 列表接口不返回 playlist
+    let playlist: [OVideoChannel]?
     let update: String?
 
     enum CodingKeys: String, CodingKey {
@@ -321,7 +302,6 @@ struct OVideoResolveResponse: Codable {
     let title: String?
 }
 
-// MARK: - 排序 / 展示辅助
 extension OVideoItem {
     var updateSortKey: String { update ?? "" }
     var releaseSortKey: String {
@@ -348,7 +328,6 @@ extension OVideoItem {
     }
 }
 
-// 排序枚举
 enum VideoSortOption: String, CaseIterable {
     case update, date, rating
     func displayName(_ en: Bool) -> String {
@@ -374,7 +353,6 @@ enum VideoSortOption: String, CaseIterable {
     }
 }
 
-// MARK: - 缓存元数据（不变）
 struct VideoCacheMetadata: Codable {
     let title: String
     let coverImage: String?
@@ -392,35 +370,35 @@ extension VideoCacheMetadata {
     }
 }
 
-// MARK: - 数据管理器（分页 / 按需）
+// MARK: - 数据管理器（分页 / 按需 / ★新增静默刷新）
 @MainActor
 class OVideoDataManager: ObservableObject {
-    // ⭐ 默认含 Featured（兜底用，正常会被服务器返回覆盖）
     @Published var categoryNames: [String] = ["Featured", "Movie", "Drama", "Show", "Anime"]
-    // 【新增】审核员模式：只看 <= 此年份的老片（nil 表示不限制）
     @Published var reviewMaxYear: Int? = nil {
         didSet {
-            // 限定条件变化时，把已经加载的旧片单清掉，强制按新 key 重新拉
             if oldValue != reviewMaxYear {
                 pageItems.removeAll(); hasMore.removeAll()
                 nextPage.removeAll(); loadingKeys.removeAll()
+                lastRefreshAt.removeAll()
             }
         }
     }
     @Published var isBootstrapping = false
     @Published var bootstrapError: String? = nil
 
-    // 每个 "category|sort" 的分页缓存
     @Published private(set) var pageItems: [String: [OVideoItem]] = [:]
     @Published private(set) var hasMore: [String: Bool] = [:]
     @Published private(set) var loadingKeys: Set<String> = []
     private var nextPage: [String: Int] = [:]
 
+    // 【新增】静默刷新节流
+    private var lastRefreshAt: [String: Date] = [:]
+    private var lastCategoryRefreshAt: Date?
+
     private let pageSize = 24
     private var didBootstrap = false
     private var loadedUserId: String? = nil
 
-    // 兼容旧 UI（底部栏不再依赖加载状态）
     var isLoading: Bool { isBootstrapping }
 
     func cacheKey(_ cat: String, _ sort: VideoSortOption) -> String {
@@ -438,12 +416,11 @@ class OVideoDataManager: ObservableObject {
         loadingKeys.contains(cacheKey(category, sort))
     }
 
-    // 引导：拉分类名；用户身份变化时清缓存
     func bootstrap(userId: String?) async {
         if didBootstrap && loadedUserId == userId { return }
         if didBootstrap && loadedUserId != userId {
             pageItems.removeAll(); hasMore.removeAll()
-            nextPage.removeAll(); loadingKeys.removeAll()
+            nextPage.removeAll(); loadingKeys.removeAll(); lastRefreshAt.removeAll()
         }
         loadedUserId = userId
         isBootstrapping = true
@@ -451,6 +428,7 @@ class OVideoDataManager: ObservableObject {
         do {
             let names = try await OVideoAPI.fetchCategories()
             if !names.isEmpty { categoryNames = names }
+            lastCategoryRefreshAt = Date()
             bootstrapError = nil
         } catch {
             bootstrapError = error.localizedDescription
@@ -480,22 +458,77 @@ class OVideoDataManager: ObservableObject {
             pageItems[key] = arr
             hasMore[key] = resp.has_more
             nextPage[key] = page + 1
+            if page == 0 { lastRefreshAt[key] = Date() }
+        } catch { }
+    }
+
+    // MARK: - ★★★【需求1】静默刷新第一页（新增内容前插 + 同 URL 就地更新）★★★
+    func silentRefreshFirstPage(category: String, sort: VideoSortOption,
+                                userId: String?, minInterval: TimeInterval = 60) async {
+        let key = cacheKey(category, sort)
+        if loadingKeys.contains(key) { return }
+        if let last = lastRefreshAt[key], Date().timeIntervalSince(last) < minInterval { return }
+        lastRefreshAt[key] = Date()
+
+        do {
+            let resp = try await OVideoAPI.fetchList(category: category, sort: sort,
+                                                     page: 0, pageSize: pageSize,
+                                                     userId: userId, maxYear: reviewMaxYear)
+            var arr = pageItems[key] ?? []
+            if arr.isEmpty {
+                pageItems[key] = resp.items
+                hasMore[key] = resp.has_more
+                nextPage[key] = 1
+                return
+            }
+            // 1) 同 url 就地更新（更新时间/集数/评分等会变新）
+            let freshMap = Dictionary(resp.items.map { ($0.url, $0) }, uniquingKeysWith: { a, _ in a })
+            for i in arr.indices {
+                if let newer = freshMap[arr[i].url] { arr[i] = newer }
+            }
+            // 2) 全新条目前插（page0 就是当前排序下的头部）
+            let existing = Set(arr.map { $0.url })
+            let brandNew = resp.items.filter { !existing.contains($0.url) }
+            if !brandNew.isEmpty {
+                arr.insert(contentsOf: brandNew, at: 0)
+                print("📺 [静默刷新] \(key) 新增 \(brandNew.count) 条")
+            }
+            pageItems[key] = arr
         } catch {
-            // 失败保留 hasMore=true，允许下次重试
+            // 失败允许 20 秒后再试
+            lastRefreshAt[key] = Date().addingTimeInterval(-(max(0, minInterval - 20)))
         }
     }
 
-    // 搜索
+    /// 刷新用户当前正在看的那个分类 + 分类名
+    func silentRefreshCurrentSelection(userId: String?, minInterval: TimeInterval = 60) async {
+        await refreshCategoryNames()
+        let idx = UserDefaults.standard.integer(forKey: "OVideo_SelectedCategoryIndex")
+        let sortRaw = UserDefaults.standard.string(forKey: "OVideo_SortOption")
+            ?? VideoSortOption.date.rawValue
+        let sort = VideoSortOption(rawValue: sortRaw) ?? .date
+        guard idx >= 0, idx < categoryNames.count else { return }
+        await silentRefreshFirstPage(category: categoryNames[idx], sort: sort,
+                                     userId: userId, minInterval: minInterval)
+    }
+
+    /// 分类名变动较少，10 分钟节流
+    func refreshCategoryNames(minInterval: TimeInterval = 600) async {
+        if let last = lastCategoryRefreshAt, Date().timeIntervalSince(last) < minInterval { return }
+        lastCategoryRefreshAt = Date()
+        if let names = try? await OVideoAPI.fetchCategories(), !names.isEmpty {
+            if names != categoryNames { categoryNames = names }
+        }
+    }
+
     func search(keyword: String, userId: String?) async -> [OVideoItem] {
         (try? await OVideoAPI.search(keyword: keyword, userId: userId, maxYear: reviewMaxYear)) ?? []
     }
 
-    // 筛选选项
     func fetchFilterOptions(userId: String?) async -> OVideoFilterOptionsResponse? {
         try? await OVideoAPI.fetchFilterOptions(userId: userId)
     }
 
-    // 筛选分页
     func fetchFilter(category: String?, type: String?, year: Int?, region: String?,
                     sort: VideoSortOption, page: Int, userId: String?)
     async -> (items: [OVideoItem], hasMore: Bool) {
@@ -510,13 +543,12 @@ class OVideoDataManager: ObservableObject {
         }
     }
 
-    // 详情播放列表
     func fetchPlaylist(url: String) async -> [OVideoChannel] {
         (try? await OVideoAPI.fetchPlaylist(url: url)) ?? []
     }
 }
 
-// MARK: - 搜索历史管理器（不变）
+// MARK: - 搜索历史 / 播放记录 / 回复管理器（未改动）
 @MainActor
 final class SearchHistoryManager: ObservableObject {
     @Published private(set) var histories: [String] = []
@@ -537,7 +569,6 @@ final class SearchHistoryManager: ObservableObject {
     private func load() { histories = UserDefaults.standard.stringArray(forKey: storageKey) ?? [] }
 }
 
-// MARK: - 播放记录模型 / 管理器（不变）
 struct VideoPlayRecord: Codable, Identifiable, Hashable {
     var id: String { "\(videoURL)_\(playTime.timeIntervalSince1970)" }
     let videoTitle: String
@@ -581,20 +612,17 @@ final class VideoPlayRecordManager: ObservableObject {
     }
 }
 
-// MARK: - 寻片回复管理器（第二阶段）
 @MainActor
 final class WishReplyManager: ObservableObject {
     static let shared = WishReplyManager()
     @Published var pendingReplies: [WishReply] = []
     private init() {}
-
     func refresh(userId: String?) async {
         guard let uid = userId, !uid.isEmpty else { return }
         if let replies = try? await OVideoAPI.fetchMyWishReplies(userId: uid) {
             self.pendingReplies = replies
         }
     }
-
     func acknowledge(_ reply: WishReply, userId: String?) async {
         guard let uid = userId, !uid.isEmpty else { return }
         await OVideoAPI.ackWishReply(id: reply.id, userId: uid)
@@ -602,20 +630,17 @@ final class WishReplyManager: ObservableObject {
     }
 }
 
-// MARK: - 举报回复管理器
 @MainActor
 final class ReportReplyManager: ObservableObject {
     static let shared = ReportReplyManager()
     @Published var pendingReplies: [ReportReply] = []
     private init() {}
-
     func refresh(userId: String?) async {
         guard let uid = userId, !uid.isEmpty else { return }
         if let replies = try? await OVideoAPI.fetchMyReportReplies(userId: uid) {
             self.pendingReplies = replies
         }
     }
-
     func acknowledge(_ reply: ReportReply, userId: String?) async {
         guard let uid = userId, !uid.isEmpty else { return }
         await OVideoAPI.ackReportReply(id: reply.id, userId: uid)

@@ -28,6 +28,20 @@ final class NewsQuotaManager: ObservableObject {
     func isNewsUnlocked(_ key: String) -> Bool { unlockedNewsKeys.contains(key) }
     func clearBonusWelcome() { pendingBonusWelcome = 0 }
 
+    /// 【新增】登出/删号时清空本地点数，避免胶囊还显示旧点数
+    func reset() {
+        dailyQuota = 0
+        remaining = 0
+        bonusRemaining = 0
+        dailyRemaining = 0
+        unlockedNewsKeys = []
+        pendingBonusWelcome = 0
+        inviteCode = ""
+        inviteRewardCount = 0
+        hasRedeemedInvite = false
+        loggedIn = false
+    }
+    
     func refresh(userId: String) async {
         guard let enc = userId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "\(Self.base)/quota/status?user_id=\(enc)") else { return }

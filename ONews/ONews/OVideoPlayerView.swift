@@ -1146,7 +1146,12 @@ struct VideoPlayerPageView: View {
                 Task { await resolve() }
             }
         }
+        // ★★★【需求3】播放期间绝不打扰（全屏 presentation 与 sheet 会互卡）★★★
+        .onAppear {
+            NotificationPermissionManager.shared.suppress(true)
+        }
         .onDisappear {
+            NotificationPermissionManager.shared.suppress(false)
             ReviewManager.shared.recordVideoInteraction()
             loadTimeoutWork?.cancel()   // ⭐ 离开页面清理看门狗
             loadTimeoutWork = nil
@@ -1828,8 +1833,9 @@ struct CachedVideoPlayerView: View {
                  : "当前处于蜂窝网络，在线播放将消耗流量，是否继续？")
         }
         .onAppear {
+            NotificationPermissionManager.shared.suppress(true)   // ★【需求3】
             startInitialPlaybackIfNeeded()
-            if isCachedLoading { scheduleLoadTimeout() }   // ⭐
+            if isCachedLoading { scheduleLoadTimeout() }
         }
         // ⭐ 加载状态变化：进入加载→计时；结束加载→取消
         .onChange(of: isCachedLoading) { loading in
@@ -1851,7 +1857,8 @@ struct CachedVideoPlayerView: View {
             }
         }
         .onDisappear {
-            loadTimeoutWork?.cancel()   // ⭐
+            NotificationPermissionManager.shared.suppress(false)  // ★【需求3】
+            loadTimeoutWork?.cancel()
             loadTimeoutWork = nil
         }
         .onChange(of: authManager.isLoggedIn) { loggedIn in

@@ -4,75 +4,57 @@ import Combine
 import UIKit
 
 extension Color {
-    // 稍微带一点灰度的背景，比纯白更护眼，能衬托出白色卡片
     static let viewBackground = Color(UIColor.systemGroupedBackground)
-    
-    // 卡片背景：浅色模式纯白，深色模式深灰
     static let cardBackground = Color(UIColor.secondarySystemGroupedBackground)
 }
 
-// 【修改】AppDelegate 类：增加后台下载 Session 回调支持
 class AppDelegate: NSObject, UIApplicationDelegate {
-    // 📺 【新增】视频旋转锁定变量（默认仅支持竖屏）
     static var orientationLock: UIInterfaceOrientationMask = .portrait
-    
-    // 【修改】实现此方法，让系统根据 orientationLock 的值动态返回支持的方向
+
     func application(_ application: UIApplication,
                      supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         return Self.orientationLock
     }
 
-    // --- ✨ 关键新增：接管系统后台下载任务回调 ---
     func application(_ application: UIApplication,
                      handleEventsForBackgroundURLSession identifier: String,
                      completionHandler: @escaping () -> Void) {
         print("✨ [AppDelegate] 收到后台下载 URLSession 事件，Identifier: \(identifier)")
-        // 将回调事件传递给 HLS 下载管理器，让其在事件处理完毕后回调系统
         HLSDownloadManager.shared.backgroundCompletionHandler = completionHandler
     }
 
-    // --- 以下为你原有的业务管理器和初始化逻辑，保持不变 ---
     let newsViewModel = NewsViewModel()
     let resourceManager = ResourceManager()
     let badgeManager = AppBadgeManager()
-    // 【新增】创建 AuthManager 实例
-    let authManager = AuthManager()
-    
-    // 【新增】Prediction 相关管理器
+    let authManager = AuthManager.shared   // ✅
+
     let predictionSyncManager = PredictionSyncManager()
     let preferenceManager = PreferenceManager()
     let translationManager = TranslationManager()
-    
-    // 【新增】视频模块数据管理器（全局共享，用于预加载）
+
     let videoDataManager = OVideoDataManager()
-    
+
     var hasRequestedPermissions = false
-    
-    // 这是 App 启动后会调用的方法，是执行一次性设置的完美位置。
+
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
-        
+
         print("AppDelegate: didFinishLaunchingWithOptions - App 启动完成，开始进行一次性设置。")
-        
-        // --- 🌍 国际化智能初始化逻辑 ---
+
         initializeLanguagePreference()
-        
+
         newsViewModel.badgeUpdater = { [weak self] count in
             self?.badgeManager.updateBadge(count: count)
         }
-        
-        // 【修改】将 ResourceManager 的引用传递给 NewsViewModel
         newsViewModel.resourceManager = resourceManager
-        
-        // 异步请求角标权限,完成后设置标记
+
+        // 【需求3 修改】不再在启动时请求通知权限（避免用户一上来就点"不允许"）。
+        // 只查询当前授权状态，真正的请求交给 NotificationPermissionManager 在"成功时刻"发起。
         Task {
-            await badgeManager.requestAuthorizationAsync()
-            await MainActor.run {
-                self.hasRequestedPermissions = true
-                print("AppDelegate: 权限请求已完成")
-            }
+            await NotificationPermissionManager.shared.refreshStatus()
+            await MainActor.run { self.hasRequestedPermissions = true }
         }
-        
-        // 【修改】视频模块预加载：拉分类名 + 预热用户上次选中的分类首页
+
+        // 视频模块预加载
         Task(priority: .userInitiated) { [weak self] in
             try? await Task.sleep(nanoseconds: 10_000_000)
             guard let self = self else { return }
@@ -91,51 +73,24 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             await SeriesTrackManager.shared.refresh(force: true)
             print("📺 [预加载] 视频首页第一页已预热。")
         }
-        
+
         let tv = UITableView.appearance()
         tv.backgroundColor = .clear
         tv.separatorStyle = .none
-        
+
         return true
     }
-    
-    // 【新增】辅助方法：只在首次安装时，根据系统语言自动设置默认模式
+
     private func initializeLanguagePreference() {
         let defaults = UserDefaults.standard
         let initKey = "hasInitializedLanguage"
-        
-        // ⚠️ 调试专用：强制删除旧的初始化标记，确保每次运行都能测试逻辑。
-        // 测试通过后，请删除或注释掉下面这行代码！
-        // defaults.removeObject(forKey: initKey)
-        
-        // 1. 检查是否已经初始化过
-        // 如果已经初始化过，说明用户可能已经手动改过设置，或者已经沿用了上次的自动设置，直接跳过，尊重用户选择。
-        if defaults.bool(forKey: initKey) {
-            return
-        }
-        
-        // 2. 使用 Locale.preferredLanguages 获取用户系统首选语言列表
-        // 这是判断用户意图最准确的方法，比 Locale.current 更可靠
+        if defaults.bool(forKey: initKey) { return }
         let preferredLang = Locale.preferredLanguages.first ?? "en"
-        
         print("【国际化】检测到系统首选语言: \(preferredLang)")
-        
-        // 3. 判断逻辑
-        // 策略：只有当用户的首选语言明确是“中文”时，才关闭英文模式。
-        // 其他所有语言（英文、日文、法文等）都默认开启英文模式（作为通用语）。
-        
-        let isChinese = preferredLang.hasPrefix("zh") // 涵盖 zh-Hans, zh-Hant, zh-CN, zh-HK 等
-        
-        // 如果是中文，shouldBeEnglish = false；否则 = true
+        let isChinese = preferredLang.hasPrefix("zh")
         let shouldBeEnglish = !isChinese
-        
-        // 4. 写入设置
-        // 这里直接修改 "isGlobalEnglishMode"，视图里的 @AppStorage 会自动读取这个值
         defaults.set(shouldBeEnglish, forKey: "isGlobalEnglishMode")
-        
-        // 5. 标记已初始化，以后不再自动覆盖
         defaults.set(true, forKey: initKey)
-        
         print("【国际化】首次启动初始化完成。设置英文模式: \(shouldBeEnglish)")
     }
 }
@@ -143,66 +98,57 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
 @main
 struct NewsReaderAppApp: App {
-    // 【新增】第 2 步：使用 @UIApplicationDelegateAdaptor 将 AppDelegate 连接到 SwiftUI App 生命周期。
-    // SwiftUI 会自动创建 AppDelegate 的实例，并调用其生命周期方法。
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-
     @Environment(\.scenePhase) private var scenePhase
-    
+
     var body: some Scene {
         WindowGroup {
             MainAppView()
-                // 【修改】第 3 步：从 appDelegate 实例中获取共享对象并注入环境。
                 .environmentObject(appDelegate.newsViewModel)
                 .environmentObject(appDelegate.resourceManager)
-                // 【新增】注入 AuthManager
                 .environmentObject(appDelegate.authManager)
-                // 【新增】注入 Prediction 管理器
                 .environmentObject(appDelegate.predictionSyncManager)
                 .environmentObject(appDelegate.preferenceManager)
                 .environmentObject(appDelegate.translationManager)
-                // 【新增】注入视频模块数据管理器
                 .environmentObject(appDelegate.videoDataManager)
         }
         .onChange(of: scenePhase) { newPhase in
-            // 获取 ViewModel 和 AuthManager 的引用
             let newsViewModel = appDelegate.newsViewModel
             let authManager = appDelegate.authManager
-            
-            // 注意：这里我们不再使用 oldPhase，直接根据 newPhase 判断逻辑
+            let resourceManager = appDelegate.resourceManager
+            let videoDataManager = appDelegate.videoDataManager
+
             if newPhase == .active {
                 print("App is active. Syncing status...")
-                
-                // 1. 原有的阅读记录同步
                 newsViewModel.syncReadStatusFromPersistence()
-                
-                // 【核心新增】调用 AuthManager 处理订阅状态同步
                 authManager.handleAppDidBecomeActive()
 
-                // ⭐ 新增：App 回到前台时刷新视频免费次数配额
-                // 这样跨零点后，unlockedKeys 能及时清空，避免拿昨天的解锁状态
                 Task {
                     await FreeQuotaManager.shared.refresh(
-                        userId: FreeQuotaManager.currentUserId(auth: authManager)
-                    )
+                        userId: FreeQuotaManager.currentUserId(auth: authManager))
                     await NewsQuotaManager.shared.refresh(
-                        userId: NewsQuotaManager.currentUserId(auth: authManager)
-                    )
-                    await SeriesTrackManager.shared.refresh()   // 【新增】追剧刷新
+                        userId: NewsQuotaManager.currentUserId(auth: authManager))
+                    await SeriesTrackManager.shared.refresh(force: true)
                 }
-                
+
+                // ★★★【需求1】回前台：静默刷新新闻 + 视频（无任何弹窗/遮罩）★★★
+                Task {
+                    await NotificationPermissionManager.shared.refreshStatus()
+                    // 新闻：拉 version.json + 增量下载 JSON（有变更才会触发 UI 刷新）
+                    await resourceManager.silentRefresh(minInterval: 30, reason: "foreground")
+                    // 视频：刷新当前选中分类的第一页 + 分类名
+                    await videoDataManager.silentRefreshCurrentSelection(
+                        userId: authManager.userIdentifier, minInterval: 30)
+                }
+
             } else if newPhase == .background {
                 print("App entered background. Committing pending reads silently.")
                 newsViewModel.commitPendingReadsSilently()
-                
-                // 👇 主动释放图片内存缓存
                 Task { @MainActor in
                     ImageLoader.clearCache()
                     print("App entered background. Image cache cleared to save memory.")
                 }
-                
             } else if newPhase == .inactive {
-                print("App is inactive. Committing pending reads silently as a precaution.")
                 newsViewModel.commitPendingReadsSilently()
             }
         }
@@ -217,18 +163,17 @@ struct MainAppView: View {
     @EnvironmentObject var newsViewModel: NewsViewModel
     @EnvironmentObject var authManager: AuthManager
     @ObservedObject private var pointsCoordinator = NewsPointsCoordinator.shared
+    @ObservedObject private var notifManager = NotificationPermissionManager.shared
 
-    // 【新增】防止首启弹窗重复触发
-    @State private var didTriggerInvitePrompt = false
+    // 【需求2】首启不再主动弹登录窗，相关触发逻辑已整体移除。
+    // 登录引导只在用户"点击受限新闻/视频"时由 NewsPointsCoordinator 触发。
 
-    private func triggerInviteIfNeeded(isNewUser: Bool) {
-        guard hasCompletedInitialSetup, !didTriggerInvitePrompt else { return }
-        didTriggerInvitePrompt = true
-        NewsPointsCoordinator.shared.maybeShowFirstLaunchInvitePrompt(
-            auth: authManager,
-            reviewMode: resourceManager.serverReviewMode,
-            isNewUser: isNewUser,
-            isVideoHome: prefersVideoHome)
+    private func syncGlobalBlock() {
+        notifManager.setGlobalBlocked(
+            !hasCompletedInitialSetup
+            || resourceManager.showForceUpdate
+            || resourceManager.showMigrationSheet
+        )
     }
 
     var body: some View {
@@ -249,44 +194,52 @@ struct MainAppView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom))).zIndex(999)
             }
 
-            // 全局点数弹窗浮层（覆盖所有导航层）
             NewsPointsOverlayView().zIndex(1000)
+
+            Color.clear
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .sheet(isPresented: $notifManager.showPreAsk) { NotificationPreAskView() }
         }
         .animation(.easeInOut, value: resourceManager.showForceUpdate)
         .animation(.easeInOut, value: resourceManager.showMigrationSheet)
-        // 全局点数相关 sheet
         .sheet(isPresented: $pointsCoordinator.showInviteSheet) { NewsInviteView() }
         .sheet(isPresented: $pointsCoordinator.showLoginSheet) { LoginView() }
         .sheet(isPresented: $pointsCoordinator.showSubscriptionSheet) { SubscriptionView() }
         .sheet(isPresented: $pointsCoordinator.showVideoInviteSheet) { VideoInviteView() }
-        // 【新增】一打开就是主界面 → 老用户
+        // 【需求3】通知授权预弹窗（Soft-Ask）
+        .sheet(isPresented: $notifManager.showPreAsk) { NotificationPreAskView() }
+        .onReceive(NotificationCenter.default.publisher(for: .notificationPermissionGranted)) { _ in
+            // 拿到权限后立刻把角标补上
+            newsViewModel.refreshBadge()
+        }
         .onAppear {
-            if hasCompletedInitialSetup { triggerInviteIfNeeded(isNewUser: false) }
+            syncGlobalBlock()
+            // 【需求2】此处原来的 triggerInviteIfNeeded(...) 已删除
         }
-        // 【新增】刚完成引导 → 新用户
-        .onChange(of: hasCompletedInitialSetup) { done in
-            if done { triggerInviteIfNeeded(isNewUser: true) }
+        .onChange(of: hasCompletedInitialSetup) { _ in
+            syncGlobalBlock()
+            // 【需求2】此处原来的 triggerInviteIfNeeded(...) 已删除
         }
+        .onChange(of: resourceManager.showForceUpdate) { _ in syncGlobalBlock() }
+        .onChange(of: resourceManager.showMigrationSheet) { _ in syncGlobalBlock() }
         .onChange(of: authManager.isLoggedIn) { newVal in
             if newVal {
                 Task {
                     await FreeQuotaManager.shared.refresh(
-                        userId: FreeQuotaManager.currentUserId(auth: authManager)
-                    )
+                        userId: FreeQuotaManager.currentUserId(auth: authManager))
                     await NewsQuotaManager.shared.refresh(
-                        userId: NewsQuotaManager.currentUserId(auth: authManager)
-                    )
+                        userId: NewsQuotaManager.currentUserId(auth: authManager))
                 }
             }
         }
     }
 }
 
-// 【修改】只看视频的首页容器：无返回按钮；模块关闭时显示提示页
 struct VideoOnlyHomeView: View {
     @EnvironmentObject var resourceManager: ResourceManager
-    @EnvironmentObject var authManager: AuthManager               // 【新增】
-    @ObservedObject private var supportManager = SupportChatManager.shared  // 【新增】
+    @EnvironmentObject var authManager: AuthManager
+    @ObservedObject private var supportManager = SupportChatManager.shared
 
     var body: some View {
         NavigationStack {
@@ -296,48 +249,40 @@ struct VideoOnlyHomeView: View {
                 VideoModuleClosedView()
             }
         }
-        // 【新增】接管全局 SupportChatManager.openChat(type:)（如举报/寻片回复等入口）
+        // ★【需求1】视频首页只拉 version.json（省流量），不下载新闻 JSON
+        .onAppear {
+            Task { await resourceManager.refreshServerConfig(minInterval: 120) }
+        }
         .sheet(isPresented: $supportManager.showChat) {
             SupportChatView(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
         }
     }
 }
 
-/// 公共：搜索输入视图（在导航栏下方显示）
-/// 已从各个视图文件中提取至此，以供全局复用。
 struct SearchBarInline: View {
     @Binding var text: String
-    // 【修改】默认使用 Localized 里的占位符
-    var placeholder: String = Localized.searchPlaceholder 
+    var placeholder: String = Localized.searchPlaceholder
     var onCommit: () -> Void
     var onCancel: () -> Void
 
-    // 焦点绑定
     @FocusState private var isFocused: Bool
 
     var body: some View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                
+                Image(systemName: "magnifyingglass").foregroundColor(.secondary)
                 TextField(placeholder, text: $text, onCommit: onCommit)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled(true)
                     .submitLabel(.search)
                     .focused($isFocused)
-                
-                // 【新增】一键清除按钮
                 if !text.isEmpty {
-                    Button(action: {
-                        text = ""           // 清空输入内容
-                        isFocused = true    // 保持输入框焦点，不收起键盘
-                    }) {
+                    Button(action: { text = ""; isFocused = true }) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.secondary.opacity(0.6))
-                            .padding(.trailing, 4) // 稍微增加一点右侧边距，避免太贴边
+                            .padding(.trailing, 4)
                     }
-                    .buttonStyle(PlainButtonStyle()) // 防止触发外层其他点击事件
+                    .buttonStyle(PlainButtonStyle())
                 }
             }
             .padding(10)
@@ -345,119 +290,81 @@ struct SearchBarInline: View {
             .cornerRadius(10)
 
             if !text.isEmpty {
-                // 【修改】使用 Localized.search
-                Button(Localized.search) { onCommit() }
-                    .buttonStyle(.bordered)
+                Button(Localized.search) { onCommit() }.buttonStyle(.bordered)
             }
-
-            // 【修改】使用 Localized.cancel
-            Button(Localized.cancel) {
-                onCancel()
-                // 取消时顺便收起键盘
-                isFocused = false
-            }
+            Button(Localized.cancel) { onCancel(); isFocused = false }
         }
         .padding(.horizontal)
         .padding(.top, 8)
         .padding(.bottom, 4)
-        .background(.ultraThinMaterial) // 使用材质背景以适应不同上下文
-        .onAppear {
-            // 出现时自动聚焦
-            DispatchQueue.main.async {
-                self.isFocused = true
-            }
-        }
+        .background(.ultraThinMaterial)
+        .onAppear { DispatchQueue.main.async { self.isFocused = true } }
     }
 }
 
-/// 公共：文章卡片视图
-/// 已从各个视图文件中提取至此，以供全局复用。
 struct ArticleRowCardView: View {
     let article: Article
     let sourceName: String?
-    let sourceNameEN: String? // 【新增】接收英文名称
+    let sourceNameEN: String?
     let isReadEffective: Bool
     let isContentMatch: Bool
     let isLocked: Bool
-    
-    // 【新增 1】接收外部传入的语言状态
     let showEnglish: Bool
 
-    // 【修改】初始化方法，增加 sourceNameEN，默认值为 nil
-    init(article: Article, sourceName: String?, sourceNameEN: String? = nil, isReadEffective: Bool, isContentMatch: Bool = false, isLocked: Bool = false, showEnglish: Bool = false) {
+    init(article: Article, sourceName: String?, sourceNameEN: String? = nil, isReadEffective: Bool,
+         isContentMatch: Bool = false, isLocked: Bool = false, showEnglish: Bool = false) {
         self.article = article
         self.sourceName = sourceName
-        self.sourceNameEN = sourceNameEN // 【新增】
+        self.sourceNameEN = sourceNameEN
         self.isReadEffective = isReadEffective
         self.isContentMatch = isContentMatch
         self.isLocked = isLocked
         self.showEnglish = showEnglish
     }
-    
-    // 【新增 3】核心逻辑：决定显示哪个标题
+
     var displayTopic: String {
-        // 如果开启英文模式且有英文标题，则显示英文
-        if showEnglish, let engTitle = article.topic_eng, !engTitle.isEmpty {
-            return engTitle
-        }
-        // 否则（关闭模式 或 没有英文标题），显示中文
+        if showEnglish, let engTitle = article.topic_eng, !engTitle.isEmpty { return engTitle }
         return article.topic
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) { 
-            // 1. 顶部元数据行：来源名称 + 锁定状态
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
                 if let name = sourceName {
-                    // 【核心修改】这里增加判断：如果是英文模式且有英文名，显示英文名；否则显示中文名
                     let finalName = (showEnglish && sourceNameEN != nil && !sourceNameEN!.isEmpty) ? sourceNameEN! : name
-                    
                     Text(finalName.replacingOccurrences(of: "_", with: " ").uppercased())
                         .font(.system(size: 11, weight: .bold, design: .default))
                         .tracking(0.5)
                         .foregroundColor(isReadEffective ? .secondary.opacity(0.7) : .blue.opacity(0.8))
-                        // 添加动画
                         .animation(.none, value: showEnglish)
                 }
-                
                 Spacer()
-                
                 if isLocked {
                     HStack(spacing: 4) {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 14))
-                        // 【修改】使用 Localized.needSubscription
-                        Text(Localized.needSubscription)
-                            .font(.system(size: 14, weight: .medium))
+                        Image(systemName: "lock.fill").font(.system(size: 14))
+                        Text(Localized.needSubscription).font(.system(size: 14, weight: .medium))
                     }
                     .foregroundColor(.orange.opacity(0.9))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
                     .background(Color.orange.opacity(0.15))
                     .cornerRadius(8)
                 }
             }
-            
-            // 2. 标题区域：使用衬线字体
+
             HStack(alignment: .top) {
-                // 【修改 4】这里必须使用计算出来的 displayTopic，而不是固定的 article.topic
                 Text(displayTopic)
                     .font(.system(size: 19, weight: isReadEffective ? .regular : .bold, design: .serif))
                     .foregroundColor(isReadEffective ? .secondary : .primary)
                     .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true) // 防止截断
+                    .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                     .opacity(isReadEffective ? 0.8 : 1.0)
-                    // 【可选】添加动画，让文字切换更平滑
                     .animation(.none, value: showEnglish)
-                
                 Spacer(minLength: 0)
             }
 
-            // 3. 底部标签栏：正文匹配标记等
             if isContentMatch {
                 HStack {
-                    // 【修改】使用 Localized.contentMatch
                     Label(Localized.contentMatch, systemImage: "text.magnifyingglass")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.secondary)
@@ -465,153 +372,116 @@ struct ArticleRowCardView: View {
                 }
             }
         }
-        .padding(18) // 【修改】内边距也稍微加大一点，让文字不拥挤
+        .padding(18)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color.cardBackground)
                 .shadow(color: Color.black.opacity(isReadEffective ? 0.02 : 0.06), radius: 8, x: 0, y: 4)
         )
-        // 如果已读，稍微降低整体透明度，让未读内容更突出
         .opacity(isLocked ? 0.7 : 1.0)
     }
 }
 
-// 【主要修改】将 NewsViewModel 标记为 @MainActor，以确保其所有操作都在主线程上执行。
 @MainActor
 class NewsViewModel: ObservableObject {
-    // 定义一个公共的静态常量
     nonisolated static let preferredSourceOrder: [String] = [
-        "ft",        // 金融时报
-        "wsjcn",     // 华尔街日报中文
-        "nytimes",   // 纽约时报
-        "bloomberg", // 彭博社
-        "rfi",       // 法广
-        "nikkei",    // 日经亚洲
-        "dw",         // 德声
-        "wsj",       // 华尔街日报
-        "economist", // 经济学人
-        "reuters",   // 路透社
-        "washpost",  // 华盛顿邮报
-        "mittr",     // 麻省理工,
-        "bbc",      // 英国广播公司
+        "ft", "wsjcn", "nytimes", "bloomberg", "rfi", "nikkei", "dw",
+        "wsj", "economist", "reuters", "washpost", "mittr", "bbc",
     ]
 
     @Published var sources: [NewsSource] = []
-
-    // MARK: - UI状态管理
     @Published var expandedTimestampsBySource: [String: Set<String>] = [:]
     let allArticlesKey = "__ALL_ARTICLES__"
 
-    // 【新增】从服务器获取的锁定天数
     @Published var lockedDays: Int = 0
-    
-    // 【新增】对 ResourceManager 的弱引用，以便访问配置
     weak var resourceManager: ResourceManager?
 
     private let subscriptionManager = SubscriptionManager.shared
-
     private let readKey = "readTopics"
     private var readRecords: [String: Date] = [:]
 
     var badgeUpdater: ((Int) -> Void)?
     private var cancellables = Set<AnyCancellable>()
 
-    // ✅ 会话中暂存的“已读但未提交”的文章ID
     private var pendingReadArticleIDs: Set<UUID> = []
-    // ✅ 兜底集合：最近一次静默提交到持久化但未刷新 UI 的文章 IDs
     private var lastSilentCommittedIDs: Set<UUID> = []
-    
-    // 放在 NewsViewModel 类内，lockCheckFormatter 附近即可
-    // 添加 nonisolated 关键字，允许后台线程调用它进行高速排序
+
+    // ★★★【需求1 关键】阅读详情页期间禁止重建 sources（因为 Article.id 是解码时新建的 UUID，
+    // 一旦重建，详情页的 currentArticle.id 会在新数组里找不到 → 点"下一篇"直接失效）★★★
+    @Published var isReadingArticle: Bool = false {
+        didSet {
+            guard oldValue != isReadingArticle else { return }
+            if !isReadingArticle && pendingReload {
+                pendingReload = false
+                print("📥 [延后刷新] 退出详情页，开始落地新数据。")
+                loadNews()
+            }
+        }
+    }
+    private var pendingReload = false
+
     nonisolated private static func djb2Hash(_ string: String) -> UInt64 {
         var hash: UInt64 = 5381
-        for byte in string.utf8 {
-            hash = (hash &<< 5) &+ hash &+ UInt64(byte)
-        }
+        for byte in string.utf8 { hash = (hash &<< 5) &+ hash &+ UInt64(byte) }
         return hash
     }
 
-
-    // 【优化】静态 DateFormatter 缓存，避免重复创建
-    private static let lockCheckFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyMMdd"
-        f.timeZone = TimeZone(secondsFromGMT: 0)
-        return f
-    }()
-    
     private var documentsDirectory: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    // 【优化1】改为存储属性，直接缓存排序好的数据，供 UI 零延迟读取
     @Published var allArticlesSortedForDisplay: [(article: Article, sourceName: String, sourceNameEN: String)] = []
 
     init() {
         loadReadRecords()
-        
+
         $sources
-            .map { sources in
-                sources.flatMap { $0.articles }.filter { !$0.isRead }.count
-            }
+            .map { sources in sources.flatMap { $0.articles }.filter { !$0.isRead }.count }
             .removeDuplicates()
             .sink { [weak self] unreadCount in
-                print("检测到未读数变化，准备更新角标: \(unreadCount)")
                 self?.badgeUpdater?(unreadCount)
             }
             .store(in: &cancellables)
-            
-        // 👇 【新增】监听数据下载完成的通知，并在收到时重新加载磁盘数据
+
+        // 数据下载完成 → 若正在阅读则延后落地
         NotificationCenter.default.publisher(for: .newsDataDidUpdate)
             .sink { [weak self] _ in
+                guard let self = self else { return }
+                if self.isReadingArticle {
+                    self.pendingReload = true
+                    print("📥 [延后刷新] 用户正在阅读，新数据稍后落地。")
+                    return
+                }
                 print("收到数据更新通知，重新加载本地新闻数据...")
-                self?.loadNews()
+                self.loadNews()
+            }
+            .store(in: &cancellables)
+
+        // 【新增】只更新配置（锁天数等），不重建列表，成本极低
+        NotificationCenter.default.publisher(for: .newsConfigDidUpdate)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                let d = self.resourceManager?.serverLockedDays ?? 0
+                if self.lockedDays != d { self.lockedDays = d }
             }
             .store(in: &cancellables)
     }
 
-    // MARK: - 新增的锁定逻辑
-    
-    /// 检查给定的时间戳是否在锁定期内
+    /// 【新增】拿到通知权限后主动补角标
+    func refreshBadge() {
+        badgeUpdater?(totalUnreadCount)
+    }
+
+    // MARK: - 锁定逻辑（★需求2 修复：统一走 NewsLockRule，全程 UTC 日历）
     func isTimestampLocked(timestamp: String) -> Bool {
-        // 如果 lockedDays 为 0 或负数，则不锁定任何内容
-        guard lockedDays > 0 else { return false }
-        
-        // 1. 获取基准日期：优先使用本次运行获取的 serverDate，如果没有则取上次缓存的
-        let referenceDateStr = resourceManager?.serverDate ?? UserDefaults.standard.string(forKey: "LastKnownServerDate")
-        
-        // 2. 如果完全拿不到服务器日期（比如从未联网），为了安全，默认锁定最近的文章
-        // 或者你可以选择信任本地时间作为最后兜底，但这里我们解析服务器日期
-        guard let refDateStr = referenceDateStr,
-              let refDate = Self.lockCheckFormatter.date(from: refDateStr),
-              let articleDate = Self.lockCheckFormatter.date(from: timestamp) else {
-            // 如果拿不到基准，保守起见：如果文章日期非常新（比如就是今天），则锁定
-            return true 
-        }
-        
-        let calendar = Calendar.current
-        // 注意：这里不再使用 Date()，而是使用 refDate (服务器时间)
-        let startOfRefDay = calendar.startOfDay(for: refDate)
-        
-        let components = calendar.dateComponents([.day], from: articleDate, to: startOfRefDay)
-        
-        if let dayDifference = components.day {
-            // 文章日期与服务器日期对比
-            // 如果 dayDifference < 0，说明用户把本地时间往后调了（调到未来），依然锁定
-            // 如果 dayDifference < lockedDays，说明是最近几天的，锁定
-            return dayDifference < lockedDays
-        }
-        
-        return false
+        NewsLockRule.isLocked(timestamp: timestamp,
+                              lockedDays: lockedDays,
+                              serverDate: resourceManager?.serverDate)
     }
 
     func toggleTimestampExpansion(for sourceKey: String, timestamp: String) {
         var currentSet = expandedTimestampsBySource[sourceKey, default: Set<String>()]
-        if currentSet.contains(timestamp) {
-            currentSet.remove(timestamp)
-        } else {
-            currentSet.insert(timestamp)
-        }
+        if currentSet.contains(timestamp) { currentSet.remove(timestamp) } else { currentSet.insert(timestamp) }
         expandedTimestampsBySource[sourceKey] = currentSet
     }
 
@@ -622,132 +492,81 @@ class NewsViewModel: ObservableObject {
     private func saveReadRecords() {
         UserDefaults.standard.set(self.readRecords, forKey: readKey)
     }
-    
-    // 【优化】核心修改：异步加载数据，防止卡顿
+
     func loadNews() {
+        // 双保险：阅读详情页时绝不重建（避免 id 失效）
+        if isReadingArticle {
+            pendingReload = true
+            return
+        }
+
         self.lockedDays = resourceManager?.serverLockedDays ?? 0
-        
-        // 获取当前的映射关系 (从 version.json 下载下来的 "wsj": "环球资讯|Global Info")
         let currentMappings = resourceManager?.sourceMappings ?? [:]
-        
         let subscribedIDs = SubscriptionManager.shared.subscribedSourceIDs
-        
-        // 【迁移逻辑】兼容旧版本
         let hasLegacySubscriptions = UserDefaults.standard.object(forKey: SubscriptionManager.shared.oldSubscribedSourcesKey) != nil
-        
+
         if subscribedIDs.isEmpty && !hasLegacySubscriptions {
             self.sources = []
             return
         }
 
         let preferredOrder = Self.preferredSourceOrder
-        
-        // 捕获需要的数据，传入后台 Task
         let docDir = self.documentsDirectory
         let readRecordsCopy = self.readRecords
-        
-        // 使用 Task.detached 将繁重的 IO 和 JSON 解码移出主线程
+
         Task.detached(priority: .userInitiated) {
-            guard let allFileURLs = try? FileManager.default.contentsOfDirectory(at: docDir, includingPropertiesForKeys: nil) else {
-                return
-            }
-            
+            guard let allFileURLs = try? FileManager.default.contentsOfDirectory(at: docDir, includingPropertiesForKeys: nil) else { return }
             let newsJSONURLs = allFileURLs.filter {
                 $0.lastPathComponent.starts(with: "onews_") && $0.pathExtension == "json"
             }
-            
             guard !newsJSONURLs.isEmpty else { return }
-            
-            // 【修改点1】Key改为 String (source_id)，不再是中文名
+
             var allArticlesBySourceID = [String: [Article]]()
             let decoder = JSONDecoder()
-            
+
             for url in newsJSONURLs {
-                // 这里的 Data 读取和 decode 是最耗时的，现在在后台线程运行
                 guard let data = try? Data(contentsOf: url),
-                      let decoded = try? decoder.decode([String: [Article]].self, from: data) else {
-                    continue
-                }
-                
+                      let decoded = try? decoder.decode([String: [Article]].self, from: data) else { continue }
+
                 for (_, articles) in decoded {
-                    // 必须有 source_id
                     guard let firstArticle = articles.first,
-                          let sourceId = firstArticle.source_id else {
-                        continue
-                    }
-                    
-                    // 【修改】直接使用函数开头捕获的 subscribedIDs 副本
-                    // 这样就避免了在后台线程访问 SubscriptionManager 单例，确保线程安全
-                    if !subscribedIDs.contains(sourceId) {
-                        continue
-                    }
-                    
+                          let sourceId = firstArticle.source_id else { continue }
+                    if !subscribedIDs.contains(sourceId) { continue }
+
                     let timestamp = url.lastPathComponent
                         .replacingOccurrences(of: "onews_", with: "")
                         .replacingOccurrences(of: ".json", with: "")
-                    
+
                     let articlesWithTimestamp = articles.map { article -> Article in
                         var mutableArticle = article
                         mutableArticle.timestamp = timestamp
                         return mutableArticle
                     }
-                    
-                    // 【修改点2】直接用 sourceId 作为归类的 Key
                     allArticlesBySourceID[sourceId, default: []].append(contentsOf: articlesWithTimestamp)
                 }
             }
-            
-            // 【修改点3】在这里统一处理 "中文|英文" 的分割逻辑
+
             var tempSources = allArticlesBySourceID.map { sourceId, articles -> NewsSource in
-                
-                // 1. 获取映射字符串 (例如: "环球资讯|Global Info")
-                // 如果没有映射，就暂时用 sourceId
                 let rawMappingName = currentMappings[sourceId] ?? sourceId
-                
-                // 2. 切分字符串
                 let nameParts = rawMappingName.components(separatedBy: "|")
                 let cnName = nameParts.first ?? rawMappingName
-                // 如果有竖线后的部分就用，没有则回退到中文名
                 let enName = nameParts.count > 1 ? nameParts[1] : cnName
-                
+
                 let sortedArticles = articles.sorted {
-                    if $0.timestamp != $1.timestamp {
-                        return $0.timestamp > $1.timestamp
-                    }
-                    // 【新增】同一天内：hot=1 优先
-                    let h1 = $0.hot ?? 0
-                    let h2 = $1.hot ?? 0
-                    if h1 != h2 {
-                        return h1 > h2
-                    }
+                    if $0.timestamp != $1.timestamp { return $0.timestamp > $1.timestamp }
+                    let h1 = $0.hot ?? 0, h2 = $1.hot ?? 0
+                    if h1 != h2 { return h1 > h2 }
                     return $0.topic < $1.topic
                 }
-                
-                return NewsSource(
-                    sourceId: sourceId,
-                    name: cnName,      // 存中文
-                    name_en: enName,   // 存英文
-                    articles: sortedArticles
-                )
+                return NewsSource(sourceId: sourceId, name: cnName, name_en: enName, articles: sortedArticles)
             }
-            // 【步骤 2：修改排序逻辑】
-            // 原代码: .sorted { $0.name < $1.name }
-            // 修改为:
             .sorted { source1, source2 in
-                // 获取两个源在自定义列表中的索引 (如果没有找到，返回 Int.max，即排到最后)
                 let index1 = preferredOrder.firstIndex(of: source1.sourceId) ?? Int.max
                 let index2 = preferredOrder.firstIndex(of: source2.sourceId) ?? Int.max
-                
-                // 如果两个都在列表中（或者有一个在列表中），按列表索引排序（小的在前）
-                if index1 != index2 {
-                    return index1 < index2
-                }
-                
-                // 如果两个都不在列表中（index 都是 Int.max），则回退到按中文名称排序
+                if index1 != index2 { return index1 < index2 }
                 return source1.name < source2.name
             }
-            
-            // 应用已读状态
+
             for i in tempSources.indices {
                 for j in tempSources[i].articles.indices {
                     let topic = tempSources[i].articles[j].topic
@@ -756,11 +575,8 @@ class NewsViewModel: ObservableObject {
                     }
                 }
             }
-            
-            // 【关键修改】在切换回 MainActor 之前，将 var 转为 let。
+
             let finalSources = tempSources
-            
-            // 【优化2】在后台线程提前完成合并与哈希排序，彻底解放主线程
             let flatList = finalSources.flatMap { source in
                 source.articles.map { (article: $0, sourceName: source.name, sourceNameEN: source.name_en) }
             }
@@ -768,171 +584,124 @@ class NewsViewModel: ObservableObject {
                 if item1.article.timestamp != item2.article.timestamp {
                     return item1.article.timestamp > item2.article.timestamp
                 }
-                // 【新增】同一天内：hot=1 优先
-                let h1 = item1.article.hot ?? 0
-                let h2 = item2.article.hot ?? 0
-                if h1 != h2 {
-                    return h1 > h2
-                }
+                let h1 = item1.article.hot ?? 0, h2 = item2.article.hot ?? 0
+                if h1 != h2 { return h1 > h2 }
                 let key1 = NewsViewModel.djb2Hash(item1.article.topic + item1.sourceName)
                 let key2 = NewsViewModel.djb2Hash(item2.article.topic + item2.sourceName)
                 return key1 < key2
             }
-            
-            // 回到主线程更新 UI
+
             await MainActor.run {
+                // ★★★【需求2】把"本地已下载新闻的最新一天"存下来，作为锁定判定的设备无关基准，
+                // 彻底消除 iPad/iPhone 时区差异 & server_date 缓存过期导致的误锁。
+                NewsLockRule.noteNewestLocalArticleDate(finalAllArticles.first?.article.timestamp)
+
+                // 再次确认：万一刚好进了详情页，就放弃这次替换，交给退出时重来
+                if self.isReadingArticle {
+                    self.pendingReload = true
+                    return
+                }
                 self.sources = finalSources
-                self.allArticlesSortedForDisplay = finalAllArticles // 把计算好的结果直接赋给 UI
+                self.allArticlesSortedForDisplay = finalAllArticles
                 print("新闻数据加载/刷新完成！(后台线程处理)")
+
+                #if DEBUG
+                if let newest = finalAllArticles.first?.article.timestamp {
+                    print(NewsLockRule.debugDescribe(timestamp: newest,
+                                                    lockedDays: self.lockedDays,
+                                                    serverDate: self.resourceManager?.serverDate))
+                }
+                #endif
             }
         }
     }
 
     // MARK: - 暂存与提交逻辑
-
     func stageArticleAsRead(articleID: UUID) -> Bool {
         if let article = sources.flatMap({ $0.articles }).first(where: { $0.id == articleID }), article.isRead {
             return false
         }
-        if pendingReadArticleIDs.contains(articleID) {
-            return false
-        }
+        if pendingReadArticleIDs.contains(articleID) { return false }
         pendingReadArticleIDs.insert(articleID)
         return true
     }
 
-    func isArticlePendingRead(articleID: UUID) -> Bool {
-        return pendingReadArticleIDs.contains(articleID)
-    }
+    func isArticlePendingRead(articleID: UUID) -> Bool { pendingReadArticleIDs.contains(articleID) }
 
     func isEffectivelyRead(articleID: UUID) -> Bool {
         if isArticlePendingRead(articleID: articleID) { return true }
-        if let (i, j) = indexPathOfArticle(id: articleID) {
-            return sources[i].articles[j].isRead
-        }
+        if let (i, j) = indexPathOfArticle(id: articleID) { return sources[i].articles[j].isRead }
         return false
     }
 
     func isArticleEffectivelyRead(_ article: Article) -> Bool {
-        // 1. 优先查是否在本次会话中暂存为已读 (Set 查询，O(1) 复杂度)
         if isArticlePendingRead(articleID: article.id) { return true }
-        
-        // 2. 直接通过 topic 查询持久化的已读字典 readRecords (Dictionary 查询，O(1) 复杂度！)
-        // 彻底移除了原先去 sources 中逐层遍历的性能瓶颈
         if readRecords[article.topic] != nil { return true }
-        
-        // 3. 兜底返回结构体本身的状态
         return article.isRead
     }
 
-    /// 提交所有暂存的已读文章并刷新 UI。
-    /// 另外：兜底处理最近一次静默提交过但 UI 未刷新的 IDs。
     func commitPendingReads() {
         var idsToCommit = pendingReadArticleIDs
-        // 将 pending 清空，防止重复
         pendingReadArticleIDs.removeAll()
-        
-        // 把 lastSilentCommittedIDs 也并入（兜底刷新 UI）
         if !lastSilentCommittedIDs.isEmpty {
             idsToCommit.formUnion(lastSilentCommittedIDs)
             lastSilentCommittedIDs.removeAll()
         }
-        
         guard !idsToCommit.isEmpty else { return }
-        
         DispatchQueue.main.async {
-            for articleID in idsToCommit {
-                self.markAsRead(articleID: articleID)
-            }
+            for articleID in idsToCommit { self.markAsRead(articleID: articleID) }
             print("【完整提交】完成。")
         }
     }
 
-    /// 应用退到后台时调用：处理暂存项，并总是重新计算和设置角标。
     func commitPendingReadsSilently() {
         let idsToCommit = pendingReadArticleIDs
-
-        // 步骤 1: 如果有暂存的已读文章，则进行静默提交处理。
         if !idsToCommit.isEmpty {
-            print("【静默提交】正在提交 \(idsToCommit.count) 篇暂存的已读文章（不刷新 UI）...")
-            
-            // 记录这批被静默提交的 ID，供稍后 UI 刷新兜底
             lastSilentCommittedIDs.formUnion(idsToCommit)
-            // 清空 pending 队列
             pendingReadArticleIDs.removeAll()
-
-            // 更新持久化存储
             for articleID in idsToCommit {
                 if let (sourceIndex, articleIndex) = indexPathOfArticle(id: articleID) {
                     let topic = sources[sourceIndex].articles[articleIndex].topic
-                    if readRecords[topic] == nil {
-                        readRecords[topic] = Date()
-                    }
+                    if readRecords[topic] == nil { readRecords[topic] = Date() }
                 }
             }
             saveReadRecords()
-            print("【静默提交】持久化存储已更新。")
-
-        } else {
-            // 即使没有要提交的，也打印日志，便于调试
-            print("【静默提交】没有暂存的已读文章需要提交。")
         }
-
-        // 步骤 2: 无论有无暂存项，都根据当前的持久化状态重新计算总未读数并更新角标。
-        // 这是解决角标消失问题的关键：确保每次退到后台都设置一次正确的角标值。
         let currentUnreadCount = calculateUnreadCountAfterSilentCommit()
-        
-        DispatchQueue.main.async { [weak self] in
-            self?.badgeUpdater?(currentUnreadCount)
-        }
-
-        print("【静幕提交】完成。应用角标已(重新)设置为: \(currentUnreadCount)。")
+        DispatchQueue.main.async { [weak self] in self?.badgeUpdater?(currentUnreadCount) }
     }
 
-    // MARK: - 新增的同步方法
-    /// 将持久化存储的已读状态同步到内存中的 `sources` 数组。
-    /// 这个方法比 `loadNews()` 更轻量，只更新 `isRead` 状态。
     func syncReadStatusFromPersistence() {
         DispatchQueue.main.async {
             var didChange = false
             for i in self.sources.indices {
                 for j in self.sources[i].articles.indices {
                     let article = self.sources[i].articles[j]
-                    // 如果文章在内存中是未读，但在持久化记录中是已读
                     if !article.isRead && self.readRecords.keys.contains(article.topic) {
                         self.sources[i].articles[j].isRead = true
                         didChange = true
                     }
                 }
             }
-            if didChange {
-                print("状态同步：已将持久化的已读状态同步到内存中的 `sources`。")
-            }
+            if didChange { print("状态同步：已将持久化的已读状态同步到内存中的 `sources`。") }
         }
     }
 
     private func calculateUnreadCountAfterSilentCommit() -> Int {
         var count = 0
         for source in sources {
-            for article in source.articles {
-                if readRecords[article.topic] == nil {
-                    count += 1
-                }
-            }
+            for article in source.articles where readRecords[article.topic] == nil { count += 1 }
         }
         return count
     }
 
     private func indexPathOfArticle(id: UUID) -> (Int, Int)? {
         for i in sources.indices {
-            if let j = sources[i].articles.firstIndex(where: { $0.id == id }) {
-                return (i, j)
-            }
+            if let j = sources[i].articles.firstIndex(where: { $0.id == id }) { return (i, j) }
         }
         return nil
     }
 
-    // MARK: - 底层标记函数：会刷新内存 sources，从而刷新 UI
     func markAsRead(articleID: UUID) {
         DispatchQueue.main.async {
             if let (i, j) = self.indexPathOfArticle(id: articleID) {
@@ -963,8 +732,7 @@ class NewsViewModel: ObservableObject {
         DispatchQueue.main.async {
             guard let pivotIndex = visibleArticles.firstIndex(where: { $0.id == articleID }) else { return }
             guard pivotIndex > 0 else { return }
-            let articlesAbove = visibleArticles[0..<pivotIndex]
-            for article in articlesAbove where !article.isRead {
+            for article in visibleArticles[0..<pivotIndex] where !article.isRead {
                 self.markAsRead(articleID: article.id)
             }
         }
@@ -974,159 +742,105 @@ class NewsViewModel: ObservableObject {
         DispatchQueue.main.async {
             guard let pivotIndex = visibleArticles.firstIndex(where: { $0.id == articleID }) else { return }
             guard pivotIndex < visibleArticles.count - 1 else { return }
-            let articlesBelow = visibleArticles[(pivotIndex + 1)...]
-            for article in articlesBelow where !article.isRead {
+            for article in visibleArticles[(pivotIndex + 1)...] where !article.isRead {
                 self.markAsRead(articleID: article.id)
             }
         }
     }
 
-    /// 批量将指定来源（或全部来源）的所有未读文章标记为已读
     func markAllAsReadInSource(_ sourceName: String?) {
         var changed = false
         if let name = sourceName {
-            // 单一来源
             if let sourceIndex = sources.firstIndex(where: { $0.name == name }) {
-                for j in sources[sourceIndex].articles.indices {
-                    if !sources[sourceIndex].articles[j].isRead {
-                        sources[sourceIndex].articles[j].isRead = true
-                        readRecords[sources[sourceIndex].articles[j].topic] = Date()
-                        changed = true
-                    }
+                for j in sources[sourceIndex].articles.indices where !sources[sourceIndex].articles[j].isRead {
+                    sources[sourceIndex].articles[j].isRead = true
+                    readRecords[sources[sourceIndex].articles[j].topic] = Date()
+                    changed = true
                 }
             }
         } else {
-            // 全部来源
             for i in sources.indices {
-                for j in sources[i].articles.indices {
-                    if !sources[i].articles[j].isRead {
-                        sources[i].articles[j].isRead = true
-                        readRecords[sources[i].articles[j].topic] = Date()
-                        changed = true
-                    }
+                for j in sources[i].articles.indices where !sources[i].articles[j].isRead {
+                    sources[i].articles[j].isRead = true
+                    readRecords[sources[i].articles[j].topic] = Date()
+                    changed = true
                 }
             }
         }
-        if changed {
-            saveReadRecords()
-        }
+        if changed { saveReadRecords() }
     }
 
     var totalUnreadCount: Int {
         sources.flatMap { $0.articles }.filter { !$0.isRead }.count
     }
 
-    /// 按显示顺序寻找下一篇未读：跳过已读和“已暂存为已读”的文章
     func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
-        // 1. 动态获取当前最新的文章列表，确保 isRead 状态是最新的
         let candidates: [(article: Article, sourceName: String)]
-        
         if let name = sourceName {
-            // 如果指定了来源，只取该来源
             if let source = self.sources.first(where: { $0.name == name }) {
                 candidates = source.articles.map { (article: $0, sourceName: name) }
-            } else {
-                return nil
-            }
+            } else { return nil }
         } else {
-            // 【核心修改】不要使用 allArticlesSortedForDisplay 缓存，而是实时从 sources 展开
-            // 这样能保证拿到最新的 isRead 状态
             candidates = self.sources.flatMap { source in
                 source.articles.map { (article: $0, sourceName: source.name) }
             }.sorted { item1, item2 in
-                // 保持和 loadNews 中相同的排序逻辑
                 if item1.article.timestamp != item2.article.timestamp {
                     return item1.article.timestamp > item2.article.timestamp
                 }
-                let h1 = item1.article.hot ?? 0
-                let h2 = item2.article.hot ?? 0
+                let h1 = item1.article.hot ?? 0, h2 = item2.article.hot ?? 0
                 if h1 != h2 { return h1 > h2 }
-                // 使用哈希排序保持一致性
                 let key1 = NewsViewModel.djb2Hash(item1.article.topic + item1.sourceName)
                 let key2 = NewsViewModel.djb2Hash(item2.article.topic + item2.sourceName)
                 return key1 < key2
             }
         }
-        
-        // 2. 查找当前文章索引
-        guard let currentIndex = candidates.firstIndex(where: { $0.article.id == id }) else {
-            return nil
-        }
-        
-        // 3. 查找后续文章
+
+        guard let currentIndex = candidates.firstIndex(where: { $0.article.id == id }) else { return nil }
         let subsequentItems = candidates.suffix(from: currentIndex + 1)
-        
-        // 4. 核心过滤逻辑：使用 isArticleEffectivelyRead 检查
         let nextUnreadItem = subsequentItems.first { item in
-            // 检查是否已读（包含 pending 状态）
             let isRead = isArticleEffectivelyRead(item.article)
-            // 检查是否锁定
             let isLocked = !isLoggedInNow() && isTimestampLocked(timestamp: item.article.timestamp)
-            
             return !isRead && !isLocked
         }
-        
         return nextUnreadItem
     }
-    
-    // 辅助函数，用于在非 SwiftUI 环境中获取登录状态
-    private func isLoggedInNow() -> Bool {
-        // 这是一个简化的示例。在更复杂的应用中，您可能需要通过依赖注入来访问 AuthManager。
-        // 这里我们假设可以访问一个全局实例或通过其他方式获取。
-        // 为了简单起见，我们暂时返回一个硬编码值，实际应连接到 AuthManager。
-        // 在 SwiftUI 视图中，直接使用 @EnvironmentObject authManager 即可。
-        // 此处我们假设 ViewModel 无法直接访问 AuthManager，所以返回 true 以避免破坏现有逻辑。
-        // 正确的做法是在调用此函数的地方传入登录状态。
-        // 让我们修改 findNextUnread 以接受登录状态。
-        // ... 算了，这会使调用变得复杂。暂时保持现状，因为主要锁定逻辑在UI层。
-        return true // 假设在后台逻辑中用户总是“已登录”状态，以防破坏播放下一首等功能。
-    }
+
+    private func isLoggedInNow() -> Bool { return true }
 
     func getUnreadCountForDateGroup(timestamp: String, inSource sourceName: String?) -> Int {
         var count = 0
-        
         if let name = sourceName {
             if let source = sources.first(where: { $0.name == name }) {
-                let articlesForDate = source.articles.filter { $0.timestamp == timestamp }
-                count = articlesForDate.filter { !isArticleEffectivelyRead($0) }.count
+                count = source.articles.filter { $0.timestamp == timestamp }
+                    .filter { !isArticleEffectivelyRead($0) }.count
             }
         } else {
             for source in sources {
-                let articlesForDate = source.articles.filter { $0.timestamp == timestamp }
-                count += articlesForDate.filter { !isArticleEffectivelyRead($0) }.count
+                count += source.articles.filter { $0.timestamp == timestamp }
+                    .filter { !isArticleEffectivelyRead($0) }.count
             }
         }
-        
         return count
     }
 
-    /// (新增) 计算指定上下文（单个源或全部）中的有效总未读数
     func getEffectiveUnreadCount(inSource sourceName: String?) -> Int {
         let articlesToScan: [Article]
         if let name = sourceName, let source = sources.first(where: { $0.name == name }) {
-            // 情况一：从特定新闻源进入，扫描该源的所有文章
             articlesToScan = source.articles
         } else {
-            // 情况二：从 "ALL" 进入，扫描所有来源的所有文章
             articlesToScan = sources.flatMap { $0.articles }
         }
-        
-        // 使用 isArticleEffectivelyRead 进行过滤，以获得实时准确的未读数
         return articlesToScan.filter { !isArticleEffectivelyRead($0) }.count
     }
 }
 
 struct NewsSource: Identifiable {
     let id = UUID()
-    let sourceId: String // 【新增】保存原始ID (如 "wsj")
-    let name: String     // 存中文名 (作为默认/逻辑主键)
-    let name_en: String  // 【新增】存英文名
-    
+    let sourceId: String
+    let name: String
+    let name_en: String
     var articles: [Article]
-    
-    var unreadCount: Int {
-        articles.filter { !$0.isRead }.count
-    }
+    var unreadCount: Int { articles.filter { !$0.isRead }.count }
 }
 
 struct Article: Identifiable, Codable, Hashable {
@@ -1138,52 +852,36 @@ struct Article: Identifiable, Codable, Hashable {
     let images: [String]
     let source_id: String?
     let url: String?
-    let hot: Int?           // 【新增】热门标记，可选以兼容旧数据
+    let hot: Int?
     var isRead: Bool = false
     var timestamp: String = ""
 
     enum CodingKeys: String, CodingKey {
-        // 【新增】添加 hot 映射
         case topic, article, images, source_id, url, topic_eng, article_eng, hot
     }
 
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-
-    static func == (lhs: Article, rhs: Article) -> Bool {
-        lhs.id == rhs.id
-    }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+    static func == (lhs: Article, rhs: Article) -> Bool { lhs.id == rhs.id }
 }
 
 @MainActor
 class AppBadgeManager: ObservableObject {
-    
-    // 新增异步版本的权限请求
+
     func requestAuthorizationAsync() async {
         await withCheckedContinuation { continuation in
             UNUserNotificationCenter.current().requestAuthorization(options: [.badge]) { granted, error in
                 Task { @MainActor in
-                    if granted {
-                        print("用户已授予角标权限。")
-                    } else {
-                        print("用户未授予角标权限。")
-                    }
+                    print(granted ? "用户已授予角标权限。" : "用户未授予角标权限。")
                     continuation.resume()
                 }
             }
         }
     }
-    
-    // 保留原有的同步版本,供其他地方使用
+
     func requestAuthorization() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.badge]) { granted, error in
             DispatchQueue.main.async {
-                if granted {
-                    print("用户已授予角标权限。")
-                } else {
-                    print("用户未授予角标权限。")
-                }
+                print(granted ? "用户已授予角标权限。" : "用户未授予角标权限。")
             }
         }
     }
@@ -1191,23 +889,19 @@ class AppBadgeManager: ObservableObject {
     func updateBadge(count: Int) {
         var backgroundTask: UIBackgroundTaskIdentifier = .invalid
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "updateBadgeCount") {
-            print("后台任务时间耗尽,强制结束角标更新任务。")
             if backgroundTask != .invalid {
                 UIApplication.shared.endBackgroundTask(backgroundTask)
                 backgroundTask = .invalid
             }
         }
-        
         let badgeCount = max(0, count)
         UNUserNotificationCenter.current().setBadgeCount(badgeCount) { error in
             if let error = error {
                 print("【角标更新失败】: \(error.localizedDescription)")
             } else {
-                print("【角标更新成功】应用角标已(重新)设置为: \(badgeCount)")
+                print("【角标更新成功】应用角标已设置为: \(badgeCount)")
             }
-            
             if backgroundTask != .invalid {
-                print("角标更新操作完成,结束后台任务。")
                 UIApplication.shared.endBackgroundTask(backgroundTask)
                 backgroundTask = .invalid
             }
@@ -1216,6 +910,7 @@ class AppBadgeManager: ObservableObject {
 }
 
 extension Notification.Name {
-    // 定义一个数据更新完成的通知
     static let newsDataDidUpdate = Notification.Name("newsDataDidUpdate")
+    // 【新增】仅配置更新（lockedDays / 开关 / 通知），不重建列表
+    static let newsConfigDidUpdate = Notification.Name("newsConfigDidUpdate")
 }

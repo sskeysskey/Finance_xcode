@@ -951,6 +951,8 @@ struct VideoDetailView: View {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                                 selectedChannelIndex = idx
                             }
+                            // 【需求3】此刻用户正准备播放，只累积分数，绝不打断
+                            NotificationPermissionManager.shared.record(.videoLineSwitch)
                         } label: {
                             let displayName = isGlobalEnglishMode ? "Line \(idx + 1)" : "线路 \(idx + 1)"
                             Text(displayName)
@@ -982,6 +984,8 @@ struct VideoDetailView: View {
                         ForEach(sortedEps, id: \.url) { episode in
                             Button {
                                 selectedEpisode = episode
+                                // 【需求3】点剧集是高价值互动（权重 2），但不在这里弹
+                                NotificationPermissionManager.shared.record(.videoEpisodeTap)
                                 attemptPlay(episode: episode)
                             } label: {
                                 ZStack(alignment: .topTrailing) {

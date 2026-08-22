@@ -39,24 +39,27 @@ final class NewsPointsCoordinator: ObservableObject {
     // 视频首页首启登录弹窗
     @Published var showVideoLoginPrompt = false
 
+    // MARK: - 【需求2】唯一的「这天是否受限」判定入口
+    /// 全 App 只允许通过这里判断某天是否受限；内部 = viewModel.isTimestampLocked = NewsLockRule（全程 UTC）
+    static func isRestrictedDay(_ timestamp: String, viewModel: NewsViewModel) -> Bool {
+        viewModel.isTimestampLocked(timestamp: timestamp)
+    }
+    
     // MARK: - 是否可免费访问一篇新闻
     static func canAccess(_ article: Article, auth: AuthManager, viewModel: NewsViewModel) -> Bool {
-        if auth.isSubscribed { return true }
-        if !viewModel.isTimestampLocked(timestamp: article.timestamp) { return true } // 老新闻免费
+        if auth.isSubscribed || auth.isPermanentVIP { return true }
+        if !isRestrictedDay(article.timestamp, viewModel: viewModel) { return true }   // 老新闻免费
+        // 已扣点解锁过的文章永久可读（与服务端 news_free_unlocks 一致）
         return NewsQuotaManager.shared.isNewsUnlocked(FreeQuotaManager.newsKey(article))
     }
 
     // MARK: - 列表锁标志显示规则
-    /// 是否在列表/头部显示"锁"图标与"需要订阅"文字。
-    /// 规则：
-    ///  - 已订阅 → 不显示
-    ///  - 免费(老)新闻 → 不显示
-    ///  - 未登录 → 不显示
-    ///  - 已登录且剩余点数 > 0 → 不显示
-    ///  - 仅当"已登录 且 剩余点数为 0"时才显示
+    /// 规则：已订阅/永久VIP → 不显示；免费(老)新闻 → 不显示；未登录 → 不显示；
+    ///       已登录且剩余点数 > 0 → 不显示；仅当「已登录 且 剩余点数为 0」时才显示。
+    /// ⚠️ 调用方还需叠加 `!canAccess(...)`，否则会出现"带锁但点进去能看"（已解锁的文章）。
     static func shouldShowLock(timestamp: String, auth: AuthManager, viewModel: NewsViewModel) -> Bool {
-        if auth.isSubscribed { return false }
-        if !viewModel.isTimestampLocked(timestamp: timestamp) { return false }
+        if auth.isSubscribed || auth.isPermanentVIP { return false }
+        if !isRestrictedDay(timestamp, viewModel: viewModel) { return false }
         if !auth.isLoggedIn { return false }
         return NewsQuotaManager.shared.remaining <= 0
     }
@@ -94,20 +97,9 @@ final class NewsPointsCoordinator: ObservableObject {
                                           reviewMode: Bool,
                                           isNewUser: Bool,
                                           isVideoHome: Bool) {
-        guard !auth.isSubscribed else { return }
-        guard !auth.isLoggedIn else { return }
-        let key = "hasShownNewsInvitePrompt"
-        if UserDefaults.standard.bool(forKey: key) { return }
-        if reviewMode && isNewUser { return }
-        UserDefaults.standard.set(true, forKey: key)
         self.authRef = auth
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-            if isVideoHome {
-                self.showVideoLoginPrompt = true
-            } else {
-                self.presentInsufficient(needLogin: true, context: .news)
-            }
-        }
+        UserDefaults.standard.set(true, forKey: "hasShownNewsInvitePrompt")
+        return   // 不再弹任何窗
     }
 
     // MARK: - 低层
@@ -470,25 +462,28 @@ struct NewsPointsPill: View {
     @ObservedObject var coordinator = NewsPointsCoordinator.shared
     @EnvironmentObject var authManager: AuthManager
     @AppStorage("isGlobalEnglishMode") private var en = false
+
     var body: some View {
-        HStack(spacing: 6) {
-            Text(en ? "Points \(quota.remaining)" : "点数 \(quota.remaining)")
-                .font(.system(size: 13, weight: .medium)).foregroundColor(.primary)
-            Button {
-                coordinator.authRef = authManager
-                // ⭐ 复用统一弹窗（新闻上下文；主动点“+” → isShortage:false）
-                if authManager.isLoggedIn {
+        // 【修改】未登录 / 已订阅 一律不显示，双保险
+        if authManager.isLoggedIn && !authManager.isSubscribed {
+            HStack(spacing: 6) {
+                Text(en ? "Points \(quota.remaining)" : "点数 \(quota.remaining)")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.primary)
+                Button {
+                    coordinator.authRef = authManager
                     coordinator.presentInsufficient(needLogin: false, context: .news, isShortage: false)
-                } else {
-                    coordinator.presentInsufficient(needLogin: true, context: .news, isShortage: false)
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.orange)
                 }
-            } label: {
-                Image(systemName: "plus.circle.fill").font(.system(size: 16)).foregroundColor(.orange)
-            }.buttonStyle(BorderlessButtonStyle())
+                .buttonStyle(BorderlessButtonStyle())
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(Capsule().fill(Color(.tertiarySystemFill))
+                .overlay(Capsule().stroke(Color.primary.opacity(0.1), lineWidth: 0.5)))
+            .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 12).padding(.vertical, 6)
-        .background(Capsule().fill(Color(.tertiarySystemFill))
-            .overlay(Capsule().stroke(Color.primary.opacity(0.1), lineWidth: 0.5)))
-        .fixedSize(horizontal: true, vertical: false)
     }
 }

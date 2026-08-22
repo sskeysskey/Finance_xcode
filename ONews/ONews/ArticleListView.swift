@@ -3,8 +3,7 @@ import SwiftUI
 enum ArticleFilterMode: String, CaseIterable {
     case unread
     case read
-    
-    // 获取对应的本地化文本
+
     var localizedName: String {
         switch self {
         case .unread: return Localized.unread
@@ -23,15 +22,14 @@ struct ArticleItem: Identifiable {
     let id: UUID
     let article: Article
     let sourceName: String?
-    let sourceNameEN: String? // 【新增】
+    let sourceNameEN: String?
     var isContentMatch: Bool = false
 
-    // 【修改】初始化方法
     init(article: Article, sourceName: String? = nil, sourceNameEN: String? = nil, isContentMatch: Bool = false) {
         self.id = article.id
         self.article = article
         self.sourceName = sourceName
-        self.sourceNameEN = sourceNameEN // 【新增】
+        self.sourceNameEN = sourceNameEN
         self.isContentMatch = isContentMatch
     }
 }
@@ -41,16 +39,13 @@ struct ArticleListContent: View {
     let filterMode: ArticleFilterMode
     let expandedTimestamps: Set<String>
     let viewModel: NewsViewModel
-    // 【新增】传入 AuthManager 以判断登录状态
     let authManager: AuthManager
-    // 【新增】
-    let showEnglish: Bool 
+    let showEnglish: Bool
     let onToggleTimestamp: (String) -> Void
-    // 【新增】播放回调
-    let onPlayTimestamp: (String) -> Void 
+    let onPlayTimestamp: (String) -> Void
     let onArticleTap: (ArticleItem) async -> Void
     @ObservedObject private var newsQuota = NewsQuotaManager.shared
-    
+
     var groupedArticles: [String: [ArticleItem]] {
         let initial = Dictionary(grouping: items, by: { $0.article.timestamp })
         if filterMode == .read {
@@ -59,19 +54,31 @@ struct ArticleListContent: View {
             return initial
         }
     }
-    
+
     var sortedTimestamps: [String] {
-        // 【修改】统一将日期分组排序改为降序（新->旧）。
-        // 这样未读列表也会将最新的日期显示在最上方。
+        // 统一降序（新->旧），最新日期显示在最上方
         return groupedArticles.keys.sorted(by: >)
     }
-    
+
+    // 【核心修复】原代码在 header 里引用了内层 ForEach 的 `item`，编译不过。
+    // 这里改成：该日期组"受限 且 组内仍有未解锁文章"才显示锁 —— 顺手解决
+    // "带锁却能随便点开"（文章已被永久解锁）的显示不一致问题。
+    private func isGroupLocked(_ timestamp: String) -> Bool {
+        guard NewsPointsCoordinator.shouldShowLock(timestamp: timestamp,
+                                                  auth: authManager,
+                                                  viewModel: viewModel) else { return false }
+        let group = groupedArticles[timestamp] ?? []
+        if group.isEmpty { return true }
+        return group.contains { !NewsPointsCoordinator.canAccess($0.article,
+                                                                auth: authManager,
+                                                                viewModel: viewModel) }
+    }
+
     var body: some View {
         ForEach(sortedTimestamps, id: \.self) { timestamp in
             Section {
                 if expandedTimestamps.contains(timestamp) {
                     ForEach(groupedArticles[timestamp] ?? []) { item in
-                        // 【修改】将 authManager 传递下去
                         ArticleRowButton(
                             item: item,
                             filterMode: filterMode,
@@ -79,21 +86,17 @@ struct ArticleListContent: View {
                             authManager: authManager,
                             filteredArticles: items,
                             onTap: { await onArticleTap(item) },
-                            // 【新增】传递参数
-                            showEnglish: showEnglish 
+                            showEnglish: showEnglish
                         )
                     }
                 }
             } header: {
-                // 【修改】锁只在"已登录且点数为0"时显示
-                let isLocked = NewsPointsCoordinator.shouldShowLock(timestamp: timestamp, auth: authManager, viewModel: viewModel)
                 TimestampHeader(
                     timestamp: timestamp,
                     count: groupedArticles[timestamp]?.count ?? 0,
                     isExpanded: expandedTimestamps.contains(timestamp),
-                    isLocked: isLocked, // 传递锁定状态
+                    isLocked: isGroupLocked(timestamp),
                     onToggle: { onToggleTimestamp(timestamp) },
-                    // 【新增】传递播放回调
                     onPlay: { onPlayTimestamp(timestamp) }
                 )
             }
@@ -104,38 +107,45 @@ struct ArticleListContent: View {
 struct SearchResultsList: View {
     let results: [ArticleItem]
     let viewModel: NewsViewModel
-    // 【新增】传入 AuthManager
     let authManager: AuthManager
-    // 【新增】
     let showEnglish: Bool
     let onArticleTap: (ArticleItem) async -> Void
     @ObservedObject private var newsQuota = NewsQuotaManager.shared
-    
-    // 【优化】静态 formatter
+
     private static let parsingFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyMMdd"
         return f
     }()
-    
-    // 【修改】动态获取 Formatter，适配语言切换
+
     private var displayFormatter: DateFormatter {
         let f = DateFormatter()
         f.locale = Localized.currentLocale
         f.dateFormat = Localized.dateFormatFull
         return f
     }
-    
+
     var groupedResults: [String: [ArticleItem]] {
         var initial = Dictionary(grouping: results, by: { $0.article.timestamp })
         initial = initial.mapValues { Array($0.reversed()) }
         return initial
     }
-    
+
     var sortedTimestamps: [String] {
         groupedResults.keys.sorted(by: >)
     }
-    
+
+    private func isGroupLocked(_ timestamp: String) -> Bool {
+        guard NewsPointsCoordinator.shouldShowLock(timestamp: timestamp,
+                                                  auth: authManager,
+                                                  viewModel: viewModel) else { return false }
+        let group = groupedResults[timestamp] ?? []
+        if group.isEmpty { return true }
+        return group.contains { !NewsPointsCoordinator.canAccess($0.article,
+                                                                auth: authManager,
+                                                                viewModel: viewModel) }
+    }
+
     var body: some View {
         if results.isEmpty {
             Section {
@@ -160,8 +170,7 @@ struct SearchResultsList: View {
                             Text("\(formatTimestamp(timestamp)) (\(groupedResults[timestamp]?.count ?? 0))")
                                 .font(.headline)
                                 .foregroundColor(.blue.opacity(0.85))
-                            // 【修改】锁只在"已登录且点数为0"时显示
-                            if NewsPointsCoordinator.shouldShowLock(timestamp: timestamp, auth: authManager, viewModel: viewModel) {
+                            if isGroupLocked(timestamp) {
                                 Image(systemName: "lock.fill")
                                     .foregroundColor(.yellow.opacity(0.8))
                                     .font(.footnote)
@@ -171,15 +180,13 @@ struct SearchResultsList: View {
                     .padding(.vertical, 4)
                 ) {
                     ForEach(groupedResults[timestamp] ?? []) { item in
-                        // 【修改】传递 authManager
                         ArticleRowButton(
                             item: item,
-                            filterMode: .unread, // 搜索结果统一按未读模式处理上下文菜单
+                            filterMode: .unread,
                             viewModel: viewModel,
                             authManager: authManager,
                             filteredArticles: [],
                             onTap: { await onArticleTap(item) },
-                            // 【新增】传递参数
                             showEnglish: showEnglish
                         )
                     }
@@ -187,7 +194,7 @@ struct SearchResultsList: View {
             }
         }
     }
-    
+
     private func formatTimestamp(_ timestamp: String) -> String {
         guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp }
         return displayFormatter.string(from: date)
@@ -201,35 +208,36 @@ struct ArticleRowButton: View {
     let authManager: AuthManager
     let filteredArticles: [ArticleItem]
     let onTap: () async -> Void
-    
-    // 1. 【新增】接收外部传入的状态
     let showEnglish: Bool
     @ObservedObject private var newsQuota = NewsQuotaManager.shared
-    
+
     var body: some View {
         Button(action: {
             Task { await onTap() }
         }) {
-            let isLocked = NewsPointsCoordinator.shouldShowLock(timestamp: item.article.timestamp, auth: authManager, viewModel: viewModel)
-            
-            // 【修改】传入 showEnglish 参数
+            // 【修改】已解锁的文章不再显示"需要订阅"标签，避免"带锁却能看"的割裂感
+            let isLocked = NewsPointsCoordinator.shouldShowLock(timestamp: item.article.timestamp,
+                                                               auth: authManager,
+                                                               viewModel: viewModel)
+                && !NewsPointsCoordinator.canAccess(item.article,
+                                                    auth: authManager,
+                                                    viewModel: viewModel)
+
             ArticleRowCardView(
                 article: item.article,
                 sourceName: item.sourceName,
-                sourceNameEN: item.sourceNameEN, // 【新增】传递英文名
+                sourceNameEN: item.sourceNameEN,
                 isReadEffective: viewModel.isArticleEffectivelyRead(item.article),
                 isContentMatch: item.isContentMatch,
                 isLocked: isLocked,
-                // 3. 【修改】使用传入的参数
-                showEnglish: showEnglish 
+                showEnglish: showEnglish
             )
         }
-        .buttonStyle(PlainButtonStyle()) // 取消按钮默认点击高亮效果，改用缩放动画（可选）
+        .buttonStyle(PlainButtonStyle())
         .id(item.article.id)
-        // 【关键修改】调整内边距，让卡片左右有空隙，上下有间隔
         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-        .listRowSeparator(.hidden) // 隐藏系统分割线
-        .listRowBackground(Color.clear) // 列表背景透明
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
         .contextMenu {
             ArticleContextMenu(
                 article: item.article,
@@ -238,10 +246,8 @@ struct ArticleRowButton: View {
                 filteredArticles: filteredArticles.map { $0.article }
             )
         }
-        // 【新增】左滑操作：标记为已读 / 标记为未读
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if viewModel.isArticleEffectivelyRead(item.article) {
-                // 已读状态 → 提供"标记为未读"
                 Button {
                     viewModel.markAsUnread(articleID: item.article.id)
                 } label: {
@@ -249,7 +255,6 @@ struct ArticleRowButton: View {
                 }
                 .tint(.orange)
             } else {
-                // 未读状态 → 提供"标记为已读"
                 Button {
                     viewModel.markAsRead(articleID: item.article.id)
                 } label: {
@@ -266,23 +271,22 @@ struct ArticleContextMenu: View {
     let filterMode: ArticleFilterMode
     let viewModel: NewsViewModel
     let filteredArticles: [Article]
-    
+
     var body: some View {
-        // 【关键修复】使用 viewModel.isArticleEffectivelyRead 来获取最准确的已读状态
         if viewModel.isArticleEffectivelyRead(article) {
             Button { viewModel.markAsUnread(articleID: article.id) }
             label: { Label(Localized.markAsUnread_text, systemImage: "circle") }
         } else {
             Button { viewModel.markAsRead(articleID: article.id) }
             label: { Label(Localized.markAsRead_text, systemImage: "checkmark.circle") }
-            
+
             if filterMode == .unread && !filteredArticles.isEmpty {
                 Divider()
                 Button {
                     viewModel.markAllAboveAsRead(articleID: article.id, inVisibleList: filteredArticles)
                 }
                 label: { Label(Localized.readAbove, systemImage: "arrow.up.to.line.compact") }
-                
+
                 Button {
                     viewModel.markAllBelowAsRead(articleID: article.id, inVisibleList: filteredArticles)
                 }
@@ -298,31 +302,27 @@ struct TimestampHeader: View {
     let isExpanded: Bool
     let isLocked: Bool
     let onToggle: () -> Void
-    // 【新增】播放回调
     let onPlay: () -> Void
 
-    // 定义一个渐变色，让日期看起来更有质感（蓝紫色系）
     private let dateGradient = LinearGradient(
         colors: [Color.blue, Color.purple],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
-    
-    // 【优化】静态 formatter
+
     private static let parsingFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyMMdd"
         return f
     }()
-    
-    // 【修改】动态获取 Formatter
+
     private var displayFormatter: DateFormatter {
         let f = DateFormatter()
         f.dateFormat = Localized.dateFormatShort
         f.locale = Localized.currentLocale
         return f
     }
-    
+
     var body: some View {
         Button(action: {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
@@ -330,27 +330,21 @@ struct TimestampHeader: View {
             }
         }) {
             HStack(spacing: 0) {
-                // 1. 左侧装饰条（指示状态）
                 Capsule()
                     .fill(isExpanded ? Color.blue : Color.secondary.opacity(0.3))
                     .frame(width: 4, height: 24)
                     .padding(.leading, 12)
 
-                // 2. 日期文字 (带渐变效果)
                 Text(formatTimestamp(timestamp))
                     .font(.system(size: 18, weight: .heavy, design: .rounded))
                     .foregroundStyle(isExpanded ? AnyShapeStyle(dateGradient) : AnyShapeStyle(Color.primary.opacity(0.8)))
                     .padding(.leading, 12)
-                    .fixedSize(horizontal: true, vertical: false) // 保持你要求的不换行
+                    .fixedSize(horizontal: true, vertical: false)
 
                 Spacer()
 
-                // 【新增】播放按钮 (仅在有文章时显示)
                 if count > 0 {
-                    Button(action: {
-                        // 阻止事件冒泡到父级 Button
-                        onPlay()
-                    }) {
+                    Button(action: { onPlay() }) {
                         Image(systemName: "play.fill")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundColor(.blue)
@@ -361,7 +355,6 @@ struct TimestampHeader: View {
                     .padding(.trailing, 28)
                 }
 
-                // 3. 右侧信息区 (数量 + 锁 + 箭头)
                 HStack(spacing: 8) {
                     if isLocked {
                         Image(systemName: "lock.fill")
@@ -369,7 +362,6 @@ struct TimestampHeader: View {
                             .foregroundColor(.orange)
                     }
 
-                    // 数量胶囊
                     Text("\(count)")
                         .font(.system(size: 12, weight: .bold, design: .monospaced))
                         .foregroundColor(isExpanded ? .white : .secondary)
@@ -380,7 +372,6 @@ struct TimestampHeader: View {
                                 .fill(isExpanded ? Color.blue.opacity(0.8) : Color.secondary.opacity(0.15))
                         )
 
-                    // 旋转箭头
                     Image(systemName: "chevron.right")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.secondary.opacity(0.5))
@@ -389,16 +380,15 @@ struct TimestampHeader: View {
                 .padding(.trailing, 12)
             }
             .padding(.vertical, 10)
-            // 4. 背景：毛玻璃效果 + 阴影
-            .background(.ultraThinMaterial) // iOS 系统级毛玻璃
+            .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-            .padding(.horizontal, 3) // 让整个Header左右悬空，不贴边
+            .padding(.horizontal, 3)
             .padding(.vertical, 4)
         }
         .buttonStyle(PlainButtonStyle())
     }
-    
+
     private func formatTimestamp(_ timestamp: String) -> String {
         guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp }
         return displayFormatter.string(from: date)
@@ -408,12 +398,13 @@ struct TimestampHeader: View {
 // ==================== 单一来源列表 ====================
 
 struct EmptyStateView: View {
+    @AppStorage("isGlobalEnglishMode") private var isEnglish = false
     var body: some View {
         VStack(spacing: 20) {
             Image(systemName: "tray")
                 .font(.system(size: 60))
                 .foregroundColor(.secondary.opacity(0.3))
-            Text("当前无未读文章")
+            Text(isEnglish ? "No unread articles" : "当前无未读文章")
                 .font(.headline)
                 .foregroundColor(.secondary)
         }
@@ -423,17 +414,14 @@ struct EmptyStateView: View {
 }
 
 struct ArticleListView: View {
-    let sourceName: String // 这是中文名，用于数据库查找
+    let sourceName: String
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager
-    // 【新增】获取认证管理器
     @EnvironmentObject var authManager: AuthManager
-    // 【新增】引入全局语言状态
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    
-    // 【新增】获取全局导航路径
+
     @Environment(\.appNavPath) var appNavPath
-    
+
     @State private var filterMode: ArticleFilterMode = .unread
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
@@ -444,36 +432,30 @@ struct ArticleListView: View {
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
     @State private var showMarkAllReadConfirmation = false
-    
+
     @State private var showLoginSheet = false
-    // 【新增】控制订阅弹窗
     @State private var showSubscriptionSheet = false
-    
-    // 【新增】控制未登录 Guest 菜单和已登录 Profile
+
     @State private var showGuestMenu = false
     @State private var showProfileSheet = false
-    
+
     @State private var hasPerformedAutoExpansion = false
 
-    // 【新增】首图最多等待秒数
     private var firstImageWaitTimeout: TimeInterval { 0.0 }
-    
-    // 【新增】获取当前应显示的标题
+
     private var displayTitle: String {
         guard let source = source else { return sourceName }
-        // 如果是英文模式，返回 source.name_en，否则返回 source.name
         return isGlobalEnglishMode ? source.name_en : source.name
     }
-    
+
     private var source: NewsSource? {
         viewModel.sources.first(where: { $0.name == sourceName })
     }
-    
-    // 1. 【新增】辅助函数：专门用于获取数量，减轻 View 的负担
+
     private func getCount(for mode: ArticleFilterMode) -> Int {
         return mode == .unread ? unreadCount : readCount
     }
-    
+
     private var baseFilteredArticles: [ArticleItem] {
         guard let source = source else { return [] }
         return source.articles
@@ -483,15 +465,14 @@ struct ArticleListView: View {
             }
             .map { ArticleItem(article: $0, sourceName: nil) }
     }
-    
-    // 【修改】更新搜索逻辑
+
     private var searchResults: [ArticleItem] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return []
         }
         guard let source = source else { return [] }
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        
+
         return source.articles.compactMap { article -> ArticleItem? in
             if article.topic.lowercased().contains(keyword) {
                 return ArticleItem(article: article, sourceName: nil, isContentMatch: false)
@@ -502,17 +483,17 @@ struct ArticleListView: View {
             return nil
         }
     }
-    
+
     private var unreadCount: Int {
         guard let source = source else { return 0 }
         return source.articles.filter { !$0.isRead }.count
     }
-    
+
     private var readCount: Int {
         guard let source = source else { return 0 }
         return source.articles.filter { $0.isRead }.count
     }
-    
+
     var body: some View {
         if source == nil {
             VStack {
@@ -520,11 +501,9 @@ struct ArticleListView: View {
                     .foregroundColor(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // 【修改】使用系统背景
             .background(Color.viewBackground.ignoresSafeArea())
         } else {
             ZStack {
-                // 【核心修改】判断是否为空
                 if filterMode == .unread && baseFilteredArticles.isEmpty {
                     EmptyStateView()
                 } else {
@@ -545,16 +524,12 @@ struct ArticleListView: View {
                                 }
                             )
                         }
-                        
-                        // 【新增】通知条插入位置
-                        // 注意：由于我们在 Source_List.swift 定义了 NotificationBannerView，
-                        // 只要它们在同一个 Target 下，这里可以直接使用。
+
                         if let message = resourceManager.activeNotification {
                             NotificationBannerView(message: message) {
                                 resourceManager.dismissNotification()
                             }
-                            // 稍微给下面一点间距，或者让Banner自带padding
-                            .background(Color.viewBackground) // 确保背景色一致
+                            .background(Color.viewBackground)
                         }
 
                         List {
@@ -562,11 +537,10 @@ struct ArticleListView: View {
                                 SearchResultsList(
                                     results: searchResults,
                                     viewModel: viewModel,
-                                    authManager: authManager, // 传递
-                                    // 【新增】传递状态
-                                    showEnglish: isGlobalEnglishMode, 
-                                    onArticleTap: { item in 
-                                        await handleArticleTap(item, autoPlay: false) 
+                                    authManager: authManager,
+                                    showEnglish: isGlobalEnglishMode,
+                                    onArticleTap: { item in
+                                        await handleArticleTap(item, autoPlay: false)
                                     }
                                 )
                             } else {
@@ -576,33 +550,31 @@ struct ArticleListView: View {
                                     expandedTimestamps: viewModel.expandedTimestampsBySource[sourceName, default: Set<String>()],
                                     viewModel: viewModel,
                                     authManager: authManager,
-                                    showEnglish: isGlobalEnglishMode, 
+                                    showEnglish: isGlobalEnglishMode,
                                     onToggleTimestamp: { timestamp in
                                         viewModel.toggleTimestampExpansion(for: sourceName, timestamp: timestamp)
                                     },
-                                    // 【新增】播放逻辑
                                     onPlayTimestamp: { timestamp in
-                                        // 找到该组的第一篇文章
                                         if let firstItem = baseFilteredArticles.first(where: { $0.article.timestamp == timestamp }) {
-                                            // 【修改】这里传入 true
-                                            Task { await handleArticleTap(firstItem, autoPlay: true) } 
+                                            Task { await handleArticleTap(firstItem, autoPlay: true) }
                                         }
                                     },
-                                    onArticleTap: { item in 
-                                        await handleArticleTap(item, autoPlay: false) 
+                                    onArticleTap: { item in
+                                        await handleArticleTap(item, autoPlay: false)
                                     }
                                 )
                             }
                         }
                         .listStyle(PlainListStyle())
-                        // 【修复需求】修改 onAppear 逻辑：仅在首次进入时执行自动展开
                         .onAppear {
                             if !hasPerformedAutoExpansion {
                                 autoExpandGroups()
                                 hasPerformedAutoExpansion = true
                             }
+                            // ★★★【需求1】进入/返回本页 → 静默拉一次服务器（带节流，无任何弹窗）★★★
+                            Task { await resourceManager.silentRefresh(minInterval: 60, reason: "source-list-appear") }
                         }
-                        
+
                         if !isSearchActive {
                             HStack(spacing: 8) {
                                 Picker("Filter", selection: $filterMode) {
@@ -612,8 +584,7 @@ struct ArticleListView: View {
                                     }
                                 }
                                 .pickerStyle(.segmented)
-                                
-                                // 【新增】"全部设为已读"按钮
+
                                 Button {
                                     showMarkAllReadConfirmation = true
                                 } label: {
@@ -631,11 +602,9 @@ struct ArticleListView: View {
                     .background(Color.viewBackground.ignoresSafeArea())
                 }
             }
-            // 【修改】移除这里的 navigationDestination
             .navigationTitle(displayTitle.replacingOccurrences(of: "_", with: " "))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // 【修改】调用更新后的 UserStatusToolbarItem
                 ToolbarItem(placement: .topBarLeading) {
                     UserStatusToolbarItem(
                         showGuestMenu: $showGuestMenu,
@@ -643,14 +612,12 @@ struct ArticleListView: View {
                     )
                 }
 
-                // 【新增】在导航栏中间显示免费点数胶囊
                 ToolbarItem(placement: .principal) {
                     if !authManager.isSubscribed {
                         NewsPointsPill()
                     }
                 }
 
-                // 【新增】中英切换按钮 (放在刷新按钮之前或之后)
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: {
                         withAnimation(.spring()) {
@@ -660,35 +627,17 @@ struct ArticleListView: View {
                         ZStack {
                             Circle()
                                 .strokeBorder(Color.primary, lineWidth: 1.5)
-                                // 【修改】逻辑反转：!isGlobalEnglishMode (即中文模式) 时实心
                                 .background(!isGlobalEnglishMode ? Color.primary : Color.clear)
                                 .clipShape(Circle())
-                            
-                            // 【修改】逻辑反转：中文模式下显示“中”，英文模式下显示“英”
+
                             Text(isGlobalEnglishMode ? "中" : "英")
                                 .font(.system(size: 13, weight: .bold, design: .rounded))
-                                // 【修改】逻辑反转：!isGlobalEnglishMode (即中文模式) 时文字反色
                                 .foregroundColor(!isGlobalEnglishMode ? Color.viewBackground : Color.primary)
                         }
                         .frame(width: 24, height: 24)
                     }
                 }
 
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        // 【核心修改】点击刷新时，同时同步资源和用户状态
-                        Task { 
-                            await syncResources(isManual: true) 
-                            await authManager.checkServerSubscriptionStatus()
-                        }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .foregroundColor(.primary) // 【添加这行】强制使用黑白色系
-                    }
-                    .disabled(resourceManager.isSyncing)
-                    .accessibilityLabel(Localized.refresh)
-                }
-                
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         withAnimation {
@@ -700,7 +649,7 @@ struct ArticleListView: View {
                         }
                     } label: {
                         Image(systemName: "magnifyingglass")
-                            .foregroundColor(.primary) // 【添加这行】强制使用黑白色系
+                            .foregroundColor(.primary)
                     }
                     .accessibilityLabel(Localized.search)
                 }
@@ -714,11 +663,8 @@ struct ArticleListView: View {
             )
             .alert("", isPresented: $showErrorAlert, actions: { Button(Localized.confirm, role: .cancel) { } }, message: { Text(errorMessage) })
             .sheet(isPresented: $showLoginSheet) { LoginView() }
-            // 【新增】订阅弹窗
             .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
-            // 【新增】个人中心 Sheet
             .sheet(isPresented: $showProfileSheet) { UserProfileView() }
-            // 【新增】未登录底部菜单 Sheet
             .sheet(isPresented: $showGuestMenu) {
                 VStack(spacing: 20) {
                     Capsule().fill(Color.secondary.opacity(0.3)).frame(width: 40, height: 5).padding(.top, 10)
@@ -789,11 +735,10 @@ struct ArticleListView: View {
             }
         }
     }
-    
+
     private func handleArticleTap(_ item: ArticleItem, autoPlay: Bool = false) async {
         let article = item.article
 
-        // 1. 点数/订阅门禁（不变）
         if !NewsPointsCoordinator.canAccess(article, auth: authManager, viewModel: viewModel) {
             NewsPointsCoordinator.shared.attemptUnlockArticle(article, auth: authManager, viewModel: viewModel) {
                 Task { await self.handleArticleTap(item, autoPlay: autoPlay) }
@@ -809,13 +754,11 @@ struct ArticleListView: View {
             }
         }
 
-        // 2. 无图 → 直接进
         guard !article.images.isEmpty else {
             await proceedToArticle()
             return
         }
 
-        // 3. 图片全在本地 → 直接进
         if resourceManager.checkIfImagesExistForArticle(
             timestamp: article.timestamp,
             imageNames: article.images
@@ -824,19 +767,16 @@ struct ArticleListView: View {
             return
         }
 
-        // 4. 【新增】完全没网 → 一秒都不等，直接进详情页（详情页会自愈）
         if !resourceManager.isNetworkAvailable {
             await proceedToArticle()
             resourceManager.enqueueImageDownloads(timestamp: article.timestamp, imageNames: article.images)
             return
         }
 
-        // 5. 【核心修改】有网 → 最多等 2 秒首图，超时就放行
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
             downloadProgressText = Localized.imagePrepare
-            // 让进度条这 2 秒看起来有动静
             withAnimation(.easeOut(duration: firstImageWaitTimeout)) { downloadProgress = 0.9 }
         }
 
@@ -851,31 +791,22 @@ struct ArticleListView: View {
             isDownloadingImages = false
         }
 
-        // 6. 无论首图有没有下到，都进详情页
         await proceedToArticle()
 
-        // 7. 剩余图片（含没下完的首图）继续在后台串行下载，下好会自动刷新详情页
         resourceManager.enqueueImageDownloads(timestamp: article.timestamp, imageNames: article.images)
     }
-    
-    // 【修改】新的自动展开逻辑：根据当前过滤后的文章数量动态决定
+
     private func autoExpandGroups() {
-        // 1. 获取当前模式下（未读/已读）的所有日期分组
         let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
-        
-        // 2. 获取所有时间戳并降序排列（最新日期在最前）
         let sortedTimestamps = groupedArticles.keys.sorted(by: >)
-        
-        // 3. 判断逻辑
+
         if authManager.isSubscribed {
-            // 【新增逻辑】如果已订阅，始终展开最新日期的那个分组
             if let latestTimestamp = sortedTimestamps.first {
                 viewModel.expandedTimestampsBySource[sourceName] = [latestTimestamp]
             } else {
                 viewModel.expandedTimestampsBySource[sourceName] = []
             }
         } else {
-            // 【原有逻辑】如果未订阅，只有一个分组才展开，否则全部折叠
             if sortedTimestamps.count == 1, let singleTimestamp = sortedTimestamps.first {
                 viewModel.expandedTimestampsBySource[sourceName] = [singleTimestamp]
             } else {
@@ -883,7 +814,7 @@ struct ArticleListView: View {
             }
         }
     }
-    
+
     private func syncResources(isManual: Bool = false) async {
         do {
             try await resourceManager.checkAndDownloadUpdates(isManual: isManual)
@@ -915,15 +846,12 @@ struct ArticleListView: View {
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager
-    // 【新增】获取认证管理器
     @EnvironmentObject var authManager: AuthManager
-    
-    // 1. 补上 AppStorage
+
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    
-    // 【新增】获取全局导航路径
+
     @Environment(\.appNavPath) var appNavPath
-    
+
     @State private var filterMode: ArticleFilterMode = .unread
     @State private var isSearching: Bool = false
     @State private var searchText: String = ""
@@ -934,71 +862,57 @@ struct AllArticlesListView: View {
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
     @State private var showMarkAllReadConfirmation = false
-    
-    // 【修改】移除 selectedArticleItem 和 isNavigationActive
-    
+
     @State private var showLoginSheet = false
-    // 【新增】
     @State private var showSubscriptionSheet = false
-    
-    // 【新增】状态
+
     @State private var showGuestMenu = false
     @State private var showProfileSheet = false
-    
+
     @State private var hasPerformedAutoExpansion = false
-    
+
     // MARK: - 辅助计算属性
-    
+
     private var baseFilteredArticles: [ArticleItem] {
         viewModel.allArticlesSortedForDisplay
             .filter { item in
                 let isReadEff = viewModel.isArticleEffectivelyRead(item.article)
                 return (filterMode == .unread) ? !isReadEff : isReadEff
             }
-            // 【核心修改】这里传入 sourceNameEN
             .map { ArticleItem(article: $0.article, sourceName: $0.sourceName, sourceNameEN: $0.sourceNameEN) }
     }
-    
+
     private var totalUnreadCount: Int { viewModel.totalUnreadCount }
     private var totalReadCount: Int { viewModel.sources.flatMap { $0.articles }.filter { $0.isRead }.count }
-    // 【新增】首图最多等待秒数
     private var firstImageWaitTimeout: TimeInterval { 0.0 }
-    
-    // 【修改】更新搜索逻辑
+
     private var searchResults: [ArticleItem] {
         guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return []
         }
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        
-        // 【核心修改】allArticlesSortedForDisplay 现在返回 3 个元素的元组
+
         return viewModel.allArticlesSortedForDisplay.compactMap { item -> ArticleItem? in
             if item.article.topic.lowercased().contains(keyword) {
-                // 传入 sourceNameEN
                 return ArticleItem(article: item.article, sourceName: item.sourceName, sourceNameEN: item.sourceNameEN, isContentMatch: false)
             }
             if item.article.article.lowercased().contains(keyword) {
-                // 传入 sourceNameEN
                 return ArticleItem(article: item.article, sourceName: item.sourceName, sourceNameEN: item.sourceNameEN, isContentMatch: true)
             }
             return nil
         }
     }
-    
-    // MARK: - 核心修复：添加辅助函数
-    
-    // 修复 1：定义获取数量的函数（使用 totalUnreadCount）
+
     private func getCount(for mode: ArticleFilterMode) -> Int {
         return mode == .unread ? totalUnreadCount : totalReadCount
     }
-    
-    // 修复 2：定义获取标题文字的函数（解决编译器超时问题）
+
     private func getFilterTitle(for mode: ArticleFilterMode) -> String {
         let name = mode.localizedName
         let count = getCount(for: mode)
         return "\(name) (\(count))"
     }
-    
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -1018,8 +932,7 @@ struct AllArticlesListView: View {
                         }
                     )
                 }
-                
-                // 【新增】通知条插入位置
+
                 if let message = resourceManager.activeNotification {
                     NotificationBannerView(message: message) {
                         resourceManager.dismissNotification()
@@ -1032,11 +945,10 @@ struct AllArticlesListView: View {
                         SearchResultsList(
                             results: searchResults,
                             viewModel: viewModel,
-                            authManager: authManager, // 传递
-                            // 【新增】传递状态
+                            authManager: authManager,
                             showEnglish: isGlobalEnglishMode,
-                            onArticleTap: { item in 
-                                await handleArticleTap(item, autoPlay: false) 
+                            onArticleTap: { item in
+                                await handleArticleTap(item, autoPlay: false)
                             }
                         )
                     } else {
@@ -1045,35 +957,32 @@ struct AllArticlesListView: View {
                             filterMode: filterMode,
                             expandedTimestamps: viewModel.expandedTimestampsBySource[viewModel.allArticlesKey, default: Set<String>()],
                             viewModel: viewModel,
-                            authManager: authManager, // 传递
-                            // 【新增】传递状态
+                            authManager: authManager,
                             showEnglish: isGlobalEnglishMode,
                             onToggleTimestamp: { timestamp in
                                 viewModel.toggleTimestampExpansion(for: viewModel.allArticlesKey, timestamp: timestamp)
                             },
-                            // 【新增】播放逻辑
                             onPlayTimestamp: { timestamp in
-                                // 找到该组的第一篇文章
                                 if let firstItem = baseFilteredArticles.first(where: { $0.article.timestamp == timestamp }) {
-                                    // 【修改】这里传入 true
                                     Task { await handleArticleTap(firstItem, autoPlay: true) }
                                 }
                             },
-                            onArticleTap: { item in 
-                                await handleArticleTap(item, autoPlay: false) 
+                            onArticleTap: { item in
+                                await handleArticleTap(item, autoPlay: false)
                             }
                         )
                     }
                 }
                 .listStyle(PlainListStyle())
-                // 【修复需求】修改 onAppear 逻辑：仅在首次进入时执行自动展开
                 .onAppear {
                     if !hasPerformedAutoExpansion {
                         autoExpandGroups()
                         hasPerformedAutoExpansion = true
                     }
+                    // ★★★【需求1】进入/返回本页 → 静默刷新（带节流）★★★
+                    Task { await resourceManager.silentRefresh(minInterval: 60, reason: "all-list-appear") }
                 }
-                
+
                 if !isSearchActive {
                     HStack(spacing: 8) {
                         Picker("Filter", selection: $filterMode) {
@@ -1082,8 +991,7 @@ struct AllArticlesListView: View {
                             }
                         }
                         .pickerStyle(.segmented)
-                        
-                        // 【新增】"全部设为已读"按钮
+
                         Button {
                             showMarkAllReadConfirmation = true
                         } label: {
@@ -1100,10 +1008,8 @@ struct AllArticlesListView: View {
             }
             .background(Color.viewBackground.ignoresSafeArea())
         }
-        // 【修改】移除这里的 navigationDestination
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // 【修改】调用更新后的 UserStatusToolbarItem
             ToolbarItem(placement: .topBarLeading) {
                 UserStatusToolbarItem(
                     showGuestMenu: $showGuestMenu,
@@ -1111,14 +1017,12 @@ struct AllArticlesListView: View {
                 )
             }
 
-            // 【新增】在导航栏中间显示免费点数胶囊
             ToolbarItem(placement: .principal) {
                 if !authManager.isSubscribed {
                     NewsPointsPill()
                 }
             }
 
-            // 【新增】中英切换按钮 (放在刷新按钮之前或之后)
             ToolbarItem(placement: .topBarTrailing) {
                 Button(action: {
                     withAnimation(.spring()) {
@@ -1128,20 +1032,17 @@ struct AllArticlesListView: View {
                     ZStack {
                         Circle()
                             .strokeBorder(Color.primary, lineWidth: 1.5)
-                            // 【修改】逻辑反转：!isGlobalEnglishMode (即中文模式) 时实心
                             .background(!isGlobalEnglishMode ? Color.primary : Color.clear)
                             .clipShape(Circle())
-                        
-                        // 【修改】逻辑反转：中文模式下显示“中”，英文模式下显示“英”
+
                         Text(isGlobalEnglishMode ? "中" : "英")
                             .font(.system(size: 13, weight: .bold, design: .rounded))
-                            // 【修改】逻辑反转：!isGlobalEnglishMode (即中文模式) 时文字反色
                             .foregroundColor(!isGlobalEnglishMode ? Color.viewBackground : Color.primary)
                     }
                     .frame(width: 24, height: 24)
                 }
             }
-            
+
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     withAnimation {
@@ -1167,9 +1068,7 @@ struct AllArticlesListView: View {
         )
         .alert("", isPresented: $showErrorAlert, actions: { Button(Localized.confirm, role: .cancel) { } }, message: { Text(errorMessage) })
         .sheet(isPresented: $showLoginSheet) { LoginView() }
-        // 【新增】
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
-        // 【新增】Sheet
         .sheet(isPresented: $showProfileSheet) { UserProfileView() }
         .sheet(isPresented: $showGuestMenu) {
             VStack(spacing: 20) {
@@ -1220,7 +1119,7 @@ struct AllArticlesListView: View {
             titleVisibility: .visible
         ) {
             Button(Localized.markAllAsRead, role: .destructive) {
-                viewModel.markAllAsReadInSource(nil) // nil 表示全部来源
+                viewModel.markAllAsReadInSource(nil)
             }
             Button(Localized.cancel, role: .cancel) { }
         }
@@ -1240,12 +1139,11 @@ struct AllArticlesListView: View {
             }
         }
     }
-    
+
     private func handleArticleTap(_ item: ArticleItem, autoPlay: Bool = false) async {
         let article = item.article
         guard let sourceName = item.sourceName else { return }
 
-        // 1. 点数/订阅门禁（不变）
         if !NewsPointsCoordinator.canAccess(article, auth: authManager, viewModel: viewModel) {
             NewsPointsCoordinator.shared.attemptUnlockArticle(article, auth: authManager, viewModel: viewModel) {
                 Task { await self.handleArticleTap(item, autoPlay: autoPlay) }
@@ -1261,13 +1159,11 @@ struct AllArticlesListView: View {
             }
         }
 
-        // 2. 无图 → 直接进
         guard !article.images.isEmpty else {
             await proceedToArticle()
             return
         }
 
-        // 3. 图片全在本地 → 直接进
         if resourceManager.checkIfImagesExistForArticle(
             timestamp: article.timestamp,
             imageNames: article.images
@@ -1276,14 +1172,12 @@ struct AllArticlesListView: View {
             return
         }
 
-        // 4. 没网 → 直接进
         if !resourceManager.isNetworkAvailable {
             await proceedToArticle()
             resourceManager.enqueueImageDownloads(timestamp: article.timestamp, imageNames: article.images)
             return
         }
 
-        // 5. 最多等 2 秒首图
         await MainActor.run {
             isDownloadingImages = true
             downloadProgress = 0.0
@@ -1302,33 +1196,23 @@ struct AllArticlesListView: View {
             isDownloadingImages = false
         }
 
-        // 6. 放行
         await proceedToArticle()
 
-        // 7. 后台补齐剩余图片
         resourceManager.enqueueImageDownloads(timestamp: article.timestamp, imageNames: article.images)
     }
-    
-    // 【修改】新的自动展开逻辑
+
     private func autoExpandGroups() {
         let key = viewModel.allArticlesKey
-        
-        // 1. 获取当前模式下（未读/已读）的所有日期分组
         let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
-        
-        // 2. 获取所有时间戳并降序排列
         let sortedTimestamps = groupedArticles.keys.sorted(by: >)
-        
-        // 3. 判断逻辑
+
         if authManager.isSubscribed {
-            // 【新增逻辑】如果已订阅，始终展开最新日期的那个分组
             if let latestTimestamp = sortedTimestamps.first {
                 viewModel.expandedTimestampsBySource[key] = [latestTimestamp]
             } else {
                 viewModel.expandedTimestampsBySource[key] = []
             }
         } else {
-            // 【原有逻辑】如果未订阅，只有一个分组才展开，否则全部折叠
             if sortedTimestamps.count == 1, let singleTimestamp = sortedTimestamps.first {
                 viewModel.expandedTimestampsBySource[key] = [singleTimestamp]
             } else {
@@ -1336,14 +1220,14 @@ struct AllArticlesListView: View {
             }
         }
     }
-    
+
     private func syncResources(isManual: Bool = false) async {
         do {
             try await resourceManager.checkAndDownloadUpdates(isManual: isManual)
             viewModel.loadNews()
         } catch {
             if isManual {
-                await MainActor.run { // 建议在主线程更新 UI 状态
+                await MainActor.run {
                     switch error {
                     case is DecodingError:
                         self.errorMessage = Localized.parseError
@@ -1355,7 +1239,7 @@ struct AllArticlesListView: View {
                     default:
                         self.errorMessage = Localized.unknownErrorMsg
                     }
-                    self.showErrorAlert = true // 移出 switch，确保所有错误都弹窗
+                    self.showErrorAlert = true
                 }
                 print("手动同步失败: \(error)")
             }

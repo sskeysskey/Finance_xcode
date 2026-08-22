@@ -3,34 +3,36 @@ import Foundation
 final class TrackingManager {
     static let shared = TrackingManager()
     private let baseURL = "http://106.15.183.158:5001/api/OVideo/track"
-    
-    // 引入锁，保证多线程访问内存缓存时的线程安全
+
     private let lock = NSRecursiveLock()
-    // 内存缓存：一次启动内不重复发同一事件，减少网络请求
     private var sentInSession: Set<String> = []
-    
+
     private init() {}
-    
+
     enum EventType: String {
         case play              = "play"
         case downloadStart     = "download_start"
         case downloadComplete  = "download_complete"
     }
-    
+
     /// 通用上报。失败不抛错，不影响主流程
-    /// - Parameter source: 播放来源（仅在线播放传入，如 "home"/"filter"/"search"）
+    /// - Parameters:
+    ///   - source: 播放来源（仅在线播放传入，如 "home"/"filter"/"search"）
+    ///   - episodeKey: 【新增】本集的解锁 key（与 FreeQuotaManager.unlock 用的一致），
+    ///                 传了服务端就能细分「赠送点数 / 每日免费点数」
+    ///   - accessType: 【新增】权限来源；不传则自动推断
     func track(event: EventType,
                userId: String?,
                userType: String? = nil,
                videoURL: String,
                videoTitle: String,
-               source: String? = nil) {          // 【新增】播放来源
+               source: String? = nil,
+               episodeKey: String? = nil,
+               accessType: String? = nil) {
         guard let userId = userId, !userId.isEmpty else { return }
-        // 没显式传 type 时，按 "dev_" 前缀推断（与新闻模块统一）
         let resolvedType = userType ?? (userId.hasPrefix("dev_") ? "device" : "apple")
         let key = "\(userId)|\(videoURL)|\(event.rawValue)"
-        
-        // 线程安全地检查并写入内存缓存
+
         lock.lock()
         if sentInSession.contains(key) {
             lock.unlock()
@@ -38,40 +40,62 @@ final class TrackingManager {
         }
         sentInSession.insert(key)
         lock.unlock()
-        
-        // 使用 Task 异步发送，不阻塞当前线程
+
         Task {
+            // 【需求3】权限来源：优先用调用方传入，否则自动推断（避免在 ?? 自动闭包中 await）
+            let access: String
+            if let accessType = accessType {
+                access = accessType
+            } else {
+                access = await Self.resolveAccessType(episodeKey: episodeKey)
+            }
+
             await Self.send(
                 userId: userId,
                 userType: resolvedType,
                 videoURL: videoURL,
                 videoTitle: videoTitle,
                 eventType: event.rawValue,
-                source: source                    // 【新增】
+                source: source,
+                episodeKey: episodeKey,
+                accessType: access
             )
         }
     }
 
+    /// 【新增】自动推断这次播放是"订阅看"还是"点数看"
+    @MainActor
+    private static func resolveAccessType(episodeKey: String?) -> String {
+        let auth = AuthManager.shared
+        if auth.isPermanentVIP { return "vip_permanent" }
+        if auth.isSubscribed   { return "subscription" }
+        // 未订阅：视频模块必须先解锁(扣点)才能播放
+        if let k = episodeKey, FreeQuotaManager.shared.isUnlocked(k) { return "points" }
+        return auth.isLoggedIn ? "points" : "free"
+    }
+
     private static func send(userId: String, userType: String, videoURL: String,
                              videoTitle: String, eventType: String,
-                             source: String?) async {      // 【新增】
+                             source: String?, episodeKey: String?,
+                             accessType: String) async {
         guard let url = URL(string: "http://106.15.183.158:5001/api/OVideo/track") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 10
-        
+
         var body: [String: Any] = [
             "user_id": userId,
             "user_type": userType,
             "video_url": videoURL,
             "video_title": videoTitle,
             "event_type": eventType,
-            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""  // 【新增】
+            "access_type": accessType,          // 【新增】
+            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         ]
-        if let source = source, !source.isEmpty {     // 【新增】仅在线播放会带 source
-            body["source"] = source
-        }
+        if let source = source, !source.isEmpty { body["source"] = source }
+        if let ek = episodeKey, !ek.isEmpty { body["episode_key"] = ek }   // 【新增】
+
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         _ = try? await URLSession.shared.data(for: request)
     }

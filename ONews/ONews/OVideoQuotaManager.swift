@@ -41,6 +41,21 @@ final class FreeQuotaManager: ObservableObject {
         return f.string(from: Date())
     }
 
+    /// 【新增】登出/删号时清空本地点数与解锁记录
+    func reset() {
+        dailyQuota = 0
+        remaining = 0
+        bonusRemaining = 0
+        dailyRemaining = 0
+        unlockedKeys = []
+        pendingBonusWelcome = 0
+        inviteCode = ""
+        inviteRewardCount = 0
+        hasRedeemedInvite = false
+        loggedIn = false
+        lastSyncDay = ""          // 让 isUnlocked 立刻失效
+    }
+
     // 视频：当天同步过才可信
     func isUnlocked(_ episodeKey: String) -> Bool {
         guard lastSyncDay == Self.localDayString() else { return false }
