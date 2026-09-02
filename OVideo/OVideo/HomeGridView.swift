@@ -17,17 +17,17 @@ struct HomeGridView: View {
             if let n = config.notification {
                 NoticeBar(text: n) { config.dismissNotification() }
             }
-            if let e = errorText {
+            if let e = errorText, !items.isEmpty {
                 ErrorBar(text: e) { retry() }
             }
             if config.useReviewDisguise {
-                ReviewArchiveBanner(year: config.reviewMaxYear,
-                                    offline: !config.didFetch)
+                ReviewArchiveBanner(year: config.reviewMaxYear, offline: !config.didFetch)
             }
             VideoGrid(items: items,
                       cardWidth: cardSize,
                       loading: data.isLoading(category, app.sort),
-                      errorText: errorText,
+                      errorText: items.isEmpty ? errorText : nil,
+                      hasMore: data.hasMorePages(category, app.sort),
                       onRetry: { retry() },
                       onReachEnd: {
                           Task { await data.loadNextPage(category, app.sort, userId: auth.userIdentifier) }
@@ -52,7 +52,8 @@ struct HomeGridView: View {
                 .keyboardShortcut("r", modifiers: .command)
             }
         }
-        .task(id: "\(category)|\(app.sort.rawValue)|\(config.effectiveMaxYear ?? -1)") {
+        // ⭐ 把 cacheEpoch 纳入 id：任何一次 resetCache 之后都会强制重新拉取（修复冷启动空白）
+        .task(id: "\(category)|\(app.sort.rawValue)|\(config.effectiveMaxYear ?? -1)|\(data.cacheEpoch)") {
             await data.loadFirstPageIfNeeded(category, app.sort, userId: auth.userIdentifier)
         }
     }
@@ -65,7 +66,6 @@ struct HomeGridView: View {
     }
 }
 
-/// 顶部错误条：把静默失败暴露出来
 struct ErrorBar: View {
     let text: String
     let onRetry: () -> Void
@@ -92,7 +92,7 @@ struct ReviewArchiveBanner: View {
             Image(systemName: offline ? "wifi.exclamationmark" : "building.columns")
                 .foregroundStyle(.secondary)
             Text(offline
-                 ? lang.t("尚未取到服务器配置，暂以 \(year) 年前资料展示（连上服务器后自动恢复全部内容）。",
+                 ? lang.t("尚未取到服务器配置，暂以 \(year) 年前资料展示。",
                           "Server config not loaded yet; showing pre-\(year) archive only.")
                  : lang.t("本馆仅收录 \(year) 年以前的经典影像资料，供研究与怀旧欣赏。",
                           "This archive only contains classic footage released before \(year)."))
@@ -120,14 +120,20 @@ struct NoticeBar: View {
     }
 }
 
+// MARK: - 网格
 struct VideoGrid: View {
     let items: [VideoItem]
     var cardWidth: Double = 180
     var loading: Bool = false
     var errorText: String? = nil
+    var hasMore: Bool = false
     var onRetry: (() -> Void)? = nil
-    var onReachEnd: (() -> Void)? = nil
+    var onItemTap: ((VideoItem) -> Void)? = nil
+    var onReachEnd: (() -> Void)? = nil            // ⚠️ 必须放最后：trailing closure 绑定到它
+
     @EnvironmentObject var lang: LanguageManager
+    /// 距列表底部还剩这么多个 item 时就预加载，避免"只有最后一个 onAppear 才触发"的卡死
+    private let prefetchThreshold = 8
 
     var body: some View {
         ScrollView {
@@ -146,74 +152,111 @@ struct VideoGrid: View {
                     }
                     .frame(height: 360)
                 } else {
-                    ContentUnavailableViewCompat(title: lang.t("暂无内容", "Nothing here"),
-                                                 message: "", systemImage: "tray")
-                        .frame(height: 320)
+                    VStack(spacing: 12) {
+                        ContentUnavailableViewCompat(title: lang.t("暂无内容", "Nothing here"),
+                                                     message: "", systemImage: "tray")
+                        if let onRetry {
+                            Button(lang.t("刷新试试", "Reload")) { onRetry() }
+                                .buttonStyle(.bordered)
+                        }
+                    }
+                    .frame(height: 340)
                 }
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: cardWidth), spacing: 18)], spacing: 22) {
-                    ForEach(items) { item in
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: cardWidth), spacing: 18)],
+                          alignment: .leading, spacing: 22) {
+                    ForEach(Array(items.enumerated()), id: \.element.url) { idx, item in
                         NavigationLink(value: Route.detail(item)) { VideoCard(item: item) }
                             .buttonStyle(.plain)
-                            .onAppear { if item.url == items.last?.url { onReachEnd?() } }
+                            // ⭐ 点击结果也算一次"有效搜索"，供搜索历史记录使用
+                            .simultaneousGesture(TapGesture().onEnded { onItemTap?(item) })
+                            .onAppear {
+                                if idx >= items.count - prefetchThreshold { onReachEnd?() }
+                            }
                     }
                 }
                 .padding(20)
-                if loading { ProgressView().padding(.bottom, 20) }
+
+                if loading {
+                    ProgressView().padding(.bottom, 24)
+                } else if hasMore {
+                    // ⭐ 兜底：即使 onAppear 没触发，用户也能手动继续加载
+                    Button(lang.t("加载更多", "Load more")) { onReachEnd?() }
+                        .buttonStyle(.bordered)
+                        .padding(.bottom, 26)
+                }
             }
         }
         .background(Color.winBG)
     }
 }
 
+// MARK: - 卡片（固定 2:3 封面 + 固定文字区高度，彻底解决高低不齐/重叠）
 struct VideoCard: View {
     let item: VideoItem
     @State private var hover = false
 
+    private var yearRegion: String {
+        var parts: [String] = []
+        if let d = item.date, !d.isEmpty {
+            parts.append(d.split(separator: "(").first.map(String.init) ?? d)
+        }
+        if let r = item.region, !r.isEmpty { parts.append(r) }
+        return parts.joined(separator: " · ")
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ZStack(alignment: .bottomTrailing) {
-                CachedImage(url: VideoAPI.coverURL(item.image))
-                    .aspectRatio(2.0/3.0, contentMode: .fill)
-                    .clipped()
+        VStack(alignment: .leading, spacing: 7) {
+            poster
+            Text(item.name)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 34, maxHeight: 34, alignment: .topLeading)
+            Text(yearRegion)
+                .font(.caption).foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 15, maxHeight: 15, alignment: .topLeading)
+        }
+        .onHover { hover = $0 }
+        .contentShape(Rectangle())
+    }
+
+    private var poster: some View {
+        Color.clear
+            .aspectRatio(2.0 / 3.0, contentMode: .fit)      // ⭐ 统一 2:3，行高必然一致
+            .overlay { CachedImage(url: VideoAPI.coverURL(item.image), contentMode: .fill) }
+            .overlay(alignment: .topLeading) {
                 if item.bestRating > 0 {
                     Text(String(format: "%.1f", item.bestRating))
                         .font(.caption2.bold()).foregroundStyle(.white)
-                        .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.92), in: Capsule())
-                        .padding(8)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.orange.opacity(0.94), in: Capsule())
+                        .padding(7)
                 }
+            }
+            .overlay(alignment: .bottomLeading) {
                 if let info = item.info, !info.isEmpty {
-                    Text(info).font(.caption.bold()).foregroundStyle(.white)
-                        .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(.black.opacity(0.65), in: Capsule())
-                        .padding(8)
+                    Text(info)
+                        .font(.caption2.bold()).foregroundStyle(.white)
+                        .lineLimit(1).truncationMode(.tail)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.black.opacity(0.68), in: Capsule())
+                        .padding(7)
                 }
+            }
+            .overlay {
                 if hover {
                     ZStack {
-                        Color.black.opacity(0.28)
+                        Color.black.opacity(0.26)
                         Image(systemName: "play.circle.fill")
-                            .font(.system(size: 40)).foregroundStyle(.white.opacity(0.95))
+                            .font(.system(size: 38)).foregroundStyle(.white.opacity(0.95))
                     }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 9))
             .shadow(color: .black.opacity(hover ? 0.28 : 0.12), radius: hover ? 12 : 5, y: 4)
-            .scaleEffect(hover ? 1.025 : 1)
+            .scaleEffect(hover ? 1.02 : 1)
             .animation(.easeOut(duration: 0.16), value: hover)
-
-            Text(item.name).font(.system(size: 13, weight: .semibold))
-                .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 6) {
-                if let d = item.date, !d.isEmpty {
-                    Text(d.split(separator: "(").first.map(String.init) ?? d)
-                }
-                if let r = item.region, !r.isEmpty { Text(r) }
-            }
-            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-        }
-        .onHover { hover = $0 }
-        .contentShape(Rectangle())
     }
 }

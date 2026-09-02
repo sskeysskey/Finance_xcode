@@ -21,12 +21,7 @@ struct ArticleContainerView: View {
 
     @State private var showNoNextToast = false
     @State private var isMiniPlayerCollapsed = false
-
     @State private var didCommitOnDisappear = false
-
-    @State private var isDownloadingImages = false
-    @State private var downloadProgress: Double = 0.0
-    @State private var downloadProgressText = ""
 
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
@@ -36,7 +31,9 @@ struct ArticleContainerView: View {
         case fromAllArticles
     }
 
-    init(article: Article, sourceName: String, context: NavigationContext, viewModel: NewsViewModel, resourceManager: ResourceManager, autoPlayOnAppear: Bool = false) {
+    init(article: Article, sourceName: String, context: NavigationContext,
+         viewModel: NewsViewModel, resourceManager: ResourceManager,
+         autoPlayOnAppear: Bool = false) {
         self.initialArticle = article
         self.navigationContext = context
         self.viewModel = viewModel
@@ -56,9 +53,7 @@ struct ArticleContainerView: View {
                 isEnglishMode: $isEnglishMode,
                 viewModel: viewModel,
                 audioPlayerManager: audioPlayerManager,
-                requestNextArticle: {
-                    await self.switchToNextArticleAndStopAudio()
-                },
+                requestNextArticle: { await self.switchToNextArticleAndStopAudio() },
                 onAudioToggle: { handleAudioToggle() }
             )
             .id(currentArticle.id)
@@ -67,9 +62,7 @@ struct ArticleContainerView: View {
                 removal: .move(edge: .top).combined(with: .opacity))
             )
 
-            if showNoNextToast {
-                ToastView(message: Localized.noMore)
-            }
+            if showNoNextToast { ToastView(message: Localized.noMore) }
 
             MiniAudioBubbleView(
                 isPlaybackActive: audioPlayerManager.isPlaybackActive,
@@ -83,9 +76,7 @@ struct ArticleContainerView: View {
                 AudioPlayerView(
                     playerManager: audioPlayerManager,
                     playNextAndStart: {
-                        Task {
-                            await switchToNextArticle(shouldAutoplayNext: true, triggerListenTrack: true)
-                        }
+                        Task { await switchToNextArticle(shouldAutoplayNext: true, triggerListenTrack: true) }
                     },
                     toggleCollapse: {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.85, blendDuration: 0.1)) {
@@ -93,44 +84,25 @@ struct ArticleContainerView: View {
                         }
                     }
                 )
-                .padding(.horizontal)
-                .padding(.bottom, 30)
+                .padding(.horizontal).padding(.bottom, 30)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .zIndex(3)
-            }
-
-            if isDownloadingImages {
-                VStack(spacing: 12) {
-                    Text(Localized.imageLoading).font(.headline).foregroundColor(.white)
-                    ProgressView(value: downloadProgress)
-                        .progressViewStyle(LinearProgressViewStyle(tint: .white))
-                        .padding(.horizontal, 40)
-                    Text(downloadProgressText).font(.caption).foregroundColor(.white.opacity(0.8))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.black.opacity(0.75))
-                .edgesIgnoringSafeArea(.all)
-                .zIndex(4)
             }
         }
         .onAppear {
             didCommitOnDisappear = false
-            // ★★★【需求1】进入详情页 → 冻结列表重建，避免 Article.id 被重新生成
             viewModel.isReadingArticle = true
             updateUnreadCounts()
 
-            NewsTrackingManager.shared.track(
-                event: .view, article: currentArticle, sourceId: currentArticle.source_id)
-
-            // 【需求3】记录互动（阅读中不弹窗，只累积分数）
+            NewsTrackingManager.shared.track(event: .view, article: currentArticle,
+                                             sourceId: currentArticle.source_id)
             NotificationPermissionManager.shared.record(.newsOpenArticle)
 
-            Task { await preDownloadNextArticleImages() }
+            noteFreeReadIfNeeded(currentArticle)     // ★【需求3b】
+            prefetchNextArticleImages()
 
             audioPlayerManager.onNextRequested = {
-                Task {
-                    await self.switchToNextArticle(shouldAutoplayNext: true, triggerListenTrack: true)
-                }
+                Task { await self.switchToNextArticle(shouldAutoplayNext: true, triggerListenTrack: true) }
             }
             audioPlayerManager.onPlaybackFinished = { }
 
@@ -141,55 +113,53 @@ struct ArticleContainerView: View {
             }
         }
         .onDisappear {
-            // ★★★ 离开详情页 → 解冻；若期间有新数据会自动落地
             viewModel.isReadingArticle = false
             guard !didCommitOnDisappear else { return }
             didCommitOnDisappear = true
             audioPlayerManager.stop()
             _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
             viewModel.commitPendingReads()
+
+            // ★【需求3b】离开详情页是弹"免登录订阅引导"的安全时机
+            AnonymousSubscribePromptManager.shared.flushIfNeeded()
         }
         .onChange(of: currentArticle) { newArticle in
             updateUnreadCounts()
-            Task { await preDownloadNextArticleImages() }
+            noteFreeReadIfNeeded(newArticle)
+            prefetchNextArticleImages()
         }
         .background(Color.viewBackground.ignoresSafeArea())
-        .alert("", isPresented: $showErrorAlert, actions: {
-            Button(Localized.ok, role: .cancel) { }
-        }, message: {
-            Text(errorMessage)
-        })
+        .alert("", isPresented: $showErrorAlert,
+               actions: { Button(Localized.ok, role: .cancel) { } },
+               message: { Text(errorMessage) })
+    }
+
+    // MARK: - 【需求3b】统计"未登录用户读了几篇免费新闻"
+
+    private func noteFreeReadIfNeeded(_ article: Article) {
+        guard !authManager.isLoggedIn, !authManager.isSubscribed else { return }
+        guard NewsFreeBadge.isFree(timestamp: article.timestamp,
+                                   auth: authManager, viewModel: viewModel) else { return }
+        AnonymousSubscribePromptManager.shared.noteFreeArticleRead()
     }
 
     private func handleBubbleTap() {
         if !isMiniPlayerCollapsed && audioPlayerManager.isPlaybackActive {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85, blendDuration: 0.1)) {
-                isMiniPlayerCollapsed = true
-            }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { isMiniPlayerCollapsed = true }
         } else if audioPlayerManager.isPlaybackActive {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85, blendDuration: 0.1)) {
-                isMiniPlayerCollapsed = false
-            }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { isMiniPlayerCollapsed = false }
         } else {
             startPlayback()
         }
     }
 
     private func handleAudioToggle() {
-        if audioPlayerManager.isPlaybackActive {
-            audioPlayerManager.stop()
-        } else {
-            startPlayback()
-        }
+        if audioPlayerManager.isPlaybackActive { audioPlayerManager.stop() } else { startPlayback() }
     }
 
     private func startPlayback() {
         isMiniPlayerCollapsed = false
-
-        let rawText: String
-        let title: String
-        let language: String
-
+        let rawText: String, title: String, language: String
         if isEnglishMode,
            let engText = currentArticle.article_eng, !engText.isEmpty,
            let engTitle = currentArticle.topic_eng {
@@ -197,16 +167,12 @@ struct ArticleContainerView: View {
         } else {
             rawText = currentArticle.article; title = currentArticle.topic; language = "zh-CN"
         }
-
-        let paragraphs = rawText
-            .components(separatedBy: .newlines)
+        let fullText = rawText.components(separatedBy: .newlines)
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        let fullText = paragraphs.joined(separator: "\n\n")
-
+            .joined(separator: "\n\n")
         audioPlayerManager.startPlayback(text: fullText, title: title, language: language)
-
-        NewsTrackingManager.shared.track(
-            event: .listen, article: currentArticle, sourceId: currentArticle.source_id)
+        NewsTrackingManager.shared.track(event: .listen, article: currentArticle,
+                                         sourceId: currentArticle.source_id)
     }
 
     private func updateUnreadCounts() {
@@ -225,16 +191,14 @@ struct ArticleContainerView: View {
         await switchToNextArticle(shouldAutoplayNext: false, triggerViewTrack: true)
     }
 
-    private func switchToNextArticle(shouldAutoplayNext: Bool, triggerViewTrack: Bool = false, triggerListenTrack: Bool = false) async {
+    private func switchToNextArticle(shouldAutoplayNext: Bool,
+                                    triggerViewTrack: Bool = false,
+                                    triggerListenTrack: Bool = false) async {
         ReviewManager.shared.recordInteraction()
         if shouldAutoplayNext { audioPlayerManager.prepareForNextTransition() }
         _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
 
-        // ★★★【需求1】点击"下一篇"时顺手拉一次服务器（只下载，不打断阅读；
-        // 新数据会在退出详情页后自动落地，绝不会让"下一篇"失效）★★★
         Task { await resourceManager.silentRefresh(minInterval: 180, reason: "next-article") }
-
-        // 【需求3】阅读完成是最佳"成功时刻"，允许弹通知预弹窗（延迟 0.8s，等转场结束）
         NotificationPermissionManager.shared.record(.newsNextArticle)
 
         let sourceNameToSearch: String?
@@ -252,14 +216,23 @@ struct ArticleContainerView: View {
         }
 
         if !NewsPointsCoordinator.canAccess(next.article, auth: authManager, viewModel: viewModel) {
+            // ★【需求5】只有"真的要弹窗"时才打断音频；自动扣点时音频连贯播放
+            let willPrompt = NewsPointsCoordinator.shared.willPromptForUnlock(
+                next.article, auth: authManager, viewModel: viewModel)
             await MainActor.run {
-                audioPlayerManager.stop()
-                NewsPointsCoordinator.shared.attemptUnlockArticle(next.article, auth: authManager, viewModel: viewModel) {
+                if willPrompt { audioPlayerManager.stop() }
+                NewsPointsCoordinator.shared.attemptUnlockArticle(
+                    next.article, auth: authManager, viewModel: viewModel,
+                    // 静默扣点失败 / 中途点数耗尽 → 兜底停掉音频，避免"弹窗了还在念"
+                    onBlocked: { self.audioPlayerManager.stop() }
+                ) {
                     Task {
-                        await self.performSwitchAfterUnlock(next: next,
-                                                            shouldAutoplayNext: shouldAutoplayNext,
-                                                            triggerViewTrack: triggerViewTrack,
-                                                            triggerListenTrack: triggerListenTrack)
+                        await self.performSwitchAfterUnlock(
+                            next: next,
+                            // 确认扣点后恢复自动播放（想保持"确认后不再自动播"就改回 shouldAutoplayNext && !willPrompt）
+                            shouldAutoplayNext: shouldAutoplayNext,
+                            triggerViewTrack: triggerViewTrack,
+                            triggerListenTrack: triggerListenTrack)
                     }
                 }
             }
@@ -276,28 +249,11 @@ struct ArticleContainerView: View {
                                           shouldAutoplayNext: Bool,
                                           triggerViewTrack: Bool,
                                           triggerListenTrack: Bool) async {
+        // ★★★【需求6】不再等待图片：先切页，图片进后台队列，由 ArticleImageView 自愈显示
         if !next.article.images.isEmpty {
-            let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
-                timestamp: next.article.timestamp, imageNames: next.article.images)
-            if !imagesAlreadyExist {
-                await MainActor.run {
-                    isDownloadingImages = true
-                    downloadProgress = 0.0
-                    downloadProgressText = Localized.imagePrepare
-                }
-                do {
-                    try await resourceManager.downloadImagesForArticle(
-                        timestamp: next.article.timestamp, imageNames: next.article.images,
-                        progressHandler: { current, total in
-                            self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
-                            self.downloadProgressText = "\(Localized.imageDownloaded) \(current) / \(total)"
-                        })
-                } catch {
-                    await MainActor.run { isDownloadingImages = false }
-                    print("下一篇图片预下载失败，继续切换: \(error.localizedDescription)")
-                }
-                await MainActor.run { isDownloadingImages = false }
-            }
+            resourceManager.enqueueImageDownloads(timestamp: next.article.timestamp,
+                                                  imageNames: next.article.images,
+                                                  priority: true)
         }
 
         await MainActor.run {
@@ -306,17 +262,19 @@ struct ArticleContainerView: View {
                 self.currentSourceName = next.sourceName
             }
             if triggerViewTrack {
-                NewsTrackingManager.shared.track(event: .view, article: next.article, sourceId: next.article.source_id)
+                NewsTrackingManager.shared.track(event: .view, article: next.article,
+                                                 sourceId: next.article.source_id)
             }
             if triggerListenTrack {
-                NewsTrackingManager.shared.track(event: .listen, article: next.article, sourceId: next.article.source_id)
+                NewsTrackingManager.shared.track(event: .listen, article: next.article,
+                                                 sourceId: next.article.source_id)
             }
         }
 
         if shouldAutoplayNext {
             await MainActor.run {
                 self.isMiniPlayerCollapsed = false
-                let rawText: String; let title: String; let language: String
+                let rawText: String, title: String, language: String
                 let canPlayEnglish = self.isEnglishMode &&
                     (next.article.article_eng != nil && !next.article.article_eng!.isEmpty)
                 if canPlayEnglish, let engText = next.article.article_eng, let engTitle = next.article.topic_eng {
@@ -324,35 +282,30 @@ struct ArticleContainerView: View {
                 } else {
                     rawText = next.article.article; title = next.article.topic; language = "zh-CN"
                 }
-                let paragraphs = rawText.components(separatedBy: .newlines)
+                let fullText = rawText.components(separatedBy: .newlines)
                     .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                let fullText = paragraphs.joined(separator: "\n\n")
+                    .joined(separator: "\n\n")
                 self.audioPlayerManager.startPlayback(text: fullText, title: title, language: language)
             }
         }
     }
 
-    private func preDownloadNextArticleImages() async {
+    /// 用共享下载队列预热下一篇（比原来的串行 await 更轻，也不会抛错）
+    private func prefetchNextArticleImages() {
         let sourceNameToSearch: String?
         switch navigationContext {
         case .fromSource(let name): sourceNameToSearch = name
         case .fromAllArticles: sourceNameToSearch = nil
         }
-        guard let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch) else { return }
-        guard !next.article.images.isEmpty else { return }
-        do {
-            try await resourceManager.preDownloadImagesForArticleSilently(
-                timestamp: next.article.timestamp, imageNames: next.article.images)
-        } catch {
-            print("静默预下载下一篇文章的图片失败: \(error.localizedDescription)")
-        }
+        guard let next = viewModel.findNextUnread(after: currentArticle.id, inSource: sourceNameToSearch),
+              !next.article.images.isEmpty else { return }
+        resourceManager.enqueueImageDownloads(timestamp: next.article.timestamp,
+                                              imageNames: next.article.images)
     }
 
     private func showToast(setter: @escaping (Bool) -> Void) {
         setter(true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            withAnimation { setter(false) }
-        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { withAnimation { setter(false) } }
     }
 
     struct ToastView: View {

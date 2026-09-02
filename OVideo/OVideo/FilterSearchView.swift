@@ -15,12 +15,13 @@ struct FilterView: View {
     @State private var page = 0
     @State private var hasMore = true
     @State private var loading = false
+    @State private var loadError: String?
     @State private var types: [String] = []
     @State private var years: [Int] = []
     @State private var regions: [String] = []
 
     private var signature: String {
-        "\(category ?? "")|\(type ?? "")|\(year.map(String.init) ?? "")|\(region ?? "")|\(sort.rawValue)|\(config.effectiveMaxYear ?? -1)"
+        "\(category ?? "")|\(type ?? "")|\(year.map(String.init) ?? "")|\(region ?? "")|\(sort.rawValue)|\(config.effectiveMaxYear ?? -1)|\(data.cacheEpoch)"
     }
 
     var body: some View {
@@ -36,15 +37,24 @@ struct FilterView: View {
                 menu(lang.t("地区", "Region"), options: regions.map { ($0, $0) }, selected: region) { region = $0 }
                 Picker("", selection: $sort) {
                     ForEach(VideoSortOption.allCases, id: \.self) { Text($0.name(lang.isEnglish)).tag($0) }
-                }.frame(width: 130)
+                }.frame(width: 130).labelsHidden()
                 Spacer()
+                if !results.isEmpty {
+                    Text(lang.t("已加载 \(results.count) 部", "\(results.count) loaded"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Button(lang.t("重置", "Reset")) {
                     category = nil; type = nil; year = nil; region = nil; sort = .update
                 }
             }
             .padding(14)
             Divider()
-            VideoGrid(items: results, loading: loading) { Task { await more() } }
+            VideoGrid(items: results,
+                      loading: loading,
+                      errorText: results.isEmpty ? loadError : nil,
+                      hasMore: hasMore,                 // ⭐ 提供「加载更多」兜底按钮
+                      onRetry: { Task { await reload() } },
+                      onReachEnd: { Task { await more() } })
         }
         .navigationTitle(lang.t("分类检索", "Filter"))
         .task { await loadOptions() }
@@ -59,8 +69,7 @@ struct FilterView: View {
             ForEach(options, id: \.0) { o in Button(o.1) { action(o.0) } }
         } label: {
             HStack(spacing: 4) {
-                Text(selected.flatMap { s in options.first { $0.0 == s }?.1 } ?? title)
-                    .lineLimit(1)
+                Text(selected.flatMap { s in options.first { $0.0 == s }?.1 } ?? title).lineLimit(1)
                 Image(systemName: "chevron.down").font(.caption2)
             }
             .frame(minWidth: 84)
@@ -74,25 +83,42 @@ struct FilterView: View {
         guard let o = await data.filterOptions(userId: auth.userIdentifier) else { return }
         types = o.types.sorted(); years = o.years.sorted(by: >); regions = o.regions.sorted()
     }
+
     private func reload() async {
-        loading = true; page = 0
-        let (i, m) = await data.filter(category: category, type: type, year: year, region: region,
-                                       sort: sort, page: 0, userId: auth.userIdentifier)
-        results = i; hasMore = m; page = 1; loading = false
+        loading = true; loadError = nil
+        page = 0; hasMore = true; results = []
+        let (i, m, err) = await data.filter(category: category, type: type, year: year, region: region,
+                                            sort: sort, page: 0, userId: auth.userIdentifier)
+        results = i; hasMore = m; page = 1; loadError = err; loading = false
     }
+
+    /// ⭐ 修复"滑到 8 行就不动"：
+    ///   ① 由 VideoGrid 提前 8 个 item 触发；
+    ///   ② 若某页全被去重掉（0 条新数据），自动继续翻下一页；
+    ///   ③ 请求出错不再把 hasMore 写死为 false。
     private func more() async {
         guard hasMore, !loading else { return }
         loading = true
-        let (i, m) = await data.filter(category: category, type: type, year: year, region: region,
-                                       sort: sort, page: page, userId: auth.userIdentifier)
-        let ex = Set(results.map(\.url))
-        results += i.filter { !ex.contains($0.url) }
-        hasMore = m; page += 1; loading = false
+        defer { loading = false }
+        var added = 0, tries = 0
+        while added == 0, tries < 3, hasMore {
+            tries += 1
+            let (i, m, err) = await data.filter(category: category, type: type, year: year, region: region,
+                                                sort: sort, page: page, userId: auth.userIdentifier)
+            loadError = err
+            if err != nil { break }                    // 网络错误：保留 hasMore，用户可再点"加载更多"
+            page += 1
+            hasMore = m
+            let ex = Set(results.map(\.url))
+            let fresh = i.filter { !ex.contains($0.url) }
+            results += fresh
+            added = fresh.count
+            if i.isEmpty { hasMore = m && false; break }
+        }
     }
 }
 
 struct SearchView: View {
-    /// 从详情页点演员名跳过来时暂存关键词
     static var pendingKeyword: String?
 
     @EnvironmentObject var data: VideoDataManager
@@ -138,7 +164,9 @@ struct SearchView: View {
                     Button(lang.t("没找到？点这里求片", "Not found? Request it")) { showWish = true }
                         .buttonStyle(.link)
                 }.padding(.horizontal, 18)
-                VideoGrid(items: results)
+                // ⭐ 点开任意结果 → 记录搜索历史
+                VideoGrid(items: results,
+                          onItemTap: { _ in history.add(keyword) })
             }
         }
         .navigationTitle(lang.t("搜索", "Search"))
@@ -147,6 +175,10 @@ struct SearchView: View {
         .onAppear {
             if let k = Self.pendingKeyword { keyword = k; Self.pendingKeyword = nil; history.add(k) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { focused = true }
+        }
+        .onDisappear {
+            // 离开搜索页时，把最后一次有结果的关键词落盘
+            if !results.isEmpty { history.add(keyword) }
         }
         .sheet(isPresented: $showWish) {
             WishSheet(initial: keyword, userId: auth.userIdentifier,
@@ -165,12 +197,22 @@ struct SearchView: View {
                     Spacer()
                     Button(lang.t("清空", "Clear")) { history.clear() }.buttonStyle(.link)
                 }
+                // ⭐ 每条历史都能单独删除
                 WrapHStack(history.items, spacing: 8) { kw in
-                    Button { keyword = kw } label: {
-                        Text(kw).font(.callout)
-                            .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(.quaternary.opacity(0.6), in: Capsule())
-                    }.buttonStyle(.plain)
+                    HStack(spacing: 4) {
+                        Button { keyword = kw } label: {
+                            Text(kw).font(.callout)
+                        }
+                        .buttonStyle(.plain)
+                        Button { history.remove(kw) } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(lang.t("删除这条历史", "Remove"))
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(.quaternary.opacity(0.6), in: Capsule())
                 }
                 Spacer()
             }
@@ -199,6 +241,13 @@ struct SearchView: View {
             let r = await data.search(kw, userId: auth.userIdentifier)
             if Task.isCancelled { return }
             results = r; searching = false
+            // ⭐ 停手 1.2s 且确实搜到内容 → 记入历史（会自动清掉前缀词，不会刷屏）
+            if !r.isEmpty {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                if !Task.isCancelled, keyword.trimmingCharacters(in: .whitespacesAndNewlines) == kw {
+                    history.add(kw)
+                }
+            }
         }
     }
 }

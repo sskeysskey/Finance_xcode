@@ -26,7 +26,6 @@ struct InviteView<M: InviteQuotaProviding>: View {
     @State private var resultTitle = ""
     @State private var resultMessage = ""
     @State private var redeemSucceeded = false
-    @State private var showLogin = false
     @State private var copied = false
 
     private var shareText: String {
@@ -56,10 +55,10 @@ struct InviteView<M: InviteQuotaProviding>: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button(en ? "Close" : "关闭") { dismiss() } } }
             .task { await quota.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
-            .sheet(isPresented: $showLogin) { LoginView() }
             .onChange(of: authManager.isLoggedIn) { newVal in
-                if newVal { showLogin = false
-                    Task { await quota.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) } }
+                if newVal {
+                    Task { await quota.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
+                }
             }
             .alert(resultTitle, isPresented: $showResult) {
                 Button(en ? "OK" : "好的", role: .cancel) { if redeemSucceeded { dismiss() } }
@@ -81,7 +80,9 @@ struct InviteView<M: InviteQuotaProviding>: View {
         VStack(spacing: 14) {
             Text(en ? "Sign in to get your invite code" : "登录后才能生成你的专属邀请码")
                 .font(.subheadline).foregroundColor(.secondary)
-            Button { showLogin = true } label: {
+            Button {
+                authManager.signInWithApple()
+            } label: {
                 Text(en ? "Sign in" : "登录")
                     .fontWeight(.bold).foregroundColor(.white)
                     .frame(maxWidth: .infinity).padding(.vertical, 14)
@@ -190,7 +191,10 @@ struct InviteView<M: InviteQuotaProviding>: View {
     }
 
     private func performRedeem() {
-        guard authManager.isLoggedIn else { showLogin = true; return }
+        guard authManager.isLoggedIn else {
+            authManager.signInWithApple()
+            return
+        }
         let code = codeInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !code.isEmpty else { return }
         isRedeeming = true

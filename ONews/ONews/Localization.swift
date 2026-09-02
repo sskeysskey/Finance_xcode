@@ -135,7 +135,7 @@ struct Localized {
     static var weChatNotInstalled: String { tr("未安装微信", "WeChat not installed") }
     
     // MARK: - 登录与个人中心
-    static var loginAccount: String { tr("登录", "Sign In") }
+    static var loginAccount: String { tr("登录有礼", "Sign In") }
     static var logout: String { tr("退出登录", "Sign Out") }
     static var feedback: String { tr("问题反馈", "Feedback") }
     static var profileTitle: String { tr("账户", "Account") }

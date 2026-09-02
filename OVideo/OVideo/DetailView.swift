@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 private struct RatingChip: Identifiable, Hashable {
     var id: String { source }
@@ -26,6 +27,7 @@ struct DetailView: View {
     @State private var showConsume = false
     @State private var showLogin = false
     @State private var showBonus = false
+    @State private var showShare = false          // ⭐ 新增分享
 
     private var sortedLines: [VideoChannel] { optimalChannels(channels) }
     private var currentEpisodes: [EpisodeItem] {
@@ -61,18 +63,12 @@ struct DetailView: View {
         .navigationTitle(item.name)
         .navigationSubtitle(item.info ?? "")
         .toolbar {
-            ToolbarItemGroup {
-                if isMulti {
-                    Button { ascending.toggle() } label: {
-                        Label(ascending ? lang.t("倒序", "Desc") : lang.t("正序", "Asc"),
-                              systemImage: ascending ? "arrow.down" : "arrow.up")
-                    }
+            // ⭐ 右上角只保留「分享」
+            ToolbarItem {
+                Button { showShare = true } label: {
+                    Label(lang.t("分享", "Share"), systemImage: "square.and.arrow.up")
                 }
-                Button { handleDownloadTapped() } label: {
-                    Label(isMulti ? lang.t("批量下载", "Batch") : lang.t("下载", "Download"),
-                          systemImage: "square.and.arrow.down")
-                }
-                .disabled(sortedLines.isEmpty)
+                .help(lang.t("分享这部影片", "Share this title"))
             }
         }
         .sheet(isPresented: $showBatch) {
@@ -81,6 +77,12 @@ struct DetailView: View {
                                    lineName: lang.t("线路 \(lineIndex + 1)", "Line \(lineIndex + 1)"),
                                    ascending: ascending)
             }
+        }
+        .sheet(isPresented: $showShare) {
+            ShareTitleSheet(item: item,
+                            lineName: lineIndex < sortedLines.count
+                                ? lang.t("线路 \(lineIndex + 1)", "Line \(lineIndex + 1)") : nil,
+                            episodeCount: currentEpisodes.count)
         }
         .sheet(isPresented: $showSubscribe) { SubscriptionView() }
         .alert(lang.t("使用免费点数", "Use 1 Free Pass"), isPresented: $showConsume) {
@@ -117,8 +119,8 @@ struct DetailView: View {
     // MARK: header
     private var header: some View {
         HStack(alignment: .top, spacing: 22) {
-            CachedImage(url: VideoAPI.coverURL(item.image))
-                .frame(width: 190, height: 266)
+            CachedImage(url: VideoAPI.coverURL(item.image), contentMode: .fill)
+                .frame(width: 190, height: 285)                 // 严格 2:3
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .shadow(radius: 10, y: 5)
 
@@ -159,7 +161,8 @@ struct DetailView: View {
                     .disabled(currentEpisodes.isEmpty)
 
                     Button { handleDownloadTapped() } label: {
-                        Label(lang.t("下载", "Download"), systemImage: "arrow.down.circle")
+                        Label(isMulti ? lang.t("批量下载", "Batch") : lang.t("下载", "Download"),
+                              systemImage: "arrow.down.circle")
                     }
                     .controlSize(.large).disabled(sortedLines.isEmpty)
                 }
@@ -175,6 +178,8 @@ struct DetailView: View {
             Text(v).font(.caption).fixedSize(horizontal: false, vertical: true)
         }
     }
+
+    /// ⭐ 可点击的人名：蓝色更亮、更明显
     private func nameRow(_ l: String, _ names: [String]) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Text("\(l):").font(.caption).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
@@ -183,18 +188,22 @@ struct DetailView: View {
                     SearchView.pendingKeyword = n
                     app.go(.search)
                 } label: {
-                    Text(n).font(.caption)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
-                }.buttonStyle(.plain)
+                    Text(n)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Color.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 5))
+                        .overlay(RoundedRectangle(cornerRadius: 5)
+                            .stroke(Color.accentColor.opacity(0.45), lineWidth: 0.8))
+                }
+                .buttonStyle(.plain)
             }
         }
     }
 
-    // MARK: 线路 + 选集
+    // MARK: 线路 + 选集（⭐ 去掉 "播放列表/Episodes" 标题；线路行左对齐；排序按钮移到线路行右侧）
     private var episodeSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(lang.t("播放列表", "Episodes")).font(.headline)
             if loading {
                 ProgressView().frame(maxWidth: .infinity).padding(.vertical, 30)
             } else if sortedLines.isEmpty {
@@ -203,15 +212,9 @@ struct DetailView: View {
                     message: lang.t("资源正在接入中，请稍后再试。", "Source is being added, please try later."),
                     systemImage: "hourglass").frame(height: 160)
             } else {
-                Picker("", selection: $lineIndex) {
-                    ForEach(sortedLines.indices, id: \.self) { i in
-                        Text(lang.t("线路 \(i + 1)", "Line \(i + 1)")).tag(i)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: CGFloat(min(sortedLines.count, 6)) * 92)
-
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 10)], spacing: 10) {
+                lineBar
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 10)],
+                          alignment: .leading, spacing: 10) {
                     ForEach(currentEpisodes) { ep in
                         Button { attemptPlay(ep) } label: {
                             Text(ep.name).font(.system(size: 12, weight: .semibold))
@@ -232,6 +235,39 @@ struct DetailView: View {
                 }
             }
         }
+    }
+
+    /// 线路选择条：淡蓝选中态 + 右侧正序/倒序
+    private var lineBar: some View {
+        HStack(alignment: .center, spacing: 8) {
+            ForEach(sortedLines.indices, id: \.self) { i in
+                Button { lineIndex = i } label: {
+                    Text(lang.t("线路 \(i + 1)", "Line \(i + 1)"))
+                        .font(.system(size: 12, weight: i == lineIndex ? .semibold : .regular))
+                        .foregroundStyle(i == lineIndex ? Color.accentColor : Color.secondary)
+                        .padding(.horizontal, 13).padding(.vertical, 5)
+                        .background(i == lineIndex
+                                    ? Color.accentColor.opacity(0.14)      // ⭐ 淡蓝
+                                    : Color.secondary.opacity(0.10),
+                                    in: Capsule())
+                        .overlay(Capsule().stroke(
+                            i == lineIndex ? Color.accentColor.opacity(0.40) : Color.clear,
+                            lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 8)
+            if isMulti {
+                Button { ascending.toggle() } label: {
+                    Label(ascending ? lang.t("倒序", "Desc") : lang.t("正序", "Asc"),
+                          systemImage: ascending ? "arrow.down" : "arrow.up")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder private func badge(_ ep: EpisodeItem) -> some View {
@@ -255,9 +291,11 @@ struct DetailView: View {
                 Text(lang.t("其他演员", "Other Cast")).font(.headline)
                 WrapHStack(item.otherCast.map(cleanName), spacing: 6) { n in
                     Button { SearchView.pendingKeyword = n; app.go(.search) } label: {
-                        Text(n).font(.caption)
+                        Text(n)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Color.accentColor)
                             .padding(.horizontal, 7).padding(.vertical, 3)
-                            .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
+                            .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 5))
                     }.buttonStyle(.plain)
                 }
             }
@@ -327,7 +365,105 @@ struct DetailView: View {
     }
 }
 
-// MARK: - 批量下载
+// MARK: - ⭐ 分享（设计说明见正文）
+struct ShareTitleSheet: View {
+    let item: VideoItem
+    var lineName: String? = nil
+    var episodeCount: Int = 0
+
+    @EnvironmentObject var lang: LanguageManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @State private var includeIntro = true
+    @State private var copiedTip: String?
+
+    private var defaultText: String {
+        var lines: [String] = []
+        lines.append(lang.t("🎬 推荐：《\(item.name)》", "🎬 Check out: \(item.name)"))
+        var meta: [String] = []
+        if let d = item.date, !d.isEmpty { meta.append(d.split(separator: "(").first.map(String.init) ?? d) }
+        if let r = item.region, !r.isEmpty { meta.append(r) }
+        if let t = item.types, !t.isEmpty { meta.append(t.joined(separator: "/")) }
+        if item.bestRating > 0 { meta.append("★ " + String(format: "%.1f", item.bestRating)) }
+        if !meta.isEmpty { lines.append(meta.joined(separator: " · ")) }
+        if let info = item.info, !info.isEmpty { lines.append(info) }
+        if episodeCount > 1 { lines.append(lang.t("共 \(episodeCount) 集可看", "\(episodeCount) episodes")) }
+        if includeIntro, let intro = item.intro, !intro.isEmpty {
+            lines.append("")
+            lines.append(String(intro.prefix(160)) + (intro.count > 160 ? "…" : ""))
+        }
+        lines.append("")
+        lines.append(lang.t("— 来自 OVideo for Mac", "— via OVideo for Mac"))
+        return lines.joined(separator: "\n")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(lang.t("分享", "Share")).font(.headline)
+
+            HStack(alignment: .top, spacing: 12) {
+                CachedImage(url: VideoAPI.coverURL(item.image), contentMode: .fill)
+                    .frame(width: 62, height: 93)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.name).font(.callout.bold()).lineLimit(2)
+                    if let info = item.info, !info.isEmpty {
+                        Text(info).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let l = lineName {
+                        Text(l).font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
+                Spacer()
+            }
+
+            Toggle(lang.t("附带剧情简介", "Include synopsis"), isOn: $includeIntro)
+                .toggleStyle(.checkbox).font(.caption)
+
+            Text(lang.t("分享文案（可直接编辑）", "Message (editable)"))
+                .font(.caption).foregroundStyle(.secondary)
+            TextEditor(text: $text)
+                .font(.callout)
+                .frame(height: 130)
+                .padding(5)
+                .overlay(RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+
+            if let t = copiedTip {
+                Label(t, systemImage: "checkmark.circle.fill")
+                    .font(.caption).foregroundStyle(.green)
+            }
+
+            HStack(spacing: 10) {
+                Button { copy(text, tip: lang.t("文案已复制", "Text copied")) } label: {
+                    Label(lang.t("复制文案", "Copy text"), systemImage: "doc.on.doc")
+                }
+                Button { copy(item.url, tip: lang.t("原始页面链接已复制", "Link copied")) } label: {
+                    Label(lang.t("复制来源链接", "Copy link"), systemImage: "link")
+                }
+                ShareLink(item: text) {
+                    Label(lang.t("系统分享…", "Share…"), systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(.borderedProminent)
+                Spacer()
+                Button(lang.t("关闭", "Close")) { dismiss() }
+            }
+        }
+        .padding(20)
+        .frame(width: 470)
+        .onAppear { text = defaultText }
+        .onChangeCompat(of: includeIntro) { _ in text = defaultText }
+    }
+
+    private func copy(_ s: String, tip: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(s, forType: .string)
+        copiedTip = tip
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { copiedTip = nil }
+    }
+}
+
+// MARK: - 批量下载（未变动逻辑）
 struct BatchDownloadSheet: View {
     let item: VideoItem
     let channel: VideoChannel
@@ -359,11 +495,8 @@ struct BatchDownloadSheet: View {
                 Spacer()
                 Button(selected.count == selectable.count
                        ? lang.t("取消全选", "Deselect All") : lang.t("全选", "Select All")) {
-                    if selected.count == selectable.count {
-                        selected = []
-                    } else {
-                        selected = Set(selectable.map(\.url))
-                    }
+                    if selected.count == selectable.count { selected = [] }
+                    else { selected = Set(selectable.map(\.url)) }
                 }
             }
             .padding(16)
@@ -373,12 +506,10 @@ struct BatchDownloadSheet: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
                     ForEach(episodes) { ep in
                         let taken = dm.isQueuedOrDone(ep.url)
-                        // ⭐ 修复：insert/remove 返回值类型不同，不能写在三元表达式里
                         Toggle(isOn: Binding(
                             get: { selected.contains(ep.url) },
                             set: { isOn in
-                                if isOn { selected.insert(ep.url) }
-                                else { selected.remove(ep.url) }
+                                if isOn { selected.insert(ep.url) } else { selected.remove(ep.url) }
                             })) {
                             HStack {
                                 Text(ep.name).lineLimit(1)

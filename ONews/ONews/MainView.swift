@@ -164,9 +164,8 @@ struct MainAppView: View {
     @EnvironmentObject var authManager: AuthManager
     @ObservedObject private var pointsCoordinator = NewsPointsCoordinator.shared
     @ObservedObject private var notifManager = NotificationPermissionManager.shared
-
-    // 【需求2】首启不再主动弹登录窗，相关触发逻辑已整体移除。
-    // 登录引导只在用户"点击受限新闻/视频"时由 NewsPointsCoordinator 触发。
+    @ObservedObject private var anonPromo = AnonymousSubscribePromptManager.shared
+    @ObservedObject private var purchaseFlow = PurchaseFlowManager.shared
 
     private func syncGlobalBlock() {
         notifManager.setGlobalBlocked(
@@ -195,34 +194,54 @@ struct MainAppView: View {
             }
 
             NewsPointsOverlayView().zIndex(1000)
-
-            Color.clear
-                .frame(width: 0, height: 0)
-                .allowsHitTesting(false)
-                .sheet(isPresented: $notifManager.showPreAsk) { NotificationPreAskView() }
+            AppFlowOverlay().zIndex(1001)
         }
         .animation(.easeInOut, value: resourceManager.showForceUpdate)
         .animation(.easeInOut, value: resourceManager.showMigrationSheet)
-        .sheet(isPresented: $pointsCoordinator.showInviteSheet) { NewsInviteView() }
-        .sheet(isPresented: $pointsCoordinator.showLoginSheet) { LoginView() }
-        .sheet(isPresented: $pointsCoordinator.showSubscriptionSheet) { SubscriptionView() }
-        .sheet(isPresented: $pointsCoordinator.showVideoInviteSheet) { VideoInviteView() }
-        // 【需求3】通知授权预弹窗（Soft-Ask）
-        .sheet(isPresented: $notifManager.showPreAsk) { NotificationPreAskView() }
+
+        // ★★★【补丁 · 问题2】每个 sheet 独立挂在自己的 View 层上，
+        //     否则同一 View 上的多个 .sheet 在 SwiftUI 里会互相覆盖，
+        //     最典型的表现就是 AnonymousSubscribeView 永远弹不出来。★★★
+        .background(
+            Color.clear
+                .sheet(isPresented: $pointsCoordinator.showInviteSheet) { NewsInviteView() }
+        )
+        .background(
+            Color.clear
+                .sheet(isPresented: $pointsCoordinator.showVideoInviteSheet) { VideoInviteView() }
+        )
+        .background(
+            Color.clear
+                // 旧的订阅中转页（useDirectPurchase = false 时才会真的弹出）
+                .sheet(isPresented: $authManager.showSubscriptionSheet) { SubscriptionView() }
+        )
+        .background(
+            Color.clear
+                // 免登录订阅引导页
+                .sheet(isPresented: $anonPromo.showSheet) { AnonymousSubscribeView() }
+        )
+        .background(
+            Color.clear
+                .sheet(isPresented: $notifManager.showPreAsk) { NotificationPreAskView() }
+        )
+
         .onReceive(NotificationCenter.default.publisher(for: .notificationPermissionGranted)) { _ in
             // 拿到权限后立刻把角标补上
             newsViewModel.refreshBadge()
         }
-        .onAppear {
-            syncGlobalBlock()
-            // 【需求2】此处原来的 triggerInviteIfNeeded(...) 已删除
+        // ★【需求4】拦截协调器自己的订阅弹窗 → 直接拉起苹果订阅
+        .onChange(of: pointsCoordinator.showSubscriptionSheet) { show in
+            guard show, PurchaseFlowManager.useDirectPurchase else { return }
+            pointsCoordinator.showSubscriptionSheet = false
+            PurchaseFlowManager.shared.startPurchase(auth: authManager, reason: "points-coordinator")
         }
-        .onChange(of: hasCompletedInitialSetup) { _ in
-            syncGlobalBlock()
-            // 【需求2】此处原来的 triggerInviteIfNeeded(...) 已删除
-        }
+        .onAppear { syncGlobalBlock() }
+        .onChange(of: hasCompletedInitialSetup) { _ in syncGlobalBlock() }
         .onChange(of: resourceManager.showForceUpdate) { _ in syncGlobalBlock() }
         .onChange(of: resourceManager.showMigrationSheet) { _ in syncGlobalBlock() }
+        .onChange(of: authManager.isSubscribed) { subscribed in
+            if subscribed { AnonymousSubscribePromptManager.shared.markPurchased() }
+        }
         .onChange(of: authManager.isLoggedIn) { newVal in
             if newVal {
                 Task {
@@ -299,86 +318,6 @@ struct SearchBarInline: View {
         .padding(.bottom, 4)
         .background(.ultraThinMaterial)
         .onAppear { DispatchQueue.main.async { self.isFocused = true } }
-    }
-}
-
-struct ArticleRowCardView: View {
-    let article: Article
-    let sourceName: String?
-    let sourceNameEN: String?
-    let isReadEffective: Bool
-    let isContentMatch: Bool
-    let isLocked: Bool
-    let showEnglish: Bool
-
-    init(article: Article, sourceName: String?, sourceNameEN: String? = nil, isReadEffective: Bool,
-         isContentMatch: Bool = false, isLocked: Bool = false, showEnglish: Bool = false) {
-        self.article = article
-        self.sourceName = sourceName
-        self.sourceNameEN = sourceNameEN
-        self.isReadEffective = isReadEffective
-        self.isContentMatch = isContentMatch
-        self.isLocked = isLocked
-        self.showEnglish = showEnglish
-    }
-
-    var displayTopic: String {
-        if showEnglish, let engTitle = article.topic_eng, !engTitle.isEmpty { return engTitle }
-        return article.topic
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                if let name = sourceName {
-                    let finalName = (showEnglish && sourceNameEN != nil && !sourceNameEN!.isEmpty) ? sourceNameEN! : name
-                    Text(finalName.replacingOccurrences(of: "_", with: " ").uppercased())
-                        .font(.system(size: 11, weight: .bold, design: .default))
-                        .tracking(0.5)
-                        .foregroundColor(isReadEffective ? .secondary.opacity(0.7) : .blue.opacity(0.8))
-                        .animation(.none, value: showEnglish)
-                }
-                Spacer()
-                if isLocked {
-                    HStack(spacing: 4) {
-                        Image(systemName: "lock.fill").font(.system(size: 14))
-                        Text(Localized.needSubscription).font(.system(size: 14, weight: .medium))
-                    }
-                    .foregroundColor(.orange.opacity(0.9))
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Color.orange.opacity(0.15))
-                    .cornerRadius(8)
-                }
-            }
-
-            HStack(alignment: .top) {
-                Text(displayTopic)
-                    .font(.system(size: 19, weight: isReadEffective ? .regular : .bold, design: .serif))
-                    .foregroundColor(isReadEffective ? .secondary : .primary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.leading)
-                    .opacity(isReadEffective ? 0.8 : 1.0)
-                    .animation(.none, value: showEnglish)
-                Spacer(minLength: 0)
-            }
-
-            if isContentMatch {
-                HStack {
-                    Label(Localized.contentMatch, systemImage: "text.magnifyingglass")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
-            }
-        }
-        .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.cardBackground)
-                .shadow(color: Color.black.opacity(isReadEffective ? 0.02 : 0.06), radius: 8, x: 0, y: 4)
-        )
-        .opacity(isLocked ? 0.7 : 1.0)
     }
 }
 

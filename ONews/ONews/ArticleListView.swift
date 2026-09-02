@@ -12,6 +12,44 @@ enum ArticleFilterMode: String, CaseIterable {
     }
 }
 
+// ==================== 【需求2】免费标识判定 ====================
+@MainActor
+enum NewsFreeBadge {
+    /// 未订阅用户 + 该日期已过锁定期 → 显示"免费"
+    static func isFree(timestamp: String, auth: AuthManager, viewModel: NewsViewModel) -> Bool {
+        if auth.isSubscribed || auth.isPermanentVIP { return false }   // ← 加 isPermanentVIP
+        return !viewModel.isTimestampLocked(timestamp: timestamp)
+    }
+}
+
+// ==================== 【补丁】免登录订阅引导：免费新闻阅读计数 ====================
+@MainActor
+enum AnonFreeReadTracker {
+    /// 仅"未登录 + 未订阅 + 该文章属于已解锁的旧新闻"才计数
+    static func note(_ article: Article, auth: AuthManager, viewModel: NewsViewModel) {
+        guard !auth.isLoggedIn, !auth.isSubscribed else { return }
+        guard !viewModel.isTimestampLocked(timestamp: article.timestamp) else { return }
+        AnonymousSubscribePromptManager.shared.noteFreeArticleRead()
+    }
+}
+
+struct FreeTagView: View {
+    var compact: Bool = false
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(Localized.isEnglish ? "FREE" : "免费")
+                .font(.system(size: compact ? 14 : 16, weight: .heavy, design: .rounded))
+        }
+        .foregroundColor(Color(red: 0.08, green: 0.68, blue: 0.28))
+        .padding(.horizontal, compact ? 6 : 8)
+        .padding(.vertical, compact ? 2 : 4)
+        .background(
+            Capsule().fill(Color(red:0.18, green:0.82, blue:0.38).opacity(0.12))
+        )
+        .overlay(Capsule().stroke(Color(red:0.18, green:0.82, blue:0.38).opacity(0.38), lineWidth: 0.6))
+    }
+}
+
 // ==================== 公共协议和扩展 ====================
 protocol ArticleListDataSource {
     var baseFilteredArticles: [ArticleItem] { get }
@@ -31,6 +69,92 @@ struct ArticleItem: Identifiable {
         self.sourceName = sourceName
         self.sourceNameEN = sourceNameEN
         self.isContentMatch = isContentMatch
+    }
+}
+
+struct ArticleRowCardView: View {
+    let article: Article
+    let sourceName: String?
+    let sourceNameEN: String?
+    let isReadEffective: Bool
+    let isContentMatch: Bool
+    let isLocked: Bool
+    let isFree: Bool                    // ★【需求2】
+    let showEnglish: Bool
+
+    init(article: Article, sourceName: String?, sourceNameEN: String? = nil, isReadEffective: Bool,
+         isContentMatch: Bool = false, isLocked: Bool = false, isFree: Bool = false,
+         showEnglish: Bool = false) {
+        self.article = article
+        self.sourceName = sourceName
+        self.sourceNameEN = sourceNameEN
+        self.isReadEffective = isReadEffective
+        self.isContentMatch = isContentMatch
+        self.isLocked = isLocked
+        self.isFree = isFree
+        self.showEnglish = showEnglish
+    }
+
+    var displayTopic: String {
+        if showEnglish, let engTitle = article.topic_eng, !engTitle.isEmpty { return engTitle }
+        return article.topic
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                if let name = sourceName {
+                    let finalName = (showEnglish && sourceNameEN != nil && !sourceNameEN!.isEmpty) ? sourceNameEN! : name
+                    Text(finalName.replacingOccurrences(of: "_", with: " ").uppercased())
+                        .font(.system(size: 11, weight: .bold))
+                        .tracking(0.5)
+                        .foregroundColor(isReadEffective ? .secondary.opacity(0.7) : .blue.opacity(0.8))
+                        .animation(.none, value: showEnglish)
+                }
+                Spacer()
+                if isLocked {
+                    HStack(spacing: 4) {
+                        Image(systemName: "lock.fill").font(.system(size: 14))
+                        Text(Localized.needSubscription).font(.system(size: 14, weight: .medium))
+                    }
+                    .foregroundColor(.orange.opacity(0.9))
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.15))
+                    .cornerRadius(8)
+                } else if isFree {
+                    // ★【需求2】旧新闻：淡绿色"免费"
+                    FreeTagView()
+                }
+            }
+
+            HStack(alignment: .top) {
+                Text(displayTopic)
+                    .font(.system(size: 19, weight: isReadEffective ? .regular : .bold, design: .serif))
+                    .foregroundColor(isReadEffective ? .secondary : .primary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+                    .opacity(isReadEffective ? 0.8 : 1.0)
+                    .animation(.none, value: showEnglish)
+                Spacer(minLength: 0)
+            }
+
+            if isContentMatch {
+                HStack {
+                    Label(Localized.contentMatch, systemImage: "text.magnifyingglass")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+            }
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.cardBackground)
+                .shadow(color: Color.black.opacity(isReadEffective ? 0.02 : 0.06), radius: 8, x: 0, y: 4)
+        )
+        .opacity(isLocked ? 0.7 : 1.0)
     }
 }
 
@@ -55,14 +179,8 @@ struct ArticleListContent: View {
         }
     }
 
-    var sortedTimestamps: [String] {
-        // 统一降序（新->旧），最新日期显示在最上方
-        return groupedArticles.keys.sorted(by: >)
-    }
+    var sortedTimestamps: [String] { groupedArticles.keys.sorted(by: >) }
 
-    // 【核心修复】原代码在 header 里引用了内层 ForEach 的 `item`，编译不过。
-    // 这里改成：该日期组"受限 且 组内仍有未解锁文章"才显示锁 —— 顺手解决
-    // "带锁却能随便点开"（文章已被永久解锁）的显示不一致问题。
     private func isGroupLocked(_ timestamp: String) -> Bool {
         guard NewsPointsCoordinator.shouldShowLock(timestamp: timestamp,
                                                   auth: authManager,
@@ -96,6 +214,9 @@ struct ArticleListContent: View {
                     count: groupedArticles[timestamp]?.count ?? 0,
                     isExpanded: expandedTimestamps.contains(timestamp),
                     isLocked: isGroupLocked(timestamp),
+                    isFree: NewsFreeBadge.isFree(timestamp: timestamp,
+                                                 auth: authManager,
+                                                 viewModel: viewModel),
                     onToggle: { onToggleTimestamp(timestamp) },
                     onPlay: { onPlayTimestamp(timestamp) }
                 )
@@ -113,9 +234,7 @@ struct SearchResultsList: View {
     @ObservedObject private var newsQuota = NewsQuotaManager.shared
 
     private static let parsingFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyMMdd"
-        return f
+        let f = DateFormatter(); f.dateFormat = "yyMMdd"; return f
     }()
 
     private var displayFormatter: DateFormatter {
@@ -126,14 +245,10 @@ struct SearchResultsList: View {
     }
 
     var groupedResults: [String: [ArticleItem]] {
-        var initial = Dictionary(grouping: results, by: { $0.article.timestamp })
-        initial = initial.mapValues { Array($0.reversed()) }
-        return initial
+        Dictionary(grouping: results, by: { $0.article.timestamp }).mapValues { Array($0.reversed()) }
     }
 
-    var sortedTimestamps: [String] {
-        groupedResults.keys.sorted(by: >)
-    }
+    var sortedTimestamps: [String] { groupedResults.keys.sorted(by: >) }
 
     private func isGroupLocked(_ timestamp: String) -> Bool {
         guard NewsPointsCoordinator.shouldShowLock(timestamp: timestamp,
@@ -166,7 +281,7 @@ struct SearchResultsList: View {
                         Text(Localized.searchResults)
                             .font(.subheadline)
                             .foregroundColor(.blue.opacity(0.7))
-                        HStack {
+                        HStack(spacing: 6) {
                             Text("\(formatTimestamp(timestamp)) (\(groupedResults[timestamp]?.count ?? 0))")
                                 .font(.headline)
                                 .foregroundColor(.blue.opacity(0.85))
@@ -174,6 +289,10 @@ struct SearchResultsList: View {
                                 Image(systemName: "lock.fill")
                                     .foregroundColor(.yellow.opacity(0.8))
                                     .font(.footnote)
+                            } else if NewsFreeBadge.isFree(timestamp: timestamp,
+                                                           auth: authManager,
+                                                           viewModel: viewModel) {
+                                FreeTagView(compact: true)
                             }
                         }
                     }
@@ -212,16 +331,18 @@ struct ArticleRowButton: View {
     @ObservedObject private var newsQuota = NewsQuotaManager.shared
 
     var body: some View {
-        Button(action: {
-            Task { await onTap() }
-        }) {
-            // 【修改】已解锁的文章不再显示"需要订阅"标签，避免"带锁却能看"的割裂感
+        Button(action: { Task { await onTap() } }) {
             let isLocked = NewsPointsCoordinator.shouldShowLock(timestamp: item.article.timestamp,
                                                                auth: authManager,
                                                                viewModel: viewModel)
                 && !NewsPointsCoordinator.canAccess(item.article,
                                                     auth: authManager,
                                                     viewModel: viewModel)
+
+            // ★【需求2】3 天前的旧新闻，对未订阅用户显示"免费"
+            let isFree = !isLocked && NewsFreeBadge.isFree(timestamp: item.article.timestamp,
+                                                          auth: authManager,
+                                                          viewModel: viewModel)
 
             ArticleRowCardView(
                 article: item.article,
@@ -230,6 +351,7 @@ struct ArticleRowButton: View {
                 isReadEffective: viewModel.isArticleEffectivelyRead(item.article),
                 isContentMatch: item.isContentMatch,
                 isLocked: isLocked,
+                isFree: isFree,
                 showEnglish: showEnglish
             )
         }
@@ -248,19 +370,13 @@ struct ArticleRowButton: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if viewModel.isArticleEffectivelyRead(item.article) {
-                Button {
-                    viewModel.markAsUnread(articleID: item.article.id)
-                } label: {
+                Button { viewModel.markAsUnread(articleID: item.article.id) } label: {
                     Label(Localized.markAsUnread_text, systemImage: "circle")
-                }
-                .tint(.orange)
+                }.tint(.orange)
             } else {
-                Button {
-                    viewModel.markAsRead(articleID: item.article.id)
-                } label: {
+                Button { viewModel.markAsRead(articleID: item.article.id) } label: {
                     Label(Localized.markAsRead_text, systemImage: "checkmark.circle")
-                }
-                .tint(.blue)
+                }.tint(.blue)
             }
         }
     }
@@ -284,13 +400,11 @@ struct ArticleContextMenu: View {
                 Divider()
                 Button {
                     viewModel.markAllAboveAsRead(articleID: article.id, inVisibleList: filteredArticles)
-                }
-                label: { Label(Localized.readAbove, systemImage: "arrow.up.to.line.compact") }
+                } label: { Label(Localized.readAbove, systemImage: "arrow.up.to.line.compact") }
 
                 Button {
                     viewModel.markAllBelowAsRead(articleID: article.id, inVisibleList: filteredArticles)
-                }
-                label: { Label(Localized.readBelow, systemImage: "arrow.down.to.line.compact") }
+                } label: { Label(Localized.readBelow, systemImage: "arrow.down.to.line.compact") }
             }
         }
     }
@@ -301,19 +415,17 @@ struct TimestampHeader: View {
     let count: Int
     let isExpanded: Bool
     let isLocked: Bool
+    let isFree: Bool                       // ★【需求2】
     let onToggle: () -> Void
     let onPlay: () -> Void
 
     private let dateGradient = LinearGradient(
         colors: [Color.blue, Color.purple],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
+        startPoint: .topLeading, endPoint: .bottomTrailing
     )
 
     private static let parsingFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyMMdd"
-        return f
+        let f = DateFormatter(); f.dateFormat = "yyMMdd"; return f
     }()
 
     private var displayFormatter: DateFormatter {
@@ -325,9 +437,7 @@ struct TimestampHeader: View {
 
     var body: some View {
         Button(action: {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
-                onToggle()
-            }
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) { onToggle() }
         }) {
             HStack(spacing: 0) {
                 Capsule()
@@ -337,41 +447,42 @@ struct TimestampHeader: View {
 
                 Text(formatTimestamp(timestamp))
                     .font(.system(size: 18, weight: .heavy, design: .rounded))
-                    .foregroundStyle(isExpanded ? AnyShapeStyle(dateGradient) : AnyShapeStyle(Color.primary.opacity(0.8)))
+                    .foregroundStyle(isExpanded ? AnyShapeStyle(dateGradient)
+                                                : AnyShapeStyle(Color.primary.opacity(0.8)))
                     .padding(.leading, 12)
                     .fixedSize(horizontal: true, vertical: false)
 
+                // ★【需求2】日期分组头上的"免费"
+                if isFree && !isLocked {
+                    FreeTagView(compact: true).padding(.leading, 8)
+                }
+
                 Spacer()
 
+                // ★ 音频播放按钮跟随展开状态高亮
                 if count > 0 {
                     Button(action: { onPlay() }) {
                         Image(systemName: "play.fill")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(.blue)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(isExpanded ? .blue : .gray)
                             .padding(8)
-                            .background(Circle().fill(Color.blue.opacity(0.1)))
+                            .background(Circle().fill(isExpanded ? Color.blue.opacity(0.18) : Color.gray.opacity(0.15)))
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .padding(.trailing, 28)
+                    .padding(.trailing, 20)
                 }
 
                 HStack(spacing: 8) {
                     if isLocked {
                         Image(systemName: "lock.fill")
-                            .font(.caption2)
-                            .foregroundColor(.orange)
+                            .font(.caption2).foregroundColor(.orange)
                     }
-
                     Text("\(count)")
                         .font(.system(size: 12, weight: .bold, design: .monospaced))
                         .foregroundColor(isExpanded ? .white : .secondary)
-                        .padding(.vertical, 4)
-                        .padding(.horizontal, 8)
-                        .background(
-                            Capsule()
-                                .fill(isExpanded ? Color.blue.opacity(0.8) : Color.secondary.opacity(0.15))
-                        )
-
+                        .padding(.vertical, 4).padding(.horizontal, 8)
+                        .background(Capsule().fill(isExpanded ? Color.blue.opacity(0.8)
+                                                             : Color.secondary.opacity(0.15)))
                     Image(systemName: "chevron.right")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.secondary.opacity(0.5))
@@ -405,8 +516,7 @@ struct EmptyStateView: View {
                 .font(.system(size: 60))
                 .foregroundColor(.secondary.opacity(0.3))
             Text(isEnglish ? "No unread articles" : "当前无未读文章")
-                .font(.headline)
-                .foregroundColor(.secondary)
+                .font(.headline).foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.viewBackground)
@@ -417,15 +527,16 @@ struct ArticleListView: View {
     let sourceName: String
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager
+    // @ObservedObject private var supportManager = SupportChatManager.shared
     @EnvironmentObject var authManager: AuthManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     @Environment(\.appNavPath) var appNavPath
 
     @State private var filterMode: ArticleFilterMode = .unread
-    @State private var isSearching: Bool = false
-    @State private var searchText: String = ""
-    @State private var isSearchActive: Bool = false
+    @State private var isSearching = false
+    @State private var searchText = ""
+    @State private var isSearchActive = false
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var isDownloadingImages = false
@@ -433,12 +544,7 @@ struct ArticleListView: View {
     @State private var downloadProgressText = ""
     @State private var showMarkAllReadConfirmation = false
 
-    @State private var showLoginSheet = false
-    @State private var showSubscriptionSheet = false
-
-    @State private var showGuestMenu = false
-    @State private var showProfileSheet = false
-
+    @State private var showProfileSheet = false          // ★ Guest 菜单 / LoginView 已删除
     @State private var hasPerformedAutoExpansion = false
 
     private var firstImageWaitTimeout: TimeInterval { 0.0 }
@@ -453,7 +559,7 @@ struct ArticleListView: View {
     }
 
     private func getCount(for mode: ArticleFilterMode) -> Int {
-        return mode == .unread ? unreadCount : readCount
+        mode == .unread ? unreadCount : readCount
     }
 
     private var baseFilteredArticles: [ArticleItem] {
@@ -467,12 +573,9 @@ struct ArticleListView: View {
     }
 
     private var searchResults: [ArticleItem] {
-        guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return []
-        }
-        guard let source = source else { return [] }
+        guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let source = source else { return [] }
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
         return source.articles.compactMap { article -> ArticleItem? in
             if article.topic.lowercased().contains(keyword) {
                 return ArticleItem(article: article, sourceName: nil, isContentMatch: false)
@@ -484,24 +587,14 @@ struct ArticleListView: View {
         }
     }
 
-    private var unreadCount: Int {
-        guard let source = source else { return 0 }
-        return source.articles.filter { !$0.isRead }.count
-    }
-
-    private var readCount: Int {
-        guard let source = source else { return 0 }
-        return source.articles.filter { $0.isRead }.count
-    }
+    private var unreadCount: Int { source?.articles.filter { !$0.isRead }.count ?? 0 }
+    private var readCount: Int { source?.articles.filter { $0.isRead }.count ?? 0 }
 
     var body: some View {
         if source == nil {
-            VStack {
-                Text(Localized.sourceUnavailable)
-                    .foregroundColor(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.viewBackground.ignoresSafeArea())
+            VStack { Text(Localized.sourceUnavailable).foregroundColor(.secondary) }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.viewBackground.ignoresSafeArea())
         } else {
             ZStack {
                 if filterMode == .unread && baseFilteredArticles.isEmpty {
@@ -516,11 +609,7 @@ struct ArticleListView: View {
                                     isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 },
                                 onCancel: {
-                                    withAnimation {
-                                        isSearching = false
-                                        isSearchActive = false
-                                        searchText = ""
-                                    }
+                                    withAnimation { isSearching = false; isSearchActive = false; searchText = "" }
                                 }
                             )
                         }
@@ -539,9 +628,7 @@ struct ArticleListView: View {
                                     viewModel: viewModel,
                                     authManager: authManager,
                                     showEnglish: isGlobalEnglishMode,
-                                    onArticleTap: { item in
-                                        await handleArticleTap(item, autoPlay: false)
-                                    }
+                                    onArticleTap: { item in await handleArticleTap(item, autoPlay: false) }
                                 )
                             } else {
                                 ArticleListContent(
@@ -559,44 +646,40 @@ struct ArticleListView: View {
                                             Task { await handleArticleTap(firstItem, autoPlay: true) }
                                         }
                                     },
-                                    onArticleTap: { item in
-                                        await handleArticleTap(item, autoPlay: false)
-                                    }
+                                    onArticleTap: { item in await handleArticleTap(item, autoPlay: false) }
                                 )
                             }
                         }
                         .listStyle(PlainListStyle())
                         .onAppear {
                             if !hasPerformedAutoExpansion {
-                                autoExpandGroups()
-                                hasPerformedAutoExpansion = true
+                                autoExpandGroups(); hasPerformedAutoExpansion = true
                             }
-                            // ★★★【需求1】进入/返回本页 → 静默拉一次服务器（带节流，无任何弹窗）★★★
                             Task { await resourceManager.silentRefresh(minInterval: 60, reason: "source-list-appear") }
+                            // // 刷新客服未读状态
+                            // Task { 
+                            //     await SupportChatManager.shared.refresh(
+                            //         userId: SupportIdentity.userId(appleId: authManager.userIdentifier)
+                            //     )
+                            // }
                         }
 
                         if !isSearchActive {
                             HStack(spacing: 8) {
                                 Picker("Filter", selection: $filterMode) {
                                     ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                                        Text("\(mode.localizedName) (\(self.getCount(for: mode)))")
-                                            .tag(mode)
+                                        Text("\(mode.localizedName) (\(self.getCount(for: mode)))").tag(mode)
                                     }
                                 }
                                 .pickerStyle(.segmented)
 
-                                Button {
-                                    showMarkAllReadConfirmation = true
-                                } label: {
+                                Button { showMarkAllReadConfirmation = true } label: {
                                     Image(systemName: "checkmark.circle")
-                                        .font(.system(size: 20))
-                                        .foregroundColor(.blue)
+                                        .font(.system(size: 20)).foregroundColor(.blue)
                                 }
                             }
                             .padding([.horizontal, .bottom])
-                            .onChange(of: filterMode) { _ in
-                                autoExpandGroups()
-                            }
+                            .onChange(of: filterMode) { _ in autoExpandGroups() }
                         }
                     }
                     .background(Color.viewBackground.ignoresSafeArea())
@@ -606,30 +689,19 @@ struct ArticleListView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    UserStatusToolbarItem(
-                        showGuestMenu: $showGuestMenu,
-                        showProfileSheet: $showProfileSheet
-                    )
+                    UserStatusToolbarItem(showProfileSheet: $showProfileSheet)
                 }
-
                 ToolbarItem(placement: .principal) {
-                    if !authManager.isSubscribed {
-                        NewsPointsPill()
-                    }
+                    // 匿名订阅用户 & 未登录用户都不该看到点数胶囊
+                    if authManager.isLoggedIn && !authManager.isSubscribed { NewsPointsPill() }
                 }
-
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: {
-                        withAnimation(.spring()) {
-                            isGlobalEnglishMode.toggle()
-                        }
-                    }) {
+                    Button(action: { withAnimation(.spring()) { isGlobalEnglishMode.toggle() } }) {
                         ZStack {
                             Circle()
                                 .strokeBorder(Color.primary, lineWidth: 1.5)
                                 .background(!isGlobalEnglishMode ? Color.primary : Color.clear)
                                 .clipShape(Circle())
-
                             Text(isGlobalEnglishMode ? "中" : "英")
                                 .font(.system(size: 13, weight: .bold, design: .rounded))
                                 .foregroundColor(!isGlobalEnglishMode ? Color.viewBackground : Color.primary)
@@ -637,99 +709,48 @@ struct ArticleListView: View {
                         .frame(width: 24, height: 24)
                     }
                 }
-
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         withAnimation {
                             isSearching.toggle()
-                            if !isSearching {
-                                isSearchActive = false
-                                searchText = ""
-                            }
+                            if !isSearching { isSearchActive = false; searchText = "" }
                         }
                     } label: {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.primary)
+                        Image(systemName: "magnifyingglass").foregroundColor(.primary)
                     }
                     .accessibilityLabel(Localized.search)
                 }
             }
+            // // ➕ 在线客服悬浮按钮
+            // .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
+            // // 独立挂载客服 sheet，避免和下面的 showProfileSheet 互相覆盖
+            // .background(
+            //     Color.clear.sheet(isPresented: $supportManager.showChat) {
+            //         SupportChatView(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
+            //     }
+            // )
             .overlay(
-                DownloadOverlay(
-                    isDownloading: isDownloadingImages,
-                    progress: downloadProgress,
-                    progressText: downloadProgressText
-                )
+                DownloadOverlay(isDownloading: isDownloadingImages,
+                                progress: downloadProgress,
+                                progressText: downloadProgressText)
             )
-            .alert("", isPresented: $showErrorAlert, actions: { Button(Localized.confirm, role: .cancel) { } }, message: { Text(errorMessage) })
-            .sheet(isPresented: $showLoginSheet) { LoginView() }
-            .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+            .alert("", isPresented: $showErrorAlert,
+                   actions: { Button(Localized.confirm, role: .cancel) { } },
+                   message: { Text(errorMessage) })
             .sheet(isPresented: $showProfileSheet) { UserProfileView() }
-            .sheet(isPresented: $showGuestMenu) {
-                VStack(spacing: 20) {
-                    Capsule().fill(Color.secondary.opacity(0.3)).frame(width: 40, height: 5).padding(.top, 10)
-                    Text(Localized.loginWelcome).font(.headline)
-                    VStack(spacing: 0) {
-                        Button {
-                            showGuestMenu = false
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showLoginSheet = true }
-                        } label: {
-                            HStack {
-                                Image(systemName: "person.crop.circle").font(.title3).frame(width: 30)
-                                Text(Localized.loginAccount).font(.body)
-                                Spacer()
-                                Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
-                            }
-                            .padding().background(Color(UIColor.secondarySystemGroupedBackground))
-                        }
-                        Divider().padding(.leading, 50)
-                        Button {
-                            let email = "728308386@qq.com"
-                            if let url = URL(string: "mailto:\(email)"), UIApplication.shared.canOpenURL(url) {
-                                UIApplication.shared.open(url)
-                            }
-                        } label: {
-                            HStack {
-                                Image(systemName: "envelope").font(.title3).frame(width: 30)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(Localized.feedback).foregroundColor(.primary)
-                                    Text("728308386@qq.com").font(.caption).foregroundColor(.secondary)
-                                }
-                                Spacer()
-                                Image(systemName: "arrow.up.right").font(.caption).foregroundColor(.gray)
-                            }
-                            .padding().background(Color(UIColor.secondarySystemGroupedBackground))
-                        }
-                    }
-                    .cornerRadius(12).padding(.horizontal)
-                    Spacer()
-                }
-                .background(Color(UIColor.systemGroupedBackground))
-                .presentationDetents([.fraction(0.30)])
-                .presentationDragIndicator(.hidden)
-            }
-            .confirmationDialog(
-                Localized.markAllAsReadConfirm,
-                isPresented: $showMarkAllReadConfirmation,
-                titleVisibility: .visible
-            ) {
+            .confirmationDialog(Localized.markAllAsReadConfirm,
+                                isPresented: $showMarkAllReadConfirmation,
+                                titleVisibility: .visible) {
                 Button(Localized.markAllAsRead, role: .destructive) {
                     viewModel.markAllAsReadInSource(sourceName)
                 }
                 Button(Localized.cancel, role: .cancel) { }
             }
-            .onChange(of: authManager.showSubscriptionSheet) { newValue in
-                self.showSubscriptionSheet = newValue
-            }
             .onChange(of: authManager.isLoggedIn) { newValue in
-                if newValue == true && self.showLoginSheet {
-                    self.showLoginSheet = false
-                }
-                if newValue == true {
+                if newValue {
                     Task {
                         await NewsQuotaManager.shared.refresh(
-                            userId: NewsQuotaManager.currentUserId(auth: authManager)
-                        )
+                            userId: NewsQuotaManager.currentUserId(auth: authManager))
                     }
                 }
             }
@@ -746,96 +767,36 @@ struct ArticleListView: View {
             return
         }
 
+        // ★【补丁·需求b】免费旧新闻阅读计数
+        AnonFreeReadTracker.note(article, auth: authManager, viewModel: viewModel)
+
         let proceedToArticle = {
             await MainActor.run {
                 appNavPath?.wrappedValue.append(
-                    NavigationTarget.articleDetail(article, self.sourceName, "source", autoPlay)
-                )
+                    NavigationTarget.articleDetail(article, self.sourceName, "source", autoPlay))
             }
         }
 
-        guard !article.images.isEmpty else {
-            await proceedToArticle()
-            return
+        // ★【需求6】图片一律后台下载，永不阻塞进入详情页
+        if !article.images.isEmpty {
+            resourceManager.enqueueImageDownloads(timestamp: article.timestamp,
+                                                  imageNames: article.images,
+                                                  priority: true)
         }
-
-        if resourceManager.checkIfImagesExistForArticle(
-            timestamp: article.timestamp,
-            imageNames: article.images
-        ) {
-            await proceedToArticle()
-            return
-        }
-
-        if !resourceManager.isNetworkAvailable {
-            await proceedToArticle()
-            resourceManager.enqueueImageDownloads(timestamp: article.timestamp, imageNames: article.images)
-            return
-        }
-
-        await MainActor.run {
-            isDownloadingImages = true
-            downloadProgress = 0.0
-            downloadProgressText = Localized.imagePrepare
-            withAnimation(.easeOut(duration: firstImageWaitTimeout)) { downloadProgress = 0.9 }
-        }
-
-        await resourceManager.waitForImages(
-            timestamp: article.timestamp,
-            imageNames: [article.images[0]],
-            timeout: firstImageWaitTimeout
-        )
-
-        await MainActor.run {
-            downloadProgress = 1.0
-            isDownloadingImages = false
-        }
-
         await proceedToArticle()
-
-        resourceManager.enqueueImageDownloads(timestamp: article.timestamp, imageNames: article.images)
     }
 
     private func autoExpandGroups() {
         let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
         let sortedTimestamps = groupedArticles.keys.sorted(by: >)
-
         if authManager.isSubscribed {
-            if let latestTimestamp = sortedTimestamps.first {
-                viewModel.expandedTimestampsBySource[sourceName] = [latestTimestamp]
-            } else {
-                viewModel.expandedTimestampsBySource[sourceName] = []
-            }
+            viewModel.expandedTimestampsBySource[sourceName] =
+                sortedTimestamps.first.map { [$0] } ?? []
         } else {
-            if sortedTimestamps.count == 1, let singleTimestamp = sortedTimestamps.first {
-                viewModel.expandedTimestampsBySource[sourceName] = [singleTimestamp]
+            if sortedTimestamps.count == 1, let s = sortedTimestamps.first {
+                viewModel.expandedTimestampsBySource[sourceName] = [s]
             } else {
                 viewModel.expandedTimestampsBySource[sourceName] = []
-            }
-        }
-    }
-
-    private func syncResources(isManual: Bool = false) async {
-        do {
-            try await resourceManager.checkAndDownloadUpdates(isManual: isManual)
-            viewModel.loadNews()
-        } catch {
-            if isManual {
-                switch error {
-                case is DecodingError:
-                    self.errorMessage = Localized.parseError
-                case let urlError as URLError where
-                    urlError.code == .cannotConnectToHost ||
-                    urlError.code == .timedOut ||
-                    urlError.code == .notConnectedToInternet:
-                    self.errorMessage = Localized.networkError
-                default:
-                    self.errorMessage = Localized.unknownErrorMsg
-                }
-                self.showErrorAlert = true
-                print("手动同步失败: \(error)")
-            } else {
-                print("自动同步静默失败: \(error)")
             }
         }
     }
@@ -846,32 +807,24 @@ struct ArticleListView: View {
 struct AllArticlesListView: View {
     @ObservedObject var viewModel: NewsViewModel
     @ObservedObject var resourceManager: ResourceManager
+    // @ObservedObject private var supportManager = SupportChatManager.shared
     @EnvironmentObject var authManager: AuthManager
 
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-
     @Environment(\.appNavPath) var appNavPath
 
     @State private var filterMode: ArticleFilterMode = .unread
-    @State private var isSearching: Bool = false
-    @State private var searchText: String = ""
-    @State private var isSearchActive: Bool = false
+    @State private var isSearching = false
+    @State private var searchText = ""
+    @State private var isSearchActive = false
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var isDownloadingImages = false
     @State private var downloadProgress: Double = 0.0
     @State private var downloadProgressText = ""
     @State private var showMarkAllReadConfirmation = false
-
-    @State private var showLoginSheet = false
-    @State private var showSubscriptionSheet = false
-
-    @State private var showGuestMenu = false
     @State private var showProfileSheet = false
-
     @State private var hasPerformedAutoExpansion = false
-
-    // MARK: - 辅助计算属性
 
     private var baseFilteredArticles: [ArticleItem] {
         viewModel.allArticlesSortedForDisplay
@@ -884,33 +837,29 @@ struct AllArticlesListView: View {
 
     private var totalUnreadCount: Int { viewModel.totalUnreadCount }
     private var totalReadCount: Int { viewModel.sources.flatMap { $0.articles }.filter { $0.isRead }.count }
-    private var firstImageWaitTimeout: TimeInterval { 0.0 }
 
     private var searchResults: [ArticleItem] {
-        guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return []
-        }
+        guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
         let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
         return viewModel.allArticlesSortedForDisplay.compactMap { item -> ArticleItem? in
             if item.article.topic.lowercased().contains(keyword) {
-                return ArticleItem(article: item.article, sourceName: item.sourceName, sourceNameEN: item.sourceNameEN, isContentMatch: false)
+                return ArticleItem(article: item.article, sourceName: item.sourceName,
+                                   sourceNameEN: item.sourceNameEN, isContentMatch: false)
             }
             if item.article.article.lowercased().contains(keyword) {
-                return ArticleItem(article: item.article, sourceName: item.sourceName, sourceNameEN: item.sourceNameEN, isContentMatch: true)
+                return ArticleItem(article: item.article, sourceName: item.sourceName,
+                                   sourceNameEN: item.sourceNameEN, isContentMatch: true)
             }
             return nil
         }
     }
 
     private func getCount(for mode: ArticleFilterMode) -> Int {
-        return mode == .unread ? totalUnreadCount : totalReadCount
+        mode == .unread ? totalUnreadCount : totalReadCount
     }
 
     private func getFilterTitle(for mode: ArticleFilterMode) -> String {
-        let name = mode.localizedName
-        let count = getCount(for: mode)
-        return "\(name) (\(count))"
+        "\(mode.localizedName) (\(getCount(for: mode)))"
     }
 
     var body: some View {
@@ -924,11 +873,7 @@ struct AllArticlesListView: View {
                             isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         },
                         onCancel: {
-                            withAnimation {
-                                isSearching = false
-                                isSearchActive = false
-                                searchText = ""
-                            }
+                            withAnimation { isSearching = false; isSearchActive = false; searchText = "" }
                         }
                     )
                 }
@@ -947,9 +892,7 @@ struct AllArticlesListView: View {
                             viewModel: viewModel,
                             authManager: authManager,
                             showEnglish: isGlobalEnglishMode,
-                            onArticleTap: { item in
-                                await handleArticleTap(item, autoPlay: false)
-                            }
+                            onArticleTap: { item in await handleArticleTap(item, autoPlay: false) }
                         )
                     } else {
                         ArticleListContent(
@@ -967,20 +910,22 @@ struct AllArticlesListView: View {
                                     Task { await handleArticleTap(firstItem, autoPlay: true) }
                                 }
                             },
-                            onArticleTap: { item in
-                                await handleArticleTap(item, autoPlay: false)
-                            }
+                            onArticleTap: { item in await handleArticleTap(item, autoPlay: false) }
                         )
                     }
                 }
                 .listStyle(PlainListStyle())
                 .onAppear {
                     if !hasPerformedAutoExpansion {
-                        autoExpandGroups()
-                        hasPerformedAutoExpansion = true
+                        autoExpandGroups(); hasPerformedAutoExpansion = true
                     }
-                    // ★★★【需求1】进入/返回本页 → 静默刷新（带节流）★★★
                     Task { await resourceManager.silentRefresh(minInterval: 60, reason: "all-list-appear") }
+                    // // 刷新客服未读状态
+                    // Task { 
+                    //     await SupportChatManager.shared.refresh(
+                    //         userId: SupportIdentity.userId(appleId: authManager.userIdentifier)
+                    //     )
+                    // }
                 }
 
                 if !isSearchActive {
@@ -992,18 +937,13 @@ struct AllArticlesListView: View {
                         }
                         .pickerStyle(.segmented)
 
-                        Button {
-                            showMarkAllReadConfirmation = true
-                        } label: {
+                        Button { showMarkAllReadConfirmation = true } label: {
                             Image(systemName: "checkmark.circle")
-                                .font(.system(size: 20))
-                                .foregroundColor(.blue)
+                                .font(.system(size: 20)).foregroundColor(.blue)
                         }
                     }
                     .padding([.horizontal, .bottom])
-                    .onChange(of: filterMode) { _ in
-                        autoExpandGroups()
-                    }
+                    .onChange(of: filterMode) { _ in autoExpandGroups() }
                 }
             }
             .background(Color.viewBackground.ignoresSafeArea())
@@ -1011,30 +951,19 @@ struct AllArticlesListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                UserStatusToolbarItem(
-                    showGuestMenu: $showGuestMenu,
-                    showProfileSheet: $showProfileSheet
-                )
+                UserStatusToolbarItem(showProfileSheet: $showProfileSheet)
             }
-
             ToolbarItem(placement: .principal) {
-                if !authManager.isSubscribed {
-                    NewsPointsPill()
-                }
+                // 匿名订阅用户 & 未登录用户都不该看到点数胶囊
+                if authManager.isLoggedIn && !authManager.isSubscribed { NewsPointsPill() }
             }
-
             ToolbarItem(placement: .topBarTrailing) {
-                Button(action: {
-                    withAnimation(.spring()) {
-                        isGlobalEnglishMode.toggle()
-                    }
-                }) {
+                Button(action: { withAnimation(.spring()) { isGlobalEnglishMode.toggle() } }) {
                     ZStack {
                         Circle()
                             .strokeBorder(Color.primary, lineWidth: 1.5)
                             .background(!isGlobalEnglishMode ? Color.primary : Color.clear)
                             .clipShape(Circle())
-
                         Text(isGlobalEnglishMode ? "中" : "英")
                             .font(.system(size: 13, weight: .bold, design: .rounded))
                             .foregroundColor(!isGlobalEnglishMode ? Color.viewBackground : Color.primary)
@@ -1042,99 +971,48 @@ struct AllArticlesListView: View {
                     .frame(width: 24, height: 24)
                 }
             }
-
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     withAnimation {
                         isSearching.toggle()
-                        if !isSearching {
-                            isSearchActive = false
-                            searchText = ""
-                        }
+                        if !isSearching { isSearchActive = false; searchText = "" }
                     }
                 } label: {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.primary)
+                    Image(systemName: "magnifyingglass").foregroundColor(.primary)
                 }
                 .accessibilityLabel(Localized.search)
             }
         }
+        // // ➕ 在线客服悬浮按钮
+        // .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
+        // // 独立挂载客服 sheet
+        // .background(
+        //     Color.clear.sheet(isPresented: $supportManager.showChat) {
+        //         SupportChatView(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
+        //     }
+        // )
         .overlay(
-            DownloadOverlay(
-                isDownloading: isDownloadingImages,
-                progress: downloadProgress,
-                progressText: downloadProgressText
-            )
+            DownloadOverlay(isDownloading: isDownloadingImages,
+                            progress: downloadProgress,
+                            progressText: downloadProgressText)
         )
-        .alert("", isPresented: $showErrorAlert, actions: { Button(Localized.confirm, role: .cancel) { } }, message: { Text(errorMessage) })
-        .sheet(isPresented: $showLoginSheet) { LoginView() }
-        .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
+        .alert("", isPresented: $showErrorAlert,
+               actions: { Button(Localized.confirm, role: .cancel) { } },
+               message: { Text(errorMessage) })
         .sheet(isPresented: $showProfileSheet) { UserProfileView() }
-        .sheet(isPresented: $showGuestMenu) {
-            VStack(spacing: 20) {
-                Capsule().fill(Color.secondary.opacity(0.3)).frame(width: 40, height: 5).padding(.top, 10)
-                Text(Localized.loginWelcome).font(.headline)
-                VStack(spacing: 0) {
-                    Button {
-                        showGuestMenu = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { showLoginSheet = true }
-                    } label: {
-                        HStack {
-                            Image(systemName: "person.crop.circle").font(.title3).frame(width: 30)
-                            Text(Localized.loginAccount).font(.body)
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
-                        }
-                        .padding().background(Color(UIColor.secondarySystemGroupedBackground))
-                    }
-                    Divider().padding(.leading, 50)
-                    Button {
-                        let email = "728308386@qq.com"
-                        if let url = URL(string: "mailto:\(email)"), UIApplication.shared.canOpenURL(url) {
-                            UIApplication.shared.open(url)
-                        }
-                    } label: {
-                        HStack {
-                            Image(systemName: "envelope").font(.title3).frame(width: 30)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(Localized.feedback).foregroundColor(.primary)
-                                Text("728308386@qq.com").font(.caption).foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "arrow.up.right").font(.caption).foregroundColor(.gray)
-                        }
-                        .padding().background(Color(UIColor.secondarySystemGroupedBackground))
-                    }
-                }
-                .cornerRadius(12).padding(.horizontal)
-                Spacer()
-            }
-            .background(Color(UIColor.systemGroupedBackground))
-            .presentationDetents([.fraction(0.30)])
-            .presentationDragIndicator(.hidden)
-        }
-        .confirmationDialog(
-            Localized.markAllAsReadConfirm,
-            isPresented: $showMarkAllReadConfirmation,
-            titleVisibility: .visible
-        ) {
+        .confirmationDialog(Localized.markAllAsReadConfirm,
+                            isPresented: $showMarkAllReadConfirmation,
+                            titleVisibility: .visible) {
             Button(Localized.markAllAsRead, role: .destructive) {
                 viewModel.markAllAsReadInSource(nil)
             }
             Button(Localized.cancel, role: .cancel) { }
         }
-        .onChange(of: authManager.showSubscriptionSheet) { newValue in
-            self.showSubscriptionSheet = newValue
-        }
         .onChange(of: authManager.isLoggedIn) { newValue in
-            if newValue == true && self.showLoginSheet {
-                self.showLoginSheet = false
-            }
-            if newValue == true {
+            if newValue {
                 Task {
                     await NewsQuotaManager.shared.refresh(
-                        userId: NewsQuotaManager.currentUserId(auth: authManager)
-                    )
+                        userId: NewsQuotaManager.currentUserId(auth: authManager))
                 }
             }
         }
@@ -1151,97 +1029,31 @@ struct AllArticlesListView: View {
             return
         }
 
-        let proceedToArticle = {
-            await MainActor.run {
-                appNavPath?.wrappedValue.append(
-                    NavigationTarget.articleDetail(article, sourceName, "all", autoPlay)
-                )
-            }
-        }
+        // ★【补丁·需求b】
+        AnonFreeReadTracker.note(article, auth: authManager, viewModel: viewModel)
 
-        guard !article.images.isEmpty else {
-            await proceedToArticle()
-            return
+        if !article.images.isEmpty {
+            resourceManager.enqueueImageDownloads(timestamp: article.timestamp,
+                                                  imageNames: article.images,
+                                                  priority: true)
         }
-
-        if resourceManager.checkIfImagesExistForArticle(
-            timestamp: article.timestamp,
-            imageNames: article.images
-        ) {
-            await proceedToArticle()
-            return
-        }
-
-        if !resourceManager.isNetworkAvailable {
-            await proceedToArticle()
-            resourceManager.enqueueImageDownloads(timestamp: article.timestamp, imageNames: article.images)
-            return
-        }
-
         await MainActor.run {
-            isDownloadingImages = true
-            downloadProgress = 0.0
-            downloadProgressText = Localized.imagePrepare
-            withAnimation(.easeOut(duration: firstImageWaitTimeout)) { downloadProgress = 0.9 }
+            appNavPath?.wrappedValue.append(
+                NavigationTarget.articleDetail(article, sourceName, "all", autoPlay))
         }
-
-        await resourceManager.waitForImages(
-            timestamp: article.timestamp,
-            imageNames: [article.images[0]],
-            timeout: firstImageWaitTimeout
-        )
-
-        await MainActor.run {
-            downloadProgress = 1.0
-            isDownloadingImages = false
-        }
-
-        await proceedToArticle()
-
-        resourceManager.enqueueImageDownloads(timestamp: article.timestamp, imageNames: article.images)
     }
 
     private func autoExpandGroups() {
         let key = viewModel.allArticlesKey
         let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
         let sortedTimestamps = groupedArticles.keys.sorted(by: >)
-
         if authManager.isSubscribed {
-            if let latestTimestamp = sortedTimestamps.first {
-                viewModel.expandedTimestampsBySource[key] = [latestTimestamp]
-            } else {
-                viewModel.expandedTimestampsBySource[key] = []
-            }
+            viewModel.expandedTimestampsBySource[key] = sortedTimestamps.first.map { [$0] } ?? []
         } else {
-            if sortedTimestamps.count == 1, let singleTimestamp = sortedTimestamps.first {
-                viewModel.expandedTimestampsBySource[key] = [singleTimestamp]
+            if sortedTimestamps.count == 1, let s = sortedTimestamps.first {
+                viewModel.expandedTimestampsBySource[key] = [s]
             } else {
                 viewModel.expandedTimestampsBySource[key] = []
-            }
-        }
-    }
-
-    private func syncResources(isManual: Bool = false) async {
-        do {
-            try await resourceManager.checkAndDownloadUpdates(isManual: isManual)
-            viewModel.loadNews()
-        } catch {
-            if isManual {
-                await MainActor.run {
-                    switch error {
-                    case is DecodingError:
-                        self.errorMessage = Localized.parseError
-                    case let urlError as URLError where
-                        urlError.code == .cannotConnectToHost ||
-                        urlError.code == .timedOut ||
-                        urlError.code == .notConnectedToInternet:
-                        self.errorMessage = Localized.networkError
-                    default:
-                        self.errorMessage = Localized.unknownErrorMsg
-                    }
-                    self.showErrorAlert = true
-                }
-                print("手动同步失败: \(error)")
             }
         }
     }

@@ -116,6 +116,7 @@ struct UserProfileView: View {
     
     // 【新增】控制退出登录确认框的状态
     @State private var showLogoutConfirmation = false
+    @State private var showLegacySubscriptionSheet = false
     
     // 【新增】删除账号相关状态
     @State private var showDeleteAccountConfirmation = false
@@ -135,6 +136,7 @@ struct UserProfileView: View {
     // 【新增】在线客服
     @ObservedObject private var supportManager = SupportChatManager.shared
     @State private var showSupportChat = false
+    @AppStorage(NewsPointsPrefs.storageKey) private var autoDeductPoints = false
 
     // 【新增】统一取客服用的 userId
     private var supportUserId: String {
@@ -182,12 +184,40 @@ struct UserProfileView: View {
                         }
                         .padding(.vertical, 10)
                     }
+
+                    if !authManager.isLoggedIn {
+                        Section {
+                            Button {
+                                authManager.signInWithApple()
+                            } label: {
+                                HStack {
+                                    Image(systemName: "apple.logo")
+                                    Text(Localized.loginAccount).fontWeight(.medium)
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
+                                }
+                            }
+                            Button {
+                                PurchaseFlowManager.shared.restore(auth: authManager)
+                            } label: {
+                                HStack {
+                                    Image(systemName: "arrow.clockwise")
+                                    Text(Localized.restorePurchase)
+                                    Spacer()
+                                }
+                            }
+                        } footer: {
+                            Text(isGlobalEnglishMode
+                                ? "Subscribed without signing in? Tap Restore Purchases after changing devices."
+                                : "免登录订阅的用户换设备后，用同一个 Apple ID 点「恢复购买」即可。")
+                        }
+                    }
                     
                     // 【新增】解决审核员找不到购买入口的问题：常驻订阅入口
                     if !authManager.isSubscribed {
                         Section {
                             Button {
-                                authManager.showSubscriptionSheet = true
+                                showLegacySubscriptionSheet = true
                             } label: {
                                 HStack {
                                     Image(systemName: "crown.fill")
@@ -247,6 +277,24 @@ struct UserProfileView: View {
                                         .foregroundColor(.secondary)
                                 }
                             }
+                        }
+                        if !authManager.isSubscribed {
+                            Toggle(isOn: $autoDeductPoints) {
+                                HStack {
+                                    Image(systemName: "bolt.circle.fill")
+                                        .foregroundColor(.orange)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(isGlobalEnglishMode ? "Auto-deduct points" : "阅读受限新闻时直接扣点")
+                                            .foregroundColor(.primary)
+                                        Text(isGlobalEnglishMode
+                                             ? "Skip the confirmation dialog (audio keeps playing)"
+                                             : "跳过每次的确认弹窗，音频播报更连贯")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            .tint(.blue)
                         }
                     }
                     
@@ -384,6 +432,7 @@ struct UserProfileView: View {
                 .sheet(isPresented: $showSupportChat) {
                     SupportChatView(userId: supportUserId)
                 }
+                .sheet(isPresented: $showLegacySubscriptionSheet) { SubscriptionView() }
                 // ✅【新增】进入个人中心即刷新未读数
                 .task {
                     await supportManager.refresh(userId: supportUserId)
@@ -608,49 +657,61 @@ func formatDateLocal(_ isoString: String, isEnglish: Bool) -> String {
     return isoString // 原样返回
 }
 
-// MARK: - 【修改】导航栏用户状态视图
-// 修改逻辑：不再直接传入 showLoginSheet，而是传入两个 Sheet 的控制状态
+// MARK: - 导航栏用户状态视图（★需求1：不再有登录中转页）
 struct UserStatusToolbarItem: View {
     @EnvironmentObject var authManager: AuthManager
-    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false 
-    
-    // 接收两个绑定的状态
-    @Binding var showGuestMenu: Bool
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+
     @Binding var showProfileSheet: Bool
-    
+
     var body: some View {
-        Button(action: {
-            if authManager.isLoggedIn {
-                // 已登录：显示个人中心
-                showProfileSheet = true
-            } else {
-                // 未登录：显示底部 Guest 菜单
-                showGuestMenu = true
-            }
-        }) {
-            if authManager.isLoggedIn {
+        Button(action: primaryAction) {
+            if authManager.isLoggedIn || authManager.isSubscribed {
                 HStack(spacing: 6) {
                     Image(systemName: "person.circle.fill")
                     if authManager.isSubscribed {
                         Image(systemName: "crown.fill").foregroundColor(.yellow).font(.caption)
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .clipShape(Capsule())
-                .foregroundColor(.primary)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .clipShape(Capsule()).foregroundColor(.primary)
             } else {
-                HStack(spacing: 6) {
-                    Text(Localized.loginAccount) // 【双语化】
-                        .font(.caption.bold())
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .clipShape(Capsule())
-                .foregroundColor(.primary)
+                Text(Localized.loginAccount)
+                    .font(.caption.bold())
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .clipShape(Capsule()).foregroundColor(.primary)
             }
         }
+        // 长按 = 更多入口（未登录用户也能进个人中心 / 反馈 / 恢复购买）
+        .contextMenu {
+            if !authManager.isLoggedIn {
+                Button {
+                    authManager.signInWithApple()
+                } label: { Label(Localized.loginAccount, systemImage: "apple.logo") }
+            }
+            Button {
+                showProfileSheet = true
+            } label: { Label(Localized.profileTitle, systemImage: "person.crop.circle") }
+
+            Button {
+                PurchaseFlowManager.shared.restore(auth: authManager)
+            } label: { Label(Localized.restorePurchase, systemImage: "arrow.clockwise") }
+
+            Button {
+                if let url = URL(string: "mailto:728308386@qq.com"),
+                   UIApplication.shared.canOpenURL(url) { UIApplication.shared.open(url) }
+            } label: { Label(Localized.feedback, systemImage: "envelope") }
+        }
         .accessibilityLabel(authManager.isLoggedIn ? Localized.profileTitle : Localized.loginAccount)
+    }
+
+    private func primaryAction() {
+        if authManager.isLoggedIn || authManager.isSubscribed {
+            showProfileSheet = true
+        } else {
+            // ★ 直接拉起苹果登录，不再经过任何中转页
+            authManager.signInWithApple()
+        }
     }
 }
 
@@ -679,11 +740,7 @@ struct SourceListView: View {
     @State private var didInitialSync = false
     
     @State private var showAddSourceSheet = false
-    // 【新增】控制登录弹窗的显示
-    @State private var showLoginSheet = false
     
-    // 【新增】控制未登录用户的底部菜单
-    @State private var showGuestMenu = false
     // 【新增】控制已登录用户的个人中心
     @State private var showProfileSheet = false
     
@@ -778,24 +835,19 @@ struct SourceListView: View {
             }
             // 【新增】在线客服悬浮按钮（仅首页显示，可长按拖动）
             // 后续如需在新闻首页恢复悬浮球，直接取消下面这行注释即可。
-            // .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
+            .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
             // 【修改】使用系统背景色
             .background(Color.viewBackground.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 // 【修改】将用户状态按钮更新为新的逻辑
                 ToolbarItem(placement: .navigationBarLeading) {
-                    UserStatusToolbarItem(
-                        showGuestMenu: $showGuestMenu,
-                        showProfileSheet: $showProfileSheet
-                    )
+                    UserStatusToolbarItem(showProfileSheet: $showProfileSheet)
                 }
 
+                // ③ toolbar principal：未登录但已匿名订阅时不需要点数胶囊，改成
                 ToolbarItem(placement: .principal) {
-                    // 【修改】只有"已登录 且 未订阅"才显示点数胶囊
-                    if authManager.isLoggedIn && !authManager.isSubscribed {
-                        NewsPointsPill()
-                    }
+                    if authManager.isLoggedIn && !authManager.isSubscribed { NewsPointsPill() }
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -915,8 +967,13 @@ struct SourceListView: View {
                 await NewsQuotaManager.shared.refresh(
                     userId: NewsQuotaManager.currentUserId(auth: authManager))
             }
-            // 【需求3】返回列表/首页是"成功时刻"，允许弹通知预弹窗
-            NotificationPermissionManager.shared.record(newDepth == 0 ? .newsHomeReturn : .newsListReturn)
+
+            // ★【补丁·需求b】离开详情页 = 最安全的弹窗时机；优先级高于通知预弹窗
+            if AnonymousSubscribePromptManager.shared.hasPending {
+                AnonymousSubscribePromptManager.shared.flushIfNeeded()
+            } else {
+                NotificationPermissionManager.shared.record(newDepth == 0 ? .newsHomeReturn : .newsListReturn)
+            }
         }
         .sheet(isPresented: $showAddSourceSheet, onDismiss: { viewModel.loadNews() }) {
             NavigationView {
@@ -924,92 +981,13 @@ struct SourceListView: View {
             }
             .environmentObject(resourceManager)
         }
-        .sheet(isPresented: $showLoginSheet) { LoginView() }
         // 【新增】接管全局 openChat(type:)：寻片/举报横幅的「回复」按钮依赖它
         .sheet(isPresented: $supportManager.showChat) {
             SupportChatView(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
         }
-        // ⚠️ 修复 Bug：直接绑定 authManager.showSubscriptionSheet，确保状态双向同步
-        .sheet(isPresented: $authManager.showSubscriptionSheet) { SubscriptionView() }
         // 【新增】个人中心
         .fullScreenCover(isPresented: $showProfileSheet) { UserProfileView() }
-        // 【新增】未登录底部菜单 Sheet (仿 Finance)
-        .sheet(isPresented: $showGuestMenu) {
-            // MARK: - Guest Menu (Bottom Sheet)
-            VStack(spacing: 20) {
-                // 顶部小横条
-                Capsule()
-                    .fill(Color.secondary.opacity(0.3))
-                    .frame(width: 40, height: 5)
-                    .padding(.top, 10)
-                
-                Text(Localized.loginWelcome) // 【双语化】
-                    .font(.headline)
-                
-                VStack(spacing: 0) {
-                    // 选项 1：登录
-                    Button {
-                        showGuestMenu = false // 先关闭菜单
-                        // 延迟一点点再打开登录页
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            showLoginSheet = true
-                        }
-                    } label: {
-                        HStack {
-                            Image(systemName: "person.crop.circle")
-                                .font(.title3)
-                                .frame(width: 30)
-                            Text(Localized.loginAccount) // 【双语化】
-                                .font(.body)
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
-                        }
-                        .padding()
-                        .background(Color(UIColor.secondarySystemGroupedBackground))
-                    }
-                    
-                    Divider().padding(.leading, 50)
-                    
-                    // 选项 2：问题反馈
-                    Button {
-                        let email = "728308386@qq.com"
-                        if let url = URL(string: "mailto:\(email)") {
-                            if UIApplication.shared.canOpenURL(url) {
-                                UIApplication.shared.open(url)
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            Image(systemName: "envelope")
-                                .font(.title3)
-                                .frame(width: 30)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(Localized.feedback) // 【双语化】
-                                    .foregroundColor(.primary)
-                                Text("728308386@qq.com")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "arrow.up.right").font(.caption).foregroundColor(.gray)
-                        }
-                        .padding()
-                        .background(Color(UIColor.secondarySystemGroupedBackground))
-                    }
-                }
-                .cornerRadius(12)
-                .padding(.horizontal)
-                
-                Spacer()
-            }
-            .background(Color(UIColor.systemGroupedBackground))
-            .presentationDetents([.fraction(0.30)]) // 只占据底部 30%
-            .presentationDragIndicator(.hidden)
-        }
         .onChange(of: authManager.isLoggedIn, perform: { newValue in
-            if newValue == true && self.showLoginSheet {
-                self.showLoginSheet = false
-            }
             if newValue == true {
                 Task {
                     let uid = FreeQuotaManager.currentUserId(auth: authManager)
@@ -1211,16 +1189,21 @@ struct SourceListView: View {
                                 // 【修改】传入 isFromAll: true，确保搜索结果中阅读/播放时在混合列表中轮询
                                 Task { await handleArticleTap(tapItem, autoPlay: false, isFromAll: true) }
                             }) {
-                                let isLocked = NewsPointsCoordinator.shouldShowLock(timestamp: item.article.timestamp, auth: authManager, viewModel: viewModel)
-                                
+                                let isLocked = NewsPointsCoordinator.shouldShowLock(timestamp: item.article.timestamp,
+                                                   auth: authManager, viewModel: viewModel)
+                                    && !NewsPointsCoordinator.canAccess(item.article, auth: authManager, viewModel: viewModel)
+                                let isFree = !isLocked && NewsFreeBadge.isFree(timestamp: item.article.timestamp,
+                                                                            auth: authManager, viewModel: viewModel)
+
                                 ArticleRowCardView(
                                     article: item.article,
                                     sourceName: item.sourceName,
-                                    sourceNameEN: item.sourceNameEN, // 【核心修改】传入 item.sourceNameEN
+                                    sourceNameEN: item.sourceNameEN,
                                     isReadEffective: viewModel.isArticleEffectivelyRead(item.article),
                                     isContentMatch: item.isContentMatch,
                                     isLocked: isLocked,
-                                    showEnglish: isGlobalEnglishMode // 【核心修改】传入当前的语言开关
+                                    isFree: isFree,
+                                    showEnglish: isGlobalEnglishMode
                                 )
                             }
                             .buttonStyle(PlainButtonStyle())
@@ -1482,47 +1465,22 @@ struct SourceListView: View {
         await proceedArticleTap(item, autoPlay: autoPlay, isFromAll: isFromAll)
     }
 
-    private func proceedArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool), autoPlay: Bool, isFromAll: Bool) async {
+    private func proceedArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool),
+                               autoPlay: Bool, isFromAll: Bool) async {
         let article = item.article
         let sourceName = item.sourceName
         let contextStr = isFromAll ? "all" : sourceName
 
-        let prepareNavigation = {
-            await MainActor.run {
-                self.navPath.append(NavigationTarget.articleDetail(article, sourceName, contextStr, autoPlay))
-            }
+        // ★【补丁·需求b】
+        AnonFreeReadTracker.note(article, auth: authManager, viewModel: viewModel)
+
+        if !article.images.isEmpty {
+            resourceManager.enqueueImageDownloads(timestamp: article.timestamp,
+                                                imageNames: article.images,
+                                                priority: true)
         }
-
-        guard !article.images.isEmpty else { await prepareNavigation(); return }
-
-        let imagesAlreadyExist = resourceManager.checkIfImagesExistForArticle(
-            timestamp: article.timestamp, imageNames: article.images)
-        if imagesAlreadyExist { await prepareNavigation(); return }
-
         await MainActor.run {
-            isDownloadingImages = true
-            downloadProgress = 0.0
-            downloadProgressText = Localized.imagePrepare
-        }
-        do {
-            try await resourceManager.downloadImagesForArticle(
-                timestamp: article.timestamp, imageNames: article.images,
-                progressHandler: { current, total in
-                    self.downloadProgress = total > 0 ? Double(current) / Double(total) : 0
-                    self.downloadProgressText = "\(Localized.imageDownloaded) \(current) / \(total)"
-                })
-            await MainActor.run { isDownloadingImages = false }
-            await prepareNavigation()
-        } catch {
-            await MainActor.run {
-                isDownloadingImages = false
-                let isNetworkError = (error as? URLError)?.code == .notConnectedToInternet ||
-                                     (error as? URLError)?.code == .timedOut ||
-                                     (error as? URLError)?.code == .networkConnectionLost ||
-                                     (error as? URLError)?.code == .cannotConnectToHost
-                if isNetworkError { Task { await prepareNavigation() } }
-                else { errorMessage = "\(Localized.fetchFailed): \(error.localizedDescription)"; showErrorAlert = true }
-            }
+            self.navPath.append(NavigationTarget.articleDetail(article, sourceName, contextStr, autoPlay))
         }
     }
     

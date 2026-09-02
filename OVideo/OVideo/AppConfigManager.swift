@@ -44,6 +44,9 @@ final class AppConfigManager: ObservableObject {
     private let kCachedMaxYear   = "GW_CachedReviewMaxYear"
     private let base = "http://106.15.183.158:5001/api/ONews"
 
+    /// ⭐ 正在进行的拉取任务：保证「同时只有一次网络请求」，且所有调用者都能 await 到结果
+    private var inflight: Task<Void, Never>?
+
     private init() {
         let d = UserDefaults.standard
         // 之前成功拿过配置 → 先用缓存值，避免离线时误进「1974 老片馆」
@@ -86,15 +89,26 @@ final class AppConfigManager: ObservableObject {
         }
     }
 
-    /// 带重试的配置拉取；失败会写入 lastError（不再静默）
+    /// 带重试的配置拉取（并发安全：重复调用会复用同一个任务）
     func refresh(retries: Int = 2) async {
-        if isRefreshing { return }
-        isRefreshing = true
-        defer { isRefreshing = false }
-        for attempt in 0...max(0, retries) {
-            if await fetchOnce() { return }
-            if attempt < retries { try? await Task.sleep(nanoseconds: 1_200_000_000) }
+        if let t = inflight { await t.value; return }
+        let t = Task { @MainActor in
+            self.isRefreshing = true
+            for attempt in 0...max(0, retries) {
+                if await self.fetchOnce() { break }
+                if attempt < retries { try? await Task.sleep(nanoseconds: 1_000_000_000) }
+            }
+            self.isRefreshing = false
         }
+        inflight = t
+        await t.value
+        inflight = nil
+    }
+
+    /// ⭐ 所有「依赖 max_year 的列表请求」都必须先 await 这个，避免冷启动误用 1974 老片模式
+    func ensureFetched() async {
+        if didFetch { return }
+        await refresh(retries: 1)
     }
 
     private func fetchOnce() async -> Bool {
@@ -102,7 +116,7 @@ final class AppConfigManager: ObservableObject {
             lastError = "配置地址无效"; return false
         }
         var req = URLRequest(url: url)
-        req.timeoutInterval = 12
+        req.timeoutInterval = 10
         req.cachePolicy = .reloadIgnoringLocalCacheData
         req.setValue(VideoAPI.ua, forHTTPHeaderField: "User-Agent")
         do {
@@ -115,7 +129,7 @@ final class AppConfigManager: ObservableObject {
             let payload = try JSONDecoder().decode(ServerVersionPayload.self, from: data)
             apply(payload)
             lastError = nil
-            print("✅ [Config] 已获取配置：reviewMode=\(reviewMode) maxYear=\(String(describing: effectiveMaxYear)) moduleEnabled=\(moduleEnabled)")
+            print("✅ [Config] reviewMode=\(reviewMode) maxYear=\(String(describing: effectiveMaxYear)) moduleEnabled=\(moduleEnabled)")
             return true
         } catch {
             let ns = error as NSError

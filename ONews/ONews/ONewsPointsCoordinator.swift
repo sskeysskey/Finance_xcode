@@ -22,41 +22,49 @@ final class NewsPointsCoordinator: ObservableObject {
     @Published var showInsufficientSheet = false
     @Published var insufficientNeedLogin = false
     @Published var insufficientRemaining = 0
-    // ⭐ 新增：区分上下文 + 是否“真的点数不足”
     @Published var insufficientContext: PointsContext = .news
-    @Published var insufficientIsShortage = true   // true=真不足(显示需要1点)；false=主动点“+”获取更多点数
+    @Published var insufficientIsShortage = true   // true=真不足；false=主动点“+”获取更多点数
 
     // 结算中 / 错误
     @Published var isProcessing = false
     @Published var showErrorSheet = false
     @Published var errorText = ""
 
+    // ★【需求5】自动扣点后的轻提示（不阻塞、不打断音频）
+    @Published var autoDeductToast: String? = nil
+    private var toastToken = UUID()
+
     // 全局 sheet（由 MainAppView 绑定）
     @Published var showInviteSheet = false
     @Published var showVideoInviteSheet = false     // 视频邀请
-    @Published var showLoginSheet = false
     @Published var showSubscriptionSheet = false
     // 视频首页首启登录弹窗
     @Published var showVideoLoginPrompt = false
 
+    // ★【需求1】登录中转页已删除。这里保留属性只为兼容旧调用点：
+    //   任何地方把它置为 true，都会被自动改写成「直接拉起苹果登录」。
+    @Published var showLoginSheet = false {
+        didSet {
+            guard showLoginSheet else { return }
+            showLoginSheet = false                       // 递归安全：置 false 时 guard 直接返回
+            let auth = authRef ?? AuthManager.shared
+            DispatchQueue.main.async { auth.signInWithApple() }
+        }
+    }
+
     // MARK: - 【需求2】唯一的「这天是否受限」判定入口
-    /// 全 App 只允许通过这里判断某天是否受限；内部 = viewModel.isTimestampLocked = NewsLockRule（全程 UTC）
     static func isRestrictedDay(_ timestamp: String, viewModel: NewsViewModel) -> Bool {
         viewModel.isTimestampLocked(timestamp: timestamp)
     }
-    
+
     // MARK: - 是否可免费访问一篇新闻
     static func canAccess(_ article: Article, auth: AuthManager, viewModel: NewsViewModel) -> Bool {
         if auth.isSubscribed || auth.isPermanentVIP { return true }
         if !isRestrictedDay(article.timestamp, viewModel: viewModel) { return true }   // 老新闻免费
-        // 已扣点解锁过的文章永久可读（与服务端 news_free_unlocks 一致）
         return NewsQuotaManager.shared.isNewsUnlocked(FreeQuotaManager.newsKey(article))
     }
 
     // MARK: - 列表锁标志显示规则
-    /// 规则：已订阅/永久VIP → 不显示；免费(老)新闻 → 不显示；未登录 → 不显示；
-    ///       已登录且剩余点数 > 0 → 不显示；仅当「已登录 且 剩余点数为 0」时才显示。
-    /// ⚠️ 调用方还需叠加 `!canAccess(...)`，否则会出现"带锁但点进去能看"（已解锁的文章）。
     static func shouldShowLock(timestamp: String, auth: AuthManager, viewModel: NewsViewModel) -> Bool {
         if auth.isSubscribed || auth.isPermanentVIP { return false }
         if !isRestrictedDay(timestamp, viewModel: viewModel) { return false }
@@ -65,34 +73,85 @@ final class NewsPointsCoordinator: ObservableObject {
     }
 
     // MARK: - 尝试解锁一篇新闻
+    /// - Parameters:
+    ///   - onBlocked: 只要「弹出了阻塞式弹窗 / 解锁失败」就会回调（用于让调用方停止音频等）
+    ///   - onSuccess: 解锁成功（含已解锁）后继续原动作
     func attemptUnlockArticle(_ article: Article,
                               auth: AuthManager,
                               viewModel: NewsViewModel,
+                              onBlocked: (() -> Void)? = nil,
                               onSuccess: @escaping () -> Void) {
         self.authRef = auth
         if Self.canAccess(article, auth: auth, viewModel: viewModel) { onSuccess(); return }
 
-        if !auth.isLoggedIn { presentInsufficient(needLogin: true, context: .news); return }
-        if quota.remaining <= 0 { presentInsufficient(needLogin: false, context: .news); return }
+        if !auth.isLoggedIn {
+            onBlocked?()
+            presentInsufficient(needLogin: true, context: .news)
+            return
+        }
+        if quota.remaining <= 0 {
+            onBlocked?()
+            presentInsufficient(needLogin: false, context: .news)
+            return
+        }
+
+        // ★★★【需求5】勾了「直接扣除，不再询问」→ 静默扣点，不弹任何窗（音频得以连贯播放）
+        if NewsPointsPrefs.autoDeduct {
+            performUnlock(article: article, auth: auth, silent: true,
+                          onBlocked: onBlocked, onSuccess: onSuccess)
+            return
+        }
 
         presentConfirm(title: article.topic) { [weak self] in
+            self?.performUnlock(article: article, auth: auth, silent: false,
+                               onBlocked: onBlocked, onSuccess: onSuccess)
+        }
+    }
+
+    /// 真正的扣点动作。silent=true 时不显示「处理中」遮罩，只在成功后给一个轻提示
+    private func performUnlock(article: Article,
+                               auth: AuthManager,
+                               silent: Bool,
+                               onBlocked: (() -> Void)?,
+                               onSuccess: @escaping () -> Void) {
+        if !silent { isProcessing = true }
+        Task { [weak self] in
             guard let self = self else { return }
-            self.isProcessing = true
-            Task {
-                let uid = FreeQuotaManager.currentUserId(auth: auth)
-                let key = FreeQuotaManager.newsKey(article)
-                let r = await self.quota.unlockNews(userId: uid, articleKey: key, topic: article.topic)
-                self.isProcessing = false
-                switch r {
-                case .success, .alreadyUnlocked: onSuccess()
-                case .quotaExceeded:             self.presentInsufficient(needLogin: false, context: .news)
-                case .failed:                    self.presentError("网络异常，扣点失败，请稍后再试")
-                }
+            let uid = FreeQuotaManager.currentUserId(auth: auth)
+            let key = FreeQuotaManager.newsKey(article)
+            let r = await self.quota.unlockNews(userId: uid, articleKey: key, topic: article.topic)
+            if !silent { self.isProcessing = false }
+
+            switch r {
+            case .success:
+                if silent { self.showAutoDeductToast() }
+                onSuccess()
+            case .alreadyUnlocked:
+                onSuccess()
+            case .quotaExceeded:
+                onBlocked?()
+                self.presentInsufficient(needLogin: false, context: .news)
+            case .failed:
+                onBlocked?()
+                self.presentError(Localized.isEnglish
+                                  ? "Network error. Failed to use your point, please try again."
+                                  : "网络异常，扣点失败，请稍后再试")
             }
         }
     }
 
-    // MARK: - 首启登录引导弹窗
+    private func showAutoDeductToast() {
+        autoDeductToast = Localized.isEnglish
+            ? "1 point used · \(quota.remaining) left"
+            : "剩余 \(quota.remaining) 点\n首页'个人中心'可关闭'自动扣点'"
+        let token = UUID(); toastToken = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.2) { [weak self] in
+            guard let self = self, self.toastToken == token else { return }
+            self.autoDeductToast = nil
+        }
+    }
+
+    // MARK: - 首启登录引导弹窗（已废弃，保留空实现）
     func maybeShowFirstLaunchInvitePrompt(auth: AuthManager,
                                           reviewMode: Bool,
                                           isNewUser: Bool,
@@ -111,7 +170,6 @@ final class NewsPointsCoordinator: ObservableObject {
         showConfirmSheet = true
     }
 
-    // ⭐ 统一入口：带上下文 + 是否真的点数不足
     func presentInsufficient(needLogin: Bool,
                              context: PointsContext = .news,
                              isShortage: Bool = true) {
@@ -133,10 +191,17 @@ final class NewsPointsCoordinator: ObservableObject {
     }
     func confirmNo() { showConfirmSheet = false; confirmAction = nil }
 
-    // ⭐ 订阅：统一
+    // ⭐【需求4】订阅：直接拉起苹果订阅（useDirectPurchase = false 时自动回落到旧中转页）
     func goSubscribe() {
         showInsufficientSheet = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.showSubscriptionSheet = true }
+        let auth = authRef ?? AuthManager.shared
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            if PurchaseFlowManager.useDirectPurchase {
+                PurchaseFlowManager.shared.startPurchase(auth: auth, reason: "news-points-insufficient")
+            } else {
+                self.showSubscriptionSheet = true
+            }
+        }
     }
 
     // 新闻邀请（保留）
@@ -158,14 +223,15 @@ final class NewsPointsCoordinator: ObservableObject {
     // ⭐ 从不足弹窗内直接登录（复用 Apple 登录）
     func doLoginFromInsufficient() {
         showInsufficientSheet = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            self.authRef?.signInWithApple()
-        }
+        let auth = authRef ?? AuthManager.shared
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { auth.signInWithApple() }
     }
 
+    /// ★【需求1】不再有中转页：等价于直接拉起苹果登录
     func goLogin() {
         showInsufficientSheet = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.showLoginSheet = true }
+        let auth = authRef ?? AuthManager.shared
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { auth.signInWithApple() }
     }
     func dismissInsufficient() { showInsufficientSheet = false }
 }
@@ -183,12 +249,35 @@ struct NewsPointsOverlayView: View {
             if c.showVideoLoginPrompt { videoLoginDialog }
             if c.showErrorSheet { errorDialog }
             if c.isProcessing { processingOverlay }
+            if let toast = c.autoDeductToast { autoDeductToastView(toast) }   // ★需求5
         }
         .animation(.easeInOut(duration: 0.2), value: c.showConfirmSheet)
         .animation(.easeInOut(duration: 0.2), value: c.showInsufficientSheet)
         .animation(.easeInOut(duration: 0.2), value: c.showVideoLoginPrompt)
         .animation(.easeInOut(duration: 0.2), value: c.showErrorSheet)
         .animation(.easeInOut(duration: 0.2), value: c.isProcessing)
+        .animation(.easeInOut(duration: 0.25), value: c.autoDeductToast)
+    }
+
+    // ★【需求5】静默扣点提示：不遮挡、不拦手势
+    private func autoDeductToastView(_ text: String) -> some View {
+        VStack {
+            Spacer()
+            HStack(spacing: 7) {
+                Image(systemName: "bolt.circle.fill")
+                    .font(.system(size: 15)).foregroundColor(.orange)
+                Text(text)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.primary)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .background(.ultraThinMaterial)
+            .clipShape(Capsule())
+            .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+            .padding(.bottom, 120)
+        }
+        .allowsHitTesting(false)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private var processingOverlay: some View {
@@ -245,7 +334,7 @@ struct NewsPointsOverlayView: View {
                 Button {
                     c.showVideoLoginPrompt = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        c.authRef?.signInWithApple()
+                        (c.authRef ?? AuthManager.shared).signInWithApple()
                     }
                 } label: {
                     HStack {
@@ -264,14 +353,16 @@ struct NewsPointsOverlayView: View {
         }
     }
 
+    // MARK: - 扣点确认弹窗（★需求5：加入「直接扣除，不再询问」）
     private var confirmDialog: some View {
         ZStack {
             Color.black.opacity(0.45).ignoresSafeArea().onTapGesture { c.confirmNo() }
             VStack(spacing: 0) {
                 Image(systemName: "bolt.circle.fill").font(.system(size: 44))
                     .foregroundStyle(.orange).padding(.top, 24)
-                Text(en ? "Use 1 Point" : "点数消耗确认").font(.subheadline).foregroundColor(.secondary).padding(.top, 12)
-                Text("标题：\(c.confirmTitle)")
+                Text(en ? "Use 1 Point" : "点数消耗确认")
+                    .font(.subheadline).foregroundColor(.secondary).padding(.top, 12)
+                Text(en ? "Title: \(c.confirmTitle)" : "标题：\(c.confirmTitle)")
                     .font(.headline)
                     .foregroundColor(.primary)
                     .multilineTextAlignment(.center)
@@ -290,7 +381,13 @@ struct NewsPointsOverlayView: View {
                      : (en ? "Free to re-read after unlock" : "解锁后永久免费再读"))
                     .font(.caption2).foregroundColor(.secondary)
                     .multilineTextAlignment(.center).padding(.horizontal, 16).padding(.top, 6)
-                Divider().padding(.top, 18)
+
+                // ★★★【需求5】勾选后：下次直接扣点、不再弹窗（音频可连贯播放）
+                NewsPointsAutoDeductToggle()
+                    .padding(.horizontal, 22)
+                    .padding(.top, 10)
+
+                Divider().padding(.top, 8)
                 HStack(spacing: 0) {
                     Button { c.confirmNo() } label: {
                         Text(en ? "Cancel" : "取消").frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.secondary)
@@ -307,7 +404,7 @@ struct NewsPointsOverlayView: View {
         }
     }
 
-    // MARK: - ⭐ 借鉴 Finance 的醒目订阅按钮（订阅统一）
+    // MARK: - 醒目订阅按钮（订阅统一）
     private var subscribeButton: some View {
         Button(action: { c.goSubscribe() }) {
             HStack(spacing: 10) {
@@ -321,21 +418,16 @@ struct NewsPointsOverlayView: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
-                    // 原价划线
                     HStack(alignment: .firstTextBaseline, spacing: 1) {
-                        Text("¥")
-                            .font(.system(size: 10))
+                        Text("¥").font(.system(size: 10))
                         Text("18")
                             .font(.system(size: 14))
                             .foregroundColor(.white.opacity(0.7))
                             .strikethrough(color: .white.opacity(0.7))
                     }
-                    // 现价
                     HStack(alignment: .firstTextBaseline, spacing: 2) {
-                        Text("¥")
-                            .font(.system(size: 13, weight: .bold))
-                        Text("12")
-                            .font(.system(size: 24, weight: .heavy))
+                        Text("¥").font(.system(size: 13, weight: .bold))
+                        Text("12").font(.system(size: 24, weight: .heavy))
                     }
                 }
             }
@@ -370,21 +462,18 @@ struct NewsPointsOverlayView: View {
         }
     }
 
-    // 标题（区分：需登录 / 真不足 / 主动获取更多）
     private var insufficientTitle: String {
         if c.insufficientNeedLogin { return en ? "Sign in to unlock" : "登录后免费阅览" }
         if c.insufficientIsShortage { return en ? "Out of points" : "点数不足" }
         return en ? "Get more points" : "获取更多点数"
     }
 
-    // 说明文案（扣点文本保持原样）
     @ViewBuilder
     private var insufficientMessageView: some View {
         if c.insufficientNeedLogin {
             Text(en ? "Sign in (free, no purchase needed) to get a welcome gift plus free daily passes. Invite friends for even more!"
                     : "登录成功即可领取新人礼包和每日免费点数，登录无需付费！")
         } else if c.insufficientIsShortage {
-            // ⭐ 保留原扣点文本（带彩色数字）
             HStack(spacing: 3) {
                 Text(en ? "You need " : "本次需要 ").foregroundColor(.secondary)
                 Text("1").foregroundColor(.orange).fontWeight(.bold)
@@ -397,30 +486,22 @@ struct NewsPointsOverlayView: View {
                     : "邀请好友得免费点数，或直接付费订阅畅享全部内容")
         }
     }
-
-    // MARK: - ⭐ 统一复用的点数不足 / 获取更多点数弹窗（Finance 风格）
+    
+    // MARK: - ⭐ 恢复紧凑自适应的弹窗（无多余空白）
     private var insufficientDialog: some View {
         ZStack {
             Color.black.opacity(0.45).ignoresSafeArea()
             VStack(spacing: 0) {
-                Image(systemName: c.insufficientNeedLogin ? "person.crop.circle.badge.plus" : "gift.fill")
-                    .font(.system(size: 44)).foregroundStyle(.orange).padding(.top, 24)
-
-                Text(insufficientTitle)
-                    .font(.headline).padding(.top, 12)
-
+                Text(insufficientTitle).font(.headline).padding(.top, 22)
                 insufficientMessageView
                     .font(.subheadline)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 20).padding(.top, 8)
-
-                // 主推按钮：未登录→登录；已登录→邀请拉新（按上下文分新闻/视频）
+                
+                // 主推按钮：未登录→登录；已登录→邀请拉新
                 Button {
-                    if c.insufficientNeedLogin {
-                        c.doLoginFromInsufficient()
-                    } else {
-                        c.openInviteForContext()
-                    }
+                    if c.insufficientNeedLogin { c.doLoginFromInsufficient() }
+                    else { c.openInviteForContext() }
                 } label: {
                     HStack {
                         Image(systemName: c.insufficientNeedLogin ? "person.fill.checkmark" : "party.popper.fill")
@@ -434,16 +515,18 @@ struct NewsPointsOverlayView: View {
                     .cornerRadius(12)
                 }
                 .padding(.horizontal, 20).padding(.top, 18)
-
-                // 订阅按钮（非登录门禁时展示；订阅统一）
-                if !c.insufficientNeedLogin {
+                
+                // 次级按钮：未登录展示免登录订阅按钮；已登录展示 VIP 升级按钮
+                if c.insufficientNeedLogin {
+                    AnonymousSubscribeButton(reason: "news-guest-paywall")
+                        .padding(.horizontal, 20).padding(.top, 12)
+                } else {
                     subscribeButton
                         .padding(.horizontal, 20).padding(.top, 12)
                 }
-
+                
                 Divider().padding(.top, 16)
-
-                // 「再等等」低调关闭
+                
                 Button { c.dismissInsufficient() } label: {
                     Text(en ? "Maybe later" : "再等等")
                         .frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.secondary)
@@ -464,7 +547,6 @@ struct NewsPointsPill: View {
     @AppStorage("isGlobalEnglishMode") private var en = false
 
     var body: some View {
-        // 【修改】未登录 / 已订阅 一律不显示，双保险
         if authManager.isLoggedIn && !authManager.isSubscribed {
             HStack(spacing: 6) {
                 Text(en ? "Points \(quota.remaining)" : "点数 \(quota.remaining)")
@@ -485,5 +567,64 @@ struct NewsPointsPill: View {
                 .overlay(Capsule().stroke(Color.primary.opacity(0.1), lineWidth: 0.5)))
             .fixedSize(horizontal: true, vertical: false)
         }
+    }
+}
+
+enum NewsPointsPrefs {
+    static let storageKey = "NewsPoints_AutoDeduct"
+
+    /// 是否已勾选「直接扣除，不再询问」
+    static var autoDeduct: Bool {
+        get { UserDefaults.standard.bool(forKey: storageKey) }
+        set { UserDefaults.standard.set(newValue, forKey: storageKey) }
+    }
+
+    static func reset() { UserDefaults.standard.set(false, forKey: storageKey) }
+}
+
+// MARK: - 剩余点数别名（对齐 NewsQuotaManager 的真实属性）
+
+extension NewsQuotaManager {
+    /// 剩余可用点数（= 赠送点 + 每日点，服务端已合并到 remaining）
+    var remainingPointsForAutoDeduct: Int { remaining }
+}
+
+// MARK: - 放在「扣点确认弹窗」里的勾选控件
+
+struct NewsPointsAutoDeductToggle: View {
+    @AppStorage(NewsPointsPrefs.storageKey) private var autoDeduct = false
+
+    var body: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) { autoDeduct.toggle() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: autoDeduct ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(autoDeduct ? .blue : .secondary)
+                Text(Localized.isEnglish ? "Deduct automatically, don't ask again"
+                                         : "直接扣除，不再询问")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.secondary)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - 供音频/自动播放判断「会不会弹窗」（只有真的弹窗才需要打断音频）
+
+extension NewsPointsCoordinator {
+    /// 解锁这篇文章是否会弹出任何阻塞式 UI
+    func willPromptForUnlock(_ article: Article,
+                             auth: AuthManager,
+                             viewModel: NewsViewModel) -> Bool {
+        if NewsPointsCoordinator.canAccess(article, auth: auth, viewModel: viewModel) { return false }
+        if !auth.isLoggedIn { return true }                                   // 未登录 → 登录/订阅门禁
+        if !NewsPointsPrefs.autoDeduct { return true }                        // 需要确认弹窗
+        return NewsQuotaManager.shared.remainingPointsForAutoDeduct <= 0      // 点数不足 → 邀请/订阅弹窗
     }
 }

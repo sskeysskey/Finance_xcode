@@ -40,6 +40,7 @@ final class NewsQuotaManager: ObservableObject {
         inviteRewardCount = 0
         hasRedeemedInvite = false
         loggedIn = false
+        NewsPointsPrefs.reset()      // 可选：登出后恢复"每次询问"
     }
     
     func refresh(userId: String) async {
