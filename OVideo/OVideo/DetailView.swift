@@ -290,7 +290,10 @@ struct DetailView: View {
             if !item.otherCast.isEmpty {
                 Text(lang.t("其他演员", "Other Cast")).font(.headline)
                 WrapHStack(item.otherCast.map(cleanName), spacing: 6) { n in
-                    Button { SearchView.pendingKeyword = n; app.go(.search) } label: {
+                    Button { 
+                        SearchView.pendingKeyword = n
+                        app.go(.search) 
+                    } label: {
                         Text(n)
                             .font(.caption.weight(.medium))
                             .foregroundStyle(Color.accentColor)

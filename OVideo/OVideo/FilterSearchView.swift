@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct FilterView: View {
     @EnvironmentObject var data: VideoDataManager
@@ -119,7 +120,16 @@ struct FilterView: View {
 }
 
 struct SearchView: View {
-    static var pendingKeyword: String?
+    // 1. 使用 Published 包装，或者使用 AppState / ObservableObject 进行通知
+    // 这里保留静态形式，但增加 Combine 发布者支持
+    @MainActor static var pendingKeyword: String? {
+        didSet {
+            if let kw = pendingKeyword {
+                pendingKeywordPublisher.send(kw)
+            }
+        }
+    }
+    static let pendingKeywordPublisher = PassthroughSubject<String, Never>()
 
     @EnvironmentObject var data: VideoDataManager
     @EnvironmentObject var auth: AuthManager
@@ -164,7 +174,7 @@ struct SearchView: View {
                     Button(lang.t("没找到？点这里求片", "Not found? Request it")) { showWish = true }
                         .buttonStyle(.link)
                 }.padding(.horizontal, 18)
-                // ⭐ 点开任意结果 → 记录搜索历史
+                // 点开任意结果 → 记录搜索历史
                 VideoGrid(items: results,
                           onItemTap: { _ in history.add(keyword) })
             }
@@ -172,8 +182,18 @@ struct SearchView: View {
         .navigationTitle(lang.t("搜索", "Search"))
         .onChangeCompat(of: keyword) { schedule($0) }
         .onChangeCompat(of: app.searchFocusToken) { _ in focused = true }
+        // ⭐ 关键修复 1：监听来自详情页等外部传入的搜索关键词
+        .onReceive(Self.pendingKeywordPublisher) { newKw in
+            keyword = newKw
+            Self.pendingKeyword = nil
+            history.add(newKw)
+        }
         .onAppear {
-            if let k = Self.pendingKeyword { keyword = k; Self.pendingKeyword = nil; history.add(k) }
+            if let k = Self.pendingKeyword {
+                keyword = k
+                Self.pendingKeyword = nil
+                history.add(k)
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { focused = true }
         }
         .onDisappear {
