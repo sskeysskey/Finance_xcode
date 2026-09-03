@@ -185,7 +185,7 @@ private enum HLSNet {
 }
 
 /// m3u8 文本解析（纯函数，无隔离）
-private enum M3U8 {
+private nonisolated enum M3U8 {
     static func pickVariant(_ text: String, base: URL) -> URL? {
         var best: (Int, URL)?
         let lines = text.components(separatedBy: .newlines)

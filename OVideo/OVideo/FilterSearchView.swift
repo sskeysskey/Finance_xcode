@@ -296,6 +296,12 @@ struct WishSheet: View {
             }
             HStack {
                 Spacer()
+                if done {
+                    Button(lang.t("去看对话", "Open Support")) {
+                        AppState.shared.openSupport(type: "wish")
+                        dismiss()
+                    }
+                }
                 Button(lang.t("关闭", "Close")) { dismiss() }
                 if !done {
                     Button(lang.t("提交", "Submit")) { Task { await submit() } }
@@ -314,7 +320,7 @@ struct WishSheet: View {
             try await VideoAPI.submitWish(content: text, keyword: initial,
                                           userId: userId, userType: userType)
             done = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { dismiss() }
+            await SupportChatManager.shared.refresh()          // ⭐ 让客服列表立刻出现这条寻片
         } catch { err = error.localizedDescription }
         working = false
     }

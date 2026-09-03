@@ -20,7 +20,8 @@ final class ReportManager {
         }
         let map = UserDefaults.standard.dictionary(forKey: reportedKey) as? [String: Double] ?? [:]
         if let l = map[episodeURL], now - l < perVideo {
-            return (false, T("你已举报过该链接，我们正在核实修复", "Already reported, we're on it"))
+            return (false, T("你已举报过该链接，我们正在核实修复（可在「在线客服」里继续沟通）",
+                             "Already reported — continue the chat in Support"))
         }
         return (true, nil)
     }
@@ -32,13 +33,17 @@ final class ReportManager {
         if !ok { return .failure(NSError(domain: "GW", code: 429,
                 userInfo: [NSLocalizedDescriptionKey: reason ?? ""])) }
         guard let u = URL(string: endpoint) else { return .failure(NSError(domain: "GW", code: -1)) }
+        // ⭐ 去掉此处多余的 await
+        let uid = SupportIdentity.userId(appleId: userId)
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 15
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "user_id": userId?.isEmpty == false ? userId! : DeviceIdentity.deviceId,
+            "user_id": uid,
+            "user_type": SupportIdentity.userType(uid),
             "video_title": title, "source_url": sourceURL, "episode_url": episodeURL,
             "channel_name": channel ?? "", "episode_name": episode ?? "", "real_url": realURL ?? "",
-            "report_type": type, "note": note, "app_version": DeviceIdentity.appVersion])
+            "report_type": type, "note": note,
+            "app_version": SupportAppConfig.clientVersion])
         do {
             let (_, resp) = try await URLSession.shared.data(for: r)
             guard let h = resp as? HTTPURLResponse, h.statusCode == 200 else {
@@ -50,6 +55,8 @@ final class ReportManager {
             recent.append(now); UserDefaults.standard.set(recent, forKey: recentKey)
             var map = UserDefaults.standard.dictionary(forKey: reportedKey) as? [String: Double] ?? [:]
             map[episodeURL] = now; UserDefaults.standard.set(map, forKey: reportedKey)
+            // ⭐ 让客服会话列表立刻出现这条反馈
+            await SupportChatManager.shared.refresh()
             return .success(())
         } catch {
             return .failure(error as NSError)
@@ -57,6 +64,8 @@ final class ReportManager {
     }
 }
 
+/// ⚠️ 旧的横幅式回复中心：已被「在线客服」取代。
+/// 若确认工程里已无引用，可整块删除。
 @MainActor
 final class ReplyCenter: ObservableObject {
     static let shared = ReplyCenter()
@@ -81,7 +90,6 @@ final class ReplyCenter: ObservableObject {
 }
 
 // MARK: - 举报 / 反馈修复
-/// ⭐ Swift 不支持 \.0 这种元组 KeyPath，改成结构体
 private struct ReportKind: Identifiable, Hashable {
     let id: String
     let zh: String
@@ -124,7 +132,6 @@ struct ReportSheet: View {
                 }
             }
 
-            // ⭐ 用 TextEditor 代替 TextField(axis:)，彻底避开重载歧义
             VStack(alignment: .leading, spacing: 4) {
                 Text(lang.t("补充说明（选填）", "Note (optional)"))
                     .font(.caption).foregroundStyle(.secondary)
@@ -138,6 +145,10 @@ struct ReportSheet: View {
                     )
             }
 
+            Text(lang.t("我们的回复会出现在左侧「在线客服」里，你可以在那里继续追问。",
+                        "Our reply will appear in “Support”, where you can keep chatting."))
+                .font(.caption).foregroundStyle(.secondary)
+
             if let r = result {
                 Text(r).font(.caption).foregroundStyle(ok ? .green : .orange)
             }
@@ -145,6 +156,12 @@ struct ReportSheet: View {
             HStack {
                 if working { ProgressView().controlSize(.small) }
                 Spacer()
+                if ok {
+                    Button(lang.t("去看对话", "Open Support")) {
+                        AppState.shared.openSupport(type: "report")
+                        dismiss()
+                    }
+                }
                 Button(lang.t("关闭", "Close")) { dismiss() }
                 Button(lang.t("提交", "Submit")) { Task { await submit() } }
                     .buttonStyle(.borderedProminent)
@@ -152,7 +169,7 @@ struct ReportSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 440)
+        .frame(width: 460)
     }
 
     private func submit() async {
@@ -166,7 +183,6 @@ struct ReportSheet: View {
         case .success:
             ok = true
             result = lang.t("已收到，我们会尽快核实修复", "Received, we'll fix it soon")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { dismiss() }
         case .failure(let e):
             ok = false
             result = e.localizedDescription

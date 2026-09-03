@@ -37,7 +37,8 @@ final class AuthManager: NSObject, ObservableObject,
     private let cacheExpKey = "GW_CacheExpiry"
     private let cacheBlkKey = "GW_CacheVideoBlocked"
 
-    private let anchorBox = WindowAnchorBox()
+    // 将 anchorBox 明确声明为 nonisolated，允许在 nonisolated presentationAnchor 中访问
+    nonisolated private let anchorBox = WindowAnchorBox()
     private var listener: Task<Void, Never>?
 
     var isPermanentVIP: Bool {
@@ -107,7 +108,10 @@ final class AuthManager: NSObject, ObservableObject,
     }
 
     nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        anchorBox.get() ?? NSWindow()
+        if let w = anchorBox.get() { return w }
+        return MainActor.assumeIsolated {
+            NSApp.keyWindow ?? NSApp.windows.first ?? NSWindow()
+        }
     }
 
     nonisolated func authorizationController(controller: ASAuthorizationController,

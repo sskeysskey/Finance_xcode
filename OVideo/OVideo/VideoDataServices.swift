@@ -560,10 +560,13 @@ enum VideoAPI {
         guard let u = URL(string: "\(baseURL)/wish") else { throw URLError(.badURL) }
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 15
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        var body: [String: Any] = ["wish_content": content, "user_type": userType,
-                                   "app_version": DeviceIdentity.appVersion]
+        // ⭐ 去掉此处多余的 await
+        let uid = SupportIdentity.userId(appleId: userId)
+        var body: [String: Any] = ["wish_content": content,
+                                   "user_id": uid,
+                                   "user_type": SupportIdentity.userType(uid),
+                                   "app_version": SupportAppConfig.clientVersion]
         if let k = keyword, !k.isEmpty { body["keyword"] = k }
-        if let i = userId, !i.isEmpty { body["user_id"] = i }
         r.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (_, resp) = try await session.data(for: r)
         if let h = resp as? HTTPURLResponse, h.statusCode >= 400 {

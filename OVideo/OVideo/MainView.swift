@@ -12,7 +12,7 @@ struct SettingsView: View {
             DownloadSettings().tabItem { Label("下载", systemImage: "arrow.down.circle") }
             AccountSettings().tabItem { Label("账号", systemImage: "person.crop.circle") }
         }
-        .frame(width: 520, height: 340)
+        .frame(width: 520, height: 360)
     }
 }
 
@@ -39,8 +39,15 @@ private struct PlaybackSettings: View {
             Toggle(lang.t("剧集正序排列", "Episodes ascending"), isOn: $asc)
             LabeledContent(lang.t("默认倍速", "Default speed"),
                 value: String(format: "%g", SpeedStore.rate) + "x")
-            Text(lang.t("播放窗口支持全屏、画中画、⌘[ / ⌘] 切换集数。",
-                        "Player supports full screen, PiP and ⌘[ / ⌘] to switch episodes."))
+            Text(lang.t("""
+                        播放窗口快捷键：空格 播放/暂停 · J 后退15秒 · K / L 前进15秒 · F 全屏 · \
+                        ←/→ ∓5秒 · ↑/↓ 音量 · M 静音 · ⌘[ / ⌘] 切换集数。播放时不会进入休眠。
+                        """,
+                        """
+                        Player shortcuts: Space play/pause · J −15s · K / L +15s · F full screen · \
+                        ←/→ ∓5s · ↑/↓ volume · M mute · ⌘[ / ⌘] switch episodes. \
+                        The Mac won't sleep while playing.
+                        """))
                 .font(.caption).foregroundStyle(.secondary)
         }.padding(20).formStyle(.grouped)
     }
@@ -83,7 +90,10 @@ private struct AccountSettings: View {
                 Button(lang.t("使用 Apple 登录", "Sign in with Apple")) { auth.signInWithApple() }
             }
             Button(lang.t("恢复购买", "Restore Purchases")) { Task { try? await auth.restorePurchases() } }
-            Link(lang.t("问题反馈：728308386@qq.com", "Feedback: 728308386@qq.com"),
+            Text(lang.t("有任何问题，建议直接用主窗口左侧的「在线客服」联系我们（⇧⌘4）。",
+                        "For any question, use “Support” in the sidebar (⇧⌘4)."))
+                .font(.caption).foregroundStyle(.secondary)
+            Link(lang.t("邮件反馈：728308386@qq.com", "Email: 728308386@qq.com"),
                  destination: URL(string: "mailto:728308386@qq.com")!)
         }
         .padding(20).formStyle(.grouped)
@@ -163,12 +173,12 @@ enum DeviceIdentity {
     }
 }
 
+// ⭐ 新增 .support
 enum SidebarItem: Hashable, Codable {
-    case category(String), filter, search, follow, downloads, history
+    case category(String), filter, search, follow, downloads, history, support
 }
 
-// ⭐ 增加 .search(String) 路由支持
-enum Route: Hashable { 
+enum Route: Hashable {
     case detail(VideoItem)
     case search(String)
 }
@@ -187,6 +197,14 @@ final class AppState: ObservableObject {
 
     func go(_ item: SidebarItem) { path = NavigationPath(); selection = item }
     func focusSearch() { go(.search); searchFocusToken += 1 }
+
+    /// ⭐ 打开在线客服；type 可传 "wish" / "report" 自动定位到对应会话
+    func openSupport(type: String? = nil, threadKey: String? = nil) {
+        SupportChatManager.shared.focusType = type
+        SupportChatManager.shared.focusThreadKey = threadKey
+        go(.support)
+        NSApp.activate(ignoringOtherApps: true)
+    }
 }
 
 struct RootView: View {
@@ -197,7 +215,7 @@ struct RootView: View {
     @ObservedObject var config = AppConfigManager.shared
     @ObservedObject var track = SeriesTrackManager.shared
     @ObservedObject var quota = QuotaManager.shared
-    @ObservedObject var replies = ReplyCenter.shared
+    @ObservedObject var support = SupportChatManager.shared      // ⭐ 替代 ReplyCenter
 
     var body: some View {
         NavigationSplitView {
@@ -208,9 +226,9 @@ struct RootView: View {
                 detailRoot
                     .navigationDestination(for: Route.self) { r in
                         switch r {
-                        case .detail(let item): 
+                        case .detail(let item):
                             DetailView(item: item)
-                        case .search(let kw): 
+                        case .search(let kw):
                             SearchView(initialKeyword: kw)
                         }
                     }
@@ -223,7 +241,9 @@ struct RootView: View {
             await data.bootstrap(userId: auth.userIdentifier)
             await quota.refresh(userId: QuotaManager.currentUserId(auth: auth))
             await track.refresh(force: true)
-            await replies.refresh(userId: auth.userIdentifier)
+            support.bind(appleId: auth.userIdentifier)           // ⭐
+            await support.refresh()
+            support.startPolling()
             if app.selection == nil { app.selection = .category(data.categoryNames.first ?? "Featured") }
         }
         .onChangeCompat(of: config.useReviewDisguise) { _ in
@@ -231,9 +251,10 @@ struct RootView: View {
             Task { await data.bootstrap(userId: auth.userIdentifier) }
         }
         .onChangeCompat(of: auth.isLoggedIn) { _ in
+            support.bind(appleId: auth.userIdentifier)           // ⭐ 换用户 = 换会话空间
             Task {
                 await quota.refresh(userId: QuotaManager.currentUserId(auth: auth))
-                await replies.refresh(userId: auth.userIdentifier)
+                await support.refresh()
             }
         }
         .onReceive(NotificationCenter.default.publisher(
@@ -242,6 +263,7 @@ struct RootView: View {
             Task {
                 await quota.refresh(userId: QuotaManager.currentUserId(auth: auth))
                 await track.refresh()
+                await support.refresh()                          // ⭐ 回前台立刻查未读
             }
         }
     }
@@ -265,21 +287,32 @@ struct RootView: View {
             Section(lang.t("我的", "Library")) {
                 HStack {
                     Label(lang.t("追剧", "Following"), systemImage: "bell")
-                    if track.unseenCount > 0 {
-                        Spacer()
-                        Text("\(track.unseenCount)").font(.caption2.bold())
-                            .padding(.horizontal, 6).padding(.vertical, 1)
-                            .background(Color.red, in: Capsule()).foregroundStyle(.white)
-                    }
+                    if track.unseenCount > 0 { Spacer(); badge(track.unseenCount) }
                 }.tag(SidebarItem.follow)
                 Label(lang.t("下载管理", "Downloads"), systemImage: "arrow.down.circle")
                     .tag(SidebarItem.downloads)
                 Label(lang.t("观看记录", "History"), systemImage: "clock.arrow.circlepath")
                     .tag(SidebarItem.history)
             }
+            // ⭐ 在线客服（独立分区，右上角红标未读）
+            Section(lang.t("帮助", "Help")) {
+                HStack {
+                    Label(lang.t("在线客服", "Support"),
+                          systemImage: "bubble.left.and.bubble.right")
+                    if support.unreadTotal > 0 { Spacer(); badge(support.unreadTotal) }
+                }.tag(SidebarItem.support)
+            }
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) { sidebarFooter }
+    }
+
+    private func badge(_ n: Int) -> some View {
+        Text(n > 99 ? "99+" : "\(n)")
+            .font(.caption2.bold())
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(Color.red, in: Capsule())
+            .foregroundStyle(.white)
     }
 
     private var sidebarFooter: some View {
@@ -324,7 +357,10 @@ struct RootView: View {
 
     // MARK: 主区
     @ViewBuilder private var detailRoot: some View {
-        if !config.moduleEnabled || auth.isVideoModuleBlocked {
+        if app.selection == .support {
+            // 客服页不受版权开关影响，永远可用
+            SupportCenterView()
+        } else if !config.moduleEnabled || auth.isVideoModuleBlocked {
             ModuleClosedView()
         } else {
             switch app.selection {
@@ -334,6 +370,7 @@ struct RootView: View {
             case .follow:          FollowView()
             case .downloads:       DownloadsView()
             case .history:         HistoryView()
+            case .support:         SupportCenterView()
             case nil:              ProgressView()
             }
         }
@@ -423,16 +460,22 @@ struct AppCommands: Commands {
                 .keyboardShortcut("2", modifiers: [.command, .shift])
             Button(lang.t("观看记录", "History")) { app.go(.history) }
                 .keyboardShortcut("3", modifiers: [.command, .shift])
+            Button(lang.t("在线客服", "Support")) { app.openSupport() }
+                .keyboardShortcut("4", modifiers: [.command, .shift])          // ⭐
             Divider()
             Button(lang.t("刷新", "Refresh")) {
-                Task { await AppConfigManager.shared.refresh() }
+                Task {
+                    await AppConfigManager.shared.refresh()
+                    await SupportChatManager.shared.refresh()
+                }
             }.keyboardShortcut("r", modifiers: [.command, .shift])
         }
         CommandGroup(after: .appInfo) {
             Button(lang.t("会员与点数…", "Membership & Points…")) { app.showSubscription = true }
         }
         CommandGroup(replacing: .help) {
-            Link(lang.t("问题反馈", "Send Feedback"),
+            Button(lang.t("联系在线客服", "Contact Support")) { app.openSupport() }   // ⭐
+            Link(lang.t("邮件反馈", "Send Feedback"),
                  destination: URL(string: "mailto:728308386@qq.com")!)
         }
     }
@@ -461,8 +504,7 @@ struct ForceUpdateView: View {
     }
 }
 
-/// 跨 macOS 13 / 14 / 15 的 onChange 替代品：
-/// 不使用 macOS 14 已弃用的 onChange(of:perform:)，也不使用 macOS 14 才有的双参数 onChange。
+/// 跨 macOS 13 / 14 / 15 的 onChange 替代品
 struct GWChangeObserver<V: Equatable>: ViewModifier {
     let value: V
     let action: (V) -> Void
@@ -477,7 +519,6 @@ struct GWChangeObserver<V: Equatable>: ViewModifier {
 }
 
 extension View {
-    /// 用法与旧的 .onChange(of:) { newValue in } 完全一致
     func onChangeCompat<V: Equatable>(of value: V, perform action: @escaping (V) -> Void) -> some View {
         modifier(GWChangeObserver(value: value, action: action))
     }
