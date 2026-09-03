@@ -27,7 +27,7 @@ struct DetailView: View {
     @State private var showConsume = false
     @State private var showLogin = false
     @State private var showBonus = false
-    @State private var showShare = false          // ⭐ 新增分享
+    @State private var showShare = false
 
     private var sortedLines: [VideoChannel] { optimalChannels(channels) }
     private var currentEpisodes: [EpisodeItem] {
@@ -179,14 +179,13 @@ struct DetailView: View {
         }
     }
 
-    /// ⭐ 可点击的人名：蓝色更亮、更明显
+    /// ⭐ 可点击的人名：通过 NavigationStack Push 进搜索页，保留返回路径
     private func nameRow(_ l: String, _ names: [String]) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Text("\(l):").font(.caption).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
             WrapHStack(names, spacing: 6) { n in
                 Button {
-                    SearchView.pendingKeyword = n
-                    app.go(.search)
+                    app.path.append(Route.search(n))
                 } label: {
                     Text(n)
                         .font(.caption.weight(.semibold))
@@ -201,7 +200,7 @@ struct DetailView: View {
         }
     }
 
-    // MARK: 线路 + 选集（⭐ 去掉 "播放列表/Episodes" 标题；线路行左对齐；排序按钮移到线路行右侧）
+    // MARK: 线路 + 选集
     private var episodeSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             if loading {
@@ -291,8 +290,7 @@ struct DetailView: View {
                 Text(lang.t("其他演员", "Other Cast")).font(.headline)
                 WrapHStack(item.otherCast.map(cleanName), spacing: 6) { n in
                     Button { 
-                        SearchView.pendingKeyword = n
-                        app.go(.search) 
+                        app.path.append(Route.search(n))
                     } label: {
                         Text(n)
                             .font(.caption.weight(.medium))
@@ -368,7 +366,7 @@ struct DetailView: View {
     }
 }
 
-// MARK: - ⭐ 分享（设计说明见正文）
+// MARK: - 分享
 struct ShareTitleSheet: View {
     let item: VideoItem
     var lineName: String? = nil
@@ -466,7 +464,7 @@ struct ShareTitleSheet: View {
     }
 }
 
-// MARK: - 批量下载（未变动逻辑）
+// MARK: - 批量下载
 struct BatchDownloadSheet: View {
     let item: VideoItem
     let channel: VideoChannel

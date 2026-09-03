@@ -50,6 +50,7 @@ struct MacPlayerView: NSViewRepresentable {
     }
 }
 
+
 @MainActor
 final class PlayerModel: ObservableObject {
     let player = AVPlayer()
@@ -352,3 +353,112 @@ struct PlayerWindowView: View {
         pendingEp = nil
     }
 }
+
+// MARK: - 观看记录
+struct HistoryView: View {
+    @ObservedObject var store = PlayRecordStore.shared
+    @EnvironmentObject var lang: LanguageManager
+    @EnvironmentObject var auth: AuthManager
+    @ObservedObject var quota = QuotaManager.shared
+    @Environment(\.openWindow) private var openWindow
+    @State private var showSubscribe = false
+
+    var body: some View {
+        Group {
+            if store.records.isEmpty {
+                ContentUnavailableViewCompat(
+                    title: lang.t("暂无观看记录", "No history"),
+                    message: "",
+                    systemImage: "clock.badge.questionmark")
+            } else {
+                List {
+                    // ⭐ 关键修复：显式 id，不再依赖 PlayRecord: Identifiable
+                    ForEach(store.records, id: \.videoURL) { r in
+                        row(for: r)
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
+        .navigationTitle(lang.t("观看记录", "History"))
+        .toolbar {
+            if !store.records.isEmpty {
+                Button(lang.t("清空", "Clear All"), role: .destructive) { store.clear() }
+            }
+        }
+        .sheet(isPresented: $showSubscribe) { SubscriptionView() }
+    }
+
+    @ViewBuilder
+    private func row(for r: PlayRecord) -> some View {
+        HStack(spacing: 12) {
+            CachedImage(url: VideoAPI.coverURL(r.coverImage))
+                .frame(width: 42, height: 60)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(r.videoTitle).font(.callout.weight(.semibold))
+                // ⭐ .accent 是 macOS 14+，这里用 Color.accentColor
+                Text(r.episodeName).font(.caption).foregroundStyle(Color.accentColor)
+                Text(gwDateFormatter.string(from: r.playTime))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button { play(r) } label: {
+                Image(systemName: "play.circle.fill").font(.title2)
+            }
+            .buttonStyle(.borderless)
+
+            Button { store.remove(r) } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.red)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func play(_ r: PlayRecord) {
+        Task {
+            switch decideAccess(episodeKey: r.videoURL, auth: auth, quota: quota) {
+            case .allowed:
+                break
+            case .needLogin:
+                auth.signInWithApple(); return
+            case .needConsume:
+                let uid = QuotaManager.currentUserId(auth: auth)
+                let res = await quota.unlock(userId: uid, episodeKey: r.videoURL,
+                                             title: "\(r.videoTitle) · \(r.episodeName)")
+                if case .quotaExceeded = res { showSubscribe = true; return }
+                if case .failed = res { showSubscribe = true; return }
+            case .exhausted:
+                showSubscribe = true; return
+            }
+
+            let fallback = EpisodeItem(number: "1", name: r.episodeName, url: r.videoURL)
+            var eps: [EpisodeItem] = [fallback]
+            if let src = r.sourceURL, !src.isEmpty,
+               let best = optimalChannels((try? await VideoAPI.fetchPlaylist(url: src)) ?? []).first {
+                let list = best.episodeItems()
+                // ⭐ 只有列表里确实包含当前这一集，才用整条线路（否则上/下一集索引会错乱）
+                eps = list.contains(where: { $0.url == r.videoURL }) ? list : [fallback]
+            }
+
+            openWindow(id: "player", value: PlayPayload(
+                seriesTitle: r.videoTitle, episodeName: r.episodeName, episodeKey: r.videoURL,
+                sourceURL: r.sourceURL, cover: r.coverImage, channelName: r.channelName,
+                episodes: eps, playSource: "history"))
+        }
+    }
+}
+
+// MARK: - 兼容工具
+/// macOS 13 安全的日期显示（不依赖 .formatted(date:time:) 的重载推断）
+private let gwDateFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateStyle = .medium
+    f.timeStyle = .short
+    return f
+}()

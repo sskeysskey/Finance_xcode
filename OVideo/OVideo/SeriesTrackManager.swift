@@ -128,3 +128,95 @@ final class SeriesTrackManager: ObservableObject {
         if let d = try? JSONEncoder().encode(items) { UserDefaults.standard.set(d, forKey: key) }
     }
 }
+
+// MARK: - 追剧提醒
+struct FollowView: View {
+    @ObservedObject var track = SeriesTrackManager.shared
+    @EnvironmentObject var lang: LanguageManager
+    @ObservedObject var app = AppState.shared
+    @State private var loadingURL: String?
+
+    var body: some View {
+        Group {
+            if track.updatedList.isEmpty {
+                ContentUnavailableViewCompat(
+                    title: lang.t("暂无剧集更新", "No new episodes"),
+                    message: lang.t("已在追 \(track.trackedCount) 部，有更新会在这里提醒你。",
+                                    "Following \(track.trackedCount) series."),
+                    systemImage: "bell.slash")
+            } else {
+                List {
+                    // ⭐ 显式 id，避免依赖 Identifiable 推断
+                    ForEach(track.updatedList, id: \.sourceURL) { s in
+                        row(for: s)
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
+        .navigationTitle(lang.t("追剧提醒", "Following"))
+        .toolbar {
+            Button {
+                Task { await track.refresh(force: true) }
+            } label: { Image(systemName: "arrow.clockwise") }
+        }
+        .onAppear { track.markAllSeen() }
+        .task { await track.refresh() }
+    }
+
+    @ViewBuilder
+    private func row(for s: TrackedSeries) -> some View {
+        HStack(spacing: 12) {
+            CachedImage(url: VideoAPI.coverURL(s.coverImage))
+                .frame(width: 48, height: 68)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(s.title).font(.callout.weight(.semibold))
+                HStack(spacing: 6) {
+                    Text(lang.t("新增 \(s.newEpisodeCount) 集", "+\(s.newEpisodeCount) new"))
+                        .font(.caption2.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Color.red, in: Capsule())
+                    if let i = s.latestInfo, !i.isEmpty {
+                        Text(i).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if let e = s.lastWatchedEpisode, !e.isEmpty {
+                    Text(lang.t("上次看到：", "Watched: ") + e)
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            if loadingURL == s.sourceURL { ProgressView().controlSize(.small) }
+
+            Menu {
+                Button(lang.t("临时清除", "Clear once")) { track.markWatched(s.sourceURL) }
+                Button(lang.t("取消追剧", "Stop following"), role: .destructive) {
+                    track.mute(s.sourceURL)
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .buttonStyle(.borderless)
+            .frame(width: 28)
+        }
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
+        .onTapGesture { open(s) }
+    }
+
+    private func open(_ s: TrackedSeries) {
+        guard loadingURL == nil else { return }
+        loadingURL = s.sourceURL
+        Task {
+            let item = await VideoAPI.fetchDetail(url: s.sourceURL)
+            loadingURL = nil
+            if let item { app.path.append(Route.detail(item)) }
+        }
+    }
+}

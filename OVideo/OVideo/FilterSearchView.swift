@@ -93,10 +93,6 @@ struct FilterView: View {
         results = i; hasMore = m; page = 1; loadError = err; loading = false
     }
 
-    /// ⭐ 修复"滑到 8 行就不动"：
-    ///   ① 由 VideoGrid 提前 8 个 item 触发；
-    ///   ② 若某页全被去重掉（0 条新数据），自动继续翻下一页；
-    ///   ③ 请求出错不再把 hasMore 写死为 false。
     private func more() async {
         guard hasMore, !loading else { return }
         loading = true
@@ -120,8 +116,9 @@ struct FilterView: View {
 }
 
 struct SearchView: View {
-    // 1. 使用 Published 包装，或者使用 AppState / ObservableObject 进行通知
-    // 这里保留静态形式，但增加 Combine 发布者支持
+    // ⭐ 支持从 NavigationStack 传入初始关键词
+    var initialKeyword: String? = nil
+
     @MainActor static var pendingKeyword: String? {
         didSet {
             if let kw = pendingKeyword {
@@ -179,7 +176,7 @@ struct SearchView: View {
                           onItemTap: { _ in history.add(keyword) })
             }
         }
-        .navigationTitle(lang.t("搜索", "Search"))
+        .navigationTitle(keyword.isEmpty ? lang.t("搜索", "Search") : keyword)
         .onChangeCompat(of: keyword) { schedule($0) }
         .onChangeCompat(of: app.searchFocusToken) { _ in focused = true }
         // ⭐ 关键修复 1：监听来自详情页等外部传入的搜索关键词
@@ -189,7 +186,11 @@ struct SearchView: View {
             history.add(newKw)
         }
         .onAppear {
-            if let k = Self.pendingKeyword {
+            if let initKw = initialKeyword, !initKw.isEmpty {
+                keyword = initKw
+                schedule(initKw)
+                history.add(initKw)
+            } else if let k = Self.pendingKeyword {
                 keyword = k
                 Self.pendingKeyword = nil
                 history.add(k)

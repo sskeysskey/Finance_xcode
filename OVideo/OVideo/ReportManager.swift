@@ -79,3 +79,97 @@ final class ReplyCenter: ObservableObject {
         reportReplies.removeAll { $0.id == report.id }
     }
 }
+
+// MARK: - 举报 / 反馈修复
+/// ⭐ Swift 不支持 \.0 这种元组 KeyPath，改成结构体
+private struct ReportKind: Identifiable, Hashable {
+    let id: String
+    let zh: String
+    let en: String
+}
+
+private let gwReportKinds: [ReportKind] = [
+    .init(id: "playback_failed",  zh: "无法播放",       en: "Can't play"),
+    .init(id: "download_failed",  zh: "无法下载",       en: "Can't download"),
+    .init(id: "media_error",      zh: "画面或声音异常", en: "Audio/Video issue"),
+    .init(id: "content_mismatch", zh: "内容与简介不符", en: "Wrong content"),
+    .init(id: "other",            zh: "其他问题",       en: "Other")
+]
+
+struct ReportSheet: View {
+    let title: String
+    let sourceURL: String
+    let episodeURL: String
+    let channel: String?
+    let episode: String?
+    let realURL: String?
+
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var auth: AuthManager
+    @EnvironmentObject var lang: LanguageManager
+    @State private var type = "playback_failed"
+    @State private var note = ""
+    @State private var working = false
+    @State private var result: String?
+    @State private var ok = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(lang.t("反馈修复", "Report an issue")).font(.headline)
+            Text(title).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+
+            Picker(lang.t("问题类型", "Issue"), selection: $type) {
+                ForEach(gwReportKinds) { k in
+                    Text(lang.t(k.zh, k.en)).tag(k.id)
+                }
+            }
+
+            // ⭐ 用 TextEditor 代替 TextField(axis:)，彻底避开重载歧义
+            VStack(alignment: .leading, spacing: 4) {
+                Text(lang.t("补充说明（选填）", "Note (optional)"))
+                    .font(.caption).foregroundStyle(.secondary)
+                TextEditor(text: $note)
+                    .font(.body)
+                    .frame(height: 68)
+                    .padding(4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                    )
+            }
+
+            if let r = result {
+                Text(r).font(.caption).foregroundStyle(ok ? .green : .orange)
+            }
+
+            HStack {
+                if working { ProgressView().controlSize(.small) }
+                Spacer()
+                Button(lang.t("关闭", "Close")) { dismiss() }
+                Button(lang.t("提交", "Submit")) { Task { await submit() } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(working || ok)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+
+    private func submit() async {
+        working = true; result = nil
+        let r = await ReportManager.shared.submit(
+            title: title, sourceURL: sourceURL, episodeURL: episodeURL,
+            channel: channel, episode: episode, realURL: realURL,
+            type: type, note: note, userId: auth.userIdentifier)
+        working = false
+        switch r {
+        case .success:
+            ok = true
+            result = lang.t("已收到，我们会尽快核实修复", "Received, we'll fix it soon")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { dismiss() }
+        case .failure(let e):
+            ok = false
+            result = e.localizedDescription
+        }
+    }
+}
