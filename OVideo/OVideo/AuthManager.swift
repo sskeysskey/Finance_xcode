@@ -5,15 +5,6 @@ import Security
 import StoreKit
 import Combine
 
-/// 线程安全地保存登录时的窗口，供 nonisolated 的 presentationAnchor 使用
-/// （避免使用 macOS 14 才有的 MainActor.assumeIsolated）
-final class WindowAnchorBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var window: NSWindow?
-    func set(_ w: NSWindow?) { lock.lock(); window = w; lock.unlock() }
-    func get() -> NSWindow? { lock.lock(); defer { lock.unlock() }; return window }
-}
-
 @MainActor
 final class AuthManager: NSObject, ObservableObject,
     ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
@@ -37,8 +28,6 @@ final class AuthManager: NSObject, ObservableObject,
     private let cacheExpKey = "GW_CacheExpiry"
     private let cacheBlkKey = "GW_CacheVideoBlocked"
 
-    // 将 anchorBox 明确声明为 nonisolated，允许在 nonisolated presentationAnchor 中访问
-    nonisolated private let anchorBox = WindowAnchorBox()
     private var listener: Task<Void, Never>?
 
     var isPermanentVIP: Bool {
@@ -85,7 +74,6 @@ final class AuthManager: NSObject, ObservableObject,
     // MARK: Sign in with Apple (macOS)
     func signInWithApple() {
         guard !isLoggingIn else { return }
-        anchorBox.set(NSApp.keyWindow ?? NSApp.windows.first)
         isLoggingIn = true; errorMessage = nil
         let req = ASAuthorizationAppleIDProvider().createRequest()
         req.requestedScopes = [.fullName, .email]
@@ -108,8 +96,7 @@ final class AuthManager: NSObject, ObservableObject,
     }
 
     nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        if let w = anchorBox.get() { return w }
-        return MainActor.assumeIsolated {
+        MainActor.assumeIsolated {
             NSApp.keyWindow ?? NSApp.windows.first ?? NSWindow()
         }
     }
