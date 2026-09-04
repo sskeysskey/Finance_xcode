@@ -649,10 +649,10 @@ struct PlayerWindowView: View {
                     .keyboardShortcut(.space, modifiers: [])
                     .focused($isPlayPauseFocused)
 
-                // 前进 15 秒（快捷键 K，不抢焦点）
+                // 前进 15 秒（快捷键 L，不抢焦点）
                 ctrl("goforward.15", size: 19,
-                     help: lang.t("前进 15 秒 (K)", "Forward 15s (K)")) { model.seek(by: 15) }
-                    .keyboardShortcut("k", modifiers: [])
+                    help: lang.t("前进 15 秒 (L/D)", "Forward 15s (L/D)")) { model.seek(by: 15) }
+                    .keyboardShortcut("l", modifiers: [])
                     .focusable(false)
 
                 // 下一集
@@ -762,17 +762,25 @@ struct PlayerWindowView: View {
         .help(lang.t("倍速", "Speed"))
     }
 
-    /// ⭐ b. 其余快捷键（零尺寸隐形按钮，始终在视图树里所以永远生效）
+    /// ⭐ 其余快捷键（零尺寸隐形按钮，始终在视图树里所以永远生效）
     private var extraShortcuts: some View {
         Group {
-            Button("") { model.seek(by: 15) }.keyboardShortcut("l", modifiers: [])
+            // --- 核心播放控制 (J/K/L & A/S/D) ---
+            // (注：J 与 L 已分别直接绑定在 controlBar 的后退与前进按钮上)
+            Button("") { model.togglePlay() }.keyboardShortcut("k", modifiers: []) // K: 播放/暂停
+            Button("") { model.seek(by: -15) }.keyboardShortcut("a", modifiers: []) // A: 后退 15s
+            Button("") { model.togglePlay() }.keyboardShortcut("s", modifiers: []) // S: 播放/暂停
+            Button("") { model.seek(by: 15) }.keyboardShortcut("d", modifiers: [])  // D: 前进 15s
+
+            // --- 其他已有快捷键 ---
             Button("") { model.togglePlay() }.keyboardShortcut("p", modifiers: .command)
             Button("") { model.seek(by: -5) }.keyboardShortcut(.leftArrow, modifiers: [])
             Button("") { model.seek(by: 5) }.keyboardShortcut(.rightArrow, modifiers: [])
             Button("") { model.nudgeVolume(0.05) }.keyboardShortcut(.upArrow, modifiers: [])
             Button("") { model.nudgeVolume(-0.05) }.keyboardShortcut(.downArrow, modifiers: [])
             Button("") { model.toggleMute() }.keyboardShortcut("m", modifiers: [])
-            // ⭐ 优化 2：全屏状态下支持按 ESC 退出全屏
+            
+            // 全屏状态下按 ESC 退出全屏
             if isFullScreen {
                 Button("") { toggleFullScreen() }.keyboardShortcut(.escape, modifiers: [])
             }
@@ -788,7 +796,8 @@ struct PlayerWindowView: View {
         hideTask?.cancel()
         guard model.isPlaying, !modalUp else { return }
         hideTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            // ⭐ 将 3 秒修改为 1.5 秒（根据喜好调整，例如 1.2 秒可写为 1_200_000_000）
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard !Task.isCancelled, model.isPlaying, !modalUp else { return }
             withAnimation(.easeOut(duration: 0.25)) { controlsVisible = false }
             NSCursor.setHiddenUntilMouseMoves(true)
