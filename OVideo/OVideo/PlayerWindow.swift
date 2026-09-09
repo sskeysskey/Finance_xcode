@@ -139,6 +139,9 @@ final class PlayerModel: ObservableObject {
     private var sleepToken: NSObjectProtocol?
     private var episodeKey = ""
     private var lastSavedAt: Double = -100
+    // ⭐ seek 静默期：跳转造成的瞬时 waitingToPlay 不当作"暂停"上报给 UI
+    private var isSeekGraceActive = false
+    private var seekGraceTask: Task<Void, Never>?
 
     /// UI 用的"当前时间"（拖动时显示拖动位置）
     var displayTime: Double { isScrubbing ? scrubTime : currentTime }
@@ -154,6 +157,7 @@ final class PlayerModel: ObservableObject {
         payload = p; current = episode
         loading = true; error = nil
         teardownItemObservers()
+        endSeekGrace()              // ⭐
 
         currentTime = 0; duration = 0; bufferedTime = 0
         isScrubbing = false; lastSavedAt = -100
@@ -270,6 +274,7 @@ final class PlayerModel: ObservableObject {
     // MARK: 播放控制
     func togglePlay() {
         if player.timeControlStatus == .playing {
+            endSeekGrace()          // ⭐ 用户主动暂停，立即恢复真实状态上报
             player.pause()
         } else {
             player.play()
@@ -290,9 +295,28 @@ final class PlayerModel: ObservableObject {
         let upper = duration > 1 ? duration - 0.3 : max(t, 0)
         let clamped = min(max(0, t), upper)
         currentTime = clamped
+        beginSeekGrace()                                  // ⭐ 新增这一行
         player.seek(to: CMTime(seconds: clamped, preferredTimescale: 600))
         PositionStore.save(clamped, episodeKey)
         lastSavedAt = clamped
+    }
+
+    // ⭐ 静默期管理（全部在主线程，无跨线程捕获）
+    private func beginSeekGrace() {
+        isSeekGraceActive = true
+        seekGraceTask?.cancel()
+        seekGraceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)   // 0.8s，够覆盖一次普通 seek
+            guard !Task.isCancelled, let self else { return }
+            self.isSeekGraceActive = false
+            self.setPlaying(self.player.timeControlStatus == .playing)  // 补报一次真实状态
+        }
+    }
+
+    private func endSeekGrace() {
+        seekGraceTask?.cancel()
+        seekGraceTask = nil
+        isSeekGraceActive = false
     }
 
     /// 拖动进度条时的实时预览（不真正 seek，拖完再跳）
@@ -335,6 +359,7 @@ final class PlayerModel: ObservableObject {
     }
 
     private func setPlaying(_ playing: Bool) {
+        if !playing, isSeekGraceActive { return }   // ⭐ 忽略 seek 引起的瞬时非播放
         isPlaying = playing
         if playing {
             if sleepToken == nil {
@@ -346,6 +371,7 @@ final class PlayerModel: ObservableObject {
             releaseSleepAssertion()
         }
     }
+
     private func releaseSleepAssertion() {
         if let t = sleepToken {
             ProcessInfo.processInfo.endActivity(t)
@@ -362,6 +388,7 @@ final class PlayerModel: ObservableObject {
         player.replaceCurrentItem(with: nil)
         pip = nil
         pipReady = false
+        endSeekGrace()              // ⭐
     }
 
     private func teardownItemObservers() {
@@ -640,7 +667,6 @@ struct PlayerWindowView: View {
                 // 后退 15 秒（快捷键 J，不抢焦点）
                 ctrl("gobackward.15", size: 19,
                      help: lang.t("后退 15 秒 (J)", "Back 15s (J)")) { model.seek(by: -15) }
-                    .keyboardShortcut("j", modifiers: [])
                     .focusable(false)
 
                 // ⭐ 播放 / 暂停（默认 Tab 焦点落在该按钮上）
@@ -652,7 +678,6 @@ struct PlayerWindowView: View {
                 // 前进 15 秒（快捷键 L，不抢焦点）
                 ctrl("goforward.15", size: 19,
                     help: lang.t("前进 15 秒 (L/D)", "Forward 15s (L/D)")) { model.seek(by: 15) }
-                    .keyboardShortcut("l", modifiers: [])
                     .focusable(false)
 
                 // 下一集
@@ -766,11 +791,12 @@ struct PlayerWindowView: View {
     private var extraShortcuts: some View {
         Group {
             // --- 核心播放控制 (J/K/L & A/S/D) ---
-            // (注：J 与 L 已分别直接绑定在 controlBar 的后退与前进按钮上)
             Button("") { model.togglePlay() }.keyboardShortcut("k", modifiers: []) // K: 播放/暂停
             Button("") { model.seek(by: -15) }.keyboardShortcut("a", modifiers: []) // A: 后退 15s
             Button("") { model.togglePlay() }.keyboardShortcut("s", modifiers: []) // S: 播放/暂停
             Button("") { model.seek(by: 15) }.keyboardShortcut("d", modifiers: [])  // D: 前进 15s
+            Button("") { model.seek(by: -15) }.keyboardShortcut("j", modifiers: [])
+            Button("") { model.seek(by: 15)  }.keyboardShortcut("l", modifiers: [])
 
             // --- 其他已有快捷键 ---
             Button("") { model.togglePlay() }.keyboardShortcut("p", modifiers: .command)

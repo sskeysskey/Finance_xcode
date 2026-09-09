@@ -1,0 +1,867 @@
+// 图片缓存 / 瀑布流 / 卡片 / 首页 Pager（分页无限滚动版）
+
+import SwiftUI
+
+// ⭐ 新增：分类显示名统一辅助（卡片标签 + 首页菜单共用）
+func videoCategoryDisplayName(_ key: String, english: Bool) -> String {
+    if english {
+        return key   // 英文模式直接用原始 key
+    }
+    switch key {
+    case "Featured": return "最新"
+    case "Movie":    return "电影"
+    case "Drama":    return "剧集"
+    case "Show":     return "综艺"
+    case "Anime":    return "动漫"
+    default:         return key
+    }
+}
+
+// MARK: - 图片内存缓存（不变）
+final class OImageCache {
+    static let shared = OImageCache()
+    private let cache = NSCache<NSURL, UIImage>()
+    private init() {
+        cache.countLimit = 300
+        cache.totalCostLimit = 200 * 1024 * 1024
+    }
+    func image(for url: URL) -> UIImage? { cache.object(forKey: url as NSURL) }
+    func clearAll() { cache.removeAllObjects() }
+    func set(_ image: UIImage, for url: URL) {
+        cache.setObject(image, forKey: url as NSURL,
+                        cost: Int(image.size.width * image.size.height * 4))
+    }
+}
+
+// MARK: - 带缓存异步图片（不变）
+struct CachedAsyncImage<Content: View>: View {
+    let url: URL
+    let content: (AsyncImagePhase) -> Content
+    @State private var uiImage: UIImage?
+    @State private var isLoading = false
+    init(url: URL, @ViewBuilder content: @escaping (AsyncImagePhase) -> Content) {
+        self.url = url; self.content = content
+    }
+    var body: some View {
+        Group {
+            if let img = uiImage { content(.success(Image(uiImage: img))) }
+            else { content(.empty) }
+        }
+        .task(id: url) { await load() }
+    }
+    private func load() async {
+        if uiImage != nil { return }
+        if let cached = OImageCache.shared.image(for: url) { self.uiImage = cached; return }
+        isLoading = true; defer { isLoading = false }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            if let img = UIImage(data: data) {
+                OImageCache.shared.set(img, for: url)
+                self.uiImage = img
+            }
+        } catch { }
+    }
+}
+
+// MARK: - 瀑布流（带触底回调）
+struct WaterfallGridView: View {
+    let items: [OVideoItem]
+    @ObservedObject var dataManager: OVideoDataManager
+    var playSource: String = "unknown"       // ⭐ 新增：点击来源，透传给详情页
+    var onReachEnd: (() -> Void)? = nil      // 触底加载下一页
+
+    private let columns: [GridItem] = [
+        GridItem(.flexible(), spacing: 10),
+        GridItem(.flexible(), spacing: 10)
+    ]
+
+    var body: some View {
+        if items.isEmpty {
+            Text("暂无内容")
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 200)
+        } else {
+            LazyVGrid(columns: columns, spacing: 12) {
+                ForEach(items) { item in
+                    NavigationLink(destination: VideoDetailView(item: item,
+                                                                dataManager: dataManager,
+                                                                playSource: playSource)) {   // ⭐ 透传
+                        VideoCardView(item: item)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .onAppear {
+                        if item.url == items.last?.url { onReachEnd?() }
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+        }
+    }
+}
+
+// MARK: - 卡片
+struct VideoCardView: View {
+    let item: OVideoItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Color.clear
+                .aspectRatio(2.0/3.0, contentMode: .fit)
+                .overlay(
+                    ZStack(alignment: .bottomTrailing) {
+                        coverImage
+                        if item.bestRating > 0 {
+                            VStack {
+                                HStack {
+                                    Text(String(format: "%.1f", item.bestRating))
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 10).padding(.vertical, 3)
+                                        .background(Capsule().fill(Color.orange.opacity(0.9)))
+                                        .padding(12)
+                                    Spacer()
+                                }
+                                Spacer()
+                            }
+                        }
+                        if let info = item.info, !info.isEmpty {
+                            Text(info)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 10).padding(.vertical, 3)
+                                .background(Capsule().fill(Color.black.opacity(0.65)))
+                                .padding(12)
+                        }
+                    }
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            Text(item.name)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 2)
+                .padding(.top, 2)
+
+            // 时间 / 地区 / 类型行
+            HStack(spacing: 10) {
+                if let date = item.date, !date.isEmpty {
+                    Text(date.split(separator: "(").first.map(String.init) ?? date)
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+
+                    // ⭐ 新增：上映日期右边显示地区
+                    if let region = item.region, !region.isEmpty {
+                        Text(region)
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                } else if let region = item.region, !region.isEmpty {
+                    // 没有日期时，只显示地区（可选兜底）
+                    Text(region)
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                } else if let types = item.types, !types.isEmpty {
+                    Text(types.joined(separator: " / "))
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+        .padding(.bottom, 8)
+        .contentShape(Rectangle())   // ⭐ 整张卡片的点击命中区域限定为自身矩形
+    }
+
+    @ViewBuilder
+    private var coverImage: some View {
+        if let imageName = item.image, !imageName.isEmpty,
+           let url = OVideoAPI.coverURL(for: imageName) {
+            CachedAsyncImage(url: url) { phase in
+                switch phase {
+                case .empty:
+                    ZStack { Rectangle().fill(Color.secondary.opacity(0.12)); ProgressView() }
+                case .success(let img):
+                    img.resizable().scaledToFill()
+                case .failure:
+                    ZStack {
+                        Rectangle().fill(Color.secondary.opacity(0.12))
+                        Image(systemName: "photo").foregroundColor(.secondary)
+                    }
+                @unknown default:
+                    Rectangle().fill(Color.secondary.opacity(0.12))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+            .contentShape(Rectangle())
+        } else {
+            ZStack {
+                Rectangle().fill(Color.secondary.opacity(0.12))
+                Image(systemName: "film").foregroundColor(.secondary).font(.title2)
+            }
+        }
+    }
+}
+
+// MARK: - 频道主题
+enum VideoCategoryTheme {
+    static func color(for key: String) -> Color {
+        switch key {
+        case "Featured": return Color(red: 0.95, green: 0.30, blue: 0.45)   // ⭐ 最新：玫红
+        case "Movie": return Color(red: 0.25, green: 0.55, blue: 0.95)
+        case "Drama": return Color(red: 0.62, green: 0.36, blue: 0.85)
+        case "Show":  return Color(red: 0.98, green: 0.55, blue: 0.20)
+        case "Anime": return Color(red: 0.95, green: 0.35, blue: 0.58)
+        case "TV":    return Color(red: 0.20, green: 0.72, blue: 0.45)
+        default:      return Color(red: 0.45, green: 0.50, blue: 0.58)
+        }
+    }
+    static func icon(for key: String) -> String {
+        switch key {
+        case "Featured": return "flame.fill"     // ⭐ 最新
+        case "Movie": return "film.fill"
+        case "Drama": return "theatermasks.fill"
+        case "Show":  return "sparkles"
+        case "Anime": return "star.bubble.fill"
+        case "TV":    return "tv.fill"
+        default:      return "square.stack.fill"
+        }
+    }
+}
+
+// MARK: - 顶层入口
+struct VideoModuleView: View {
+    @EnvironmentObject private var dataManager: OVideoDataManager
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var resourceManager: ResourceManager
+    @ObservedObject private var seriesTrack = SeriesTrackManager.shared      // 【新增】
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    @AppStorage("OVideo_TrackNoAutoPopup") private var noAutoPopup = false   // 【新增】
+
+    @AppStorage("OVideo_SortOption") private var sortOptionRaw: String = VideoSortOption.date.rawValue
+    @AppStorage("OVideo_SelectedCategoryIndex") private var selectedCategoryIndex: Int = 0
+    @AppStorage("hasSeenVideoSwipeGuide") private var hasSeenVideoSwipeGuide = false
+
+    // 【新增】是否显示左上角返回按钮（只看视频的根视图传 false）
+    var showBackButton: Bool = true
+    // 【需求3】区分「首次进入」与「从其他页面返回」
+    @State private var didAppearOnce = false
+
+    private var sortBinding: Binding<VideoSortOption> {
+        Binding(get: { VideoSortOption(rawValue: sortOptionRaw) ?? .date },
+                set: { sortOptionRaw = $0.rawValue })
+    }
+    private var categoryIndexBinding: Binding<Int> {
+        Binding(get: { selectedCategoryIndex }, set: { selectedCategoryIndex = $0 })
+    }
+
+    var body: some View {
+        ZStack {
+            VideoBrowseView(dataManager: dataManager,
+                            selectedCategoryIndex: categoryIndexBinding,
+                            sortOption: sortBinding,
+                            showBackButton: showBackButton)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VideoBottomBar(dataManager: dataManager, isLoading: false)
+                }
+            if !hasSeenVideoSwipeGuide {
+                VideoSwipeGuideView(hasSeenGuide: $hasSeenVideoSwipeGuide)
+                    .zIndex(1)
+                    .transition(.opacity)
+            }
+        }
+        // ✅ 在线客服悬浮按钮
+        .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
+        .sheet(isPresented: $seriesTrack.showSheet) {
+            SeriesTrackListView()
+                .environmentObject(dataManager)
+                .environmentObject(authManager)
+                .environmentObject(resourceManager)
+        }
+        // ★★★【需求1】每次回到视频首页（从详情/播放器/搜索返回）都静默刷新 ★★★
+        .onAppear {
+            dataManager.reviewMaxYear = resourceManager.effectiveReviewVideoMaxYear
+            Task {
+                // 只拉 version.json（开关/审核年份/通知），不下载新闻 JSON，省流量
+                await resourceManager.refreshServerConfig(minInterval: 120)
+                await dataManager.silentRefreshCurrentSelection(
+                    userId: authManager.userIdentifier, minInterval: 45)
+                await seriesTrack.refresh()
+            }
+            // 【需求3】只有「返回」视频首页才算成功时刻；冷启动第一次不打扰
+            if didAppearOnce {
+                NotificationPermissionManager.shared.record(.videoHomeReturn)
+            } else {
+                didAppearOnce = true
+            }
+        }
+        .task {
+            await dataManager.bootstrap(userId: authManager.userIdentifier)
+            await FreeQuotaManager.shared.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
+            await seriesTrack.refresh()
+            if !noAutoPopup, seriesTrack.unseenCount > 0, !seriesTrack.showSheet {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                seriesTrack.showSheet = true
+            }
+        }
+    }
+}
+
+// 【新增】视频模块关闭时的占位提示页（只看视频的用户遇到模块关闭时显示）
+struct VideoModuleClosedView: View {
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "film.stack")
+                .font(.system(size: 64))
+                .foregroundColor(.secondary.opacity(0.35))
+            Text(isGlobalEnglishMode
+                 ? "The video module is temporarily closed due to copyright reasons. Thank you for your understanding."
+                 : "因版权原因，视频模块暂时关闭，敬请谅解。")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
+    }
+}
+
+// MARK: - 底部栏（个人中心 + 免费点数合并成一个按钮）
+struct VideoBottomBar: View {
+    @ObservedObject var dataManager: OVideoDataManager
+    @EnvironmentObject var authManager: AuthManager
+    @ObservedObject private var quota = FreeQuotaManager.shared
+    @ObservedObject private var seriesTrack = SeriesTrackManager.shared
+    @ObservedObject private var support = SupportChatManager.shared
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    let isLoading: Bool
+
+    @State private var showProfile = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            NavigationLink { VideoFilterView(dataManager: dataManager) } label: {
+                BarItemView(icon: "line.3.horizontal.decrease.circle.fill",
+                            zh: "分类检索", en: "Filter", isEnglish: isGlobalEnglishMode)
+            }.buttonStyle(.plain)
+
+            Button { seriesTrack.showSheet = true } label: {
+                BarItemView(icon: "bell.fill", zh: "追剧", en: "Follow",
+                            isEnglish: isGlobalEnglishMode, badge: seriesTrack.unseenCount)
+            }.buttonStyle(.plain)
+
+            NavigationLink { VideoCacheView() } label: {
+                BarItemView(icon: "arrow.down.circle.fill",
+                            zh: "下载管理", en: "Cache", isEnglish: isGlobalEnglishMode)
+            }.buttonStyle(.plain)
+
+            Button { showProfile = true } label: {
+                BarProfileItemView(isEnglish: isGlobalEnglishMode,
+                                   isVIP: authManager.isSubscribed,
+                                   showPoints: authManager.isLoggedIn && !authManager.isSubscribed,
+                                   points: quota.remaining,
+                                   badge: support.unreadTotal)
+            }.buttonStyle(.plain)
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
+        .background(Color(UIColor.systemBackground))
+        .overlay(alignment: .top) { Color.primary.opacity(0.15).frame(height: 0.5) }
+        .ignoresSafeArea(edges: .bottom)
+        .fullScreenCover(isPresented: $showProfile) { VideoProfileView() }
+    }
+}
+
+private struct BarProfileItemView: View {
+    let isEnglish: Bool
+    let isVIP: Bool
+    let showPoints: Bool
+    let points: Int
+    let badge: Int
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: isVIP ? "crown.fill" : "person.crop.circle.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(isVIP ? .orange : .primary)
+                if badge > 0 {
+                    Text(badge > 99 ? "99+" : "\(badge)")
+                        .font(.system(size: 10, weight: .bold)).foregroundColor(.white)
+                        .padding(.horizontal, badge > 9 ? 4 : 5).padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.red))
+                        .overlay(Capsule().stroke(Color(UIColor.systemBackground), lineWidth: 1.5))
+                        .offset(x: 11, y: -6)
+                }
+            }
+            .frame(height: 26)
+
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary)
+                .lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+    }
+
+    private var label: String {
+        if showPoints { return isEnglish ? "Me · \(points)pt" : "我的 · \(points)点" }
+        return isEnglish ? "Me" : "我的"
+    }
+}
+
+private struct BarItemView: View {
+    let icon: String
+    let zh: String
+    let en: String
+    let isEnglish: Bool
+    var badge: Int = 0          // 【新增】
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: icon)
+                    .font(.system(size: 24, weight: .regular))
+                    .foregroundColor(.primary)
+
+                if badge > 0 {
+                    Text(badge > 99 ? "99+" : "\(badge)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, badge > 9 ? 4 : 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.red))
+                        .overlay(Capsule().stroke(Color(UIColor.systemBackground), lineWidth: 1.5))
+                        .offset(x: 11, y: -6)
+                }
+            }
+            .frame(height: 26)
+
+            Text(isEnglish ? en : zh)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - 单个分类列表（分页 + 无限滚动）
+struct CategoryVideoListView: View {
+    let categoryName: String
+    let sortOption: VideoSortOption
+    @ObservedObject var dataManager: OVideoDataManager
+    let userId: String?
+
+    var body: some View {
+        let items = dataManager.items(category: categoryName, sort: sortOption)
+        let loading = dataManager.isLoadingPage(category: categoryName, sort: sortOption)
+
+        ScrollViewReader { proxy in
+            ScrollView {
+                Color.clear.frame(height: 0).id("top_anchor")
+
+                if items.isEmpty && loading {
+                    ProgressView().padding(.top, 80)
+                } else {
+                    WaterfallGridView(items: items, dataManager: dataManager,
+                                      playSource: "home",          // ⭐ 首页
+                                      onReachEnd: {
+                                          Task { await dataManager.loadNextPage(category: categoryName,
+                                                                                sort: sortOption, userId: userId) }
+                                      })
+                    .padding(.top, 10)
+
+                    if loading && !items.isEmpty {
+                        ProgressView().padding(.vertical, 16)
+                    }
+                    Color.clear.frame(height: 20)
+                }
+            }
+            .onChange(of: sortOption) { _ in
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    proxy.scrollTo("top_anchor", anchor: .top)
+                }
+            }
+        }
+        .background(Color(UIColor.systemGroupedBackground))
+        .task(id: "\(categoryName)|\(sortOption.rawValue)|\(dataManager.reviewMaxYear ?? -1)") {
+            await dataManager.loadFirstPageIfNeeded(category: categoryName,
+                                                    sort: sortOption, userId: userId)
+        }
+    }
+}
+
+// ⭐ 新增:支持"中间滑动切栏目 / 贴边右滑返回上一页"的分页控制器
+final class EdgeSwipePageViewController: UIPageViewController, UIGestureRecognizerDelegate {
+    private var didSetupEdgeGesture = false
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        setupEdgeGestureIfNeeded()
+    }
+
+    private func setupEdgeGestureIfNeeded() {
+        guard !didSetupEdgeGesture,
+              let nav = navigationController,
+              let popGesture = nav.interactivePopGestureRecognizer else { return }
+        didSetupEdgeGesture = true
+
+        // 因为隐藏了系统导航栏,需要手动开启并接管返回手势
+        popGesture.isEnabled = true
+        popGesture.delegate = self
+
+        // 关键:内部横向滚动手势必须等"边缘返回手势"失败后才触发
+        for sub in view.subviews {
+            if let scroll = sub as? UIScrollView {
+                scroll.panGestureRecognizer.require(toFail: popGesture)
+            }
+        }
+    }
+
+    // 栈里有上一页时,才允许触发返回手势
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        return (navigationController?.viewControllers.count ?? 0) > 1
+    }
+}
+
+// MARK: - 无限循环 Pager（按名称）— 不变
+struct InfinitePageViewController: UIViewControllerRepresentable {
+    var categories: [String]
+    @Binding var selectedIndex: Int
+    var sortOption: VideoSortOption
+    var dataManager: OVideoDataManager
+    var userId: String?
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIViewController(context: Context) -> UIPageViewController {
+        let pvc = EdgeSwipePageViewController(transitionStyle: .scroll,
+                                      navigationOrientation: .horizontal, options: nil)
+        pvc.dataSource = context.coordinator
+        pvc.delegate = context.coordinator
+        pvc.view.backgroundColor = .clear
+        if !categories.isEmpty {
+            let safe = min(max(0, selectedIndex), categories.count - 1)
+            pvc.setViewControllers([context.coordinator.viewController(for: safe)],
+                                   direction: .forward, animated: false)
+        }
+        return pvc
+    }
+
+    func updateUIViewController(_ pageViewController: UIPageViewController, context: Context) {
+        context.coordinator.parent = self
+        guard !categories.isEmpty else { return }
+
+        let signature = categories.joined(separator: ",")
+        let sortChanged = context.coordinator.lastSortOption != sortOption
+        let dataChanged = context.coordinator.lastCategoriesSignature != signature
+
+        if sortChanged || dataChanged {
+            for (index, vc) in context.coordinator.controllers where index < categories.count {
+                vc.rootView = CategoryVideoListView(categoryName: categories[index],
+                                                    sortOption: sortOption,
+                                                    dataManager: dataManager, userId: userId)
+            }
+            context.coordinator.lastSortOption = sortOption
+            context.coordinator.lastCategoriesSignature = signature
+        }
+
+        let safeTarget = min(max(0, selectedIndex), categories.count - 1)
+        if context.coordinator.currentIndex != safeTarget {
+            let count = categories.count
+            let current = context.coordinator.currentIndex
+            var diff = safeTarget - current
+            if diff > count / 2 { diff -= count } else if diff < -count / 2 { diff += count }
+            let direction: UIPageViewController.NavigationDirection = diff >= 0 ? .forward : .reverse
+            let vc = context.coordinator.viewController(for: safeTarget)
+            pageViewController.setViewControllers([vc], direction: direction, animated: true)
+            context.coordinator.currentIndex = safeTarget
+        }
+    }
+
+    class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
+        var parent: InfinitePageViewController
+        var currentIndex: Int
+        var controllers = [Int: UIHostingController<CategoryVideoListView>]()
+        var lastSortOption: VideoSortOption?
+        var lastCategoriesSignature: String = ""
+
+        init(_ parent: InfinitePageViewController) {
+            self.parent = parent
+            self.currentIndex = parent.selectedIndex
+        }
+
+        func viewController(for index: Int) -> UIViewController {
+            if let cached = controllers[index] { return cached }
+            let view = CategoryVideoListView(categoryName: parent.categories[index],
+                                             sortOption: parent.sortOption,
+                                             dataManager: parent.dataManager, userId: parent.userId)
+            let vc = UIHostingController(rootView: view)
+            vc.view.backgroundColor = .clear
+            controllers[index] = vc
+            return vc
+        }
+
+        func pageViewController(_ pvc: UIPageViewController, viewControllerBefore vc: UIViewController) -> UIViewController? {
+            guard !parent.categories.isEmpty,
+                  let host = vc as? UIHostingController<CategoryVideoListView>,
+                  let index = controllers.first(where: { $0.value == host })?.key else { return nil }
+            return viewController(for: (index - 1 + parent.categories.count) % parent.categories.count)
+        }
+
+        func pageViewController(_ pvc: UIPageViewController, viewControllerAfter vc: UIViewController) -> UIViewController? {
+            guard !parent.categories.isEmpty,
+                  let host = vc as? UIHostingController<CategoryVideoListView>,
+                  let index = controllers.first(where: { $0.value == host })?.key else { return nil }
+            return viewController(for: (index + 1) % parent.categories.count)
+        }
+
+        func pageViewController(_ pvc: UIPageViewController, didFinishAnimating finished: Bool,
+                                previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
+            if completed,
+               let visible = pvc.viewControllers?.first as? UIHostingController<CategoryVideoListView>,
+               let index = controllers.first(where: { $0.value == visible })?.key {
+                currentIndex = index
+                DispatchQueue.main.async {
+                    if self.parent.selectedIndex != index { self.parent.selectedIndex = index }
+                }
+            }
+        }
+    }
+}
+
+// ⭐ 需求2：横向分类栏（小红书风格）
+struct CategoryTabBar: View {
+    let categories: [String]
+    @Binding var selectedIndex: Int
+    let isEnglish: Bool
+    @Namespace private var ns
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(Array(categories.enumerated()), id: \.offset) { idx, cat in
+                        let isSelected = idx == selectedIndex
+                        let theme = VideoCategoryTheme.color(for: cat)
+                        Button {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                selectedIndex = idx
+                            }
+                        } label: {
+                            VStack(spacing: 5) {
+                                HStack(spacing: 4) {
+                                    if isSelected {
+                                        Image(systemName: VideoCategoryTheme.icon(for: cat))
+                                            .font(.system(size: 11, weight: .bold))
+                                            .foregroundColor(theme)
+                                    }
+                                    Text(videoCategoryDisplayName(cat, english: isEnglish))
+                                        .font(.system(size: isSelected ? 17 : 15,
+                                                      weight: isSelected ? .bold : .medium))
+                                        .foregroundColor(isSelected ? .primary : .secondary)
+                                }
+                                ZStack {
+                                    if isSelected {
+                                        Capsule()
+                                            .fill(theme)
+                                            .matchedGeometryEffect(id: "tab_underline", in: ns)
+                                            .frame(width: 24, height: 3)
+                                    } else {
+                                        Capsule().fill(Color.clear).frame(width: 24, height: 3)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .id(idx)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+            }
+            .onChange(of: selectedIndex) { newIdx in
+                withAnimation { proxy.scrollTo(newIdx, anchor: .center) }
+            }
+        }
+    }
+}
+
+// MARK: - 首页（需求2 版本：顶部横向分类栏）
+struct VideoBrowseView: View {
+    @ObservedObject var dataManager: OVideoDataManager
+    @Binding var selectedCategoryIndex: Int
+    @Binding var sortOption: VideoSortOption
+    // 【新增】是否显示返回按钮
+    var showBackButton: Bool = true
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    @EnvironmentObject var authManager: AuthManager
+
+    // ⭐ 新增：用于触发返回上一页的操作
+    @Environment(\.presentationMode) var presentationMode
+
+    private var userId: String? { authManager.userIdentifier }
+
+    var body: some View {
+        Group {
+            if dataManager.categoryNames.isEmpty {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 0) {
+                    // ⭐ 顶部 banner：返回按钮 + 横向分类栏 + 右侧搜索图标
+                    HStack(spacing: 0) {
+                        // 【修改】只看视频的根视图不显示返回按钮
+                        if showBackButton {
+                            Button {
+                                presentationMode.wrappedValue.dismiss()
+                            } label: {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 20, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                    .padding(.leading, 16)
+                                    .padding(.trailing, 8)
+                                    .padding(.vertical, 10)
+                            }
+                        }
+
+                        CategoryTabBar(categories: dataManager.categoryNames,
+                                    selectedIndex: $selectedCategoryIndex,
+                                    isEnglish: isGlobalEnglishMode)
+                            .frame(maxWidth: .infinity)
+                            .padding(.leading, showBackButton ? 0 : 8)   // 【新增】无返回按钮时补一点左边距
+
+                        NavigationLink {
+                            VideoSearchTabView(dataManager: dataManager)
+                        } label: {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.primary)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.plain)
+                        .offset(y: -2)
+                    }
+                    .background(.ultraThinMaterial)
+
+                    Divider().opacity(0.4)
+
+                    // ⭐ 下方分页内容 + 悬浮排序按钮
+                    ZStack(alignment: .topTrailing) {
+                        InfinitePageViewController(categories: dataManager.categoryNames,
+                                                   selectedIndex: $selectedCategoryIndex,
+                                                   sortOption: sortOption,
+                                                   dataManager: dataManager,
+                                                   userId: userId)
+                            .ignoresSafeArea(edges: .bottom)
+
+                        floatingSortButton
+                            .padding(.trailing, 12)
+                            .padding(.top, 8)
+                    }
+                }
+            }
+        }
+        // ⭐ 隐藏系统导航栏，把空间让给分类栏
+        .toolbar(.hidden, for: .navigationBar)
+        // ★★★【需求1】切换栏目 / 切换排序时，静默刷新该栏目第一页
+        .onChange(of: selectedCategoryIndex) { idx in
+            guard idx >= 0, idx < dataManager.categoryNames.count else { return }
+            let cat = dataManager.categoryNames[idx]
+            Task {
+                await dataManager.silentRefreshFirstPage(
+                    category: cat, sort: sortOption, userId: userId, minInterval: 90)
+            }
+        }
+        .onChange(of: sortOption) { newSort in
+            let idx = selectedCategoryIndex
+            guard idx >= 0, idx < dataManager.categoryNames.count else { return }
+            let cat = dataManager.categoryNames[idx]
+            Task {
+                await dataManager.silentRefreshFirstPage(
+                    category: cat, sort: newSort, userId: userId, minInterval: 90)
+            }
+        }
+    }
+
+    // ⭐ 悬浮排序按钮（靠右，悬浮在卡片之上，会轻微遮挡下方卡片）
+    private var floatingSortButton: some View {
+        Menu {
+            ForEach(VideoSortOption.allCases, id: \.self) { opt in
+                Button { withAnimation { sortOption = opt } } label: {
+                    if opt == sortOption {
+                        Label(opt.displayName(isGlobalEnglishMode), systemImage: "checkmark")
+                    } else {
+                        Text(opt.displayName(isGlobalEnglishMode))
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(sortOption.shortName(isGlobalEnglishMode))
+                    .font(.system(size: 13, weight: .semibold))
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundColor(.primary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(.ultraThinMaterial))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+            .shadow(color: Color.black.opacity(0.15), radius: 5, x: 0, y: 2)
+            .animation(.easeInOut(duration: 0.2), value: sortOption)
+        }
+    }
+}
+
+// MARK: - 新手引导（不变）
+struct VideoSwipeGuideView: View {
+    @Binding var hasSeenGuide: Bool
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    @State private var iconOffset: CGFloat = 40
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.75).ignoresSafeArea()
+            VStack(spacing: 30) {
+                Image(systemName: "hand.draw.fill")
+                    .font(.system(size: 65)).foregroundColor(.white)
+                    .offset(x: iconOffset)
+                    .onAppear {
+                        withAnimation(Animation.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                            iconOffset = -40
+                        }
+                    }
+                VStack(spacing: 12) {
+                    Text(isGlobalEnglishMode ? "Swipe to switch channels" : "左右滑动切换频道")
+                        .font(.title2.bold()).foregroundColor(.white)
+                    Text(isGlobalEnglishMode ? "Featured / Movies / Dramas / Shows / Anime" : "最新 / 电影 / 剧集 / 综艺 / 动漫")
+                        .font(.subheadline).foregroundColor(.white.opacity(0.8))
+                }
+                Button {
+                    withAnimation(.easeInOut) { hasSeenGuide = true }
+                } label: {
+                    Text(isGlobalEnglishMode ? "Got it" : "知道了")
+                        .font(.system(size: 16, weight: .bold)).foregroundColor(.black)
+                        .padding(.horizontal, 40).padding(.vertical, 14)
+                        .background(Color.white).clipShape(Capsule())
+                }
+                .padding(.top, 20)
+            }
+        }
+    }
+}

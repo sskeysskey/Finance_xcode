@@ -482,7 +482,7 @@ struct AnonymousSubscribeButton: View {
                     // 原价划线
                     HStack(alignment: .firstTextBaseline, spacing: 1) {
                         Text("¥").font(.system(size: 10))
-                        Text("18")
+                        Text("24")
                             .font(.system(size: 14))
                             .foregroundColor(.white.opacity(0.7))
                             .strikethrough(color: .white.opacity(0.7))

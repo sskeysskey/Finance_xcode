@@ -1,12 +1,117 @@
 import SwiftUI
 import AppKit
 
+// MARK: - 季度解析辅助（用于同系列多季联想）
+private func chineseNumeralToInt(_ raw: String) -> Int? {
+    let s = raw.trimmingCharacters(in: .whitespaces)
+    if let n = Int(s) { return n }
+    let map: [Character: Int] = ["零":0,"一":1,"二":2,"三":3,"四":4,"五":5,
+                                 "六":6,"七":7,"八":8,"九":9,"十":10]
+    let chars = Array(s)
+    guard !chars.isEmpty else { return nil }
+    if s == "十" { return 10 }
+    if let idx = chars.firstIndex(of: "十") {
+        let before = chars[..<idx]
+        let after  = chars[(idx+1)...]
+        let tens = before.isEmpty ? 1 : (map[before.first!] ?? 0)
+        let ones = after.isEmpty ? 0 : (map[after.first!] ?? 0)
+        return tens * 10 + ones
+    }
+    var val = 0
+    for ch in chars {
+        guard let d = map[ch] else { return nil }
+        val = val * 10 + d
+    }
+    return val
+}
+
+private func romanNumeralToInt(_ raw: String) -> Int? {
+    let map: [Character: Int] = ["I":1,"V":5,"X":10,"L":50,"C":100,"D":500,"M":1000]
+    let chars = Array(raw.uppercased())
+    guard !chars.isEmpty else { return nil }
+    var total = 0, prev = 0
+    for ch in chars.reversed() {
+        guard let v = map[ch] else { return nil }
+        if v < prev { total -= v } else { total += v; prev = v }
+    }
+    return total > 0 ? total : nil
+}
+
+/// 从片名解析 (基础名, 季号)
+private func videoSeasonInfo(from name: String) -> (base: String, season: Int)? {
+    let trimmed = name.trimmingCharacters(in: .whitespaces)
+    guard !trimmed.isEmpty else { return nil }
+
+    if let r = seasonByExplicitMarker(trimmed) { return r }   // 1. 第X季
+    if let r = seasonByRomanSuffix(trimmed)    { return r }   // 2. 冲上云霄II
+    if let r = seasonByArabicSuffix(trimmed)   { return r }   // 3. 洛奇2 / 洛奇4：xxx
+    if let r = seasonByChineseSuffix(trimmed)  { return r }   // 4. 绝望一
+    return (trimmed, 1)                                       // 5. 无标记 → 默认为第1部
+}
+
+private func seasonByExplicitMarker(_ name: String) -> (base: String, season: Int)? {
+    let pattern = "第\\s*([0-9零一二三四五六七八九十百]+)\\s*季"
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let full = NSRange(name.startIndex..., in: name)
+    guard let match = regex.firstMatch(in: name, range: full),
+          let numRange = Range(match.range(at: 1), in: name),
+          let matchRange = Range(match.range, in: name),
+          let season = chineseNumeralToInt(String(name[numRange])) else { return nil }
+    var base = name
+    base.removeSubrange(matchRange)
+    base = base.trimmingCharacters(in: .whitespaces)
+    return (base, season)
+}
+
+private func seasonByRomanSuffix(_ name: String) -> (base: String, season: Int)? {
+    let pattern = "^(.*?)\\s*([IVXL]{1,7})$"
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let full = NSRange(name.startIndex..., in: name)
+    guard let match = regex.firstMatch(in: name, range: full),
+          let baseRange = Range(match.range(at: 1), in: name),
+          let romanRange = Range(match.range(at: 2), in: name) else { return nil }
+    let base = String(name[baseRange]).trimmingCharacters(in: .whitespaces)
+    guard !base.isEmpty else { return nil }
+    if let last = base.last, last.isLetter, last.isASCII { return nil }
+    guard let season = romanNumeralToInt(String(name[romanRange])),
+          season >= 1, season <= 39 else { return nil }
+    return (base, season)
+}
+
+private func seasonByArabicSuffix(_ name: String) -> (base: String, season: Int)? {
+    let pattern = "^(\\D+?)([0-9]{1,3})(?:[：:\\s\\-—·].*)?$"
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let full = NSRange(name.startIndex..., in: name)
+    guard let match = regex.firstMatch(in: name, range: full),
+          let baseRange = Range(match.range(at: 1), in: name),
+          let numRange = Range(match.range(at: 2), in: name) else { return nil }
+    let base = String(name[baseRange]).trimmingCharacters(in: .whitespaces)
+    guard !base.isEmpty, let season = Int(String(name[numRange])),
+          season >= 1, season <= 99 else { return nil }
+    return (base, season)
+}
+
+private func seasonByChineseSuffix(_ name: String) -> (base: String, season: Int)? {
+    let numerals = "零一二三四五六七八九十"
+    let pattern = "^(.*?[^\(numerals)])([\(numerals)]{1,3})$"
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let full = NSRange(name.startIndex..., in: name)
+    guard let match = regex.firstMatch(in: name, range: full),
+          let baseRange = Range(match.range(at: 1), in: name),
+          let numRange = Range(match.range(at: 2), in: name) else { return nil }
+    let base = String(name[baseRange]).trimmingCharacters(in: .whitespaces)
+    guard !base.isEmpty, let season = chineseNumeralToInt(String(name[numRange])),
+          season >= 1, season <= 99 else { return nil }
+    return (base, season)
+}
+
 private struct RatingChip: Identifiable, Hashable {
     var id: String { source }
     let source: String
     let value: String
 }
 
+// MARK: - 主详情视图
 struct DetailView: View {
     let item: VideoItem
     @EnvironmentObject var data: VideoDataManager
@@ -29,6 +134,11 @@ struct DetailView: View {
     @State private var showBonus = false
     @State private var showShare = false
 
+    // ⭐ 同系列其它季状态
+    @State private var seasonSiblings: [VideoItem] = []
+    @State private var selectedSeasonItem: VideoItem? = nil
+    @State private var navigateToSeason = false
+
     private var sortedLines: [VideoChannel] { optimalChannels(channels) }
     private var currentEpisodes: [EpisodeItem] {
         guard lineIndex < sortedLines.count else { return [] }
@@ -48,6 +158,10 @@ struct DetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header
+                if seasonSiblings.count > 1 {
+                    Divider()
+                    seasonSection
+                }
                 Divider()
                 episodeSection
                 if !item.otherCast.isEmpty || (item.intro?.isEmpty == false) {
@@ -63,12 +177,17 @@ struct DetailView: View {
         .navigationTitle(item.name)
         .navigationSubtitle(item.info ?? "")
         .toolbar {
-            // ⭐ 右上角只保留「分享」
             ToolbarItem {
                 Button { showShare = true } label: {
                     Label(lang.t("分享", "Share"), systemImage: "square.and.arrow.up")
                 }
                 .help(lang.t("分享这部影片", "Share this title"))
+            }
+        }
+        // ⭐ 切换到其它季的详情页
+        .navigationDestination(isPresented: $navigateToSeason) {
+            if let s = selectedSeasonItem {
+                DetailView(item: s)
             }
         }
         .sheet(isPresented: $showBatch) {
@@ -113,14 +232,118 @@ struct DetailView: View {
                 channels = await data.playlist(item.url)
                 loading = false
             }
+            await loadSeasonSiblingsIfNeeded()
         }
     }
 
-    // MARK: header
+    // MARK: - 同系列其它季加载
+    private func loadSeasonSiblingsIfNeeded() async {
+        guard seasonSiblings.isEmpty,
+              let info = videoSeasonInfo(from: item.name),
+              !info.base.isEmpty else { return }
+
+        let uid = QuotaManager.currentUserId(auth: auth)
+        let results = await data.search(info.base, userId: uid)
+
+        let sameSeries = results.filter { cand in
+            guard let ci = videoSeasonInfo(from: cand.name) else { return false }
+            return ci.base == info.base
+        }
+
+        var seen = Set<String>()
+        var unique = sameSeries.filter { seen.insert($0.url).inserted }
+        if !unique.contains(where: { $0.url == item.url }) {
+            unique.append(item)
+        }
+
+        let sorted = unique.sorted {
+            (videoSeasonInfo(from: $0.name)?.season ?? 0) < (videoSeasonInfo(from: $1.name)?.season ?? 0)
+        }
+
+        await MainActor.run {
+            seasonSiblings = sorted.count > 1 ? sorted : []
+        }
+    }
+
+    // MARK: - 各季展示区域
+    private var seasonSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "square.stack.3d.up.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.accentColor)
+                Text(lang.t("选择季", "All Seasons"))
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                Text("\(seasonSiblings.count)")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6).padding(.vertical, 1)
+                    .background(Capsule().fill(Color.accentColor))
+            }
+
+            FlowLayout(spacing: 12) {
+                ForEach(seasonSiblings) { s in
+                    let isCurrent = (s.url == item.url)
+                    Button {
+                        if !isCurrent {
+                            selectedSeasonItem = s
+                            navigateToSeason = true
+                        }
+                    } label: {
+                        seasonChip(for: s, isCurrent: isCurrent)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isCurrent)
+                }
+            }
+        }
+    }
+
+    private func seasonLabel(for s: VideoItem) -> String {
+        if let info = videoSeasonInfo(from: s.name) {
+            return lang.isEnglish ? "S\(info.season)" : "第\(info.season)季"
+        }
+        return s.name
+    }
+
+    private func seasonChip(for s: VideoItem, isCurrent: Bool) -> some View {
+        VStack(spacing: 6) {
+            CachedImage(url: VideoAPI.coverURL(s.image), contentMode: .fill)
+                .frame(width: 76, height: 108)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(isCurrent ? Color.accentColor : Color.primary.opacity(0.12),
+                                lineWidth: isCurrent ? 2 : 1)
+                )
+                .overlay(alignment: .bottomLeading) {
+                    if isCurrent {
+                        Text(lang.t("当前", "Now"))
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Capsule().fill(Color.accentColor))
+                            .padding(4)
+                    }
+                }
+                .shadow(color: isCurrent ? Color.accentColor.opacity(0.3) : Color.black.opacity(0.15),
+                        radius: 4, y: 2)
+
+            Text(seasonLabel(for: s))
+                .font(.system(size: 12, weight: isCurrent ? .bold : .medium))
+                .foregroundStyle(isCurrent ? Color.accentColor : Color.secondary)
+                .lineLimit(1)
+        }
+        .frame(width: 76)
+        .contentShape(Rectangle())
+    }
+
+    // MARK: - Header
     private var header: some View {
         HStack(alignment: .top, spacing: 22) {
             CachedImage(url: VideoAPI.coverURL(item.image), contentMode: .fill)
-                .frame(width: 190, height: 285)                 // 严格 2:3
+                .frame(width: 190, height: 285)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .shadow(radius: 10, y: 5)
 
@@ -179,7 +402,6 @@ struct DetailView: View {
         }
     }
 
-    /// ⭐ 可点击的人名：通过 NavigationStack Push 进搜索页，保留返回路径
     private func nameRow(_ l: String, _ names: [String]) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Text("\(l):").font(.caption).foregroundStyle(.secondary).frame(width: 46, alignment: .leading)
@@ -200,7 +422,7 @@ struct DetailView: View {
         }
     }
 
-    // MARK: 线路 + 选集
+    // MARK: - 线路 + 选集
     private var episodeSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             if loading {
@@ -236,7 +458,6 @@ struct DetailView: View {
         }
     }
 
-    /// 线路选择条：淡蓝选中态 + 右侧正序/倒序
     private var lineBar: some View {
         HStack(alignment: .center, spacing: 8) {
             ForEach(sortedLines.indices, id: \.self) { i in
@@ -246,7 +467,7 @@ struct DetailView: View {
                         .foregroundStyle(i == lineIndex ? Color.accentColor : Color.secondary)
                         .padding(.horizontal, 13).padding(.vertical, 5)
                         .background(i == lineIndex
-                                    ? Color.accentColor.opacity(0.14)      // ⭐ 淡蓝
+                                    ? Color.accentColor.opacity(0.14)
                                     : Color.secondary.opacity(0.10),
                                     in: Capsule())
                         .overlay(Capsule().stroke(
@@ -308,7 +529,7 @@ struct DetailView: View {
         }
     }
 
-    // MARK: 行为
+    // MARK: - 播放与下载行为
     private func attemptPlay(_ ep: EpisodeItem) {
         switch decideAccess(episodeKey: ep.url, auth: auth, quota: quota) {
         case .allowed:      openPlayer(ep)
@@ -317,6 +538,7 @@ struct DetailView: View {
         case .exhausted:    showSubscribe = true
         }
     }
+
     private func consumeAndPlay() async {
         guard let ep = pendingEp else { return }
         let uid = QuotaManager.currentUserId(auth: auth)
@@ -327,6 +549,7 @@ struct DetailView: View {
         }
         pendingEp = nil
     }
+
     private func openPlayer(_ ep: EpisodeItem) {
         guard lineIndex < sortedLines.count else { return }
         let ch = sortedLines[lineIndex]
@@ -342,6 +565,7 @@ struct DetailView: View {
         if currentEpisodes.count == 1, let only = eps.first { downloadSingle(only) }
         else { showBatch = true }
     }
+
     private func downloadSingle(_ ep: EpisodeItem) {
         Task {
             switch decideAccess(episodeKey: ep.url, auth: auth, quota: quota) {
@@ -577,7 +801,7 @@ struct BatchDownloadSheet: View {
     }
 }
 
-/// 简易自动换行容器
+// MARK: - 布局辅助
 struct WrapHStack<T: Hashable, V: View>: View {
     let items: [T]; let spacing: CGFloat; let content: (T) -> V
     init(_ items: [T], spacing: CGFloat = 6, @ViewBuilder content: @escaping (T) -> V) {
