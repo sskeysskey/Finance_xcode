@@ -132,6 +132,21 @@ private func splitSeriesSubtitle(_ name: String) -> (head: String, subtitle: Str
     return (head, sub)
 }
 
+// 5. 常见语言后缀识别（如：死无对证国语 / 无间道 粤语版）
+private func seasonByLanguageSuffix(_ name: String) -> (base: String, lang: String)? {
+    let pattern = "^(.*?)[\\s\\-_·]?(国语|粤语|普通话|国粤双语|英语|双语)(?:版)?$"
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let full = NSRange(name.startIndex..., in: name)
+    guard let match = regex.firstMatch(in: name, range: full),
+          let baseRange = Range(match.range(at: 1), in: name),
+          let langRange = Range(match.range(at: 2), in: name) else { return nil }
+    
+    let base = String(name[baseRange]).trimmingCharacters(in: .whitespaces)
+    let lang = String(name[langRange]).trimmingCharacters(in: .whitespaces)
+    guard base.count >= 2 else { return nil } // 基础名至少2个字，防止误伤
+    return (base, lang)
+}
+
 // 1. 显式标记：第X季 / 第X部
 private func seasonByExplicitMarker(_ name: String) -> (base: String, season: Int)? {
     let pattern = "第\\s*([0-9零一二三四五六七八九十百]+)\\s*[季部]"
@@ -227,13 +242,19 @@ func videoSeriesInfo(from name: String) -> VideoSeriesInfo? {
                                subtitle: subtitle, marker: .chinese)
     }
 
-    // 2) 只有副标题、没有编号：海洋奇缘：启航 → base=海洋奇缘, season=nil
+    // ⭐ 新增：命中语言版本（如：死无对证国语 -> base: 死无对证, subtitle: 国语）
+    if let r = seasonByLanguageSuffix(head) {
+        return VideoSeriesInfo(raw: trimmed, base: r.base, season: nil,
+                               subtitle: r.lang, marker: .subtitleOnly)
+    }
+
+    // 2) 只有副标题、没有编号
     if let sub = subtitle {
         return VideoSeriesInfo(raw: trimmed, base: head, season: nil,
                                subtitle: sub, marker: .subtitleOnly)
     }
 
-    // 3) 完全没有任何标记 → 视为第 1 部，便于与续集归为同系列
+    // 3) 完全没有任何标记 → 视为第 1 部
     return VideoSeriesInfo(raw: trimmed, base: trimmed, season: 1,
                            subtitle: nil, marker: .none)
 }
