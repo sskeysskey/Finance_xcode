@@ -91,14 +91,15 @@ struct ArticleContainerView: View {
         }
         .onAppear {
             didCommitOnDisappear = false
-            viewModel.isReadingArticle = true
+            // ★ 开启阅读会话（内部会置 isReadingArticle = true，并记录当前文章的稳定 topic）
+            viewModel.beginReading(currentArticle)
             updateUnreadCounts()
 
             NewsTrackingManager.shared.track(event: .view, article: currentArticle,
                                              sourceId: currentArticle.source_id)
             NotificationPermissionManager.shared.record(.newsOpenArticle)
 
-            noteFreeReadIfNeeded(currentArticle)     // ★【需求3b】
+            noteFreeReadIfNeeded(currentArticle)
             prefetchNextArticleImages()
 
             audioPlayerManager.onNextRequested = {
@@ -113,17 +114,18 @@ struct ArticleContainerView: View {
             }
         }
         .onDisappear {
-            viewModel.isReadingArticle = false
             guard !didCommitOnDisappear else { return }
             didCommitOnDisappear = true
             audioPlayerManager.stop()
-            _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
-            viewModel.commitPendingReads()
 
-            // ★【需求3b】离开详情页是弹"免登录订阅引导"的安全时机
+            // ★★★ 关键：同步落盘 → 最后才解冻数据重建（顺序绝不能反）
+            viewModel.finishReading(markCurrentAsRead: true)
+
             AnonymousSubscribePromptManager.shared.flushIfNeeded()
         }
         .onChange(of: currentArticle) { newArticle in
+            // ★ 切到下一篇：更新阅读会话指向
+            viewModel.beginReading(newArticle)
             updateUnreadCounts()
             noteFreeReadIfNeeded(newArticle)
             prefetchNextArticleImages()
@@ -134,8 +136,7 @@ struct ArticleContainerView: View {
                message: { Text(errorMessage) })
     }
 
-    // MARK: - 【需求3b】统计"未登录用户读了几篇免费新闻"
-
+    // MARK: - 免费阅读计数
     private func noteFreeReadIfNeeded(_ article: Article) {
         guard !authManager.isLoggedIn, !authManager.isSubscribed else { return }
         guard NewsFreeBadge.isFree(timestamp: article.timestamp,
@@ -196,7 +197,9 @@ struct ArticleContainerView: View {
                                     triggerListenTrack: Bool = false) async {
         ReviewManager.shared.recordInteraction()
         if shouldAutoplayNext { audioPlayerManager.prepareForNextTransition() }
-        _ = viewModel.stageArticleAsRead(articleID: currentArticle.id)
+
+        // ★★★ 点"下一篇"= 明确读完 → 立即落盘（不再只是暂存）
+        viewModel.markArticleAsRead(currentArticle)
 
         Task { await resourceManager.silentRefresh(minInterval: 180, reason: "next-article") }
         NotificationPermissionManager.shared.record(.newsNextArticle)
@@ -216,20 +219,17 @@ struct ArticleContainerView: View {
         }
 
         if !NewsPointsCoordinator.canAccess(next.article, auth: authManager, viewModel: viewModel) {
-            // ★【需求5】只有"真的要弹窗"时才打断音频；自动扣点时音频连贯播放
             let willPrompt = NewsPointsCoordinator.shared.willPromptForUnlock(
                 next.article, auth: authManager, viewModel: viewModel)
             await MainActor.run {
                 if willPrompt { audioPlayerManager.stop() }
                 NewsPointsCoordinator.shared.attemptUnlockArticle(
                     next.article, auth: authManager, viewModel: viewModel,
-                    // 静默扣点失败 / 中途点数耗尽 → 兜底停掉音频，避免"弹窗了还在念"
                     onBlocked: { self.audioPlayerManager.stop() }
                 ) {
                     Task {
                         await self.performSwitchAfterUnlock(
                             next: next,
-                            // 确认扣点后恢复自动播放（想保持"确认后不再自动播"就改回 shouldAutoplayNext && !willPrompt）
                             shouldAutoplayNext: shouldAutoplayNext,
                             triggerViewTrack: triggerViewTrack,
                             triggerListenTrack: triggerListenTrack)
@@ -249,7 +249,6 @@ struct ArticleContainerView: View {
                                           shouldAutoplayNext: Bool,
                                           triggerViewTrack: Bool,
                                           triggerListenTrack: Bool) async {
-        // ★★★【需求6】不再等待图片：先切页，图片进后台队列，由 ArticleImageView 自愈显示
         if !next.article.images.isEmpty {
             resourceManager.enqueueImageDownloads(timestamp: next.article.timestamp,
                                                   imageNames: next.article.images,
@@ -290,7 +289,6 @@ struct ArticleContainerView: View {
         }
     }
 
-    /// 用共享下载队列预热下一篇（比原来的串行 await 更轻，也不会抛错）
     private func prefetchNextArticleImages() {
         let sourceNameToSearch: String?
         switch navigationContext {

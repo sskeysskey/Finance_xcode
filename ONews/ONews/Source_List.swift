@@ -937,6 +937,7 @@ struct SourceListView: View {
         .environment(\.appNavPath, $navPath)
         .tint(.blue)
         .onAppear {
+            viewModel.finishReadingIfNeeded()   // ★ 新增，必须在 loadNews 之前
             viewModel.loadNews()
 
             // ★★★【需求1】首启用带遮罩的正常同步；之后每次回到首页只做静默刷新 ★★★
@@ -961,6 +962,10 @@ struct SourceListView: View {
             let isBack = newDepth < lastNavDepth
             lastNavDepth = newDepth
             guard isBack else { return }
+
+            // ★★★ 兜底：任何形式的返回（手势返回 / 返回按钮 / 系统 pop），
+            //     都强制把详情页的"已读"同步落盘，然后才允许数据重建。
+            viewModel.finishReadingIfNeeded()
 
             Task {
                 await resourceManager.silentRefresh(minInterval: 45, reason: "nav-back(\(newDepth))")
@@ -1211,11 +1216,12 @@ struct SourceListView: View {
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .contextMenu {
-                                // 保持原有菜单逻辑
-                                if item.article.isRead {
-                                    Button { viewModel.markAsUnread(articleID: item.article.id) } label: { Label(Localized.markAsUnread_text, systemImage: "circle") }
+                                if viewModel.isArticleEffectivelyRead(item.article) {
+                                    Button { withAnimation { viewModel.markAsUnread(article: item.article) } }
+                                        label: { Label(Localized.markAsUnread_text, systemImage: "circle") }
                                 } else {
-                                    Button { viewModel.markAsRead(articleID: item.article.id) } label: { Label(Localized.markAsRead_text, systemImage: "checkmark.circle") }
+                                    Button { withAnimation { viewModel.markAsRead(article: item.article) } }
+                                        label: { Label(Localized.markAsRead_text, systemImage: "checkmark.circle") }
                                 }
                             }
                         }
