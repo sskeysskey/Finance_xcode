@@ -338,8 +338,6 @@ struct ArticleRowCardView: View {
                     .padding(.horizontal, 8).padding(.vertical, 4)
                     .background(Color.orange.opacity(0.15))
                     .cornerRadius(8)
-                } else if isFree {
-                    FreeTagView()
                 }
             }
 
@@ -1108,7 +1106,6 @@ struct ArticleListView: View {
             }
             .listStyle(PlainListStyle())
             .environment(\.defaultMinListRowHeight, 0)
-            .animation(.easeInOut(duration: 0.25), value: baseFilteredArticles.count)
         }
     }
 
@@ -1175,7 +1172,8 @@ struct ArticleListView: View {
     private func markOne(_ item: ArticleItem, asRead: Bool) {
         ONewsHaptics.light()
         let a = item.article
-        withAnimation(.easeInOut(duration: 0.25)) { viewModel.markArticles([a], asRead: asRead) }
+        // 直接更新状态，无需 withAnimation，原生 swipeActions 会平滑收起此行
+        viewModel.markArticles([a], asRead: asRead)
         let msg = isGlobalEnglishMode
             ? (asRead ? "Marked as read" : "Marked as unread")
             : (asRead ? "已标记为已读" : "已标记为未读")
@@ -1202,6 +1200,9 @@ struct ArticleListView: View {
                                                   imageNames: article.images,
                                                   priority: true)
         }
+        // ★★★ 新增：点击瞬间就在后台把正文排版算好，push 动画结束时内容已就位（无占位、无跳版）
+        ArticleBodyCache.shared.prefetch(article: article)
+
         await MainActor.run {
             appNavPath?.wrappedValue.append(
                 NavigationTarget.articleDetail(article, self.sourceName, "source", autoPlay))
@@ -1468,7 +1469,6 @@ struct AllArticlesListView: View {
             }
             .listStyle(PlainListStyle())
             .environment(\.defaultMinListRowHeight, 0)
-            .animation(.easeInOut(duration: 0.25), value: baseFilteredArticles.count)
         }
     }
 
@@ -1534,7 +1534,8 @@ struct AllArticlesListView: View {
     private func markOne(_ item: ArticleItem, asRead: Bool) {
         ONewsHaptics.light()
         let a = item.article
-        withAnimation(.easeInOut(duration: 0.25)) { viewModel.markArticles([a], asRead: asRead) }
+        // 直接更新状态，无需 withAnimation，原生 swipeActions 会平滑收起此行
+        viewModel.markArticles([a], asRead: asRead)
         let msg = isGlobalEnglishMode
             ? (asRead ? "Marked as read" : "Marked as unread")
             : (asRead ? "已标记为已读" : "已标记为未读")
@@ -1562,6 +1563,8 @@ struct AllArticlesListView: View {
                                                   imageNames: article.images,
                                                   priority: true)
         }
+        ArticleBodyCache.shared.prefetch(article: article)   // ★★★ 新增
+
         await MainActor.run {
             appNavPath?.wrappedValue.append(
                 NavigationTarget.articleDetail(article, sourceName, "all", autoPlay))

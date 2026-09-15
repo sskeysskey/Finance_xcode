@@ -1485,6 +1485,8 @@ struct SourceListView: View {
                                                 imageNames: article.images,
                                                 priority: true)
         }
+        ArticleBodyCache.shared.prefetch(article: article)   // ★★★ 新增
+
         await MainActor.run {
             self.navPath.append(NavigationTarget.articleDetail(article, sourceName, contextStr, autoPlay))
         }

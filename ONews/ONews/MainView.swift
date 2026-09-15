@@ -52,7 +52,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             await MainActor.run { self.hasRequestedPermissions = true }
         }
 
-        // 视频模块预加载
         Task(priority: .userInitiated) { [weak self] in
             try? await Task.sleep(nanoseconds: 10_000_000)
             guard let self = self else { return }
@@ -118,6 +117,8 @@ struct NewsReaderAppApp: App {
 
             if newPhase == .active {
                 print("App is active. Syncing status...")
+                // ★ 恢复"允许提交阅读会话"的权限
+                newsViewModel.noteAppBecameActive()
                 newsViewModel.syncReadStatusFromPersistence()
                 authManager.handleAppDidBecomeActive()
 
@@ -137,15 +138,16 @@ struct NewsReaderAppApp: App {
                 }
 
             } else if newPhase == .background {
-                // ★ 现在这里是同步落盘（按 topic），不再依赖 UUID 反查
-                print("App entered background. Committing pending reads.")
-                newsViewModel.commitPendingReadsSilently()
+                // ★★★ 关键：进后台 **只把已确定的已读刷盘**，
+                //     绝不把"正在阅读、尚未读完"的那一篇标记为已读。
+                print("App entered background. Flush read records only (reading session preserved).")
+                newsViewModel.noteAppLeftForeground()
                 Task { @MainActor in
                     ImageLoader.clearCache()
                     print("App entered background. Image cache cleared to save memory.")
                 }
             } else if newPhase == .inactive {
-                newsViewModel.commitPendingReadsSilently()
+                newsViewModel.noteAppLeftForeground()
             }
         }
     }
@@ -195,26 +197,11 @@ struct MainAppView: View {
         .animation(.easeInOut, value: resourceManager.showForceUpdate)
         .animation(.easeInOut, value: resourceManager.showMigrationSheet)
 
-        .background(
-            Color.clear
-                .sheet(isPresented: $pointsCoordinator.showInviteSheet) { NewsInviteView() }
-        )
-        .background(
-            Color.clear
-                .sheet(isPresented: $pointsCoordinator.showVideoInviteSheet) { VideoInviteView() }
-        )
-        .background(
-            Color.clear
-                .sheet(isPresented: $authManager.showSubscriptionSheet) { SubscriptionView() }
-        )
-        .background(
-            Color.clear
-                .sheet(isPresented: $anonPromo.showSheet) { AnonymousSubscribeView() }
-        )
-        .background(
-            Color.clear
-                .sheet(isPresented: $notifManager.showPreAsk) { NotificationPreAskView() }
-        )
+        .background(Color.clear.sheet(isPresented: $pointsCoordinator.showInviteSheet) { NewsInviteView() })
+        .background(Color.clear.sheet(isPresented: $pointsCoordinator.showVideoInviteSheet) { VideoInviteView() })
+        .background(Color.clear.sheet(isPresented: $authManager.showSubscriptionSheet) { SubscriptionView() })
+        .background(Color.clear.sheet(isPresented: $anonPromo.showSheet) { AnonymousSubscribeView() })
+        .background(Color.clear.sheet(isPresented: $notifManager.showPreAsk) { NotificationPreAskView() })
 
         .onReceive(NotificationCenter.default.publisher(for: .notificationPermissionGranted)) { _ in
             newsViewModel.refreshBadge()
@@ -257,9 +244,7 @@ struct VideoOnlyHomeView: View {
                 VideoModuleClosedView()
             }
         }
-        .onAppear {
-            Task { await resourceManager.refreshServerConfig(minInterval: 120) }
-        }
+        .onAppear { Task { await resourceManager.refreshServerConfig(minInterval: 120) } }
         .sheet(isPresented: $supportManager.showChat) {
             SupportChatView(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
         }
@@ -310,7 +295,11 @@ struct SearchBarInline: View {
 }
 
 // ============================================================================
-// MARK: - NewsViewModel（★已读引擎重写：同步落盘 + topic 稳定键 + 稳定 UUID）
+// MARK: - NewsViewModel
+// ★ 已读引擎重写：
+//   1) 阅读会话（reading session）纯内存，永不落盘 → 杀进程 / 被系统回收都保持未读
+//   2) 已读只由 4 类"显式用户动作"提交：返回列表 / 下一篇 / 音频跳下一篇 / 列表手动标记
+//   3) 阅读期间不重写 sources 数组 → 详情页不会被 @Published 风暴刷成 PPT
 // ============================================================================
 @MainActor
 class NewsViewModel: ObservableObject {
@@ -333,14 +322,14 @@ class NewsViewModel: ObservableObject {
     var badgeUpdater: ((Int) -> Void)?
     private var cancellables = Set<AnyCancellable>()
 
-    /// 暂存已读（id -> topic）。现在只作为兼容通道，主流程都是"写入即落盘"
-    private var pendingReadTopics: [UUID: String] = [:]
-
-    /// 当前详情页正在阅读的文章（兜底提交用）
+    // MARK: 阅读会话（★纯内存，绝不持久化）
     private var readingArticleID: UUID?
     private var readingArticleTopic: String?
+    /// 一旦阅读期间 App 离开前台，本次会话的提交权限就被吊销（回前台恢复）
+    private var suspendedDuringReading = false
+    /// 阅读期间累积的"内存同步"债务
+    private var pendingMemorySync = false
 
-    /// 阅读详情页期间禁止重建 sources
     @Published var isReadingArticle: Bool = false {
         didSet {
             guard oldValue != isReadingArticle else { return }
@@ -373,14 +362,6 @@ class NewsViewModel: ObservableObject {
     init() {
         loadReadRecords()
 
-        $sources
-            .map { sources in sources.flatMap { $0.articles }.filter { !$0.isRead }.count }
-            .removeDuplicates()
-            .sink { [weak self] unreadCount in
-                self?.badgeUpdater?(unreadCount)
-            }
-            .store(in: &cancellables)
-
         NotificationCenter.default.publisher(for: .newsDataDidUpdate)
             .sink { [weak self] _ in
                 guard let self = self else { return }
@@ -403,8 +384,20 @@ class NewsViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
-    func refreshBadge() {
-        badgeUpdater?(totalUnreadCount)
+    func refreshBadge() { badgeUpdater?(totalUnreadCount) }
+
+    // MARK: - 生命周期钩子（App 层调用）
+    /// 离开前台：只把"已确定的已读记录"刷到磁盘；吊销当前阅读会话的提交权限
+    func noteAppLeftForeground() {
+        if isReadingArticle || readingArticleTopic != nil {
+            suspendedDuringReading = true
+            print("⏸️ [阅读会话] App 离开前台，本篇保持未读（提交权限已吊销）。")
+        }
+        UserDefaults.standard.synchronize()   // 立刻刷盘，防止随后被杀导致已读丢失
+    }
+
+    func noteAppBecameActive() {
+        suspendedDuringReading = false
     }
 
     // MARK: - 锁定逻辑
@@ -415,9 +408,9 @@ class NewsViewModel: ObservableObject {
     }
 
     func toggleTimestampExpansion(for sourceKey: String, timestamp: String) {
-        var currentSet = expandedTimestampsBySource[sourceKey, default: Set<String>()]
-        if currentSet.contains(timestamp) { currentSet.remove(timestamp) } else { currentSet.insert(timestamp) }
-        expandedTimestampsBySource[sourceKey] = currentSet
+        var set = expandedTimestampsBySource[sourceKey, default: Set<String>()]
+        if set.contains(timestamp) { set.remove(timestamp) } else { set.insert(timestamp) }
+        expandedTimestampsBySource[sourceKey] = set
     }
 
     private func loadReadRecords() {
@@ -438,9 +431,9 @@ class NewsViewModel: ObservableObject {
         self.lockedDays = resourceManager?.serverLockedDays ?? 0
         let currentMappings = resourceManager?.sourceMappings ?? [:]
         let subscribedIDs = SubscriptionManager.shared.subscribedSourceIDs
-        let hasLegacySubscriptions = UserDefaults.standard.object(forKey: SubscriptionManager.shared.oldSubscribedSourcesKey) != nil
+        let hasLegacy = UserDefaults.standard.object(forKey: SubscriptionManager.shared.oldSubscribedSourcesKey) != nil
 
-        if subscribedIDs.isEmpty && !hasLegacySubscriptions {
+        if subscribedIDs.isEmpty && !hasLegacy {
             self.sources = []
             self.allArticlesSortedForDisplay = []
             return
@@ -459,7 +452,6 @@ class NewsViewModel: ObservableObject {
 
             var allArticlesBySourceID = [String: [Article]]()
             let decoder = JSONDecoder()
-            // ★ 稳定 ID 去重集合
             var usedKeys = Set<String>()
 
             for url in newsJSONURLs.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
@@ -467,18 +459,16 @@ class NewsViewModel: ObservableObject {
                       let decoded = try? decoder.decode([String: [Article]].self, from: data) else { continue }
 
                 for (_, articles) in decoded {
-                    guard let firstArticle = articles.first,
-                          let sourceId = firstArticle.source_id else { continue }
+                    guard let first = articles.first, let sourceId = first.source_id else { continue }
                     if !subscribedIDs.contains(sourceId) { continue }
 
                     let timestamp = url.lastPathComponent
                         .replacingOccurrences(of: "onews_", with: "")
                         .replacingOccurrences(of: ".json", with: "")
 
-                    let articlesWithTimestamp = articles.map { article -> Article in
+                    let withTs = articles.map { article -> Article in
                         var m = article
                         m.timestamp = timestamp
-                        // ★★★ 确定性稳定标识：数据重建后 id 不变
                         var key = "\(sourceId)|\(timestamp)|\(article.topic)"
                         if usedKeys.contains(key) {
                             var n = 2
@@ -490,35 +480,34 @@ class NewsViewModel: ObservableObject {
                         m.id = Article.stableUUID(from: key)
                         return m
                     }
-                    allArticlesBySourceID[sourceId, default: []].append(contentsOf: articlesWithTimestamp)
+                    allArticlesBySourceID[sourceId, default: []].append(contentsOf: withTs)
                 }
             }
 
             var tempSources = allArticlesBySourceID.map { sourceId, articles -> NewsSource in
-                let rawMappingName = currentMappings[sourceId] ?? sourceId
-                let nameParts = rawMappingName.components(separatedBy: "|")
-                let cnName = nameParts.first ?? rawMappingName
-                let enName = nameParts.count > 1 ? nameParts[1] : cnName
+                let raw = currentMappings[sourceId] ?? sourceId
+                let parts = raw.components(separatedBy: "|")
+                let cnName = parts.first ?? raw
+                let enName = parts.count > 1 ? parts[1] : cnName
 
-                let sortedArticles = articles.sorted {
+                let sorted = articles.sorted {
                     if $0.timestamp != $1.timestamp { return $0.timestamp > $1.timestamp }
                     let h1 = $0.hot ?? 0, h2 = $1.hot ?? 0
                     if h1 != h2 { return h1 > h2 }
                     return $0.topic < $1.topic
                 }
-                return NewsSource(sourceId: sourceId, name: cnName, name_en: enName, articles: sortedArticles)
+                return NewsSource(sourceId: sourceId, name: cnName, name_en: enName, articles: sorted)
             }
-            .sorted { source1, source2 in
-                let index1 = preferredOrder.firstIndex(of: source1.sourceId) ?? Int.max
-                let index2 = preferredOrder.firstIndex(of: source2.sourceId) ?? Int.max
-                if index1 != index2 { return index1 < index2 }
-                return source1.name < source2.name
+            .sorted { s1, s2 in
+                let i1 = preferredOrder.firstIndex(of: s1.sourceId) ?? Int.max
+                let i2 = preferredOrder.firstIndex(of: s2.sourceId) ?? Int.max
+                if i1 != i2 { return i1 < i2 }
+                return s1.name < s2.name
             }
 
             for i in tempSources.indices {
                 for j in tempSources[i].articles.indices {
-                    let topic = tempSources[i].articles[j].topic
-                    if readRecordsCopy.keys.contains(topic) {
+                    if readRecordsCopy.keys.contains(tempSources[i].articles[j].topic) {
                         tempSources[i].articles[j].isRead = true
                     }
                 }
@@ -528,59 +517,47 @@ class NewsViewModel: ObservableObject {
             let flatList = finalSources.flatMap { source in
                 source.articles.map { (article: $0, sourceName: source.name, sourceNameEN: source.name_en) }
             }
-            let finalAllArticles = flatList.sorted { item1, item2 in
-                if item1.article.timestamp != item2.article.timestamp {
-                    return item1.article.timestamp > item2.article.timestamp
+            let finalAll = flatList.sorted { i1, i2 in
+                if i1.article.timestamp != i2.article.timestamp {
+                    return i1.article.timestamp > i2.article.timestamp
                 }
-                let h1 = item1.article.hot ?? 0, h2 = item2.article.hot ?? 0
+                let h1 = i1.article.hot ?? 0, h2 = i2.article.hot ?? 0
                 if h1 != h2 { return h1 > h2 }
-                let key1 = NewsViewModel.djb2Hash(item1.article.topic + item1.sourceName)
-                let key2 = NewsViewModel.djb2Hash(item2.article.topic + item2.sourceName)
-                return key1 < key2
+                let k1 = NewsViewModel.djb2Hash(i1.article.topic + i1.sourceName)
+                let k2 = NewsViewModel.djb2Hash(i2.article.topic + i2.sourceName)
+                return k1 < k2
             }
 
             await MainActor.run {
-                NewsLockRule.noteNewestLocalArticleDate(finalAllArticles.first?.article.timestamp)
+                NewsLockRule.noteNewestLocalArticleDate(finalAll.first?.article.timestamp)
 
                 if self.isReadingArticle {
                     self.pendingReload = true
                     return
                 }
 
-                // ★★★ 关键修复：用"当前"的 readRecords 再刷一遍，消除后台快照竞态
                 let records = self.readRecords
                 var srcs = finalSources
                 for i in srcs.indices {
                     for j in srcs[i].articles.indices where !srcs[i].articles[j].isRead {
-                        if records[srcs[i].articles[j].topic] != nil {
-                            srcs[i].articles[j].isRead = true
-                        }
+                        if records[srcs[i].articles[j].topic] != nil { srcs[i].articles[j].isRead = true }
                     }
                 }
-                var flat = finalAllArticles
+                var flat = finalAll
                 for k in flat.indices where !flat[k].article.isRead {
-                    if records[flat[k].article.topic] != nil {
-                        flat[k].article.isRead = true
-                    }
+                    if records[flat[k].article.topic] != nil { flat[k].article.isRead = true }
                 }
 
                 self.sources = srcs
                 self.allArticlesSortedForDisplay = flat
+                self.refreshBadge()
                 print("新闻数据加载/刷新完成！(后台线程处理)")
-
-                #if DEBUG
-                if let newest = flat.first?.article.timestamp {
-                    print(NewsLockRule.debugDescribe(timestamp: newest,
-                                                    lockedDays: self.lockedDays,
-                                                    serverDate: self.resourceManager?.serverDate))
-                }
-                #endif
             }
         }
     }
 
     // ========================================================================
-    // MARK: - ★已读核心：同步、幂等、立即持久化
+    // MARK: - 已读核心
     // ========================================================================
 
     func article(withID id: UUID) -> Article? {
@@ -590,179 +567,43 @@ class NewsViewModel: ObservableObject {
         return nil
     }
 
-    private func indexPathOfArticle(id: UUID) -> (Int, Int)? {
-        for i in sources.indices {
-            if let j = sources[i].articles.firstIndex(where: { $0.id == id }) { return (i, j) }
-        }
-        return nil
-    }
-
-    /// 唯一的状态写入口：以 topic 为稳定键，先落盘再同步内存（一次性替换，只发一次通知）
+    /// 唯一的状态写入口：**先落盘**（durability），内存同步可延后（performance）
     private func applyReadState(_ targets: [ReadTarget], read: Bool) {
         guard !targets.isEmpty else { return }
         let topics = Set(targets.map { $0.topic })
-        let ids = Set(targets.compactMap { $0.id })
 
-        // 1. 持久化（同步、立即）
-        var recordsChanged = false
+        var changed = false
         for t in topics {
             if read {
-                if readRecords[t] == nil { readRecords[t] = Date(); recordsChanged = true }
+                if readRecords[t] == nil { readRecords[t] = Date(); changed = true }
             } else {
-                if readRecords.removeValue(forKey: t) != nil { recordsChanged = true }
+                if readRecords.removeValue(forKey: t) != nil { changed = true }
             }
         }
-        if recordsChanged { saveReadRecords() }
+        if changed { saveReadRecords() }
 
-        // 2. 清理暂存
-        for id in ids { pendingReadTopics.removeValue(forKey: id) }
-        if !read {
-            let snap = pendingReadTopics
-            for (k, v) in snap where topics.contains(v) { pendingReadTopics.removeValue(forKey: k) }
+        if isReadingArticle {
+            // ★ 阅读详情页期间不重写 sources / flat 数组：
+            //   避免 @Published 广播导致详情页整棵重排（这是"点下一篇卡一下"的根因）。
+            //   UI 正确性由 isArticleEffectivelyRead(readRecords) 保证。
+            pendingMemorySync = true
+            return
         }
-
-        // 3. 同步内存（sources）
-        var srcs = sources
-        var srcChanged = false
-        for i in srcs.indices {
-            for j in srcs[i].articles.indices {
-                let a = srcs[i].articles[j]
-                guard topics.contains(a.topic) || ids.contains(a.id) else { continue }
-                if a.isRead != read { srcs[i].articles[j].isRead = read; srcChanged = true }
-            }
-        }
-        if srcChanged { sources = srcs }
-
-        // 4. 同步内存（全部文章扁平列表）
-        var flat = allArticlesSortedForDisplay
-        var flatChanged = false
-        for k in flat.indices {
-            let a = flat[k].article
-            guard topics.contains(a.topic) || ids.contains(a.id) else { continue }
-            if a.isRead != read { flat[k].article.isRead = read; flatChanged = true }
-        }
-        if flatChanged { allArticlesSortedForDisplay = flat }
-
-        badgeUpdater?(totalUnreadCount)
+        refreshMemoryFromRecords()
     }
 
-    // MARK: 对外 API
-
-    /// ★推荐：读完立刻落盘
-    func markArticleAsRead(_ article: Article) {
-        applyReadState([ReadTarget(id: article.id, topic: article.topic)], read: true)
-    }
-
-    func markAsRead(article: Article) { markArticleAsRead(article) }
-
-    func markAsUnread(article: Article) {
-        applyReadState([ReadTarget(id: article.id, topic: article.topic)], read: false)
-    }
-
-    func markAsRead(articleID: UUID) {
-        if let a = article(withID: articleID) {
-            markArticleAsRead(a)
-        } else if let t = pendingReadTopics[articleID] {
-            applyReadState([ReadTarget(id: articleID, topic: t)], read: true)
-        }
-    }
-
-    func markAsUnread(articleID: UUID) {
-        if let a = article(withID: articleID) {
-            markAsUnread(article: a)
-        } else if let t = pendingReadTopics[articleID] {
-            applyReadState([ReadTarget(id: articleID, topic: t)], read: false)
-        }
-    }
-
-    /// 批量（多选 / 撤销 / 以上以下全部已读）
-    func markArticles(_ articles: [Article], asRead: Bool) {
-        guard !articles.isEmpty else { return }
-        applyReadState(articles.map { ReadTarget(id: $0.id, topic: $0.topic) }, read: asRead)
-    }
-
-    // MARK: 暂存（兼容保留）
-    @discardableResult
-    func stageArticleAsRead(_ article: Article) -> Bool {
-        if readRecords[article.topic] != nil { return false }
-        if pendingReadTopics[article.id] != nil { return false }
-        pendingReadTopics[article.id] = article.topic
-        return true
-    }
-
-    @discardableResult
-    func stageArticleAsRead(articleID: UUID) -> Bool {
-        guard let a = article(withID: articleID) else { return false }
-        return stageArticleAsRead(a)
-    }
-
-    func isArticlePendingRead(articleID: UUID) -> Bool { pendingReadTopics[articleID] != nil }
-
-    /// 把暂存的全部落盘（同步）
-    func persistPendingReads() {
-        guard !pendingReadTopics.isEmpty else { return }
-        let snap = pendingReadTopics
-        pendingReadTopics.removeAll()
-        applyReadState(snap.map { ReadTarget(id: $0.key, topic: $0.value) }, read: true)
-    }
-
-    func commitPendingReads() { persistPendingReads() }
-    func commitPendingReadsSilently() { persistPendingReads() }
-
-    // MARK: 阅读会话（★核心修复点）
-    func beginReading(_ article: Article) {
-        readingArticleID = article.id
-        readingArticleTopic = article.topic
-        if !isReadingArticle { isReadingArticle = true }
-    }
-
-    /// 退出详情页：**先同步落盘，最后才解冻数据重建**
-    func finishReading(markCurrentAsRead: Bool = true) {
-        let id = readingArticleID
-        let topic = readingArticleTopic
-        readingArticleID = nil
-        readingArticleTopic = nil
-
-        if markCurrentAsRead, let topic = topic {
-            applyReadState([ReadTarget(id: id, topic: topic)], read: true)
-        }
-        persistPendingReads()
-
-        // ★ 必须放最后：这一行会触发被延后的 loadNews()
-        isReadingArticle = false
-    }
-
-    /// 兜底：列表页出现 / 导航栈回退时调用，防 onDisappear 偶发不触发
-    func finishReadingIfNeeded() {
-        guard readingArticleID != nil || readingArticleTopic != nil
-                || isReadingArticle || !pendingReadTopics.isEmpty else { return }
-        finishReading(markCurrentAsRead: true)
-    }
-
-    // MARK: 已读判定
-    func isEffectivelyRead(articleID: UUID) -> Bool {
-        if isArticlePendingRead(articleID: articleID) { return true }
-        if let a = article(withID: articleID) { return isArticleEffectivelyRead(a) }
-        return false
-    }
-
-    func isArticleEffectivelyRead(_ article: Article) -> Bool {
-        if pendingReadTopics[article.id] != nil { return true }
-        if readRecords[article.topic] != nil { return true }
-        return article.isRead
-    }
-
-    func syncReadStatusFromPersistence() {
-        loadReadRecords()
-        let topics = Set(readRecords.keys)
-        guard !topics.isEmpty else { return }
+    /// 以 readRecords 为唯一真相，把内存数组同步一次（双向）
+    private func refreshMemoryFromRecords() {
+        pendingMemorySync = false
+        let records = readRecords
 
         var srcs = sources
         var changed = false
         for i in srcs.indices {
-            for j in srcs[i].articles.indices where !srcs[i].articles[j].isRead {
-                if topics.contains(srcs[i].articles[j].topic) {
-                    srcs[i].articles[j].isRead = true; changed = true
+            for j in srcs[i].articles.indices {
+                let want = records[srcs[i].articles[j].topic] != nil
+                if srcs[i].articles[j].isRead != want {
+                    srcs[i].articles[j].isRead = want; changed = true
                 }
             }
         }
@@ -770,14 +611,103 @@ class NewsViewModel: ObservableObject {
 
         var flat = allArticlesSortedForDisplay
         var fChanged = false
-        for k in flat.indices where !flat[k].article.isRead {
-            if topics.contains(flat[k].article.topic) {
-                flat[k].article.isRead = true; fChanged = true
+        for k in flat.indices {
+            let want = records[flat[k].article.topic] != nil
+            if flat[k].article.isRead != want {
+                flat[k].article.isRead = want; fChanged = true
             }
         }
         if fChanged { allArticlesSortedForDisplay = flat }
 
-        if changed || fChanged { print("状态同步：已把持久化的已读同步到内存。") }
+        refreshBadge()
+    }
+
+    // MARK: 对外 API
+    func markArticleAsRead(_ article: Article) {
+        applyReadState([ReadTarget(id: article.id, topic: article.topic)], read: true)
+    }
+    func markAsRead(article: Article) { markArticleAsRead(article) }
+    func markAsUnread(article: Article) {
+        applyReadState([ReadTarget(id: article.id, topic: article.topic)], read: false)
+    }
+    func markAsRead(articleID: UUID) {
+        if let a = article(withID: articleID) { markArticleAsRead(a) }
+    }
+    func markAsUnread(articleID: UUID) {
+        if let a = article(withID: articleID) { markAsUnread(article: a) }
+    }
+    func markArticles(_ articles: [Article], asRead: Bool) {
+        guard !articles.isEmpty else { return }
+        applyReadState(articles.map { ReadTarget(id: $0.id, topic: $0.topic) }, read: asRead)
+    }
+
+    // MARK: 遗留"暂存"接口 —— ★已废弃为 no-op
+    // 之所以保留签名：避免其它文件编译失败。
+    // 之所以改成 no-op：任何"进详情页就暂存已读"的旧路径都必须被彻底掐死，
+    // 否则杀进程时 commitPendingReads 会把没读完的文章写成已读。
+    @discardableResult
+    func stageArticleAsRead(_ article: Article) -> Bool { false }
+    @discardableResult
+    func stageArticleAsRead(articleID: UUID) -> Bool { false }
+    func isArticlePendingRead(articleID: UUID) -> Bool { false }
+    func persistPendingReads() { UserDefaults.standard.synchronize() }
+    func commitPendingReads() { persistPendingReads() }
+    func commitPendingReadsSilently() { persistPendingReads() }
+
+    // MARK: 阅读会话
+    func beginReading(_ article: Article) {
+        readingArticleID = article.id
+        readingArticleTopic = article.topic
+        suspendedDuringReading = false
+        if !isReadingArticle { isReadingArticle = true }
+    }
+
+    /// 退出详情页（用户真的返回 / 明确读完）：先落盘 → 再同步内存 → 最后解冻数据重建
+    func finishReading(markCurrentAsRead: Bool = true) {
+        let topic = readingArticleTopic
+        let id = readingArticleID
+        readingArticleID = nil
+        readingArticleTopic = nil
+
+        // ★ 若阅读期间进过后台（可能已被系统回收再恢复），本次不允许自动标记已读
+        let allowCommit = markCurrentAsRead && !suspendedDuringReading
+        if !allowCommit && markCurrentAsRead {
+            print("🚫 [阅读会话] 曾离开前台，跳过自动标记已读，保持未读。")
+        }
+
+        if allowCommit, let topic = topic {
+            // 此时 isReadingArticle 仍为 true → 只落盘，内存同步在下面统一做
+            applyReadState([ReadTarget(id: id, topic: topic)], read: true)
+        }
+
+        if pendingMemorySync { refreshMemoryFromRecords() }
+        UserDefaults.standard.synchronize()
+
+        suspendedDuringReading = false
+        isReadingArticle = false      // 必须最后：这一行会触发被延后的 loadNews()
+    }
+
+    /// 兜底：列表页出现 / 导航栈回退时调用
+    func finishReadingIfNeeded() {
+        guard readingArticleID != nil || readingArticleTopic != nil
+                || isReadingArticle || pendingMemorySync else { return }
+        finishReading(markCurrentAsRead: true)
+    }
+
+    // MARK: 已读判定
+    func isEffectivelyRead(articleID: UUID) -> Bool {
+        if let a = article(withID: articleID) { return isArticleEffectivelyRead(a) }
+        return false
+    }
+
+    func isArticleEffectivelyRead(_ article: Article) -> Bool {
+        if readRecords[article.topic] != nil { return true }
+        return article.isRead
+    }
+
+    func syncReadStatusFromPersistence() {
+        loadReadRecords()
+        refreshMemoryFromRecords()
     }
 
     // MARK: 批量操作
@@ -795,46 +725,41 @@ class NewsViewModel: ObservableObject {
     func markAllAsReadInSource(_ sourceName: String?) {
         let targets: [Article]
         if let name = sourceName, let s = sources.first(where: { $0.name == name }) {
-            targets = s.articles.filter { !$0.isRead }
+            targets = s.articles.filter { !isArticleEffectivelyRead($0) }
         } else {
-            targets = sources.flatMap { $0.articles }.filter { !$0.isRead }
+            targets = sources.flatMap { $0.articles }.filter { !isArticleEffectivelyRead($0) }
         }
         markArticles(targets, asRead: true)
     }
 
     var totalUnreadCount: Int {
-        sources.flatMap { $0.articles }.filter { !$0.isRead }.count
+        sources.flatMap { $0.articles }.filter { !isArticleEffectivelyRead($0) }.count
     }
 
-    // MARK: - 下一篇
+    // MARK: - 下一篇（★不再每次全量排序）
     func findNextUnread(after id: UUID, inSource sourceName: String?) -> (article: Article, sourceName: String)? {
-        let candidates: [(article: Article, sourceName: String)]
         if let name = sourceName {
-            if let source = self.sources.first(where: { $0.name == name }) {
-                candidates = source.articles.map { (article: $0, sourceName: name) }
-            } else { return nil }
-        } else {
-            candidates = self.sources.flatMap { source in
-                source.articles.map { (article: $0, sourceName: source.name) }
-            }.sorted { item1, item2 in
-                if item1.article.timestamp != item2.article.timestamp {
-                    return item1.article.timestamp > item2.article.timestamp
-                }
-                let h1 = item1.article.hot ?? 0, h2 = item2.article.hot ?? 0
-                if h1 != h2 { return h1 > h2 }
-                let key1 = NewsViewModel.djb2Hash(item1.article.topic + item1.sourceName)
-                let key2 = NewsViewModel.djb2Hash(item2.article.topic + item2.sourceName)
-                return key1 < key2
+            guard let source = sources.first(where: { $0.name == name }),
+                  let idx = source.articles.firstIndex(where: { $0.id == id }) else { return nil }
+            for a in source.articles[(idx + 1)...] where isSelectableNext(a) {
+                return (a, name)
             }
+            return nil
+        } else {
+            // ★ 直接复用已排好序的缓存列表，避免 flatMap + sorted 的主线程尖峰
+            let list = allArticlesSortedForDisplay
+            guard let idx = list.firstIndex(where: { $0.article.id == id }) else { return nil }
+            for item in list[(idx + 1)...] where isSelectableNext(item.article) {
+                return (item.article, item.sourceName)
+            }
+            return nil
         }
+    }
 
-        guard let currentIndex = candidates.firstIndex(where: { $0.article.id == id }) else { return nil }
-        let subsequentItems = candidates.suffix(from: currentIndex + 1)
-        return subsequentItems.first { item in
-            let isRead = isArticleEffectivelyRead(item.article)
-            let isLocked = !isLoggedInNow() && isTimestampLocked(timestamp: item.article.timestamp)
-            return !isRead && !isLocked
-        }
+    private func isSelectableNext(_ a: Article) -> Bool {
+        if isArticleEffectivelyRead(a) { return false }
+        if !isLoggedInNow() && isTimestampLocked(timestamp: a.timestamp) { return false }
+        return true
     }
 
     private func isLoggedInNow() -> Bool { return true }
@@ -843,26 +768,25 @@ class NewsViewModel: ObservableObject {
         var count = 0
         if let name = sourceName {
             if let source = sources.first(where: { $0.name == name }) {
-                count = source.articles.filter { $0.timestamp == timestamp }
-                    .filter { !isArticleEffectivelyRead($0) }.count
+                count = source.articles.lazy
+                    .filter { $0.timestamp == timestamp && !self.isArticleEffectivelyRead($0) }.count
             }
         } else {
             for source in sources {
-                count += source.articles.filter { $0.timestamp == timestamp }
-                    .filter { !isArticleEffectivelyRead($0) }.count
+                count += source.articles.lazy
+                    .filter { $0.timestamp == timestamp && !self.isArticleEffectivelyRead($0) }.count
             }
         }
         return count
     }
 
     func getEffectiveUnreadCount(inSource sourceName: String?) -> Int {
-        let articlesToScan: [Article]
         if let name = sourceName, let source = sources.first(where: { $0.name == name }) {
-            articlesToScan = source.articles
-        } else {
-            articlesToScan = sources.flatMap { $0.articles }
+            return source.articles.lazy.filter { !self.isArticleEffectivelyRead($0) }.count
         }
-        return articlesToScan.filter { !isArticleEffectivelyRead($0) }.count
+        return sources.reduce(0) { acc, s in
+            acc + s.articles.lazy.filter { !self.isArticleEffectivelyRead($0) }.count
+        }
     }
 }
 
@@ -870,7 +794,6 @@ class NewsViewModel: ObservableObject {
 // MARK: - 数据模型
 // ============================================================================
 struct NewsSource: Identifiable {
-    // ★ 稳定 id：避免每次重建触发 List 全量 diff
     var id: String { sourceId }
     let sourceId: String
     let name: String
@@ -891,7 +814,6 @@ struct Article: Identifiable, Codable, Hashable {
     let hot: Int?
     var isRead: Bool = false
     var timestamp: String = ""
-    /// ★ 稳定标识（source_id|timestamp|topic[#n]），不参与编解码
     var stableKey: String = ""
 
     enum CodingKeys: String, CodingKey {
@@ -901,7 +823,6 @@ struct Article: Identifiable, Codable, Hashable {
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
     static func == (lhs: Article, rhs: Article) -> Bool { lhs.id == rhs.id }
 
-    /// 由字符串派生确定性 UUID（FNV-1a + djb2 各取 8 字节）
     static func stableUUID(from key: String) -> UUID {
         var h1: UInt64 = 0xcbf29ce484222325
         var h2: UInt64 = 5381
@@ -914,18 +835,15 @@ struct Article: Identifiable, Codable, Hashable {
             bytes[i]     = UInt8(truncatingIfNeeded: h1 >> (8 * UInt64(i)))
             bytes[8 + i] = UInt8(truncatingIfNeeded: h2 >> (8 * UInt64(i)))
         }
-        return bytes.withUnsafeBufferPointer { ptr in
-            NSUUID(uuidBytes: ptr.baseAddress) as UUID
-        }
+        return bytes.withUnsafeBufferPointer { ptr in NSUUID(uuidBytes: ptr.baseAddress) as UUID }
     }
 }
 
 @MainActor
 class AppBadgeManager: ObservableObject {
-
     func requestAuthorizationAsync() async {
         await withCheckedContinuation { continuation in
-            UNUserNotificationCenter.current().requestAuthorization(options: [.badge]) { granted, error in
+            UNUserNotificationCenter.current().requestAuthorization(options: [.badge]) { granted, _ in
                 Task { @MainActor in
                     print(granted ? "用户已授予角标权限。" : "用户未授予角标权限。")
                     continuation.resume()
@@ -935,7 +853,7 @@ class AppBadgeManager: ObservableObject {
     }
 
     func requestAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.badge]) { granted, error in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.badge]) { granted, _ in
             DispatchQueue.main.async {
                 print(granted ? "用户已授予角标权限。" : "用户未授予角标权限。")
             }
@@ -946,18 +864,13 @@ class AppBadgeManager: ObservableObject {
         var backgroundTask: UIBackgroundTaskIdentifier = .invalid
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "updateBadgeCount") {
             if backgroundTask != .invalid {
-                UIApplication.shared.endBackgroundTask(backgroundTask)
-                backgroundTask = .invalid
+                UIApplication.shared.endBackgroundTask(backgroundTask); backgroundTask = .invalid
             }
         }
-        let badgeCount = max(0, count)
-        UNUserNotificationCenter.current().setBadgeCount(badgeCount) { error in
-            if let error = error {
-                print("【角标更新失败】: \(error.localizedDescription)")
-            }
+        UNUserNotificationCenter.current().setBadgeCount(max(0, count)) { error in
+            if let error = error { print("【角标更新失败】: \(error.localizedDescription)") }
             if backgroundTask != .invalid {
-                UIApplication.shared.endBackgroundTask(backgroundTask)
-                backgroundTask = .invalid
+                UIApplication.shared.endBackgroundTask(backgroundTask); backgroundTask = .invalid
             }
         }
     }

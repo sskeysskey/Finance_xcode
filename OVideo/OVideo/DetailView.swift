@@ -1,8 +1,76 @@
 import SwiftUI
 import AppKit
 
-// MARK: - 季度解析辅助（用于同系列多季联想）
-private func chineseNumeralToInt(_ raw: String) -> Int? {
+// MARK: - ⭐ 系列 / 季 解析辅助（全局 · 原样移植自 iOS）
+// ============================================================
+// 【可配置区】改这里就能调整归类行为，改完不用动任何其它代码
+// ============================================================
+
+/// 副标题分隔符：出现这些符号时，符号「前面」视为系列名，「后面」视为副标题。
+let videoSubtitleSeparators: Set<Character> = ["：", ":"]
+
+/// 【手动映射表 · 最高优先级】自动规则搞不定、或想强制指定顺序时写这里。
+/// title  = 片名原文（比较时会自动 trim / 去空格 / 半角冒号→全角）
+/// base   = 系列基础名（必须和同系列其它片解析出的 base 完全一致）
+/// season = 序号；写 nil 表示"序号未知"，会排在该系列最后
+let videoSeriesOverrides: [(title: String, base: String, season: Int?)] = [
+    // 示例：海洋奇缘：启航 = 海洋奇缘系列第 3 部
+    ("海洋奇缘：启航", "海洋奇缘", 3),
+]
+
+/// 【禁止拆分名单】写进来的"系列名"不会被当成系列去做副标题拆分，用于防止误关联。
+let videoSeriesNoSplitBases: Set<String> = [
+    // "怪物",
+    // "我是谁",
+]
+
+// ============================================================
+// 【实现区】
+// ============================================================
+
+/// 片名归一化：trim + 去空格 + 半角冒号转全角，用于查表 / 去重
+func normalizedTitleKey(_ s: String) -> String {
+    s.trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: ":",  with: "：")
+        .replacingOccurrences(of: " ",  with: "")
+        .replacingOccurrences(of: "\u{3000}", with: "")   // 全角空格
+}
+
+private let videoSeriesOverrideMap: [String: (base: String, season: Int?)] = {
+    var m: [String: (base: String, season: Int?)] = [:]
+    for o in videoSeriesOverrides {
+        m[normalizedTitleKey(o.title)] = (o.base, o.season)
+    }
+    return m
+}()
+
+private let videoSeriesNoSplitKeys: Set<String> = Set(
+    videoSeriesNoSplitBases.map { normalizedTitleKey($0) }
+)
+
+/// 命中的是哪种规则（用来决定 UI 上叫"第N季"还是"第N部"）
+enum VideoSeriesMarker {
+    case manual          // 手动映射表
+    case explicitSeason  // 第X季 / 第X部（显式标记）
+    case roman           // 冲上云霄II
+    case arabic          // 海洋奇缘2
+    case chinese         // 绝望二
+    case subtitleOnly    // 海洋奇缘：启航（有副标题、无编号）
+    case none            // 完全无标记，视为第 1 部
+}
+
+struct VideoSeriesInfo {
+    let raw: String
+    let base: String          // 系列基础名：同系列必须完全相等
+    let season: Int?          // nil = 序号未知（排最后）
+    let subtitle: String?     // 副标题，如"启航"
+    let marker: VideoSeriesMarker
+    /// 排序用：未知序号丢到最后
+    var seasonSortKey: Int { season ?? Int.max }
+}
+
+// 中文数字转阿拉伯数字（支持到 99）
+func chineseNumeralToInt(_ raw: String) -> Int? {
     let s = raw.trimmingCharacters(in: .whitespaces)
     if let n = Int(s) { return n }
     let map: [Character: Int] = ["零":0,"一":1,"二":2,"三":3,"四":4,"五":5,
@@ -25,7 +93,8 @@ private func chineseNumeralToInt(_ raw: String) -> Int? {
     return val
 }
 
-private func romanNumeralToInt(_ raw: String) -> Int? {
+// 罗马数字转整数（I V X L 组合）
+func romanNumeralToInt(_ raw: String) -> Int? {
     let map: [Character: Int] = ["I":1,"V":5,"X":10,"L":50,"C":100,"D":500,"M":1000]
     let chars = Array(raw.uppercased())
     guard !chars.isEmpty else { return nil }
@@ -37,20 +106,36 @@ private func romanNumeralToInt(_ raw: String) -> Int? {
     return total > 0 ? total : nil
 }
 
-/// 从片名解析 (基础名, 季号)
-private func videoSeasonInfo(from name: String) -> (base: String, season: Int)? {
-    let trimmed = name.trimmingCharacters(in: .whitespaces)
-    guard !trimmed.isEmpty else { return nil }
-
-    if let r = seasonByExplicitMarker(trimmed) { return r }   // 1. 第X季
-    if let r = seasonByRomanSuffix(trimmed)    { return r }   // 2. 冲上云霄II
-    if let r = seasonByArabicSuffix(trimmed)   { return r }   // 3. 洛奇2 / 洛奇4：xxx
-    if let r = seasonByChineseSuffix(trimmed)  { return r }   // 4. 绝望一
-    return (trimmed, 1)                                       // 5. 无标记 → 默认为第1部
+/// 核心：副标题剥离
+private func splitSeriesSubtitle(_ name: String) -> (head: String, subtitle: String?) {
+    guard let idx = name.firstIndex(where: { videoSubtitleSeparators.contains($0) }) else {
+        return (name, nil)
+    }
+    let head = String(name[name.startIndex..<idx]).trimmingCharacters(in: .whitespaces)
+    let sub  = String(name[name.index(after: idx)...]).trimmingCharacters(in: .whitespaces)
+    guard head.count >= 2, !sub.isEmpty else { return (name, nil) }
+    if videoSeriesNoSplitKeys.contains(normalizedTitleKey(head)) { return (name, nil) }
+    return (head, sub)
 }
 
+// 语言后缀识别（如：死无对证国语 / 无间道 粤语版）
+private func seasonByLanguageSuffix(_ name: String) -> (base: String, lang: String)? {
+    let pattern = "^(.*?)[\\s\\-_·]?(国语|粤语|普通话|国粤双语|英语|双语)(?:版)?$"
+    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    let full = NSRange(name.startIndex..., in: name)
+    guard let match = regex.firstMatch(in: name, range: full),
+          let baseRange = Range(match.range(at: 1), in: name),
+          let langRange = Range(match.range(at: 2), in: name) else { return nil }
+    
+    let base = String(name[baseRange]).trimmingCharacters(in: .whitespaces)
+    let lang = String(name[langRange]).trimmingCharacters(in: .whitespaces)
+    guard base.count >= 2 else { return nil }
+    return (base, lang)
+}
+
+// 1. 显式标记：第X季 / 第X部
 private func seasonByExplicitMarker(_ name: String) -> (base: String, season: Int)? {
-    let pattern = "第\\s*([0-9零一二三四五六七八九十百]+)\\s*季"
+    let pattern = "第\\s*([0-9零一二三四五六七八九十百]+)\\s*[季部]"
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
     let full = NSRange(name.startIndex..., in: name)
     guard let match = regex.firstMatch(in: name, range: full),
@@ -60,9 +145,11 @@ private func seasonByExplicitMarker(_ name: String) -> (base: String, season: In
     var base = name
     base.removeSubrange(matchRange)
     base = base.trimmingCharacters(in: .whitespaces)
+    guard !base.isEmpty else { return nil }
     return (base, season)
 }
 
+// 2. 结尾罗马数字：冲上云霄II
 private func seasonByRomanSuffix(_ name: String) -> (base: String, season: Int)? {
     let pattern = "^(.*?)\\s*([IVXL]{1,7})$"
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
@@ -78,6 +165,7 @@ private func seasonByRomanSuffix(_ name: String) -> (base: String, season: Int)?
     return (base, season)
 }
 
+// 3. 结尾阿拉伯数字（可带副标题）：洛奇2 / 洛奇4 最后的决战
 private func seasonByArabicSuffix(_ name: String) -> (base: String, season: Int)? {
     let pattern = "^(\\D+?)([0-9]{1,3})(?:[：:\\s\\-—·].*)?$"
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
@@ -91,6 +179,7 @@ private func seasonByArabicSuffix(_ name: String) -> (base: String, season: Int)
     return (base, season)
 }
 
+// 4. 结尾中文数字：绝望一 / 唐人街探案三
 private func seasonByChineseSuffix(_ name: String) -> (base: String, season: Int)? {
     let numerals = "零一二三四五六七八九十"
     let pattern = "^(.*?[^\(numerals)])([\(numerals)]{1,3})$"
@@ -105,13 +194,68 @@ private func seasonByChineseSuffix(_ name: String) -> (base: String, season: Int
     return (base, season)
 }
 
+/// 统一入口：片名解析为系列详情结构
+func videoSeriesInfo(from name: String) -> VideoSeriesInfo? {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    // 0) 手动最高优先级映射
+    if let ov = videoSeriesOverrideMap[normalizedTitleKey(trimmed)] {
+        return VideoSeriesInfo(raw: trimmed, base: ov.base, season: ov.season,
+                               subtitle: splitSeriesSubtitle(trimmed).subtitle,
+                               marker: .manual)
+    }
+
+    // 1) 剥离副标题套用数字规则
+    let (head, subtitle) = splitSeriesSubtitle(trimmed)
+
+    if let r = seasonByExplicitMarker(head) {
+        return VideoSeriesInfo(raw: trimmed, base: r.base, season: r.season,
+                               subtitle: subtitle, marker: .explicitSeason)
+    }
+    if let r = seasonByRomanSuffix(head) {
+        return VideoSeriesInfo(raw: trimmed, base: r.base, season: r.season,
+                               subtitle: subtitle, marker: .roman)
+    }
+    if let r = seasonByArabicSuffix(head) {
+        return VideoSeriesInfo(raw: trimmed, base: r.base, season: r.season,
+                               subtitle: subtitle, marker: .arabic)
+    }
+    if let r = seasonByChineseSuffix(head) {
+        return VideoSeriesInfo(raw: trimmed, base: r.base, season: r.season,
+                               subtitle: subtitle, marker: .chinese)
+    }
+
+    // 语言后缀识别（如：死无对证国语）
+    if let r = seasonByLanguageSuffix(head) {
+        return VideoSeriesInfo(raw: trimmed, base: r.base, season: nil,
+                               subtitle: r.lang, marker: .subtitleOnly)
+    }
+
+    // 2) 只有副标题，无编号
+    if let sub = subtitle {
+        return VideoSeriesInfo(raw: trimmed, base: head, season: nil,
+                               subtitle: sub, marker: .subtitleOnly)
+    }
+
+    // 3) 没有任何标记，默认为第 1 部
+    return VideoSeriesInfo(raw: trimmed, base: trimmed, season: 1,
+                           subtitle: nil, marker: .none)
+}
+
+/// 兼容旧接口签名
+func videoSeasonInfo(from name: String) -> (base: String, season: Int)? {
+    guard let info = videoSeriesInfo(from: name) else { return nil }
+    return (info.base, info.season ?? 999)
+}
+
 private struct RatingChip: Identifiable, Hashable {
     var id: String { source }
     let source: String
     let value: String
 }
 
-// MARK: - 主详情视图
+// MARK: - 主详情视图 (macOS)
 struct DetailView: View {
     let item: VideoItem
     @EnvironmentObject var data: VideoDataManager
@@ -236,28 +380,48 @@ struct DetailView: View {
         }
     }
 
-    // MARK: - 同系列其它季加载
+    // MARK: - ⭐ 同系列其它季/其它部加载（移植对齐 iOS 完整去重与排序）
     private func loadSeasonSiblingsIfNeeded() async {
         guard seasonSiblings.isEmpty,
-              let info = videoSeasonInfo(from: item.name),
-              !info.base.isEmpty else { return }
+              let info = videoSeriesInfo(from: item.name),
+              info.base.count >= 2 else { return }
 
         let uid = QuotaManager.currentUserId(auth: auth)
-        let results = await data.search(info.base, userId: uid)
+        // 用基础名检索（如："海洋奇缘"）
+        var results = await data.search(info.base, userId: uid)
+        if !results.contains(where: { $0.url == item.url }) { results.append(item) }
 
-        let sameSeries = results.filter { cand in
-            guard let ci = videoSeasonInfo(from: cand.name) else { return false }
-            return ci.base == info.base
+        // 1) 基础名严格匹配
+        let sameSeries = results.filter {
+            videoSeriesInfo(from: $0.name)?.base == info.base
         }
 
-        var seen = Set<String>()
-        var unique = sameSeries.filter { seen.insert($0.url).inserted }
-        if !unique.contains(where: { $0.url == item.url }) {
-            unique.append(item)
-        }
+        // 2) 按 url 去重
+        var seenURL = Set<String>()
+        let uniqueByURL = sameSeries.filter { seenURL.insert($0.url).inserted }
 
-        let sorted = unique.sorted {
-            (videoSeasonInfo(from: $0.name)?.season ?? 0) < (videoSeasonInfo(from: $1.name)?.season ?? 0)
+        // 3) 同名不同源合并留一（优先当前正在浏览项，其次评分更高项）
+        var byName: [String: VideoItem] = [:]
+        for it in uniqueByURL {
+            let key = normalizedTitleKey(it.name)
+            guard let exist = byName[key] else { byName[key] = it; continue }
+            if exist.url != item.url,
+               it.url == item.url || it.bestRating > exist.bestRating {
+                byName[key] = it
+            }
+        }
+        var deduped = Array(byName.values)
+        if !deduped.contains(where: { $0.url == item.url }) { deduped.append(item) }
+
+        // 4) 排序：有编号排前；无编号（副标题未知序号）排最后，内部以年代/名字长度托底
+        let sorted = deduped.sorted { a, b in
+            let sa = videoSeriesInfo(from: a.name)?.seasonSortKey ?? Int.max
+            let sb = videoSeriesInfo(from: b.name)?.seasonSortKey ?? Int.max
+            if sa != sb { return sa < sb }
+            let ra = a.date ?? "9999"
+            let rb = b.date ?? "9999"
+            if ra != rb { return ra < rb }
+            return a.name.count < b.name.count
         }
 
         await MainActor.run {
@@ -265,14 +429,21 @@ struct DetailView: View {
         }
     }
 
-    // MARK: - 各季展示区域
+    /// 该系列若出现过显式的“第X季/部”则用“季”，否则用“部/系列”
+    private var seasonStyleUsesSeasonWord: Bool {
+        seasonSiblings.contains { videoSeriesInfo(from: $0.name)?.marker == .explicitSeason }
+    }
+
+    // MARK: - ⭐ 各季展示区域
     private var seasonSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "square.stack.3d.up.fill")
                     .font(.system(size: 13))
                     .foregroundStyle(Color.accentColor)
-                Text(lang.t("选择季", "All Seasons"))
+                Text(seasonStyleUsesSeasonWord
+                     ? lang.t("选择季", "All Seasons")
+                     : lang.t("系列作品", "The Series"))
                     .font(.headline)
                     .foregroundStyle(.primary)
                 Text("\(seasonSiblings.count)")
@@ -300,15 +471,29 @@ struct DetailView: View {
         }
     }
 
+    /// 主标：第2季 / 第2部 / S2 / Part 2；若无编号则显示副标题（如"启航"）
     private func seasonLabel(for s: VideoItem) -> String {
-        if let info = videoSeasonInfo(from: s.name) {
-            return lang.isEnglish ? "S\(info.season)" : "第\(info.season)季"
+        guard let info = videoSeriesInfo(from: s.name) else { return s.name }
+        if let n = info.season {
+            if seasonStyleUsesSeasonWord {
+                return lang.isEnglish ? "S\(n)" : "第\(n)季"
+            }
+            return lang.isEnglish ? "Part \(n)" : "第\(n)部"
         }
+        if let sub = info.subtitle, !sub.isEmpty { return sub }
         return s.name
     }
 
+    /// 副标：有编号且有副标题时在下方补充微标
+    private func seasonSubLabel(for s: VideoItem) -> String? {
+        guard let info = videoSeriesInfo(from: s.name),
+              info.season != nil,
+              let sub = info.subtitle, !sub.isEmpty else { return nil }
+        return sub
+    }
+
     private func seasonChip(for s: VideoItem, isCurrent: Bool) -> some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             CachedImage(url: VideoAPI.coverURL(s.image), contentMode: .fill)
                 .frame(width: 76, height: 108)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -330,10 +515,21 @@ struct DetailView: View {
                 .shadow(color: isCurrent ? Color.accentColor.opacity(0.3) : Color.black.opacity(0.15),
                         radius: 4, y: 2)
 
-            Text(seasonLabel(for: s))
-                .font(.system(size: 12, weight: isCurrent ? .bold : .medium))
-                .foregroundStyle(isCurrent ? Color.accentColor : Color.secondary)
-                .lineLimit(1)
+            VStack(spacing: 2) {
+                Text(seasonLabel(for: s))
+                    .font(.system(size: 12, weight: isCurrent ? .bold : .medium))
+                    .foregroundStyle(isCurrent ? Color.accentColor : Color.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+
+                if let sub = seasonSubLabel(for: s) {
+                    Text(sub)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color.secondary.opacity(0.8))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+            }
         }
         .frame(width: 76)
         .contentShape(Rectangle())

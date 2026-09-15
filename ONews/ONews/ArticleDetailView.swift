@@ -1,8 +1,9 @@
 import SwiftUI
 import UIKit
 import Photos
+import ImageIO
 
-// MARK: - 1. 定义用于检测滚动位置的 PreferenceKey
+// MARK: - 1. PreferenceKey（仅 VIP 吸顶条使用，普通用户不会挂载探针）
 struct ScrollOffsetPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
@@ -22,703 +23,709 @@ struct ActivityView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-// MARK: - ImageLoader (保持不变)
+// ============================================================================
+// MARK: - ★ 正文排版：预构建 + 全局缓存（Reeder 式"内容先到位，绝不闪占位"）
+// ============================================================================
+
+/// 正文由若干"块"组成：连续段落被合并成 **一个** UITextView，图片单独成块。
+/// 这样一篇文章的原生视图数量从 N(段落) 降到 (图片数+1)，排版次数同步下降。
+struct ArticleBodyBlock: Identifiable {
+    enum Content {
+        case text(NSAttributedString)
+        case image(String)
+    }
+    let id: String
+    let content: Content
+}
+
+/// 预构建结果（class：可直接放进 NSCache；@unchecked Sendable：允许跨线程构建后回传）
+final class PreparedArticleBody: @unchecked Sendable {
+    let bodyID: String
+    let blocks: [ArticleBodyBlock]
+    let paragraphs: [String]       // 分享文本用
+    init(bodyID: String, blocks: [ArticleBodyBlock], paragraphs: [String]) {
+        self.bodyID = bodyID
+        self.blocks = blocks
+        self.paragraphs = paragraphs
+    }
+}
+
+enum ArticleBodyBuilder {
+
+    /// 纯计算，可在任意线程执行（UIFont / NSAttributedString 构建是线程安全的）
+    static func build(article: Article, english: Bool, fontSize: CGFloat, bodyID: String) -> PreparedArticleBody {
+
+        // 1. 选择语言
+        let source: String
+        if english, let eng = article.article_eng, !eng.isEmpty {
+            source = eng
+        } else {
+            source = article.article
+        }
+
+        // 2. 分段
+        let paras = source
+            .components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+        // 3. 图片分布（与旧逻辑完全一致，保证观感不变）
+        let allImages = article.images
+        let rest = Array(allImages.dropFirst())
+        let distribute = !rest.isEmpty && rest.count < paras.count
+        let interval = distribute ? max(1, paras.count / (rest.count + 1)) : 1
+
+        // 4. 文本属性
+        let font = NativeParagraphView.makeFont(size: fontSize)
+        let style = NativeParagraphView.makeParagraphStyle(for: fontSize)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .paragraphStyle: style,
+            .foregroundColor: UIColor.label      // 动态色，暗黑模式自动跟随
+        ]
+
+        var blocks: [ArticleBodyBlock] = []
+        var pending = NSMutableAttributedString()
+        var textBlockSeq = 0
+
+        func flushText() {
+            guard pending.length > 0 else { return }
+            blocks.append(.init(id: "\(bodyID)#t\(textBlockSeq)",
+                                content: .text(NSAttributedString(attributedString: pending))))
+            textBlockSeq += 1
+            pending = NSMutableAttributedString()
+        }
+
+        if let first = allImages.first {
+            blocks.append(.init(id: "\(bodyID)#i-first", content: .image(first)))
+        }
+
+        for (pIndex, para) in paras.enumerated() {
+            if pending.length > 0 {
+                pending.append(NSAttributedString(string: "\n", attributes: attrs))
+            }
+            pending.append(NSAttributedString(string: para, attributes: attrs))
+
+            if (pIndex + 1) % interval == 0 {
+                let imgIdx = (pIndex + 1) / interval - 1
+                if imgIdx >= 0 && imgIdx < rest.count {
+                    flushText()
+                    blocks.append(.init(id: "\(bodyID)#i\(imgIdx)", content: .image(rest[imgIdx])))
+                }
+            }
+        }
+        flushText()
+
+        // 尾部多余图片
+        if !distribute && rest.count > paras.count {
+            for (offset, name) in rest.dropFirst(paras.count).enumerated() {
+                blocks.append(.init(id: "\(bodyID)#tail\(offset)", content: .image(name)))
+            }
+        }
+
+        return PreparedArticleBody(bodyID: bodyID, blocks: blocks, paragraphs: paras)
+    }
+}
+
+/// 全局正文缓存：命中即 0 成本；未命中同步构建（毫秒级）；配合 prefetch 基本永远命中。
+final class ArticleBodyCache: @unchecked Sendable {
+    static let shared = ArticleBodyCache()
+    private let cache = NSCache<NSString, PreparedArticleBody>()
+    private init() { cache.countLimit = 16 }
+
+    static func key(articleID: UUID, english: Bool, fontSize: Double) -> String {
+        "\(articleID.uuidString)|\(english ? 1 : 0)|\(Int(fontSize))"
+    }
+
+    /// 同步获取（命中缓存直接返回，否则当场构建并入缓存）
+    func body(for article: Article, english: Bool, fontSize: Double) -> PreparedArticleBody {
+        let k = Self.key(articleID: article.id, english: english, fontSize: fontSize)
+        if let hit = cache.object(forKey: k as NSString) { return hit }
+        let built = ArticleBodyBuilder.build(article: article,
+                                            english: english,
+                                            fontSize: CGFloat(fontSize),
+                                            bodyID: k)
+        cache.setObject(built, forKey: k as NSString)
+        return built
+    }
+
+    /// 后台预热（列表点击瞬间 / 预取下一篇时调用）
+    func prefetch(article: Article, english: Bool, fontSize: Double) {
+        let k = Self.key(articleID: article.id, english: english, fontSize: fontSize)
+        if cache.object(forKey: k as NSString) != nil { return }
+        Task.detached(priority: .userInitiated) { [cache] in
+            let built = ArticleBodyBuilder.build(article: article,
+                                                 english: english,
+                                                 fontSize: CGFloat(fontSize),
+                                                 bodyID: k)
+            cache.setObject(built, forKey: k as NSString)
+        }
+    }
+
+    /// 便捷版：自动读取当前语言/字号偏好
+    @MainActor
+    func prefetch(article: Article) {
+        let english = UserDefaults.standard.bool(forKey: "isGlobalEnglishMode")
+        let raw = UserDefaults.standard.double(forKey: "articleBodyFontSize")
+        prefetch(article: article, english: english, fontSize: raw > 0 ? raw : 25)
+    }
+
+    func purge() { cache.removeAllObjects() }
+}
+
+/// 文本块高度缓存：让 sizeThatFits 命中时 0 排版（滚动/复用/回退都不再重排）
+final class TextHeightCache: @unchecked Sendable {
+    static let shared = TextHeightCache()
+    private let cache = NSCache<NSString, NSNumber>()
+    private init() { cache.countLimit = 600 }
+    func height(_ key: String) -> CGFloat? {
+        guard let n = cache.object(forKey: key as NSString) else { return nil }
+        return CGFloat(n.doubleValue)
+    }
+    func set(_ h: CGFloat, _ key: String) {
+        cache.setObject(NSNumber(value: Double(h)), forKey: key as NSString)
+    }
+}
+
+// ============================================================================
+// MARK: - ImageLoader（降采样解码 + 有上限的缓存 + 宽高比记录）
+// ============================================================================
+
+/// 记录图片宽高比，用于占位时预留正确高度 → 图片到位不跳版
+final class ImageAspectStore: @unchecked Sendable {
+    static let shared = ImageAspectStore()
+    private var map: [String: CGFloat] = [:]      // path -> height/width
+    private let lock = NSLock()
+    func ratio(for path: String) -> CGFloat? {
+        lock.lock(); defer { lock.unlock() }
+        return map[path]
+    }
+    func set(_ r: CGFloat, for path: String) {
+        guard r.isFinite, r > 0 else { return }
+        lock.lock(); map[path] = r; lock.unlock()
+    }
+}
+
 @MainActor
 final class ImageLoader: ObservableObject {
     @Published var image: UIImage?
     @Published var isLoading = false
-    @Published var isFailed = false // 新增失败状态标记
-    
-    private static var cache = NSCache<NSString, UIImage>()
-    
-    // 【新增】初始化时同步检查缓存，避免首帧闪烁和高度跳变！
+    @Published var isFailed = false
+
+    private static let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 60
+        c.totalCostLimit = 80 * 1024 * 1024      // ★ 关键：给缓存上限，避免内存压力抖动
+        return c
+    }()
+
+    /// 目标像素宽（按屏幕物理像素，避免解码 4000px 大图）
+    private static let targetPixelWidth: CGFloat = {
+        UIScreen.main.bounds.width * UIScreen.main.scale
+    }()
+
     init(imagePath: String? = nil) {
-        if let path = imagePath {
-            let cacheKey = path as NSString
-            if let cached = Self.cache.object(forKey: cacheKey) {
-                self.image = cached
-            }
+        if let path = imagePath, let cached = Self.cache.object(forKey: path as NSString) {
+            self.image = cached
         }
     }
-    
-    // 改为异步方法，并返回一个 Bool 表示本地加载是否成功
+
     func load(from path: String) async -> Bool {
         let cacheKey = path as NSString
-        
-        // 1. 先检查内存缓存
         if let cached = Self.cache.object(forKey: cacheKey) {
             self.image = cached
             self.isFailed = false
             return true
         }
-        
-        // 2. 异步加载本地文件
+
         isLoading = true
-        self.isFailed = false
-        
-        // 【优化】将读取和解码彻底放入后台线程
-        let loadedImage = await Task.detached(priority: .userInitiated) {
-            guard let rawImage = UIImage(contentsOfFile: path) else { return nil as UIImage? }
-            // 提前在后台线程进行解码，防止主线程渲染时掉帧
-            return await rawImage.byPreparingForDisplay() ?? rawImage
+        isFailed = false
+
+        let maxPixel = Self.targetPixelWidth
+        let loaded = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+            Self.decodeDownsampled(path: path, maxPixelWidth: maxPixel)
         }.value
-        
-        self.isLoading = false
-        
-        if let img = loadedImage {
-            Self.cache.setObject(img, forKey: cacheKey)
+
+        isLoading = false
+
+        if let img = loaded {
+            let cost = Int(img.size.width * img.scale * img.size.height * img.scale * 4)
+            Self.cache.setObject(img, forKey: cacheKey, cost: cost)
+            if img.size.width > 0 {
+                ImageAspectStore.shared.set(img.size.height / img.size.width, for: path)
+            }
             self.image = img
             return true
         } else {
             self.isFailed = true
-            return false // 图片不存在或已损坏
+            return false
         }
     }
-    
+
+    /// ImageIO 降采样：只解码到屏幕需要的尺寸，CPU/内存都省一大截
+    nonisolated private static func decodeDownsampled(path: String, maxPixelWidth: CGFloat) -> UIImage? {
+        let url = URL(fileURLWithPath: path)
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+
+        // 先取原始尺寸，记录宽高比（即使解码失败也能预留高度）
+        if let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+           let w = props[kCGImagePropertyPixelWidth] as? CGFloat,
+           let h = props[kCGImagePropertyPixelHeight] as? CGFloat, w > 0 {
+            ImageAspectStore.shared.set(h / w, for: path)
+        }
+
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,          // 提前解码，滚动时不再解
+            kCGImageSourceThumbnailMaxPixelSize: max(600, maxPixelWidth)
+        ]
+        if let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) {
+            return UIImage(cgImage: cg)
+        }
+        return UIImage(contentsOfFile: path)
+    }
+
     static func clearCache() {
         cache.removeAllObjects()
+        ArticleBodyCache.shared.purge()
     }
 }
 
+// ============================================================================
 // MARK: - ArticleDetailView
+// ============================================================================
 struct ArticleDetailView: View {
     let article: Article
     let sourceName: String
+    /// 由容器算好（中/英），详情页不再持有 NewsViewModel → 彻底断开 @Published 风暴
+    let sourceDisplayName: String
     let unreadCountForGroup: Int
     let totalUnreadCount: Int
-    // 【修改】改为 Binding，接收父视图的状态
-    @Binding var isEnglishMode: Bool 
-    @ObservedObject var viewModel: NewsViewModel
+    @Binding var isEnglishMode: Bool
+    /// 是否启用吸顶标题（只有后门 VIP 才为 true；false 时完全不挂滚动探针）
+    let showStickyTitle: Bool
+    var requestNextArticle: () async -> Void
 
-    // 【新增】引入全局的 AuthManager 用于判断是否为后门 VIP
-    @EnvironmentObject var authManager: AuthManager
-    // 【新增】获取全局导航路径，用于跳转视频首页
     @Environment(\.appNavPath) private var appNavPath
 
-    // 【修改为】：让它变成普通属性，不再触发 ArticleDetailView 的整体刷新
-    let audioPlayerManager: AudioPlayerManager
-    var requestNextArticle: () async -> Void
-    // 【新增】用于处理右上角音频按钮点击的闭包
-    var onAudioToggle: () -> Void
-    
-    @State private var isSharePresented = false
-    @State private var cachedAttrParagraphs: [NSAttributedString] = []
-    
-    // 【新增】控制推广弹窗显示
     @State private var showNewsPromoSheet = false
-    
-    // 【优化】使用 @State 缓存耗时计算的结果，避免 body 每次刷新都重算
-    @State private var cachedParagraphs: [String] = []
-    @State private var cachedRemainingImages: [String] = []
-    @State private var cachedInsertionInterval: Int = 1
-    @State private var cachedDistributeEvenly: Bool = false
-    // 【新增】标记内容是否准备就绪，防止闪烁
-    @State private var isContentReady = false
-    @State private var prepareTask: Task<Void, Never>? = nil
-
-    // 【修改】控制自定义分享菜单
     @State private var showCustomShareSheet = false
-    // 【新增】控制系统分享（点击“更多”后显示）
     @State private var showSystemActivitySheet = false
-    // 【新增】控制微信引导页
     @State private var showWeChatGuideSheet = false
-    // 【新增】字体调整相关
     @State private var showFontAdjustment = false
-    @AppStorage("articleBodyFontSize") private var articleBodyFontSize: Double = 25
-    @AppStorage("imageCaptionFontSize") private var imageCaptionFontSize: Double = 12
-
-    // 【新增】用于标题吸附的状态
     @State private var isTitleVisible = true
-    
-    // 【新增 2】判断是否存在有效的英文版本
+
+    @AppStorage("articleBodyFontSize") private var articleBodyFontSize: Double = 25
+
+    // MARK: 正文（同步取缓存，命中即 0 成本；无 @State、无占位、无二次布局）
+    private var prepared: PreparedArticleBody {
+        ArticleBodyCache.shared.body(for: article,
+                                     english: isEnglishMode,
+                                     fontSize: articleBodyFontSize)
+    }
+
     private var hasEnglishVersion: Bool {
-        guard let tEng = article.topic_eng, !tEng.isEmpty,
-              let aEng = article.article_eng, !aEng.isEmpty else {
-            return false
-        }
+        guard let t = article.topic_eng, !t.isEmpty,
+              let a = article.article_eng, !a.isEmpty else { return false }
         return true
     }
-    
-    // 获取当前应显示的标题
+
     private var displayTopic: String {
         (isEnglishMode && hasEnglishVersion) ? (article.topic_eng ?? article.topic) : article.topic
     }
-    
-    // 【新增】获取当前应显示的来源名称 (Banner 标题)
-    private var displaySourceName: String {
-        // 如果是英文模式，尝试在 viewModel 的 sources 列表中查找对应的英文名
-        if isEnglishMode {
-            // 注意：这里的 sourceName 通常是中文名（作为ID使用），我们用它来查找 Source 对象
-            if let source = viewModel.sources.first(where: { $0.name == sourceName }) {
-                return source.name_en
-            }
-        }
-        // 默认为传入的 sourceName (中文)
-        return sourceName
-    }
-    
-    // 【修改】去掉星期几，只保留日期
-    // 【优化：改为静态全局复用】
+
     private static let monthDayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.setLocalizedDateFormatFromTemplate("MMMd")
-        return f
+        let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("MMMd"); return f
     }()
-    
-    private static let longDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        // 注意：因为 Localized 可能会随语言切换，Locale 的赋值我们移到具体使用的方法中
-        return f
-    }()
-    
+    private static let longDateFormatter = DateFormatter()
     private static let parsingFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyMMdd"
-        return f
+        let f = DateFormatter(); f.dateFormat = "yyMMdd"; return f
     }()
-    
+
     var body: some View {
-        ZStack(alignment: .top) { // 修改 ZStack 对齐方式为 top
+        ZStack(alignment: .top) {
             ScrollView {
-                // 【优化 1】使用 LazyVStack 替代 VStack
-                // 这使得只有进入屏幕的段落和图片才会被渲染，极大减少长文章的内存占用和卡顿
-                // LazyVStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 16) {
-                    
-                    // 头部信息区域
-                    VStack(alignment: .leading, spacing: 8) {
-                        // --- 修改开始 ---
-                        HStack(alignment: .center, spacing: 10) {
-                            Text(formatDate(from: article.timestamp))
-                                .font(.caption).foregroundColor(.gray)
-
-                                // 如果存在 url 且格式正确，则显示超链接
-                            if let urlString = article.url, let url = URL(string: urlString) {
-                                Link(destination: url) {
-                                    HStack(spacing: 2) {
-                                        Text(Localized.originalLink)
-                                        Image(systemName: "arrow.up.right")
-                                    }
-                                    .font(.caption)
-                                    .foregroundColor(.blue) // 经典的链接蓝色
-                                }
-                            }
-                        }
-                        
-                        // 【修改 1】这里使用动态的 displayTopic
-                        Text(displayTopic)
-                            .font(.system(.title, design: .serif)).fontWeight(.bold)
-                            // 英文标题通常不需要那么紧凑，可以微调，这里保持一致即可
-                            .animation(.none, value: isEnglishMode) 
-                    }
-                    .padding(.horizontal, 20)
-                    // 【优化】给头部一个固定的 ID，防止 LazyVStack 刷新时跳动
-                    .id("Header-\(article.id)")
-                    // 【新增】监测此 Header 的位置
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear.preference(
-                                key: ScrollOffsetPreferenceKey.self,
-                                value: geo.frame(in: .named("Scroll")).minY
-                            )
-                        }
-                    )
-                    
-                    // ... (原有内容逻辑保持不变) ...
-                    if let firstImage = article.images.first {
-                        ArticleImageView(imageName: firstImage, timestamp: article.timestamp)
-                            .padding(.horizontal, 0) // 图片内部已有 padding
-                    }
-                    
-                    // 【优化】仅当内容准备好后才显示段落，避免布局跳变
-                    if isContentReady {
-                        ForEach(cachedParagraphs.indices, id: \.self) { pIndex in
-                            // ⭐ 核心替换：用 NativeParagraphView 替代 SwiftUI Text
-                            // - 移除了 .font / .lineSpacing（已在 NSAttributedString 中预设）
-                            // - 移除了 .onLongPressGesture（UITextView 原生支持选择+复制）
-                            if pIndex < cachedAttrParagraphs.count {
-                                NativeParagraphView(attributedText: cachedAttrParagraphs[pIndex])
-                                    .padding(.horizontal, 18)
-                                    .padding(.bottom, 18)
-                                    .id("p-\(article.id)-\(pIndex)")
-                            }
-
-                            // 图片插入逻辑（保持不变）
-                            if (pIndex + 1) % cachedInsertionInterval == 0 {
-                                let imageIndexToInsert = (pIndex + 1) / cachedInsertionInterval - 1
-                                if imageIndexToInsert < cachedRemainingImages.count {
-                                    ArticleImageView(
-                                        imageName: cachedRemainingImages[imageIndexToInsert],
-                                        timestamp: article.timestamp
-                                    )
-                                    .id("img-\(article.id)-\(imageIndexToInsert)")
-                                }
-                            }
-                        }
-
-                        // 尾部多余图片
-                        if !cachedDistributeEvenly && cachedRemainingImages.count > cachedParagraphs.count {
-                            let extraImages = cachedRemainingImages.dropFirst(cachedParagraphs.count)
-                            ForEach(Array(extraImages), id: \.self) { imageName in
-                                ArticleImageView(imageName: imageName, timestamp: article.timestamp)
-                            }
-                        }
-                    } else {
-                        // 占位符，防止进入页面时一片空白
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 50)
-                    }
-                    
-                    Button(action: {
-                        Task {
-                            await self.requestNextArticle()
-                        }
-                    }) {
-                        HStack {
-                            Text(Localized.readNext)
-                                .fontWeight(.bold)
-                            Image(systemName: "arrow.right.circle.fill")
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.blue)
-                        .cornerRadius(12)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 20) // 稍微调整上边距
-                    
-                    // 【新增】在这里插入文字链接触发器
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(Localized.isEnglish ? "More from Developer" : "“毛遂自荐”博主另一款精品应用")
-                        .font(.footnote)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 2)
-                        .frame(maxWidth: .infinity, alignment: .center) // <--- 关键修改：让文字容器填满宽度并居中
-                        
-                        HStack {
-                            Spacer()
-                            // 唯一保留的应用：美股精灵
-                            PromoCardView(
-                                title: Localized.isEnglish ? "US Stock Elf" : "美股精灵",
-                                subtitle: Localized.isEnglish ? "AI Stock Picks" : "AI算法每日荐股，全球财经数据一站搞定，炒美股必备伴侣。",
-                                imageName: "logo_stock_elf_small", // 对应 Assets 中的名字
-                                isSystemIcon: false,        // 告诉视图这不是系统图标
-                                colors: [.blue, .purple]
-                            ) {
-                                showNewsPromoSheet = true
-                            }
-                            .frame(width: 220) // 限制宽度使其保持原本的方块感
-                            Spacer()
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 10)
-                    .padding(.bottom, 100)
+                    header
+                    // ★ Equatable 包裹：只要 bodyID 不变，正文这一整棵子树绝不重算
+                    ArticleBodyContentView(prepared: prepared, timestamp: article.timestamp)
+                        .equatable()
+                    footer
                 }
                 .padding(.vertical)
             }
-            .coordinateSpace(name: "Scroll") // 【新增】命名空间
-            .onPreferenceChange(ScrollOffsetPreferenceKey.self) { value in
-                let shouldBeVisible = value > 0
-                // 只有真的变化时才触发动画
-                guard shouldBeVisible != isTitleVisible else { return }
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isTitleVisible = shouldBeVisible
-                }
+            .scrollIndicators(.hidden)
+            .coordinateSpace(name: "Scroll")
+            // 仅 VIP 才付出滚动监听成本
+            .modifier(StickyTitleObserver(enabled: showStickyTitle) { visible in
+                guard visible != isTitleVisible else { return }
+                withAnimation(.easeInOut(duration: 0.2)) { isTitleVisible = visible }
+            })
+
+            if showStickyTitle && !isTitleVisible {
+                stickyBar
             }
 
-            // ==========================================
-            // 【修改】吸附条视图：仅当标题不可见 且 是后门VIP时才显示
-            // ==========================================
-            if !isTitleVisible && authManager.isPermanentVIP {
-                Text(displayTopic)
-                    .font(.subheadline) // 建议用 subheadline 或 headline，看起来更像导航栏标题
-                    .fontWeight(.semibold)
-                    .lineLimit(1)
-                    .padding(.horizontal, 16) // 【修复问题3】去掉 40，改为标准边距 16，充分利用宽度
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity)
-                    // 【修复问题2】使用 Rectangle 填充背景并忽略顶部安全区，彻底消除与 Toolbar 的缝隙
-                    .background(
-                        Rectangle()
-                            .fill(.ultraThinMaterial)
-                            .ignoresSafeArea(edges: .top) 
-                    )
-                    .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(10) // 确保在最上层
-            }
-            // --- 新增：右下角悬浮按钮 ---
             VStack {
-                Spacer() // 将内容推到底部
+                Spacer()
                 HStack {
-                    Spacer() // 将按钮推到右侧
-                    NextArticleFloatingButton {
-                        Task {
-                            await self.requestNextArticle()
-                        }
-                    }
+                    Spacer()
+                    NextArticleFloatingButton { Task { await requestNextArticle() } }
                 }
             }
-            // 确保按钮在最上层，且不会被其他视图遮挡
-            .zIndex(100) 
+            .zIndex(100)
         }
-        .onAppear { prepareContent() }
-        .onChange(of: article) { _ in isContentReady = false; prepareContent() }
-        .onChange(of: isEnglishMode) { _ in prepareContent() }
-        .onChange(of: articleBodyFontSize) { _ in prepareContent() }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                VStack(spacing: 2) {
-                    // 【修改】使用 displaySourceName 替代 sourceName
-                    Text(displaySourceName.replacingOccurrences(of: "_", with: " "))
-                        .font(.headline)
-                        // 添加动画，防止文字切换时生硬跳变
-                        .animation(.none, value: isEnglishMode)
-                    
-                    HStack(spacing: 8) {
-                        if unreadCountForGroup == totalUnreadCount {
-                            Text("\(totalUnreadCount)")
-                        } else {
-                            Text("\(unreadCountForGroup) | \(totalUnreadCount)")
-                        }
-                        // 这里调用的是 formatMonthDay，下面已经修改了该函数的实现
-                        Text(formatMonthDay(from: article.timestamp))
-                    }
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                }
-            }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 12) { // 稍微增加间距
-                    // 【新增 5】中/英 切换按钮
-                    if hasEnglishVersion {
-                        Button(action: {
-                            withAnimation(.spring()) {
-                                isEnglishMode.toggle()
-                            }
-                        }) {
-                            ZStack {
-                                Circle()
-                                    .strokeBorder(Color.primary, lineWidth: 1.5)
-                                    // 【修改】逻辑反转：!isEnglishMode (即中文模式) 时实心
-                                    .background(!isEnglishMode ? Color.primary : Color.clear)
-                                    .clipShape(Circle())
-                                    
-                                Text(isEnglishMode ? "中" : "英")
-                                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                                    // 【修改】逻辑反转：!isEnglishMode (即中文模式) 时文字反色
-                                    .foregroundColor(!isEnglishMode ? Color.viewBackground : Color.primary)
-                            }
-                            .frame(width: 24, height: 24)
-                        }
-                        // 稍微给个过渡动画
-                        .transition(.scale.combined(with: .opacity))
-                    }
-                    
-                    // 【修改】将分享按钮提取到这里，替换原来的音频按钮
-                    Button(action: { showCustomShareSheet = true }) {
-                        Image(systemName: "square.and.arrow.up")
-                    }
-                    
-                    Menu {
-                        // 分享已被移出
-                        
-                        Button(action: { showFontAdjustment = true }) {
-                            Label(Localized.isEnglish ? "Font Size" : "字体大小", systemImage: "textformat.size")
-                        }
-
-                        // 【新增】跳转视频搜索
-                        Button(action: {
-                            appNavPath?.wrappedValue.append(NavigationTarget.videoSearch)
-                        }) {
-                            Label(Localized.isEnglish ? "Video Library" : "视频检索",
-                                systemImage: "magnifyingglass")
-                        }
-                        
-                        // 【新增】跳转视频搜索 
-                        Button(action: {
-                            appNavPath?.wrappedValue.append(NavigationTarget.videoModule)
-                        }) {
-                            Label(Localized.isEnglish ? "Video Library" : "影视频道",
-                                systemImage: "play.rectangle.fill")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                }
-                // 【修改点1】这里添加 .primary 颜色，使图标变为黑白（跟随系统主题）
-                .foregroundColor(.primary)
-            }
-        }
+        .toolbar { toolbarContent }
         .navigationBarTitleDisplayMode(.inline)
-                // 1. 自定义分享菜单
         .sheet(isPresented: $showCustomShareSheet) {
             CustomShareSheet(
                 onWeChatAction: {
-                    // --- 核心逻辑：复制文本并弹出引导 ---
-                    let text = createShareText()
-                    UIPasteboard.general.string = text
-                    
-                    // 延迟一点时间，让当前 sheet 收起动画完成后再弹出下一个
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        showWeChatGuideSheet = true
-                    }
+                    UIPasteboard.general.string = createShareText()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showWeChatGuideSheet = true }
                 },
                 onSystemShareAction: {
-                    // --- 核心逻辑：调用系统分享 ---
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        showSystemActivitySheet = true
-                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showSystemActivitySheet = true }
                 }
             )
         }
-        // 2. 微信引导页
-        .sheet(isPresented: $showWeChatGuideSheet) {
-            WeChatGuideView()
-        }
-        // 3. 原生系统分享（作为“更多”选项）
+        .sheet(isPresented: $showWeChatGuideSheet) { WeChatGuideView() }
         .sheet(isPresented: $showSystemActivitySheet) {
             ActivityView(activityItems: [createShareText()])
                 .presentationDetents([.medium, .large])
         }
-
-        // 【新增】挂载推广弹窗
         .sheet(isPresented: $showNewsPromoSheet) {
             NewsPromoView(onOpenAction: {
-                // 关闭弹窗
                 showNewsPromoSheet = false
-                // 延迟执行跳转，保证动画流畅
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     openApp(scheme: "globalnews://", appId: "6754904170")
                 }
             })
         }
         .sheet(isPresented: $showFontAdjustment) {
-            FontAdjustmentView()
-                .presentationDetents([.large])
+            FontAdjustmentView().presentationDetents([.large])
+        }
+        // 语言/字号变更时预热新版本，避免下一帧同步构建
+        .onChange(of: isEnglishMode) { newValue in
+            ArticleBodyCache.shared.prefetch(article: article,
+                                             english: newValue,
+                                             fontSize: articleBodyFontSize)
+        }
+        .onChange(of: articleBodyFontSize) { newValue in
+            ArticleBodyCache.shared.prefetch(article: article,
+                                             english: isEnglishMode,
+                                             fontSize: newValue)
         }
     }
 
-    // 【新增】生成分享文本的辅助函数，避免在 ViewBuilder 中写复杂逻辑
+    // MARK: - 头部
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                Text(formatDate(from: article.timestamp))
+                    .font(.caption).foregroundColor(.gray)
+                if let urlString = article.url, let url = URL(string: urlString) {
+                    Link(destination: url) {
+                        HStack(spacing: 2) {
+                            Text(Localized.originalLink)
+                            Image(systemName: "arrow.up.right")
+                        }
+                        .font(.caption).foregroundColor(.blue)
+                    }
+                }
+            }
+            Text(displayTopic)
+                .font(.system(.title, design: .serif)).fontWeight(.bold)
+                .animation(.none, value: isEnglishMode)
+        }
+        .padding(.horizontal, 20)
+        .id("Header-\(article.id)")
+    }
+
+    // MARK: - 尾部（下一篇按钮 + 推广）
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: { Task { await requestNextArticle() } }) {
+                HStack {
+                    Text(Localized.readNext).fontWeight(.bold)
+                    Image(systemName: "arrow.right.circle.fill")
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.blue)
+                .cornerRadius(12)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text(Localized.isEnglish ? "More from Developer" : "“毛遂自荐”博主另一款精品应用")
+                    .font(.footnote).fontWeight(.semibold)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 2)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                HStack {
+                    Spacer()
+                    PromoCardView(
+                        title: Localized.isEnglish ? "US Stock Elf" : "美股精灵",
+                        subtitle: Localized.isEnglish ? "AI Stock Picks" : "AI算法每日荐股，全球财经数据一站搞定，炒美股必备伴侣。",
+                        imageName: "logo_stock_elf_small",
+                        isSystemIcon: false,
+                        colors: [.blue, .purple]
+                    ) { showNewsPromoSheet = true }
+                    .frame(width: 220)
+                    Spacer()
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 22)
+            .padding(.bottom, 100)
+        }
+    }
+
+    private var stickyBar: some View {
+        Text(displayTopic)
+            .font(.subheadline).fontWeight(.semibold)
+            .lineLimit(1)
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(Rectangle().fill(.ultraThinMaterial).ignoresSafeArea(edges: .top))
+            .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .zIndex(10)
+    }
+
+    // MARK: - Toolbar
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            VStack(spacing: 2) {
+                Text(sourceDisplayName.replacingOccurrences(of: "_", with: " "))
+                    .font(.headline)
+                    .animation(.none, value: isEnglishMode)
+                HStack(spacing: 8) {
+                    if unreadCountForGroup == totalUnreadCount {
+                        Text("\(totalUnreadCount)")
+                    } else {
+                        Text("\(unreadCountForGroup) | \(totalUnreadCount)")
+                    }
+                    Text(formatMonthDay(from: article.timestamp))
+                }
+                .font(.caption).foregroundColor(.secondary)
+            }
+        }
+        ToolbarItem(placement: .navigationBarTrailing) {
+            HStack(spacing: 12) {
+                if hasEnglishVersion {
+                    Button(action: { withAnimation(.spring()) { isEnglishMode.toggle() } }) {
+                        ZStack {
+                            Circle()
+                                .strokeBorder(Color.primary, lineWidth: 1.5)
+                                .background(!isEnglishMode ? Color.primary : Color.clear)
+                                .clipShape(Circle())
+                            Text(isEnglishMode ? "中" : "英")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .foregroundColor(!isEnglishMode ? Color.viewBackground : Color.primary)
+                        }
+                        .frame(width: 24, height: 24)
+                    }
+                }
+
+                Button(action: { showCustomShareSheet = true }) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+
+                Menu {
+                    Button(action: { showFontAdjustment = true }) {
+                        Label(Localized.isEnglish ? "Font Size" : "字体大小", systemImage: "textformat.size")
+                    }
+                    Button(action: { appNavPath?.wrappedValue.append(NavigationTarget.videoSearch) }) {
+                        Label(Localized.isEnglish ? "Video Search" : "视频检索", systemImage: "magnifyingglass")
+                    }
+                    Button(action: { appNavPath?.wrappedValue.append(NavigationTarget.videoModule) }) {
+                        Label(Localized.isEnglish ? "Video Library" : "影视频道", systemImage: "play.rectangle.fill")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+            .foregroundColor(.primary)
+        }
+    }
+
+    // MARK: - Helpers
     private func createShareText() -> String {
         let limit = 7
-        let textParts = cachedParagraphs.prefix(limit)
-        var bodyText = textParts.joined(separator: "\n\n")
-        
-        if cachedParagraphs.count > limit {
-            bodyText += Localized.shareFooter
-        }
-        
-        // 【修改 2】分享时也使用当前显示的语言标题
+        let paras = prepared.paragraphs
+        var bodyText = paras.prefix(limit).joined(separator: "\n\n")
+        if paras.count > limit { bodyText += Localized.shareFooter }
         return displayTopic + "\n\n" + bodyText
     }
-    
-    // 【优化 2】将耗时的文本处理移至后台线程，富文本构建保留在主线程（适配 Swift 6 并发安全）
-    private func prepareContent() {
-        // 取消上一个任务
-        prepareTask?.cancel()
 
-        let currentArticle = self.article
-        let currentMode = self.isEnglishMode
-        let currentBodyFontSize = CGFloat(self.articleBodyFontSize)
-
-        // 使用 Task.detached 将纯文本处理移出主线程
-        prepareTask = Task.detached(priority: .userInitiated) {
-            // 关键检查点
-            if Task.isCancelled { return }
-
-            // 1. 选择文本源
-            let contentToParse: String
-            if currentMode, let contentEng = currentArticle.article_eng, !contentEng.isEmpty {
-                contentToParse = contentEng
-            } else {
-                contentToParse = currentArticle.article
-            }
-
-            // 2. 分段 (后台执行)
-            let paras = contentToParse
-                .components(separatedBy: .newlines)
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-            if Task.isCancelled { return }
-
-            // 3. 图片分布逻辑 (后台执行)
-            let imgs = Array(currentArticle.images.dropFirst())
-            let distribute = !imgs.isEmpty && imgs.count < paras.count
-            let interval = distribute ? max(1, paras.count / (imgs.count + 1)) : 1
-
-            // 4. 回到主线程构建 NSAttributedString 并更新 UI
-            await MainActor.run {
-                guard !Task.isCancelled else { return }
-                guard self.article.id == currentArticle.id else { return }
-                
-                // ⭐ 在主线程访问 UIKit 属性并生成 NSAttributedString，解决 Swift 6 报错
-                let font = NativeParagraphView.makeFont(size: currentBodyFontSize)
-                let style = NativeParagraphView.makeParagraphStyle(for: currentBodyFontSize)
-                let textColor = UIColor.label
-
-                let attrParas = paras.map { text in
-                    NSAttributedString(
-                        string: text,
-                        attributes: [
-                            .font: font,
-                            .paragraphStyle: style,
-                            .foregroundColor: textColor
-                        ]
-                    )
-                }
-
-                self.cachedParagraphs = paras
-                self.cachedAttrParagraphs = attrParas
-                self.cachedRemainingImages = imgs
-                self.cachedDistributeEvenly = distribute
-                self.cachedInsertionInterval = interval
-
-                withAnimation(.easeIn(duration: 0.2)) {
-                    self.isContentReady = true
-                }
-            }
-        }
-    }
-    
     private func openApp(scheme: String, appId: String) {
-        let appUrl = URL(string: scheme)
-        let storeUrl = URL(string: "https://apps.apple.com/cn/app/id\(appId)")
-        if let appUrl = appUrl, UIApplication.shared.canOpenURL(appUrl) {
+        if let appUrl = URL(string: scheme), UIApplication.shared.canOpenURL(appUrl) {
             UIApplication.shared.open(appUrl)
-        } else if let storeUrl = storeUrl {
+        } else if let storeUrl = URL(string: "https://apps.apple.com/cn/app/id\(appId)") {
             UIApplication.shared.open(storeUrl)
         }
     }
-    
-    // 【优化】使用静态 Formatter
+
     private func formatMonthDay(from timestamp: String) -> String {
-        guard let date = Self.parsingFormatter.date(from: timestamp) else {
-            return timestamp
-        }
+        guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp }
         Self.monthDayFormatter.locale = Localized.currentLocale
         return Self.monthDayFormatter.string(from: date)
     }
-    
+
     private func formatDate(from timestamp: String) -> String {
-        guard let date = Self.parsingFormatter.date(from: timestamp) else {
-            return timestamp.uppercased()
-        }
+        guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp.uppercased() }
         Self.longDateFormatter.dateFormat = Localized.dateFormatFull
         Self.longDateFormatter.locale = Localized.currentLocale
         return Self.longDateFormatter.string(from: date).uppercased()
     }
 }
 
-// MARK: - 高性能原生段落渲染视图
+// MARK: - 正文子树（Equatable：bodyID 不变就完全跳过重算）
+private struct ArticleBodyContentView: View, Equatable {
+    let prepared: PreparedArticleBody
+    let timestamp: String
+
+    static func == (l: ArticleBodyContentView, r: ArticleBodyContentView) -> Bool {
+        l.prepared.bodyID == r.prepared.bodyID && l.timestamp == r.timestamp
+    }
+
+    var body: some View {
+        // 块数量很少（图片数+1），用 VStack 即可：一次成型、绝不跳版
+        VStack(alignment: .leading, spacing: 16) {
+            ForEach(prepared.blocks) { block in
+                switch block.content {
+                case .text(let attr):
+                    NativeParagraphView(attributedText: attr, identity: block.id)
+                        .padding(.horizontal, 18)
+                case .image(let name):
+                    ArticleImageView(imageName: name, timestamp: timestamp)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 吸顶探针（VIP 专用；非 VIP 时零成本）
+private struct StickyTitleObserver: ViewModifier {
+    let enabled: Bool
+    let onChange: (Bool) -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: ScrollOffsetPreferenceKey.self,
+                                               value: geo.frame(in: .named("Scroll")).minY)
+                    }
+                    .frame(height: 1), alignment: .top
+                )
+                .onPreferenceChange(ScrollOffsetPreferenceKey.self) { onChange($0 > -80) }
+        } else {
+            content
+        }
+    }
+}
+
+// ============================================================================
+// MARK: - 高性能原生文本块（TextKit1 + 身份化高度缓存）
+// ============================================================================
 struct NativeParagraphView: UIViewRepresentable {
     let attributedText: NSAttributedString
+    /// 稳定身份（bodyID#index）：用于判断"内容是否真的换了"和高度缓存键，
+    /// 比 hashValue 更安全（无碰撞风险），比内容比较更快（O(1) 字符串比较）。
+    var identity: String = ""
 
-    // 【新增】用 Coordinator 缓存上一次的尺寸
-    class Coordinator {
-        var lastWidth: CGFloat = -1
-        var lastHeight: CGFloat = -1
-        var lastTextHash: Int = 0
+    final class Coordinator {
+        var appliedIdentity: String = ""
     }
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    // 公开静态资源，供 prepareContent() 在后台线程复用
-    static let paragraphFont: UIFont = {
-        if let font = UIFont(name: "NewYork-Regular", size: 25) {
-            return font
-        }
-        let descriptor = UIFontDescriptor.preferredFontDescriptor(withTextStyle: .body)
-        if let serifDesc = descriptor.withDesign(.serif) {
-            return UIFont(descriptor: serifDesc, size: 25)
-        }
-        return UIFont.systemFont(ofSize: 25)
-    }()
+    // ---- 字体 / 段落样式（供 Builder 在后台线程复用）----
+    static let paragraphFont: UIFont = makeFont(size: 25)
 
-    static let paragraphStyle: NSParagraphStyle = {
-        let style = NSMutableParagraphStyle()
-        style.lineSpacing = 12
-        return style
-    }()
-
-    // 【新增】动态字号工厂方法
     static func makeFont(size: CGFloat) -> UIFont {
-        if let font = UIFont(name: "NewYork-Regular", size: size) {
-            return font
-        }
-        let descriptor = UIFontDescriptor.preferredFontDescriptor(withTextStyle: .body)
-        if let serifDesc = descriptor.withDesign(.serif) {
-            return UIFont(descriptor: serifDesc, size: size)
-        }
+        if let f = UIFont(name: "NewYork-Regular", size: size) { return f }
+        let d = UIFontDescriptor.preferredFontDescriptor(withTextStyle: .body)
+        if let serif = d.withDesign(.serif) { return UIFont(descriptor: serif, size: size) }
         return UIFont.systemFont(ofSize: size)
     }
 
+    static let paragraphStyle: NSParagraphStyle = makeParagraphStyle(for: 25)
+
     static func makeParagraphStyle(for fontSize: CGFloat) -> NSParagraphStyle {
-        let style = NSMutableParagraphStyle()
-        style.lineSpacing = round(fontSize * 0.48)
-        return style
+        let s = NSMutableParagraphStyle()
+        s.lineSpacing = round(fontSize * 0.48)
+        // ★ 段间距用 paragraphSpacing 表达，从而把多段合并进 1 个 UITextView
+        s.paragraphSpacing = round(fontSize * 0.95)
+        s.lineBreakMode = .byWordWrapping
+        return s
     }
 
-    func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
+    static func makeTextView() -> UITextView {
+        let tv: UITextView
+        if #available(iOS 16.0, *) {
+            // 静态长文用 TextKit 1 的高度计算更快更稳（TextKit 2 的 viewport 布局在
+            // isScrollEnabled = false 时会做额外的 fragment 往返）
+            tv = UITextView(usingTextLayoutManager: false)
+        } else {
+            tv = UITextView()
+        }
         tv.isEditable = false
-        tv.isScrollEnabled = false          // 关键：禁止内部滚动，让高度自适应内容
-        tv.isSelectable = true              // 原生长按选词 → 复制/翻译/朗读，替代旧的 onLongPressGesture
+        tv.isScrollEnabled = false
+        tv.isSelectable = true                  // 原生长按选词 / 复制 / 翻译
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
         tv.backgroundColor = .clear
         tv.dataDetectorTypes = []
-        // 确保垂直方向高度不被压缩
+        tv.adjustsFontForContentSizeCategory = false
+        tv.textDragInteraction?.isEnabled = false
+        tv.clipsToBounds = false
+        tv.layoutManager.allowsNonContiguousLayout = false
         tv.setContentCompressionResistancePriority(.required, for: .vertical)
         tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return tv
     }
 
+    func makeUIView(context: Context) -> UITextView { Self.makeTextView() }
+
     func updateUIView(_ tv: UITextView, context: Context) {
-        // 优先比引用，再比长度，最后才比内容
-        if tv.attributedText !== attributedText 
-        && tv.attributedText.length != attributedText.length {
-            tv.attributedText = attributedText
-            return
-        }
-        // 直接赋值预建好的 NSAttributedString，主线程零开销
-        // 仅当内容确实变化时才重新赋值
-        if tv.attributedText != attributedText {
-            tv.attributedText = attributedText
-        }
+        apply(tv, context.coordinator)
     }
 
-    // iOS 16+ 精准高度计算，消除 LazyVStack 布局跳动
+    private func apply(_ tv: UITextView, _ coord: Coordinator) {
+        let key = identity.isEmpty ? "\(attributedText.length)" : identity
+        guard coord.appliedIdentity != key else { return }
+        tv.attributedText = attributedText
+        coord.appliedIdentity = key
+    }
+
     @available(iOS 16.0, *)
-    func sizeThatFits(
-        _ proposal: ProposedViewSize,
-        uiView: UITextView,
-        context: Context
-    ) -> CGSize? {
-        // 【修改】增加 width > 10 的判断，防止由于非预期的极小宽度触发无限布局循环
-        guard let width = proposal.width, width > 10, width < .infinity else { return nil }
-        
-        let textHash = attributedText.hashValue
-        // 宽度和文本都没变 → 直接返回缓存，避免 UITextView 重新排版
-        if abs(context.coordinator.lastWidth - width) < 0.5 
-           && context.coordinator.lastTextHash == textHash 
-           && context.coordinator.lastHeight > 0 {
-            return CGSize(width: width, height: context.coordinator.lastHeight)
+    func sizeThatFits(_ proposal: ProposedViewSize,
+                      uiView: UITextView,
+                      context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 10 else { return nil }
+        let w = (width * 2).rounded() / 2
+        let cacheKey = "\(identity)|\(w)"
+
+        if let h = TextHeightCache.shared.height(cacheKey) {
+            return CGSize(width: width, height: h)
         }
-        
-        let size = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        let h = ceil(size.height)
-        context.coordinator.lastWidth = width
-        context.coordinator.lastHeight = h
-        context.coordinator.lastTextHash = textHash
+        apply(uiView, context.coordinator)      // 确保测量前内容已就位
+        let h = ceil(uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height)
+        TextHeightCache.shared.set(h, cacheKey)
         return CGSize(width: width, height: h)
     }
 }
 
-// MARK: - ArticleImageView（带网络自愈）
+// ============================================================================
+// MARK: - ArticleImageView（预留高度 + 网络自愈）
+// ============================================================================
 struct ArticleImageView: View {
     let imageName: String
     let timestamp: String
@@ -728,53 +735,56 @@ struct ArticleImageView: View {
     @EnvironmentObject var resourceManager: ResourceManager
     @AppStorage("imageCaptionFontSize") private var captionFontSize: Double = 12
 
-    // 【新增】自愈状态
     @State private var recoveryTask: Task<Void, Never>? = nil
     @State private var isRecovering = false
 
     private let horizontalPadding: CGFloat = 20
 
     private var imagePath: String {
-        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return dir.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
     }
 
     init(imageName: String, timestamp: String) {
         self.imageName = imageName
         self.timestamp = timestamp
-        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let path = documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let path = dir.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
         self._imageLoader = StateObject(wrappedValue: ImageLoader(imagePath: path))
+    }
+
+    /// 占位高度：已知宽高比 → 精确预留，图片到位不跳版
+    private var placeholderHeight: CGFloat {
+        let contentWidth = UIScreen.main.bounds.width - horizontalPadding * 2
+        if let r = ImageAspectStore.shared.ratio(for: imagePath) {
+            return min(max(contentWidth * r, 120), 620)
+        }
+        return 220
     }
 
     var body: some View {
         VStack(spacing: 8) {
             Group {
                 if let uiImage = imageLoader.image {
-                    Button(action: { self.isShowingZoomView = true }) {
+                    Button(action: { isShowingZoomView = true }) {
                         Image(uiImage: uiImage)
                             .resizable()
                             .scaledToFit()
                             .frame(maxWidth: .infinity)
-                            .clipped()
                     }
                     .buttonStyle(PlainButtonStyle())
 
                 } else if imageLoader.isLoading || isRecovering {
-                    // 【修改】等待中的占位（含"等待网络"提示）
                     VStack(spacing: 10) {
                         ProgressView()
-                        Text(waitingHintText)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        Text(waitingHintText).font(.caption).foregroundColor(.secondary)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 200)
+                    .frame(maxWidth: .infinity, minHeight: placeholderHeight)
                     .background(Color(UIColor.secondarySystemBackground))
                     .cornerRadius(12)
                     .padding(.horizontal, horizontalPadding)
 
                 } else {
-                    // 手动重试
                     Button(action: { manualRetry() }) {
                         VStack(spacing: 8) {
                             Image(systemName: "arrow.clockwise.circle.fill")
@@ -782,7 +792,7 @@ struct ArticleImageView: View {
                             Text(Localized.isEnglish ? "Tap to retry" : "图片加载失败，点击重试")
                                 .font(.caption).foregroundColor(.secondary)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 200)
+                        .frame(maxWidth: .infinity, minHeight: placeholderHeight)
                         .background(Color(UIColor.secondarySystemBackground))
                         .cornerRadius(12)
                         .padding(.horizontal, horizontalPadding)
@@ -804,31 +814,22 @@ struct ArticleImageView: View {
             ZoomableImageView(imageName: imageName, timestamp: timestamp, isPresented: $isShowingZoomView)
         }
         .padding(.vertical, 10)
-        .animation(.easeIn(duration: 0.2), value: imageLoader.image == nil)
         .onAppear { startInitialLoad() }
         .onDisappear {
-            recoveryTask?.cancel()
-            recoveryTask = nil
-            isRecovering = false
+            recoveryTask?.cancel(); recoveryTask = nil; isRecovering = false
         }
-        // 【新增】网络恢复 → 立即重试
         .onChange(of: resourceManager.isNetworkAvailable) { available in
-            if available && imageLoader.image == nil {
-                startRecovery()
-            }
+            if available && imageLoader.image == nil { startRecovery() }
         }
-        // 【新增】后台队列下好这张图 → 立即加载显示
         .onReceive(NotificationCenter.default.publisher(for: .articleImageDidDownload)) { note in
-            guard imageLoader.image == nil else { return }
-            guard let path = note.userInfo?["path"] as? String, path == imagePath else { return }
+            guard imageLoader.image == nil,
+                  let path = note.userInfo?["path"] as? String, path == imagePath else { return }
             Task {
                 if await imageLoader.load(from: imagePath) {
-                    recoveryTask?.cancel()
-                    isRecovering = false
+                    recoveryTask?.cancel(); isRecovering = false
                 }
             }
         }
-        // 【新增】App 回到前台 → 重试
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             if imageLoader.image == nil { startRecovery() }
         }
@@ -849,22 +850,16 @@ struct ArticleImageView: View {
         }
     }
 
-    /// 【核心】自愈循环：入队下载 + 递增间隔轮询，直到成功或次数用尽
     private func startRecovery() {
         guard imageLoader.image == nil else { return }
         recoveryTask?.cancel()
         isRecovering = true
 
         recoveryTask = Task {
-            // 先把这张图插到下载队首
-            resourceManager.enqueueImageDownloads(
-                timestamp: timestamp,
-                imageNames: [imageName],
-                priority: true
-            )
-
+            resourceManager.enqueueImageDownloads(timestamp: timestamp,
+                                                  imageNames: [imageName], priority: true)
             var delayMs: UInt64 = 600
-            for _ in 0..<25 {                     // 约 1~2 分钟内持续尝试
+            for _ in 0..<25 {
                 if Task.isCancelled { return }
                 try? await Task.sleep(for: .milliseconds(Int(delayMs)))
                 if Task.isCancelled { return }
@@ -872,31 +867,22 @@ struct ArticleImageView: View {
 
                 if FileManager.default.fileExists(atPath: imagePath) {
                     if await imageLoader.load(from: imagePath) {
-                        isRecovering = false
-                        return
+                        isRecovering = false; return
                     } else {
-                        // 文件损坏/空文件：删掉重下
                         try? FileManager.default.removeItem(atPath: imagePath)
                     }
                 }
-
-                // 有网才继续催下载（队列内部会去重）
                 if resourceManager.isNetworkAvailable {
-                    resourceManager.enqueueImageDownloads(
-                        timestamp: timestamp,
-                        imageNames: [imageName],
-                        priority: true
-                    )
+                    resourceManager.enqueueImageDownloads(timestamp: timestamp,
+                                                          imageNames: [imageName], priority: true)
                 }
-
-                delayMs = min(delayMs * 2, 5000)   // 0.6s → 1.2s → 2.4s → 5s…
+                delayMs = min(delayMs * 2, 5000)
             }
             isRecovering = false
         }
     }
 
     private func manualRetry() {
-        // 若本地存在但无法解码，先删掉，否则下载逻辑会误判"已存在"
         if FileManager.default.fileExists(atPath: imagePath),
            UIImage(contentsOfFile: imagePath) == nil {
             try? FileManager.default.removeItem(atPath: imagePath)
@@ -905,7 +891,9 @@ struct ArticleImageView: View {
     }
 }
 
-// MARK: - ZoomableImageView
+// ============================================================================
+// MARK: - 以下为原样保留的组件
+// ============================================================================
 struct ZoomableImageView: View {
     let imageName: String
     let timestamp: String
@@ -914,12 +902,8 @@ struct ZoomableImageView: View {
     @State private var saveAlertMessage = ""
 
     private var imagePath: String {
-        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
-    }
-
-    private func loadImage() -> UIImage? {
-        return UIImage(contentsOfFile: imagePath)
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return dir.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
     }
 
     var body: some View {
@@ -930,7 +914,8 @@ struct ZoomableImageView: View {
                 HStack {
                     Spacer()
                     Button(action: { isPresented = false }) {
-                        Image(systemName: "xmark.circle.fill").font(.largeTitle).foregroundColor(.white.opacity(0.7))
+                        Image(systemName: "xmark.circle.fill").font(.largeTitle)
+                            .foregroundColor(.white.opacity(0.7))
                             .background(Color.black.opacity(0.5).clipShape(Circle()))
                     }.padding()
                 }
@@ -941,7 +926,8 @@ struct ZoomableImageView: View {
                 HStack {
                     Spacer()
                     Button(action: saveImageToPhotoLibrary) {
-                        Image(systemName: "arrow.down.circle.fill").font(.largeTitle).foregroundColor(.white.opacity(0.7))
+                        Image(systemName: "arrow.down.circle.fill").font(.largeTitle)
+                            .foregroundColor(.white.opacity(0.7))
                             .background(Color.black.opacity(0.5).clipShape(Circle()))
                     }.padding()
                 }
@@ -960,9 +946,9 @@ struct ZoomableImageView: View {
         guard let imageData = uiImage.jpegData(compressionQuality: 1.0) else {
             saveAlertMessage = "图片转换失败"; showSaveAlert = true; return
         }
-        let requestAuth: (@escaping (PHAuthorizationStatus) -> Void) -> Void = { callback in
-            if #available(iOS 14, *) { PHPhotoLibrary.requestAuthorization(for: .addOnly, handler: callback) }
-            else { PHPhotoLibrary.requestAuthorization(callback) }
+        let requestAuth: (@escaping (PHAuthorizationStatus) -> Void) -> Void = { cb in
+            if #available(iOS 14, *) { PHPhotoLibrary.requestAuthorization(for: .addOnly, handler: cb) }
+            else { PHPhotoLibrary.requestAuthorization(cb) }
         }
         requestAuth { status in
             DispatchQueue.main.async {
@@ -973,7 +959,8 @@ struct ZoomableImageView: View {
                         req.addResource(with: .photo, data: imageData, options: nil)
                     } completionHandler: { success, error in
                         DispatchQueue.main.async {
-                            saveAlertMessage = success ? Localized.saveToAlbum : "\(Localized.saveFailed): \(error?.localizedDescription ?? "")"
+                            saveAlertMessage = success ? Localized.saveToAlbum
+                                : "\(Localized.saveFailed): \(error?.localizedDescription ?? "")"
                             showSaveAlert = true
                         }
                     }
@@ -985,49 +972,39 @@ struct ZoomableImageView: View {
     }
 }
 
-// MARK: - ZoomableScrollView (保持不变)
 struct ZoomableScrollView: UIViewRepresentable {
     let imageName: String
     let timestamp: String
     func makeUIView(context: Context) -> UIScrollView {
-        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let imagePath = documentsDirectory.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
-        guard let image = UIImage(contentsOfFile: imagePath) else {
-            print("ZoomableScrollView 无法加载图片于: \(imagePath)")
-            return UIScrollView()
-        }
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let imagePath = dir.appendingPathComponent("news_images_\(timestamp)/\(imageName)").path
+        guard let image = UIImage(contentsOfFile: imagePath) else { return UIScrollView() }
 
         let scrollView = UIScrollView()
         let imageView = UIImageView(image: image)
         imageView.contentMode = .scaleAspectFit
         imageView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(imageView)
-        
         NSLayoutConstraint.activate([
             imageView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
             imageView.heightAnchor.constraint(equalTo: scrollView.heightAnchor),
             imageView.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
             imageView.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor)
         ])
-
         scrollView.delegate = context.coordinator
         scrollView.maximumZoomScale = 5.0
         scrollView.minimumZoomScale = 1.0
         scrollView.bouncesZoom = true
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
-
         context.coordinator.imageView = imageView
-        
-        let doubleTapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap))
-        doubleTapGesture.numberOfTapsRequired = 2
-        scrollView.addGestureRecognizer(doubleTapGesture)
-
+        let dt = UITapGestureRecognizer(target: context.coordinator,
+                                        action: #selector(Coordinator.handleDoubleTap))
+        dt.numberOfTapsRequired = 2
+        scrollView.addGestureRecognizer(dt)
         return scrollView
     }
-
     func updateUIView(_ uiView: UIScrollView, context: Context) {}
-
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     class Coordinator: NSObject, UIScrollViewDelegate {
@@ -1035,79 +1012,60 @@ struct ZoomableScrollView: UIViewRepresentable {
         var imageView: UIImageView?
         init(_ parent: ZoomableScrollView) { self.parent = parent }
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
-        @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
-            guard let scrollView = gesture.view as? UIScrollView else { return }
-            if scrollView.zoomScale > scrollView.minimumZoomScale {
-                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
+        @objc func handleDoubleTap(_ g: UITapGestureRecognizer) {
+            guard let sv = g.view as? UIScrollView else { return }
+            if sv.zoomScale > sv.minimumZoomScale {
+                sv.setZoomScale(sv.minimumZoomScale, animated: true)
             } else {
-                let point = gesture.location(in: imageView)
-                let zoomRect = zoomRect(for: scrollView, with: point, scale: scrollView.maximumZoomScale / 2)
-                scrollView.zoom(to: zoomRect, animated: true)
+                let p = g.location(in: imageView)
+                sv.zoom(to: zoomRect(for: sv, with: p, scale: sv.maximumZoomScale / 2), animated: true)
             }
         }
-        private func zoomRect(for scrollView: UIScrollView, with point: CGPoint, scale: CGFloat) -> CGRect {
-            let newSize = CGSize(width: scrollView.frame.width / scale, height: scrollView.frame.height / scale)
-            let newOrigin = CGPoint(x: point.x - newSize.width / 2.0, y: point.y - newSize.height / 2.0)
-            return CGRect(origin: newOrigin, size: newSize)
+        private func zoomRect(for sv: UIScrollView, with p: CGPoint, scale: CGFloat) -> CGRect {
+            let size = CGSize(width: sv.frame.width / scale, height: sv.frame.height / scale)
+            return CGRect(origin: CGPoint(x: p.x - size.width / 2, y: p.y - size.height / 2), size: size)
         }
     }
 }
 
-// MARK: - 【移植自A程序】财经要闻推广页
 struct NewsPromoView: View {
-    // 传入跳转逻辑
     var onOpenAction: () -> Void
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
         ZStack {
-            // 背景：由上至下的微妙渐变
-            LinearGradient(
-                gradient: Gradient(colors: [Color.blue.opacity(0.1), Color(UIColor.systemBackground)]),
-                startPoint: .top,
-                endPoint: .center
-            )
-            .ignoresSafeArea()
+            LinearGradient(gradient: Gradient(colors: [Color.blue.opacity(0.1), Color(UIColor.systemBackground)]),
+                           startPoint: .top, endPoint: .center)
+                .ignoresSafeArea()
 
             VStack(spacing: 25) {
-                // 1. 顶部把手
-                Capsule()
-                    .fill(Color.secondary.opacity(0.3))
-                    .frame(width: 40, height: 5)
-                    .padding(.top, 10)
+                Capsule().fill(Color.secondary.opacity(0.3))
+                    .frame(width: 40, height: 5).padding(.top, 10)
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 25) {
-                        // 2. 头部 ICON 和 标题
                         VStack(spacing: 15) {
-                            // 【修改】使用真实的 Asset 图片名称，去掉 foregroundStyle，加上圆角
-                            Image("logo_stock_elf_small") 
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
+                            Image("logo_stock_elf_small")
+                                .resizable().aspectRatio(contentMode: .fit)
                                 .frame(width: 80, height: 80)
-                                // 添加 App 图标标准的平滑圆角
                                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                                 .shadow(color: .blue.opacity(0.3), radius: 10, x: 0, y: 5)
-                            
                             Text(Localized.promoTitle)
                                 .font(.system(size: 28, weight: .heavy))
-                                .foregroundColor(.primary)
-                                .multilineTextAlignment(.center)
+                                .foregroundColor(.primary).multilineTextAlignment(.center)
                         }
                         .padding(.top, 20)
 
-                        // 3. 媒体品牌墙
                         VStack(spacing: 10) {
-                            Text(Localized.promoFeature).font(.subheadline).foregroundColor(.secondary).textCase(.uppercase)
-                            // 在 NewsPromoView 的 body 内部
-                            let brands = Localized.isEnglish ? 
+                            Text(Localized.promoFeature).font(.subheadline)
+                                .foregroundColor(.secondary).textCase(.uppercase)
+                            let brands = Localized.isEnglish ?
                                 ["Earnings", "Economy", "Options", "ETF", "Commodity", "FX", "Exchanges", "Bonds", "..."] :
                                 ["美股财报", "美国经济数据", "期权分析", "ETF榜单", "大宗商品", "货币汇率", "全球交易所", "各国债券", "..."]
                             FlowLayoutView(items: brands)
                         }
                         .padding(.vertical, 20)
 
-                        // 4. 核心介绍文案
                         VStack(alignment: .leading, spacing: 15) {
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: "sparkles").foregroundColor(.orange)
@@ -1126,34 +1084,25 @@ struct NewsPromoView: View {
                 }
             }
 
-            // 5. 底部悬浮按钮
             VStack {
                 Spacer()
-                Button(action: {
-                    onOpenAction()
-                }) {
+                Button(action: onOpenAction) {
                     HStack {
                         Image(systemName: "app.badge.fill")
                         Text(Localized.downloadInStore).fontWeight(.bold)
                     }
-                    .font(.title3)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .background(
-                        LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing)
-                    )
+                    .font(.title3).foregroundColor(.white)
+                    .frame(maxWidth: .infinity).frame(height: 56)
+                    .background(LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing))
                     .cornerRadius(28)
                     .shadow(color: .blue.opacity(0.4), radius: 8, x: 0, y: 4)
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 30)
+                .padding(.horizontal, 20).padding(.bottom, 30)
             }
         }
     }
 }
 
-// 简单的流式布局辅助视图
 struct FlowLayoutView: View {
     let items: [String]
     var body: some View {
@@ -1171,7 +1120,7 @@ struct FlowLayoutView: View {
                 if items.indices.contains(5) { BrandTag(text: items[5]) }
                 if items.indices.contains(6) { BrandTag(text: items[6]) }
             }
-             HStack {
+            HStack {
                 if items.indices.contains(7) { BrandTag(text: items[7]) }
                 if items.indices.contains(8) { BrandTag(text: items[8]) }
             }
@@ -1182,22 +1131,16 @@ struct FlowLayoutView: View {
 struct BrandTag: View {
     let text: String
     var body: some View {
-        Text(text)
-            .font(.caption)
-            .fontWeight(.semibold)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+        Text(text).font(.caption).fontWeight(.semibold)
+            .padding(.horizontal, 12).padding(.vertical, 6)
             .background(Color.blue.opacity(0.1))
-            .foregroundColor(.blue)
-            .cornerRadius(8)
+            .foregroundColor(.blue).cornerRadius(8)
     }
 }
 
-// 【新增】将音频按钮隔离出来，让它自己去观察状态更新，不连累大视图
 struct AudioToolbarButton: View {
     @ObservedObject var audioPlayerManager: AudioPlayerManager
     var onAudioToggle: () -> Void
-    
     var body: some View {
         Button(action: onAudioToggle) {
             Image(systemName: audioPlayerManager.isPlaybackActive ? "headphones.slash" : "headphones")
@@ -1206,32 +1149,27 @@ struct AudioToolbarButton: View {
     }
 }
 
-// MARK: - 现代化推荐卡片组件
 struct PromoCardView: View {
     let title: String
     let subtitle: String
-    let imageName: String // 改为图片名称
-    let isSystemIcon: Bool // 新增：标记是否为系统图标
+    let imageName: String
+    let isSystemIcon: Bool
     let colors: [Color]
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 10) {
-                
-                // 第一行：左边图标，右边名字
                 HStack(spacing: 12) {
-                    // 图标区域
                     Group {
                         if isSystemIcon {
-                            Image(systemName: imageName)
-                                .font(.title2)
-                                .foregroundStyle(.linearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                            Image(systemName: imageName).font(.title2)
+                                .foregroundStyle(.linearGradient(colors: colors,
+                                                                 startPoint: .topLeading,
+                                                                 endPoint: .bottomTrailing))
                         } else {
-                            Image(imageName) // 加载 Assets 中的图片
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 32, height: 32) // 这里稍微缩小了一点图标尺寸，让横排更精致，你也可以保持40
+                            Image(imageName).resizable().aspectRatio(contentMode: .fit)
+                                .frame(width: 32, height: 32)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
@@ -1239,23 +1177,11 @@ struct PromoCardView: View {
                     .background(Color(UIColor.systemBackground).opacity(0.8))
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .shadow(color: colors.first!.opacity(0.2), radius: 5, x: 0, y: 2)
-                    
-                    // 名字 (标题)
-                    Text(title)
-                        .font(.subheadline)
-                        .fontWeight(.bold)
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
+
+                    Text(title).font(.subheadline).fontWeight(.bold)
+                        .foregroundColor(.primary).lineLimit(1)
                 }
-                
-                // 下一行：说明文字
-                Text(subtitle)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    // 如果你想让说明文字显示多行，可以改成 .lineLimit(2) 或去掉此限制
-                    .lineLimit(2) 
-                    // 如果想让文字和上方图标左对齐稍微缩进，可加 padding
-                    // .padding(.leading, 2) 
+                Text(subtitle).font(.caption2).foregroundColor(.secondary).lineLimit(2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
@@ -1265,11 +1191,10 @@ struct PromoCardView: View {
                     .shadow(color: Color.black.opacity(0.05), radius: 10, x: 0, y: 4)
             )
         }
-        .buttonStyle(PlainButtonStyle()) // 防止按钮默认的蓝色高亮破坏设计
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
-// MARK: - 字体大小调整视图
 struct FontAdjustmentView: View {
     @AppStorage("articleBodyFontSize") private var bodyFontSize: Double = 25
     @AppStorage("imageCaptionFontSize") private var captionFontSize: Double = 12
@@ -1284,80 +1209,53 @@ struct FontAdjustmentView: View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 28) {
-
-                    // ── 正文字号 ──
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Text(Localized.isEnglish ? "Body Font" : "正文字号")
                                 .font(.subheadline).fontWeight(.semibold)
                             Spacer()
-                            Text("\(Int(bodyFontSize)) pt")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
+                            Text("\(Int(bodyFontSize)) pt").font(.subheadline)
+                                .foregroundColor(.secondary).monospacedDigit()
                         }
-
                         HStack(spacing: 12) {
-                            Image(systemName: "textformat.size.smaller")
-                                .foregroundColor(.secondary)
-                            Slider(value: $bodyFontSize, in: bodyRange, step: 1)
-                                .tint(.blue)
-                            Image(systemName: "textformat.size.larger")
-                                .foregroundColor(.secondary)
+                            Image(systemName: "textformat.size.smaller").foregroundColor(.secondary)
+                            Slider(value: $bodyFontSize, in: bodyRange, step: 1).tint(.blue)
+                            Image(systemName: "textformat.size.larger").foregroundColor(.secondary)
                         }
-
-                        // 实时预览
                         Text(Localized.isEnglish
                              ? "This is a preview of the body text at the selected size."
                              : "这是一段示例正文，用来预览当前字体大小的实际效果。")
                             .font(.system(size: bodyFontSize, design: .serif))
                             .lineSpacing(bodyFontSize * 0.48)
-                            .padding(14)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                             .background(Color(UIColor.secondarySystemGroupedBackground))
                             .cornerRadius(12)
                     }
 
                     Divider()
 
-                    // ── 图注字号 ──
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Text(Localized.isEnglish ? "Caption Font" : "图注字号")
                                 .font(.subheadline).fontWeight(.semibold)
                             Spacer()
-                            Text("\(Int(captionFontSize)) pt")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
+                            Text("\(Int(captionFontSize)) pt").font(.subheadline)
+                                .foregroundColor(.secondary).monospacedDigit()
                         }
-
                         HStack(spacing: 12) {
-                            Image(systemName: "textformat.size.smaller")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Slider(value: $captionFontSize, in: captionRange, step: 1)
-                                .tint(.blue)
-                            Image(systemName: "textformat.size.larger")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
+                            Image(systemName: "textformat.size.smaller").font(.caption2).foregroundColor(.secondary)
+                            Slider(value: $captionFontSize, in: captionRange, step: 1).tint(.blue)
+                            Image(systemName: "textformat.size.larger").font(.caption2).foregroundColor(.secondary)
                         }
-
-                        // 实时预览
-                        Text(Localized.isEnglish
-                             ? "Sample image caption text"
-                             : "示例图片说明文字")
-                            .font(.system(size: captionFontSize))
-                            .foregroundColor(.secondary)
-                            .padding(14)
-                            .frame(maxWidth: .infinity, alignment: .center)
+                        Text(Localized.isEnglish ? "Sample image caption text" : "示例图片说明文字")
+                            .font(.system(size: captionFontSize)).foregroundColor(.secondary)
+                            .padding(14).frame(maxWidth: .infinity, alignment: .center)
                             .background(Color(UIColor.secondarySystemGroupedBackground))
                             .cornerRadius(12)
                     }
 
                     Spacer(minLength: 20)
 
-                    // ── 恢复默认 ──
                     Button(action: {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             bodyFontSize = defaultBodySize
@@ -1365,10 +1263,8 @@ struct FontAdjustmentView: View {
                         }
                     }) {
                         Text(Localized.isEnglish ? "Reset to Default" : "恢复默认")
-                            .font(.subheadline)
-                            .foregroundColor(.blue)
-                            .padding(.vertical, 12)
-                            .frame(maxWidth: .infinity)
+                            .font(.subheadline).foregroundColor(.blue)
+                            .padding(.vertical, 12).frame(maxWidth: .infinity)
                             .background(Color(UIColor.secondarySystemGroupedBackground))
                             .cornerRadius(12)
                     }
@@ -1389,20 +1285,15 @@ struct FontAdjustmentView: View {
 
 struct NextArticleFloatingButton: View {
     var action: () -> Void
-    
     var body: some View {
         Button(action: action) {
             Image(systemName: "arrow.right")
-                .font(.system(size: 18, weight: .bold)) // 保持缩小后的尺寸
-                .foregroundColor(Color.primary) // 浅色模式为黑，深色模式为白
-                .frame(width: 44, height: 44) // 保持缩小后的尺寸
-                .background(Color(UIColor.systemBackground)) // 浅色模式为白，深色模式为黑
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(Color.primary)
+                .frame(width: 44, height: 44)
+                .background(Color(UIColor.systemBackground))
                 .clipShape(Circle())
-                // 添加一个细微的边框，防止在深色模式下背景色与页面背景融为一体
-                .overlay(
-                    Circle()
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 0.5)
-                )
+                .overlay(Circle().stroke(Color.gray.opacity(0.3), lineWidth: 0.5))
                 .shadow(color: Color.black.opacity(0.15), radius: 4, x: 0, y: 2)
         }
         .padding(.trailing, 20)
