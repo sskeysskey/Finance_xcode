@@ -63,9 +63,7 @@ final class PlayerSurfaceView: NSView {
         return l
     }
 
-    var playerLayer: AVPlayerLayer {
-        return layer as! AVPlayerLayer
-    }
+    var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -108,14 +106,39 @@ struct WindowAccessor: NSViewRepresentable {
 // MARK: - 播放模型
 @MainActor
 final class PlayerModel: ObservableObject {
+
+    /// ⭐ 播放状态机：把「意图」和「实际状态」彻底分开
+    enum Phase: Equatable {
+        case idle       // 空
+        case loading    // 首次解析 / 起播中
+        case playing    // 真正在出画面
+        case buffering  // 想播但卡住了（网络/解码/seek）
+        case paused     // 用户主动暂停或播完
+        case failed     // 出错
+    }
+
     let player = AVPlayer()
 
+    // MARK: 对外状态
+    @Published var phase: Phase = .idle
     @Published var loading = true
     @Published var error: String?
     @Published var current: EpisodeItem?
     @Published var isLocal = false
 
+    /// 真正在出画面（用于：控制栏自动隐藏、防休眠判断）
     @Published var isPlaying = false
+    /// ⭐ 用户「想播」的意图（用于：播放/暂停按钮图标）—— 卡顿时依然为 true
+    @Published var intendsToPlay = false
+    /// ⭐ 正在卡顿 / 缓冲
+    @Published var isBuffering = false
+    /// ⭐ 去抖后真正显示的转圈（避免 seek 时闪一下）
+    @Published var showBusySpinner = false
+    /// ⭐ 卡了较久 → 提示网络可能有问题
+    @Published var slowNetwork = false
+    /// ⭐ 卡太久 → 给用户手动"重新加载"按钮
+    @Published var offerManualRetry = false
+
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
     @Published var bufferedTime: Double = 0
@@ -131,17 +154,37 @@ final class PlayerModel: ObservableObject {
     var payload: PlayPayload?
     var onEnded: (() -> Void)?
 
+    // MARK: 私有
     private var timeObs: Any?
     private var endObs: NSObjectProtocol?
+    private var stallObs: NSObjectProtocol?
+    private var failEndObs: NSObjectProtocol?
     private var statusObs: NSKeyValueObservation?
     private var tcsObs: NSKeyValueObservation?
+    private var waitReasonObs: NSKeyValueObservation?
+    private var bufferEmptyObs: NSKeyValueObservation?
+    private var keepUpObs: NSKeyValueObservation?
     private var pip: AVPictureInPictureController?
     private var sleepToken: NSObjectProtocol?
     private var episodeKey = ""
     private var lastSavedAt: Double = -100
-    // ⭐ seek 静默期：跳转造成的瞬时 waitingToPlay 不当作"暂停"上报给 UI
-    private var isSeekGraceActive = false
-    private var seekGraceTask: Task<Void, Never>?
+
+    /// 用户意图（唯一真源）
+    private var wantsPlayback = false
+    /// 起播/恢复时要跳到的位置
+    private var pendingStart: Double?
+
+    // 卡顿看门狗
+    private var watchdog: Task<Void, Never>?
+    private var recoveryAttempts = 0
+    private var lastRecoveryAt = Date.distantPast
+    private var isRecovering = false
+
+    // 时间线
+    private let spinnerDelay: UInt64        = 350_000_000      // 0.35s 后才转圈
+    private let slowHintDelay: UInt64       = 5_650_000_000    // 累计 ~6s 提示网络慢
+    private let autoRecoverDelay: UInt64    = 9_000_000_000    // 累计 ~15s 自动自愈
+    private let manualRetryDelay: UInt64    = 10_000_000_000   // 累计 ~25s 给手动按钮
 
     /// UI 用的"当前时间"（拖动时显示拖动位置）
     var displayTime: Double { isScrubbing ? scrubTime : currentTime }
@@ -152,16 +195,24 @@ final class PlayerModel: ObservableObject {
         observeTimeControlStatus()
     }
 
-    // MARK: 载入
-    func load(payload p: PlayPayload, episode: EpisodeItem) async {
-        payload = p; current = episode
-        loading = true; error = nil
-        teardownItemObservers()
-        endSeekGrace()              // ⭐
+    // MARK: - 载入
+    func load(payload p: PlayPayload,
+              episode: EpisodeItem,
+              startAt: Double? = nil,
+              resetRecovery: Bool = true) async {
 
+        payload = p; current = episode
+        teardownItemObservers()
+        stopWatchdog()
+
+        wantsPlayback = false          // 起播前意图归零，readyToPlay 后再置 true
+        loading = true; error = nil
         currentTime = 0; duration = 0; bufferedTime = 0
         isScrubbing = false; lastSavedAt = -100
         episodeKey = episode.url
+        pendingStart = startAt
+        if resetRecovery { recoveryAttempts = 0 }
+        recomputePhase()
 
         var target: URL?
         if let local = HLSDownloadManager.shared.localURL(forEpisodeKey: episode.url) {
@@ -172,13 +223,13 @@ final class PlayerModel: ObservableObject {
                 let real = try await VideoAPI.resolveRealURL(episodeURL: episode.url)
                 target = URL(string: real)
             } catch {
-                self.error = error.localizedDescription
-                self.loading = false
+                fail(with: error.localizedDescription)
                 return
             }
         }
         guard let url = target else {
-            error = T("无法播放", "Unable to play"); loading = false; return
+            fail(with: T("无法播放", "Unable to play"))
+            return
         }
 
         let item = AVPlayerItem(asset: AVURLAsset(url: url))
@@ -192,9 +243,17 @@ final class PlayerModel: ObservableObject {
             guard let self else { return }
             let status = observed.status
             let errText = observed.error?.localizedDescription
-            Task { @MainActor in
-                self.handleStatus(status, errorText: errText, episodeKey: key)
-            }
+            Task { @MainActor in self.handleStatus(status, errorText: errText, episodeKey: key) }
+        }
+
+        // ⭐ 缓冲相关 KVO：在进入 Task 之前解除 weak 绑定，避免 Swift 6 报错
+        bufferEmptyObs = item.observe(\.isPlaybackBufferEmpty, options: [.new]) { [weak self] _, _ in
+            guard let self else { return }
+            Task { @MainActor in self.recomputePhase() }
+        }
+        keepUpObs = item.observe(\.isPlaybackLikelyToKeepUp, options: [.new]) { [weak self] _, _ in
+            guard let self else { return }
+            Task { @MainActor in self.recomputePhase() }
         }
 
         // ⭐ 0.2s 一次：驱动进度条 / 缓冲 / 断点续播存档
@@ -210,9 +269,33 @@ final class PlayerModel: ObservableObject {
             guard let self else { return }
             Task { @MainActor in
                 PositionStore.clear(key)
+                self.wantsPlayback = false
+                self.recomputePhase()
                 self.onEnded?()
             }
         }
+
+        // ⭐ 卡顿通知
+        stallObs = NotificationCenter.default.addObserver(forName: .AVPlayerItemPlaybackStalled,
+                                                         object: item, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in self.recomputePhase() }
+        }
+
+        // ⭐ 播放中断通知
+        failEndObs = NotificationCenter.default.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime,
+                                                           object: item, queue: .main) { [weak self] note in
+            guard let self else { return }
+            let msg = (note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?.localizedDescription
+            Task { @MainActor in
+                if self.recoveryAttempts < 2 {
+                    await self.recoverNow(hard: true)
+                } else {
+                    self.fail(with: msg ?? T("播放中断", "Playback interrupted"))
+                }
+            }
+        }
+
         recordPlayback(p, episode)
     }
 
@@ -221,20 +304,28 @@ final class PlayerModel: ObservableObject {
         case .readyToPlay:
             loading = false
             if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { duration = d }
+
             let saved = PositionStore.load(episodeKey)
-            if saved > 5 {
-                player.seek(to: CMTime(seconds: saved, preferredTimescale: 600))
-                currentTime = saved
+            let startAt = pendingStart ?? (saved > 5 ? saved : 0)
+            pendingStart = nil
+            if startAt > 1 {
+                player.seek(to: CMTime(seconds: startAt, preferredTimescale: 600))
+                currentTime = startAt
             }
-            player.play()
-            player.rate = SpeedStore.rate
-            rate = SpeedStore.rate
+            resumePlayback()
         case .failed:
-            loading = false
-            error = errorText ?? T("播放失败", "Playback failed")
+            fail(with: errorText ?? T("播放失败", "Playback failed"))
         default:
-            break
+            recomputePhase()
         }
+    }
+
+    private func fail(with msg: String) {
+        loading = false
+        error = msg
+        wantsPlayback = false
+        stopWatchdog()
+        recomputePhase()
     }
 
     private func tick(_ sec: Double) {
@@ -256,6 +347,11 @@ final class PlayerModel: ObservableObject {
             let active = p.isPictureInPictureActive
             if active != isPiPActive { isPiPActive = active }
         }
+        // 连续顺畅播放一段时间后，重置自愈计数
+        if phase == .playing, recoveryAttempts > 0,
+           Date().timeIntervalSince(lastRecoveryAt) > 20 {
+            recoveryAttempts = 0
+        }
     }
 
     private func recordPlayback(_ p: PlayPayload, _ ep: EpisodeItem) {
@@ -271,52 +367,46 @@ final class PlayerModel: ObservableObject {
                                              channelName: p.channelName)
     }
 
-    // MARK: 播放控制
+    // MARK: - 播放控制
     func togglePlay() {
-        if player.timeControlStatus == .playing {
-            endSeekGrace()          // ⭐ 用户主动暂停，立即恢复真实状态上报
-            player.pause()
-        } else {
-            player.play()
-            player.rate = SpeedStore.rate
-        }
+        if wantsPlayback { pausePlayback() } else { resumePlayback() }
+    }
+
+    private func resumePlayback() {
+        guard error == nil else { return }
+        wantsPlayback = true
+        player.play()
+        player.rate = SpeedStore.rate
+        rate = SpeedStore.rate
+        recomputePhase()
+    }
+
+    private func pausePlayback() {
+        wantsPlayback = false
+        player.pause()
+        recomputePhase()
     }
 
     func setRate(_ r: Float) {
         SpeedStore.rate = r
         rate = r
-        if player.timeControlStatus == .playing { player.rate = r }
+        if wantsPlayback { player.rate = r }
     }
 
-    /// ⭐ 相对跳转（±15 秒 / ±5 秒）
+    /// 相对跳转（±15 秒 / ±5 秒）
     func seek(by delta: Double) { seek(to: displayTime + delta) }
 
     func seek(to t: Double) {
         let upper = duration > 1 ? duration - 0.3 : max(t, 0)
         let clamped = min(max(0, t), upper)
         currentTime = clamped
-        beginSeekGrace()                                  // ⭐ 新增这一行
-        player.seek(to: CMTime(seconds: clamped, preferredTimescale: 600))
+        player.seek(to: CMTime(seconds: clamped, preferredTimescale: 600)) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in self.recomputePhase() }
+        }
         PositionStore.save(clamped, episodeKey)
         lastSavedAt = clamped
-    }
-
-    // ⭐ 静默期管理（全部在主线程，无跨线程捕获）
-    private func beginSeekGrace() {
-        isSeekGraceActive = true
-        seekGraceTask?.cancel()
-        seekGraceTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 800_000_000)   // 0.8s，够覆盖一次普通 seek
-            guard !Task.isCancelled, let self else { return }
-            self.isSeekGraceActive = false
-            self.setPlaying(self.player.timeControlStatus == .playing)  // 补报一次真实状态
-        }
-    }
-
-    private func endSeekGrace() {
-        seekGraceTask?.cancel()
-        seekGraceTask = nil
-        isSeekGraceActive = false
+        recomputePhase()
     }
 
     /// 拖动进度条时的实时预览（不真正 seek，拖完再跳）
@@ -337,11 +427,125 @@ final class PlayerModel: ObservableObject {
     func nudgeVolume(_ d: Float) { setVolume(volume + d) }
     func toggleMute() { isMuted.toggle(); player.isMuted = isMuted }
 
-    // MARK: 画中画
+    // MARK: - ⭐ 状态机
+    private func observeTimeControlStatus() {
+        tcsObs = player.observe(\.timeControlStatus, options: [.new, .initial]) { [weak self] _, _ in
+            guard let self else { return }
+            Task { @MainActor in self.recomputePhase() }
+        }
+        waitReasonObs = player.observe(\.reasonForWaitingToPlay, options: [.new]) { [weak self] _, _ in
+            guard let self else { return }
+            Task { @MainActor in self.recomputePhase() }
+        }
+    }
+
+    private func recomputePhase() {
+        let newPhase: Phase
+        if error != nil {
+            newPhase = .failed
+        } else if loading {
+            newPhase = .loading
+        } else {
+            switch player.timeControlStatus {
+            case .playing:
+                newPhase = .playing
+            case .waitingToPlayAtSpecifiedRate:
+                newPhase = wantsPlayback ? .buffering : .paused
+            case .paused:
+                newPhase = wantsPlayback ? .buffering : .paused
+            @unknown default:
+                newPhase = wantsPlayback ? .buffering : .paused
+            }
+        }
+
+        let cameFromLoading = (phase == .loading)
+
+        if phase != newPhase { phase = newPhase }
+
+        let playing = (newPhase == .playing)
+        if isPlaying != playing { isPlaying = playing }
+
+        let intent = wantsPlayback && newPhase != .failed
+        if intendsToPlay != intent { intendsToPlay = intent }
+
+        let buffering = (newPhase == .buffering)
+        if isBuffering != buffering {
+            isBuffering = buffering
+            if buffering {
+                startWatchdog(immediate: cameFromLoading)
+            } else {
+                stopWatchdog()
+            }
+        }
+
+        updateSleepAssertion()
+    }
+
+    // MARK: - ⭐ 卡顿看门狗
+    private func startWatchdog(immediate: Bool) {
+        watchdog?.cancel()
+        if immediate { showBusySpinner = true }
+        watchdog = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            if !immediate {
+                try? await Task.sleep(nanoseconds: self.spinnerDelay)
+                guard !Task.isCancelled, self.isBuffering else { return }
+                self.showBusySpinner = true
+            }
+
+            try? await Task.sleep(nanoseconds: self.slowHintDelay)
+            guard !Task.isCancelled, self.isBuffering else { return }
+            self.slowNetwork = true
+
+            try? await Task.sleep(nanoseconds: self.autoRecoverDelay)
+            guard !Task.isCancelled, self.isBuffering else { return }
+            await self.recoverNow(hard: self.recoveryAttempts >= 1)
+
+            try? await Task.sleep(nanoseconds: self.manualRetryDelay)
+            guard !Task.isCancelled, self.isBuffering else { return }
+            self.offerManualRetry = true
+        }
+    }
+
+    private func stopWatchdog() {
+        watchdog?.cancel(); watchdog = nil
+        if showBusySpinner { showBusySpinner = false }
+        if slowNetwork { slowNetwork = false }
+        if offerManualRetry { offerManualRetry = false }
+    }
+
+    private func recoverNow(hard: Bool) async {
+        guard !isRecovering, let p = payload, let ep = current else { return }
+        isRecovering = true
+        recoveryAttempts += 1
+        lastRecoveryAt = Date()
+        let at = currentTime
+
+        if hard && !isLocal {
+            await load(payload: p, episode: ep, startAt: at, resetRecovery: false)
+        } else {
+            player.pause()
+            player.seek(to: CMTime(seconds: at, preferredTimescale: 600)) { [weak self] _ in
+                guard let self else { return }
+                Task { @MainActor in self.resumePlayback() }
+            }
+        }
+        isRecovering = false
+    }
+
+    /// UI 上的"重新加载"
+    func retryNow() {
+        guard let p = payload, let ep = current else { return }
+        let at = currentTime
+        offerManualRetry = false
+        Task { await load(payload: p, episode: ep, startAt: at, resetRecovery: true) }
+    }
+
+    // MARK: - 画中画
     func attach(surface: PlayerSurfaceView) {
         guard pip == nil, AVPictureInPictureController.isPictureInPictureSupported() else { return }
-        let c = AVPictureInPictureController(playerLayer: surface.playerLayer)
-        pip = c
+        pip = AVPictureInPictureController(playerLayer: surface.playerLayer)
         pipReady = true
     }
     func togglePiP() {
@@ -349,19 +553,10 @@ final class PlayerModel: ObservableObject {
         if p.isPictureInPictureActive { p.stopPictureInPicture() } else { p.startPictureInPicture() }
     }
 
-    // MARK: ⭐ 播放时禁止休眠
-    private func observeTimeControlStatus() {
-        tcsObs = player.observe(\.timeControlStatus, options: [.new, .initial]) { [weak self] p, _ in
-            guard let self else { return }
-            let playing = (p.timeControlStatus == .playing)
-            Task { @MainActor in self.setPlaying(playing) }
-        }
-    }
-
-    private func setPlaying(_ playing: Bool) {
-        if !playing, isSeekGraceActive { return }   // ⭐ 忽略 seek 引起的瞬时非播放
-        isPlaying = playing
-        if playing {
+    // MARK: - 防休眠
+    private func updateSleepAssertion() {
+        let shouldHold = wantsPlayback && error == nil
+        if shouldHold {
             if sleepToken == nil {
                 sleepToken = ProcessInfo.processInfo.beginActivity(
                     options: [.userInitiated, .idleDisplaySleepDisabled, .idleSystemSleepDisabled],
@@ -379,32 +574,39 @@ final class PlayerModel: ObservableObject {
         }
     }
 
-    // MARK: 清理
+    // MARK: - 清理
     func stop() {
+        wantsPlayback = false
         player.pause()
         if let p = pip, p.isPictureInPictureActive { p.stopPictureInPicture() }
         teardownItemObservers()
+        stopWatchdog()
         releaseSleepAssertion()
         player.replaceCurrentItem(with: nil)
         pip = nil
         pipReady = false
-        endSeekGrace()              // ⭐
+        phase = .idle
+        isPlaying = false; intendsToPlay = false; isBuffering = false
     }
 
     private func teardownItemObservers() {
         if let t = timeObs { player.removeTimeObserver(t); timeObs = nil }
-        if let e = endObs { NotificationCenter.default.removeObserver(e); endObs = nil }
+        for o in [endObs, stallObs, failEndObs].compactMap({ $0 }) {
+            NotificationCenter.default.removeObserver(o)
+        }
+        endObs = nil; stallObs = nil; failEndObs = nil
         statusObs?.invalidate(); statusObs = nil
+        bufferEmptyObs?.invalidate(); bufferEmptyObs = nil
+        keepUpObs?.invalidate(); keepUpObs = nil
     }
-    // ⚠️ 不写 deinit：@MainActor 类的 deinit 访问隔离属性在 Swift 6 是错误；
-    //    视图 onDisappear 调用 stop() 完成清理。
 }
 
-// MARK: - ⭐ 自绘时间轴（悬停 / 拖动都显示具体时间）
+// MARK: - 自绘时间轴
 struct TimelineSlider: View {
     let duration: Double
     let current: Double
     let buffered: Double
+    var buffering: Bool = false
     let onScrub: (Double) -> Void
     let onCommit: (Double) -> Void
 
@@ -412,6 +614,7 @@ struct TimelineSlider: View {
     @State private var dragValue: Double = 0
     @State private var hoverX: CGFloat?
     @State private var hoverTime: Double = 0
+    @State private var pulse = false
 
     private let barHeight: CGFloat = 5
 
@@ -433,11 +636,11 @@ struct TimelineSlider: View {
                 Circle().fill(Color.white)
                     .frame(width: knob, height: knob)
                     .shadow(radius: 2)
+                    .opacity(buffering && !dragging ? (pulse ? 0.35 : 1) : 1)
                     .offset(x: w * CGFloat(ratio) - knob / 2)
             }
             .frame(height: 22)
             .contentShape(Rectangle())
-            // ⭐ 悬停显示时间
             .onContinuousHover(coordinateSpace: .local) { phase in
                 guard usable else { return }
                 switch phase {
@@ -449,7 +652,6 @@ struct TimelineSlider: View {
                     if !dragging { hoverX = nil }
                 }
             }
-            // ⭐ 点击 / 拖动跳转
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
@@ -471,6 +673,9 @@ struct TimelineSlider: View {
             .animation(.easeOut(duration: 0.12), value: active)
         }
         .frame(height: 22)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { pulse = true }
+        }
     }
 
     @ViewBuilder private func tooltip(width: CGFloat) -> some View {
@@ -509,14 +714,18 @@ struct PlayerWindowView: View {
     @State private var window: NSWindow?
     @State private var isFullScreen = false
 
-    // ⭐ 优化 3：焦点默认落在播放/暂停按钮上
     @FocusState private var isPlayPauseFocused: Bool
 
     private var modalUp: Bool { showReport || showSubscribe || showConsume }
     private var currentIndex: Int {
         payload.episodes.firstIndex(where: { $0.url == model.current?.url }) ?? 0
     }
-    private var barVisible: Bool { controlsVisible || !model.isPlaying || model.loading }
+    private var barVisible: Bool {
+        controlsVisible || !model.isPlaying || model.loading || model.isBuffering
+    }
+    private var busyVisible: Bool {
+        model.error == nil && (model.loading || model.showBusySpinner)
+    }
 
     var body: some View {
         ZStack {
@@ -525,7 +734,6 @@ struct PlayerWindowView: View {
             PlayerSurface(player: model.player) { v in model.attach(surface: v) }
                 .ignoresSafeArea()
 
-            // 透明层：负责 hover 唤出控制条 + 单击暂停 / 双击全屏
             Color.clear
                 .contentShape(Rectangle())
                 .onContinuousHover { phase in
@@ -534,9 +742,12 @@ struct PlayerWindowView: View {
                 .onTapGesture(count: 2) { toggleFullScreen() }
                 .onTapGesture(count: 1) { model.togglePlay() }
 
-            if model.loading {
-                ProgressView().controlSize(.large).tint(.white)
+            if busyVisible {
+                busyOverlay
+                    .transition(.opacity)
+                    .animation(.easeInOut(duration: 0.2), value: busyVisible)
             }
+
             if let e = model.error { errorOverlay(e) }
 
             VStack(spacing: 0) {
@@ -552,7 +763,6 @@ struct PlayerWindowView: View {
         .frame(minWidth: 720, minHeight: 420)
         .background(WindowAccessor { w in if window !== w { window = w } })
         .navigationTitle(isFullScreen ? "" : "\(payload.seriesTitle) · \(model.current?.name ?? payload.episodeName)")
-        // ⭐ 优化 1：全屏时隐藏上方整条 toolbar 与标题横条，做到真正全屏
         .toolbar(isFullScreen ? .hidden : .visible)
         .toolbar {
             ToolbarItemGroup {
@@ -582,7 +792,6 @@ struct PlayerWindowView: View {
                 select(ep)
             }
 
-            // ⭐ 优化 3：加载后自动将键盘焦点指向播放按钮
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 isPlayPauseFocused = true
             }
@@ -600,6 +809,13 @@ struct PlayerWindowView: View {
         .onChangeCompat(of: model.isPlaying) { playing in
             if playing { bumpControls() } else { controlsVisible = true; hideTask?.cancel() }
         }
+        .onChangeCompat(of: model.isBuffering) { buffering in
+            if buffering {
+                controlsVisible = true
+                hideTask?.cancel()
+                NSCursor.setHiddenUntilMouseMoves(false)
+            }
+        }
         .sheet(isPresented: $showReport) {
             ReportSheet(title: "\(payload.seriesTitle) · \(model.current?.name ?? "")",
                         sourceURL: payload.sourceURL ?? payload.episodeKey,
@@ -614,6 +830,50 @@ struct PlayerWindowView: View {
         } message: {
             Text(quota.consumeNote(lang.isEnglish) + "\n" + quota.remainingSummary(lang.isEnglish))
         }
+    }
+
+    // MARK: 忙碌 / 卡顿遮罩
+    private var busyOverlay: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .progressViewStyle(.circular)
+                .controlSize(.large)
+                .tint(.white)
+
+            Text(busyText)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 260)
+
+            if model.offerManualRetry {
+                HStack(spacing: 10) {
+                    Button(lang.t("重新加载", "Reload")) { model.retryNow() }
+                        .buttonStyle(.borderedProminent)
+                    Button(lang.t("反馈修复", "Report")) { showReport = true }
+                        .buttonStyle(.bordered)
+                }
+                .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.08)))
+        .allowsHitTesting(model.offerManualRetry)
+        .accessibilityLabel(busyText)
+    }
+
+    private var busyText: String {
+        if model.loading { return lang.t("正在加载…", "Loading…") }
+        if model.offerManualRetry {
+            return lang.t("加载一直没完成，可以重新加载或换个线路",
+                          "Still not loading. Try reloading or another source.")
+        }
+        if model.slowNetwork {
+            return lang.t("网络似乎不太稳定，正在缓冲…", "Network seems unstable, buffering…")
+        }
+        return lang.t("缓冲中…", "Buffering…")
     }
 
     // MARK: 错误层
@@ -636,12 +896,13 @@ struct PlayerWindowView: View {
         .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    // MARK: ⭐ 控制条
+    // MARK: 控制条
     private var controlBar: some View {
         VStack(spacing: 4) {
             TimelineSlider(duration: model.duration,
                            current: model.displayTime,
                            buffered: model.bufferedTime,
+                           buffering: model.isBuffering,
                            onScrub: { model.previewScrub($0) },
                            onCommit: { model.endScrub($0) })
 
@@ -653,9 +914,23 @@ struct PlayerWindowView: View {
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(.white.opacity(0.75))
 
+                if model.isBuffering {
+                    HStack(spacing: 5) {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .controlSize(.small)
+                            .tint(.white)
+                            .scaleEffect(0.7)
+                            .frame(width: 14, height: 14)
+                        Text(lang.t("缓冲中", "Buffering"))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
+                    .transition(.opacity)
+                }
+
                 Spacer(minLength: 8)
 
-                // 上一集
                 if payload.episodes.count > 1 {
                     ctrl("backward.end.fill", size: 13,
                          help: lang.t("上一集 (⌘[)", "Previous episode (⌘[)")) { jump(-1) }
@@ -664,23 +939,22 @@ struct PlayerWindowView: View {
                         .focusable(false)
                 }
 
-                // 后退 15 秒（快捷键 J，不抢焦点）
                 ctrl("gobackward.15", size: 19,
                      help: lang.t("后退 15 秒 (J)", "Back 15s (J)")) { model.seek(by: -15) }
                     .focusable(false)
 
-                // ⭐ 播放 / 暂停（默认 Tab 焦点落在该按钮上）
-                ctrl(model.isPlaying ? "pause.fill" : "play.fill", size: 22,
+                ctrl(model.intendsToPlay ? "pause.fill" : "play.fill", size: 22,
                      help: lang.t("播放 / 暂停 (空格)", "Play / Pause (Space)")) { model.togglePlay() }
                     .keyboardShortcut(.space, modifiers: [])
                     .focused($isPlayPauseFocused)
+                    .accessibilityLabel(model.intendsToPlay
+                                        ? lang.t("暂停", "Pause")
+                                        : lang.t("播放", "Play"))
 
-                // 前进 15 秒（快捷键 L，不抢焦点）
                 ctrl("goforward.15", size: 19,
-                    help: lang.t("前进 15 秒 (L/D)", "Forward 15s (L/D)")) { model.seek(by: 15) }
+                     help: lang.t("前进 15 秒 (L/D)", "Forward 15s (L/D)")) { model.seek(by: 15) }
                     .focusable(false)
 
-                // 下一集
                 if payload.episodes.count > 1 {
                     ctrl("forward.end.fill", size: 13,
                          help: lang.t("下一集 (⌘])", "Next episode (⌘])")) { jump(1) }
@@ -705,7 +979,6 @@ struct PlayerWindowView: View {
                          help: lang.t("画中画", "Picture in Picture")) { model.togglePiP() }
                         .focusable(false)
                 }
-                // 全屏（快捷键 F）
                 ctrl(isFullScreen ? "arrow.down.right.and.arrow.up.left"
                                   : "arrow.up.left.and.arrow.down.right",
                      size: 14,
@@ -714,6 +987,7 @@ struct PlayerWindowView: View {
                     .focusable(false)
             }
             .frame(height: 34)
+            .animation(.easeInOut(duration: 0.18), value: model.isBuffering)
         }
         .padding(.horizontal, 18)
         .padding(.top, 8)
@@ -724,7 +998,6 @@ struct PlayerWindowView: View {
                            startPoint: .top, endPoint: .bottom)
         )
         .onContinuousHover { phase in
-            // 鼠标在控制条上时不要自动隐藏
             if case .active = phase { controlsVisible = true; hideTask?.cancel() }
             else { bumpControls() }
         }
@@ -787,26 +1060,23 @@ struct PlayerWindowView: View {
         .help(lang.t("倍速", "Speed"))
     }
 
-    /// ⭐ 其余快捷键（零尺寸隐形按钮，始终在视图树里所以永远生效）
     private var extraShortcuts: some View {
         Group {
-            // --- 核心播放控制 (J/K/L & A/S/D) ---
-            Button("") { model.togglePlay() }.keyboardShortcut("k", modifiers: []) // K: 播放/暂停
-            Button("") { model.seek(by: -15) }.keyboardShortcut("a", modifiers: []) // A: 后退 15s
-            Button("") { model.togglePlay() }.keyboardShortcut("s", modifiers: []) // S: 播放/暂停
-            Button("") { model.seek(by: 15) }.keyboardShortcut("d", modifiers: [])  // D: 前进 15s
+            Button("") { model.togglePlay() }.keyboardShortcut("k", modifiers: [])
+            Button("") { model.seek(by: -15) }.keyboardShortcut("a", modifiers: [])
+            Button("") { model.togglePlay() }.keyboardShortcut("s", modifiers: [])
+            Button("") { model.seek(by: 15) }.keyboardShortcut("d", modifiers: [])
             Button("") { model.seek(by: -15) }.keyboardShortcut("j", modifiers: [])
             Button("") { model.seek(by: 15)  }.keyboardShortcut("l", modifiers: [])
 
-            // --- 其他已有快捷键 ---
             Button("") { model.togglePlay() }.keyboardShortcut("p", modifiers: .command)
             Button("") { model.seek(by: -5) }.keyboardShortcut(.leftArrow, modifiers: [])
             Button("") { model.seek(by: 5) }.keyboardShortcut(.rightArrow, modifiers: [])
             Button("") { model.nudgeVolume(0.05) }.keyboardShortcut(.upArrow, modifiers: [])
             Button("") { model.nudgeVolume(-0.05) }.keyboardShortcut(.downArrow, modifiers: [])
             Button("") { model.toggleMute() }.keyboardShortcut("m", modifiers: [])
-            
-            // 全屏状态下按 ESC 退出全屏
+            Button("") { model.retryNow() }.keyboardShortcut("r", modifiers: .command)
+
             if isFullScreen {
                 Button("") { toggleFullScreen() }.keyboardShortcut(.escape, modifiers: [])
             }
@@ -820,17 +1090,16 @@ struct PlayerWindowView: View {
     private func bumpControls() {
         controlsVisible = true
         hideTask?.cancel()
-        guard model.isPlaying, !modalUp else { return }
+        guard model.isPlaying, !model.isBuffering, !modalUp else { return }
         hideTask = Task { @MainActor in
-            // ⭐ 将 3 秒修改为 1.5 秒（根据喜好调整，例如 1.2 秒可写为 1_200_000_000）
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            guard !Task.isCancelled, model.isPlaying, !modalUp else { return }
+            guard !Task.isCancelled, model.isPlaying, !model.isBuffering, !modalUp else { return }
             withAnimation(.easeOut(duration: 0.25)) { controlsVisible = false }
             NSCursor.setHiddenUntilMouseMoves(true)
         }
     }
 
-    // MARK: ⭐ c. 全屏
+    // MARK: 全屏
     private func toggleFullScreen() {
         (window ?? NSApp.keyWindow)?.toggleFullScreen(nil)
     }
@@ -900,7 +1169,7 @@ struct PlayerWindowView: View {
     }
 }
 
-// MARK: - 观看记录（逻辑未变）
+// MARK: - 观看记录
 struct HistoryView: View {
     @ObservedObject var store = PlayRecordStore.shared
     @EnvironmentObject var lang: LanguageManager

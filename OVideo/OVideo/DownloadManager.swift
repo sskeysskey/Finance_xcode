@@ -9,11 +9,29 @@ struct DownloadsView: View {
     @Environment(\.openWindow) private var openWindow
     @State private var pendingDeleteGroup: String?
 
-    private var groups: [(key: String, title: String, items: [DownloadItem])] {
-        Dictionary(grouping: dm.items, by: \.groupKey).map { k, v in
-            (k, v.first?.seriesTitle.isEmpty == false ? v.first!.seriesTitle : (v.first?.title ?? k),
-             v.sorted { $0.episodeName.localizedStandardCompare($1.episodeName) == .orderedAscending })
-        }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    private typealias GroupEntry = (key: String, title: String, items: [DownloadItem])
+
+    private var groups: [GroupEntry] {
+        let grouped = Dictionary(grouping: dm.items, by: \.groupKey)
+        var result: [GroupEntry] = []
+        result.reserveCapacity(grouped.count)
+
+        for (k, v) in grouped {
+            let title: String
+            if let first = v.first, !first.seriesTitle.isEmpty {
+                title = first.seriesTitle
+            } else {
+                title = v.first?.title ?? k
+            }
+            let sortedItems = v.sorted { a, b in
+                a.episodeName.localizedStandardCompare(b.episodeName) == .orderedAscending
+            }
+            result.append((key: k, title: title, items: sortedItems))
+        }
+
+        return result.sorted { a, b in
+            a.title.localizedStandardCompare(b.title) == .orderedAscending
+        }
     }
 
     var body: some View {
