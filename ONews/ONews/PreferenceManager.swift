@@ -308,7 +308,7 @@ struct PreferenceSelectionView: View {
             expandedTypes = Set(categories.map { $0.type })
         }
         // 【新增】监听数据变化，如果数据突然加载进来了，也自动展开
-        .onChange(of: categories.count) { _ in
+        .onChange(of: categories.count) {
             if expandedTypes.isEmpty {
                 expandedTypes = Set(categories.map { $0.type })
             }

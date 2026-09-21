@@ -1050,7 +1050,7 @@ struct ArticleListView: View {
                actions: { Button(Localized.confirm, role: .cancel) { } },
                message: { Text(errorMessage) })
         .sheet(isPresented: $showProfileSheet) { UserProfileView() }
-        .onChange(of: authManager.isLoggedIn) { newValue in
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
             if newValue {
                 Task {
                     await NewsQuotaManager.shared.refresh(
@@ -1132,7 +1132,7 @@ struct ArticleListView: View {
             .padding(.horizontal, 16)
             .padding(.top, 6)
             .padding(.bottom, 10)
-            .onChange(of: filterMode) { _ in
+            .onChange(of: filterMode) {
                 ONewsHaptics.selection()
                 autoExpandGroups()
             }
@@ -1413,7 +1413,7 @@ struct AllArticlesListView: View {
                actions: { Button(Localized.confirm, role: .cancel) { } },
                message: { Text(errorMessage) })
         .sheet(isPresented: $showProfileSheet) { UserProfileView() }
-        .onChange(of: authManager.isLoggedIn) { newValue in
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
             if newValue {
                 Task {
                     await NewsQuotaManager.shared.refresh(
@@ -1495,7 +1495,7 @@ struct AllArticlesListView: View {
             .padding(.horizontal, 16)
             .padding(.top, 6)
             .padding(.bottom, 10)
-            .onChange(of: filterMode) { _ in
+            .onChange(of: filterMode) {
                 ONewsHaptics.selection()
                 autoExpandGroups()
             }

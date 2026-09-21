@@ -143,7 +143,7 @@ struct VideoFilterView: View {
                     Color.clear.frame(height: 20)
                 }
             }
-            .onChange(of: filterSignature) { _ in
+            .onChange(of: filterSignature) {
                 proxy.scrollTo(scrollTopID, anchor: .top)
             }
         }
@@ -406,7 +406,7 @@ struct VideoSearchTabView: View {
                 historyManager.add(initial)
             }
         }
-        .onChange(of: keyword) { newValue in scheduleSearch(newValue) }
+        .onChange(of: keyword) { _, newValue in scheduleSearch(newValue) }
         // ⭐ 寻片提交弹窗
         .sheet(isPresented: $showWishSheet) {
             WishSubmitSheet(initialContent: trimmedKeyword,

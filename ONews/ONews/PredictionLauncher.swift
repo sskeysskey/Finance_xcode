@@ -207,7 +207,7 @@ struct PredictionMainContainerView: View {
         .sheet(isPresented: $authManager.showSubscriptionSheet) {
             SubscriptionView()  // ONews 的订阅视图
         }
-        .onChange(of: scenePhase) { new in
+        .onChange(of: scenePhase) { _, new in
             if new == .active && !hasAttemptedSync {
                 hasAttemptedSync = true
                 Task { try? await syncManager.checkAndSync() }
@@ -236,14 +236,14 @@ struct PredictionMainContainerView: View {
                 }
             }
         }
-        .onChange(of: syncManager.polymarketItems.count) { _ in adjustSelectedSource() }
-        .onChange(of: syncManager.kalshiItems.count) { _ in adjustSelectedSource() }
-        .onChange(of: syncManager.polymarketTrendItems.count) { _ in adjustSelectedSource() }
-        .onChange(of: syncManager.kalshiTrendItems.count) { _ in adjustSelectedSource() }
-        .onChange(of: syncManager.isSyncing) { isSyncing in
+        .onChange(of: syncManager.polymarketItems.count) { adjustSelectedSource() }
+        .onChange(of: syncManager.kalshiItems.count) { adjustSelectedSource() }
+        .onChange(of: syncManager.polymarketTrendItems.count) { adjustSelectedSource() }
+        .onChange(of: syncManager.kalshiTrendItems.count) { adjustSelectedSource() }
+        .onChange(of: syncManager.isSyncing) { _, isSyncing in
             if !isSyncing { transManager.reload() }
         }
-        .onChange(of: syncManager.dataGeneration) { _ in
+        .onChange(of: syncManager.dataGeneration) {
             newCategoryCheckTask?.cancel()
             newCategoryCheckTask = Task {
                 try? await Task.sleep(nanoseconds: 500_000_000)
@@ -294,7 +294,7 @@ struct PredictionMainContainerView: View {
                 .padding(.top, 8)
             }
             // 切换排序模式时滚到顶部
-            .onChange(of: sortMode) { newMode in
+            .onChange(of: sortMode) { _, newMode in
                 if source == selectedSource || availableSources.count <= 1 {
                     withAnimation(.easeOut(duration: 0.25)) {
                         proxy.scrollTo("top_anchor_\(source)_\(newMode)", anchor: .top)
@@ -302,7 +302,7 @@ struct PredictionMainContainerView: View {
                 }
             }
             // 切换 source 到当前页时也回到顶部
-            .onChange(of: selectedSource) { newSource in
+            .onChange(of: selectedSource) { _, newSource in
                 if newSource == source {
                     proxy.scrollTo("top_anchor_\(source)_\(sortMode)", anchor: .top)
                 }

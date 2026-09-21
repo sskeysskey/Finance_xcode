@@ -156,7 +156,7 @@ struct SubscriptionView: View {
             Button(Localized.confirm, role: .cancel) { if authManager.isSubscribed { dismiss() } }
         } message: { Text(restoreMessage) }
         // ★需求1：登录成功后继续挂起的兑换动作（不再有 LoginView）
-        .onChange(of: authManager.isLoggedIn) { newValue in
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
             guard newValue else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 switch pendingAction {
@@ -657,8 +657,8 @@ struct AnonymousSubscribeView: View {
             }
 
             .onAppear { dontRemind = promo.dontRemind }
-            .onChange(of: dontRemind) { promo.dontRemind = $0 }
-            .onChange(of: authManager.isSubscribed) { if $0 { commitAndClose() } }
+            .onChange(of: dontRemind) { _, newValue in promo.dontRemind = newValue }
+            .onChange(of: authManager.isSubscribed) { _, subscribed in if subscribed { commitAndClose() } }
         }
         .interactiveDismissDisabled(false)
         .onDisappear { promo.dontRemind = dontRemind }

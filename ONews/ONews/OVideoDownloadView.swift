@@ -598,7 +598,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                         self.suspendedAt[url] = Date()
                     }
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self = self] in
                     self?.autoResumeAfterColdLaunch()
                 }
                 self.reconcile()
@@ -997,8 +997,8 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         guard !activeTasks.isEmpty || !waitingQueue.isEmpty || !downloadProgress.isEmpty else { return }
 
         downloadSession.getAllTasks { [weak self] tasks in
-            guard let self else { return }
-            self.onMain {
+            guard let self = self else { return }
+            self.onMain { [self] in
                 for task in tasks {
                     guard let dl = task as? AVAssetDownloadTask,
                           let url = dl.taskDescription else { continue }
@@ -2663,11 +2663,12 @@ struct VideoPlayHistoryView: View {
                  ? "Sign in (free, no purchase needed) to unlock your free daily passes."
                  : "登录后即可获得每日免费观看点数，登录无需付费。")
         }
-        .onChange(of: authManager.isLoggedIn) { loggedIn in
+        .onChange(of: authManager.isLoggedIn) { _, loggedIn in
             if loggedIn {
                 Task { await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
             }
         }
+
         .task {
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
         }

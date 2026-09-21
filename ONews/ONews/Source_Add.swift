@@ -168,10 +168,10 @@ struct AddSourceView: View {
             loadAvailableSources()
         }
         // 新增下面两行监听
-        .onChange(of: selectedVideoKeys) { _ in
+        .onChange(of: selectedVideoKeys) {
             showSelectAllTotalBtn = !isAllSourcesSelected
         }
-        .onChange(of: subscriptionManager.subscribedSourceIDs) { _ in
+        .onChange(of: subscriptionManager.subscribedSourceIDs) {
             showSelectAllTotalBtn = !isAllSourcesSelected
         }
     }

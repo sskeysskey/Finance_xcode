@@ -363,7 +363,7 @@ struct WelcomeView: View {
         .alert("", isPresented: $showAlreadyUpToDateAlert) {
             Button(Localized.ok, role: .cancel) {}
         } message: { Text(Localized.upToDateMessage) }
-        .onChange(of: scenePhase) { newPhase in
+        .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active && !hasSyncedSuccessfully && !resourceManager.isSyncing {
                 if !hasAttemptedInitialSync {
                     hasAttemptedInitialSync = true
@@ -377,7 +377,7 @@ struct WelcomeView: View {
                 }
             }
         }
-        .onChange(of: resourceManager.isNetworkAvailable) { isAvailable in
+        .onChange(of: resourceManager.isNetworkAvailable) { _, isAvailable in
             if isAvailable && !hasSyncedSuccessfully && !resourceManager.isSyncing {
                 Task {
                     try? await Task.sleep(for: .seconds(1))
@@ -386,7 +386,7 @@ struct WelcomeView: View {
                 }
             }
         }
-        .onChange(of: resourceManager.showAlreadyUpToDateAlert) { newValue in
+        .onChange(of: resourceManager.showAlreadyUpToDateAlert) { _, newValue in
             if newValue {
                 if !showAddSourceView { self.showAlreadyUpToDateAlert = true }
                 resourceManager.showAlreadyUpToDateAlert = false

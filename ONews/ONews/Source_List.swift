@@ -958,7 +958,7 @@ struct SourceListView: View {
                 userId: NewsQuotaManager.currentUserId(auth: authManager)) }
         }
         // ★★★【需求1】导航栈回退监听：回到大首页(0) / 回到列表页(1) 都静默刷新一次 ★★★
-        .onChange(of: navPath.count) { newDepth in
+        .onChange(of: navPath.count) { _, newDepth in
             let isBack = newDepth < lastNavDepth
             lastNavDepth = newDepth
             guard isBack else { return }
@@ -992,7 +992,7 @@ struct SourceListView: View {
         }
         // 【新增】个人中心
         .fullScreenCover(isPresented: $showProfileSheet) { UserProfileView() }
-        .onChange(of: authManager.isLoggedIn, perform: { newValue in
+        .onChange(of: authManager.isLoggedIn) { _, newValue in
             if newValue == true {
                 Task {
                     let uid = FreeQuotaManager.currentUserId(auth: authManager)
@@ -1000,7 +1000,7 @@ struct SourceListView: View {
                     await NewsQuotaManager.shared.refresh(userId: uid)
                 }
             }
-        })
+        }
         .overlay(
             // 【修改】将两个遮罩层组合在一起，避免互相覆盖
             ZStack {

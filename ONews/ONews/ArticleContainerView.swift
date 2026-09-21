@@ -198,7 +198,7 @@ struct ArticleContainerView: View {
                 }
             }
         }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             isSceneActive = (phase == .active)
         }
         .onDisappear {
@@ -217,7 +217,7 @@ struct ArticleContainerView: View {
             viewModel.finishReading(markCurrentAsRead: true)
             AnonymousSubscribePromptManager.shared.flushIfNeeded()
         }
-        .onChange(of: currentArticle) { newArticle in
+        .onChange(of: currentArticle) { _, newArticle in
             viewModel.beginReading(newArticle)
             updateUnreadCounts()
             noteFreeReadIfNeeded(newArticle)

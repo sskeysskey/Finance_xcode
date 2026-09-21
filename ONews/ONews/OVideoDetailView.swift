@@ -542,16 +542,16 @@ struct VideoDetailView: View {
                 ? "Sign in (free, no purchase needed) to get a welcome gift plus free daily passes."
                 : "登录后即可领取新人礼包和每日免费观看点数，登录无需付费。")
         }
-        .onChange(of: authManager.isLoggedIn) { loggedIn in
+        .onChange(of: authManager.isLoggedIn) { _, loggedIn in
             if loggedIn {
                 Task { await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
             }
         }
         // ⭐ 监听礼包发放（会员不弹礼包，直接清除）
-        .onChange(of: quotaManager.pendingBonusWelcome) { v in
+        .onChange(of: quotaManager.pendingBonusWelcome) { _, v in
             guard v > 0 else { return }
             if authManager.isSubscribed {
-                quotaManager.clearBonusWelcome()          // 会员随便看，无需礼包
+                quotaManager.clearBonusWelcome()
             } else {
                 bonusWelcomeAmount = v
                 showBonusWelcome = true

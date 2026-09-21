@@ -55,7 +55,7 @@ struct InviteView<M: InviteQuotaProviding>: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button(en ? "Close" : "关闭") { dismiss() } } }
             .task { await quota.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
-            .onChange(of: authManager.isLoggedIn) { newVal in
+            .onChange(of: authManager.isLoggedIn) { _, newVal in
                 if newVal {
                     Task { await quota.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
                 }

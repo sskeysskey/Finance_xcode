@@ -202,7 +202,7 @@ struct PredictionWelcomeView: View {
                 hasCompletedOnboarding = true
             }
         }
-        .onChange(of: scenePhase) { new in
+        .onChange(of: scenePhase) { _, new in
             if new == .active && !hasAttemptedSync {
                 hasAttemptedSync = true
                 Task { try? await syncManager.checkAndSync() }

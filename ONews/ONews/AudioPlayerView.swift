@@ -6,7 +6,7 @@ import MediaPlayer
 import NaturalLanguage
 
 @MainActor
-class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate, @preconcurrency AVAudioPlayerDelegate {
+class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     // MARK: - Published Properties for UI
     @Published var isPlaybackActive = false
     @Published var isPlaying = false
@@ -126,14 +126,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         for url in chunkFileURLs {
             if let url = url { try? FileManager.default.removeItem(at: url) }
         }
-        Task { @MainActor [weak self] in
-            self?.invalidateSynthesisWatchdog()
-        }
     }
 
     func prepareForNextTransition() {
         synthesisGeneration += 1
-        resetSpeechSynthesizer() // <--- 替换原有的 stopSpeaking
+        resetSpeechSynthesizer()
         
         audioPlayer?.stop()
         isPlaying = false
@@ -197,16 +194,14 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             return .success
         }
 
-        // 锁屏快进 15 秒:target 保留,但锁屏上不显示(让出位置给"下一篇")
         commandCenter.skipForwardCommand.preferredIntervals = [15]
-        commandCenter.skipForwardCommand.isEnabled = false   // ← 由 true 改为 false
+        commandCenter.skipForwardCommand.isEnabled = false
         commandCenter.skipForwardCommand.addTarget { [weak self] _ in
             guard let self = self else { return .commandFailed }
             self.seekBy(seconds: 15)
             return .success
         }
 
-        // 锁屏快退 15 秒(保留)
         commandCenter.skipBackwardCommand.preferredIntervals = [15]
         commandCenter.skipBackwardCommand.isEnabled = true
         commandCenter.skipBackwardCommand.addTarget { [weak self] _ in
@@ -306,12 +301,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
     // MARK: - ▶ 分块文本拆分
     nonisolated private func splitIntoChunks(_ text: String) -> [String] {
-        let firstChunkTarget = 300    // 第一块目标较小，确保快速开始播放
-        let normalChunkTarget = 800   // 后续块较大，减少块间衔接
+        let firstChunkTarget = 300
+        let normalChunkTarget = 800
 
         guard text.count > firstChunkTarget else { return [text] }
 
-        // 按句子边界拆分
         let sentenceEnders: Set<Character> = ["。", "！", "？", ".", "!", "?"]
         var sentences: [String] = []
         var current = ""
@@ -325,7 +319,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                     current = ""
                 }
             } else if char == "\n" {
-                // 换行也作为断点
                 let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     sentences.append(current)
@@ -365,9 +358,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             return
         }
 
-        // 清理上一次播放状态
         synthesisGeneration += 1
-        resetSpeechSynthesizer() // <--- 替换原有的 stopSpeaking
+        resetSpeechSynthesizer()
         
         audioPlayer?.stop()
         audioPlayer?.delegate = nil
@@ -377,9 +369,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         invalidateSynthesisWatchdog()
 
         self.nowPlayingTitle = title?.isEmpty == false ? title! : Localized.playingArticle
-        // self.speechSynthesizer.delegate = self <--- 这一行删掉，reset方法里已经赋过值了
 
-        // 【修复】确保 selectedVoice 即使在系统引擎未就绪时也有明确的语言兜底
         if language.starts(with: "en") {
             if let prefId = preferredVoiceIdentifiers["en"],
             let v = AVSpeechSynthesisVoice(identifier: prefId) {
@@ -391,11 +381,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             selectedVoice = getBestVoice(for: text) ?? AVSpeechSynthesisVoice(language: "zh-CN")
         }
 
-        // 预处理文本并拆分为块
-        // 【优化】将繁重的正则替换和长文本分块操作，移入后台并发线程
         Task {
-            // 在后台执行，彻底解放主线程
-            let chunks = await Task.detached { [weak self] () -> [String] in
+            let chunks = await Task.detached { [weak self = self] () -> [String] in
                 guard let self = self else { return [] }
                 let processedText = self.preprocessText(text, language: language)
                 return self.splitIntoChunks(processedText)
@@ -403,7 +390,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             
             guard !chunks.isEmpty else { return }
             
-            // 回到主线程，安全地更新 UI 并启动播放引擎
             self.textChunks = chunks
             self.chunkFileURLs = Array(repeating: nil, count: self.textChunks.count)
             self.chunkDurations = Array(repeating: 0.0, count: self.textChunks.count)
@@ -423,10 +409,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
             self.refreshNowPlayingInfo(playbackRate: 0.0)
             
-            // 开始合成第一个块
             self.synthesizeChunk(at: 0)
         }
-
     }
 
     // MARK: - ▶ 合成单个块
@@ -434,7 +418,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         guard index < textChunks.count else {
             isAllSynthesized = true
             invalidateSynthesisWatchdog()
-            // 更新为精确总时长
             durationString = formatTime(totalEstimatedDuration)
             return
         }
@@ -445,9 +428,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         let utterance = AVSpeechUtterance(string: chunkText)
         utterance.voice = selectedVoice
-        // 【修复】如果 voice 碰巧失效，强制指定 utterance 的语言，防止系统回退到英语
         if selectedVoice == nil {
-            // 简单判断当前块是否包含中文，来决定兜底语言
             let hasChinese = chunkText.range(of: "\\p{Han}", options: .regularExpression) != nil
             utterance.voice = AVSpeechSynthesisVoice(language: hasChinese ? "zh-CN" : "en-US")
         }
@@ -467,9 +448,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         if index == 0 { startSynthesisWatchdog() }
 
         speechSynthesizer.write(utterance) { [weak self] buffer in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                // 防止旧的合成回调干扰新的播放
+            Task { @MainActor in
+                guard let self = self else { return }
                 guard self.synthesisGeneration == generation else { return }
 
                 guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
@@ -480,7 +460,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
                 self.synthesisLastWriteAt = Date()
 
                 if pcmBuffer.frameLength == 0 {
-                    // 当前块合成完毕
                     self.onChunkSynthesisComplete(at: index, fileURL: fileURL)
                 } else {
                     if self.currentChunkAudioFile == nil {
@@ -506,22 +485,18 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         currentChunkAudioFile = nil
         chunkFileURLs[index] = fileURL
 
-        // 获取此块的精确时长
         if let tempPlayer = try? AVAudioPlayer(contentsOf: fileURL) {
             chunkDurations[index] = tempPlayer.duration
         }
 
-        // 更新总时长显示
         durationString = formatTime(totalEstimatedDuration)
 
-        // 如果这正是等待播放的块，立即开始播放
         if index == currentPlayingChunkIndex && (!isPlaying || waitingForChunk) {
             waitingForChunk = false
             isSynthesizing = false
             startPlayingCurrentChunk()
         }
 
-        // 继续合成下一个块
         let nextIndex = index + 1
         if nextIndex < textChunks.count {
             synthesizeChunk(at: nextIndex)
@@ -536,7 +511,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     private func startPlayingCurrentChunk() {
         guard currentPlayingChunkIndex < chunkFileURLs.count,
               let url = chunkFileURLs[currentPlayingChunkIndex] else {
-            // 该块尚未合成完毕，进入等待状态
             waitingForChunk = true
             isSynthesizing = true
             return
@@ -563,14 +537,11 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 
     // MARK: - ▶ 用户语音偏好
-
-    /// 获取系统所有可用语音，按语言分组
     func availableVoicesGrouped() -> [(language: String, voices: [AVSpeechSynthesisVoice])] {
         let voices = AVSpeechSynthesisVoice.speechVoices()
         let grouped = Dictionary(grouping: voices, by: { $0.language })
         return grouped.map { (lang, list) in
             let sorted = list.sorted { a, b in
-                // 质量高的排前面：premium > enhanced > default
                 if a.quality.rawValue != b.quality.rawValue {
                     return a.quality.rawValue > b.quality.rawValue
                 }
@@ -579,7 +550,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             return (lang, sorted)
         }
         .sorted { lhs, rhs in
-            // 把当前系统/中文相关的排前面
             let zhPriority: (String) -> Int = {
                 if $0.hasPrefix("zh") { return 0 }
                 if $0.hasPrefix("en") { return 1 }
@@ -591,20 +561,17 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         }
     }
 
-    /// 把某个语音设置为对应语言的"偏好"
     func setPreferredVoice(_ voice: AVSpeechSynthesisVoice) {
-        let langKey = String(voice.language.prefix(2)) // "zh-CN" -> "zh"
+        let langKey = String(voice.language.prefix(2))
         preferredVoiceIdentifiers[langKey] = voice.identifier
         UserDefaults.standard.set(preferredVoiceIdentifiers, forKey: preferredVoicesKey)
     }
 
-    /// 清除某语言的偏好（恢复"自动选择最佳")
     func clearPreferredVoice(forLanguagePrefix prefix: String) {
         preferredVoiceIdentifiers.removeValue(forKey: prefix)
         UserDefaults.standard.set(preferredVoiceIdentifiers, forKey: preferredVoicesKey)
     }
 
-    /// 判断当前某语音是否被选中
     func isPreferredVoice(_ voice: AVSpeechSynthesisVoice) -> Bool {
         let langKey = String(voice.language.prefix(2))
         return preferredVoiceIdentifiers[langKey] == voice.identifier
@@ -627,7 +594,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
-        // ▶ 新增：优先使用用户选择的语音
         let langKey = String(finalLanguageCode.prefix(2))
         if let prefId = preferredVoiceIdentifiers[langKey],
         let voice = AVSpeechSynthesisVoice(identifier: prefId) {
@@ -667,7 +633,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
     func stop() {
         synthesisGeneration += 1
-        resetSpeechSynthesizer() // <--- 替换原有的 stopSpeaking
+        resetSpeechSynthesizer()
         
         audioPlayer?.stop()
 
@@ -697,8 +663,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         audioPlayer?.delegate = nil
         audioPlayer = nil
         
-        // speechSynthesizer.delegate = nil <--- 这一行删掉，reset方法里处理过了
-        
         textChunks = []
         chunkFileURLs = []
         chunkDurations = []
@@ -706,7 +670,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         currentSynthesizingChunkIndex = 0
     }
 
-    // ▶ 修改：自然结束——当前块播完后衔接下一块
     private func finishNaturally() {
         audioPlayer?.stop()
         isPlaying = false
@@ -724,20 +687,17 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         onPlaybackFinished?()
     }
 
-    // ▶ 修改：跨块 seek
-    // MARK: - ▶ 修改：跨块 seek（内部统一入口）
     private func seekToTime(_ targetTime: TimeInterval) {
         let totalDur = totalEstimatedDuration
         guard totalDur > 0 else { return }
 
-        // 找到目标块
         var cumulative: TimeInterval = 0
         var targetChunk = 0
         var timeWithinChunk: TimeInterval = 0
 
         for i in 0..<chunkDurations.count {
             let dur = chunkDurations[i]
-            if dur <= 0 { break } // 未合成的块不能 seek
+            if dur <= 0 { break }
             if cumulative + dur > targetTime {
                 targetChunk = i
                 timeWithinChunk = targetTime - cumulative
@@ -750,15 +710,12 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             }
         }
 
-        // 只能 seek 到已合成的块
         guard chunkFileURLs[targetChunk] != nil else { return }
 
         if targetChunk == currentPlayingChunkIndex {
-            // 同一块内 seek
             audioPlayer?.currentTime = timeWithinChunk
             updateProgress()
         } else {
-            // 切换到不同的块
             audioPlayer?.stop()
             stopDisplayLink()
             currentPlayingChunkIndex = targetChunk
@@ -768,7 +725,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         }
     }
 
-    // 原有 Slider 调用的接口（保持不变）
     func seek(to value: Double) {
         let totalDur = totalEstimatedDuration
         guard totalDur > 0 else { return }
@@ -776,7 +732,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         seekToTime(targetTime)
     }
 
-    // ▶ 新增：快进/快退固定秒数（应用内按钮 + 锁屏遥控共用）
     func seekBy(seconds: TimeInterval) {
         guard let player = audioPlayer else { return }
         let totalDur = totalEstimatedDuration
@@ -787,7 +742,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         seekToTime(targetTime)
     }
 
-    // ▶ 修改：块合成完毕后的文件清理
     private func cleanupAllChunkFiles() {
         currentChunkAudioFile = nil
         for url in chunkFileURLs {
@@ -837,25 +791,20 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         commandCenter.skipBackwardCommand.isEnabled = true
     }
 
-    // ▶ 修改：播放完当前块 → 衔接下一块 / 全部完成
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         currentPlayingChunkIndex += 1
 
         if currentPlayingChunkIndex < textChunks.count {
-            // 还有后续块
             if chunkFileURLs.indices.contains(currentPlayingChunkIndex),
                chunkFileURLs[currentPlayingChunkIndex] != nil {
-                // 下一块已就绪，无缝衔接
                 startPlayingCurrentChunk()
             } else {
-                // 下一块尚未合成完，进入等待
                 waitingForChunk = true
                 isSynthesizing = true
                 isPlaying = false
                 stopDisplayLink()
             }
         } else {
-            // 全部播放完毕
             finishNaturally()
         }
     }
@@ -871,7 +820,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         displayLink = nil
     }
 
-    // ▶ 修改：进度更新使用全局多块视角
     @objc private func updateProgress() {
         guard let player = audioPlayer, player.duration > 0 else { return }
         let totalDur = totalEstimatedDuration
@@ -908,8 +856,6 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         let seconds = Int(time) % 60
         return String(format: "%02d:%02d", minutes, seconds)
     }
-
-    // MARK: - 以下所有文本预处理方法保持不变
 
     nonisolated private func removeCommasFromNumbers(_ text: String) -> String {
         let pattern = #"(\d),(\d{3})"#
@@ -1452,7 +1398,7 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 }
 
-// MARK: - AudioPlayerView (UI 不变)
+// MARK: - AudioPlayerView
 struct AudioPlayerView: View {
     @ObservedObject var playerManager: AudioPlayerManager
     @State private var sliderValue: Double = 0.0
@@ -1481,7 +1427,6 @@ struct AudioPlayerView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            // 进度条区域
             HStack(spacing: 10) {
                 Text(playerManager.currentTimeString)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -1507,7 +1452,6 @@ struct AudioPlayerView: View {
                 }
             } else {
                 HStack(spacing: 40) {
-                    // 快退 15 秒
                     Button(action: { playerManager.seekBy(seconds: -15) }) {
                         Image(systemName: "gobackward.15")
                             .font(.system(size: 32, weight: .regular))
@@ -1515,7 +1459,6 @@ struct AudioPlayerView: View {
                     .disabled(!playerManager.isPlaybackActive || playerManager.isSynthesizing)
                     .opacity(!playerManager.isPlaybackActive || playerManager.isSynthesizing ? 0.6 : 1.0)
 
-                    // 播放 / 暂停
                     Button(action: { playerManager.playPause() }) {
                         Image(systemName: playPauseIconName)
                             .font(.system(size: 52, weight: .regular))
@@ -1523,7 +1466,6 @@ struct AudioPlayerView: View {
                     .disabled(playerManager.isSynthesizing || !playerManager.isPlaybackActive)
                     .opacity(playerManager.isSynthesizing || !playerManager.isPlaybackActive ? 0.6 : 1.0)
 
-                    // 快进 15 秒
                     Button(action: { playerManager.seekBy(seconds: 15) }) {
                         Image(systemName: "goforward.15")
                             .font(.system(size: 32, weight: .regular))
@@ -1533,9 +1475,7 @@ struct AudioPlayerView: View {
                 }
                 .frame(height: 66)
 
-                // 核心修改：控制栏现在包含 4 个按钮
                 HStack {
-                    // 1. 循环/自动播放
                     HStack {
                         Button(action: {
                             playerManager.isAutoPlayEnabled.toggle()
@@ -1550,7 +1490,6 @@ struct AudioPlayerView: View {
                     }
                     .frame(maxWidth: .infinity)
 
-                    // 2. 新增：语音选择按钮
                     HStack {
                         Spacer(minLength: 0)
                         Button(action: { showVoicePicker = true }) {
@@ -1563,7 +1502,6 @@ struct AudioPlayerView: View {
                     }
                     .frame(maxWidth: .infinity)
 
-                    // 3. 倍速按钮
                     HStack {
                         Spacer(minLength: 0)
                         Button(action: {
@@ -1583,7 +1521,6 @@ struct AudioPlayerView: View {
                     }
                     .frame(maxWidth: .infinity)
 
-                    // 4. 下一首
                     HStack {
                         Spacer(minLength: 0)
                         Button(action: {
@@ -1604,7 +1541,6 @@ struct AudioPlayerView: View {
         .padding(EdgeInsets(top: 28, leading: 16, bottom: 10, trailing: 16))
         .background(.black.opacity(0.8))
         .cornerRadius(18)
-        // 移除右上角的语音按钮，只保留最小化按钮
         .overlay(
             Button(action: { toggleCollapse?() }) {
                 Image(systemName: "minus")
@@ -1617,7 +1553,6 @@ struct AudioPlayerView: View {
             .padding(6),
             alignment: .topTrailing
         )
-        // 2. 将关闭按钮（xmark）移到左上角：alignment 改为 .topLeading
         .overlay(
             Button(action: { playerManager.stop() }) {
                 Image(systemName: "xmark")
@@ -1633,7 +1568,8 @@ struct AudioPlayerView: View {
         )
         .offset(y: -18)
         .padding(.horizontal, 12)
-        .onChange(of: playerManager.progress) { newValue in
+        // ✅ 修复：iOS 17+ 双参 onChange
+        .onChange(of: playerManager.progress) { _, newValue in
             if !isEditingSlider { self.sliderValue = newValue }
         }
         .safeAreaInset(edge: .bottom) {
@@ -1747,7 +1683,7 @@ struct VoicePickerView: View {
         } else if voice.language.hasPrefix("en") {
             sample = "Hello, this is a voice preview."
         } else if voice.language.hasPrefix("ja") {
-            sample = "こんにちは、これは音声のプレビューです。"
+            sample = "こんにちは、这是音声のプレビューです。"
         } else {
             sample = "Hello."
         }

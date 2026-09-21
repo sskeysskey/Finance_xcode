@@ -109,7 +109,7 @@ struct NewsReaderAppApp: App {
                 .environmentObject(appDelegate.translationManager)
                 .environmentObject(appDelegate.videoDataManager)
         }
-        .onChange(of: scenePhase) { newPhase in
+        .onChange(of: scenePhase) { _, newPhase in
             let newsViewModel = appDelegate.newsViewModel
             let authManager = appDelegate.authManager
             let resourceManager = appDelegate.resourceManager
@@ -206,19 +206,19 @@ struct MainAppView: View {
         .onReceive(NotificationCenter.default.publisher(for: .notificationPermissionGranted)) { _ in
             newsViewModel.refreshBadge()
         }
-        .onChange(of: pointsCoordinator.showSubscriptionSheet) { show in
+        .onChange(of: pointsCoordinator.showSubscriptionSheet) { _, show in
             guard show, PurchaseFlowManager.useDirectPurchase else { return }
             pointsCoordinator.showSubscriptionSheet = false
             PurchaseFlowManager.shared.startPurchase(auth: authManager, reason: "points-coordinator")
         }
         .onAppear { syncGlobalBlock() }
-        .onChange(of: hasCompletedInitialSetup) { _ in syncGlobalBlock() }
-        .onChange(of: resourceManager.showForceUpdate) { _ in syncGlobalBlock() }
-        .onChange(of: resourceManager.showMigrationSheet) { _ in syncGlobalBlock() }
-        .onChange(of: authManager.isSubscribed) { subscribed in
+        .onChange(of: hasCompletedInitialSetup) { syncGlobalBlock() }
+        .onChange(of: resourceManager.showForceUpdate) { syncGlobalBlock() }
+        .onChange(of: resourceManager.showMigrationSheet) { syncGlobalBlock() }
+        .onChange(of: authManager.isSubscribed) { _, subscribed in
             if subscribed { AnonymousSubscribePromptManager.shared.markPurchased() }
         }
-        .onChange(of: authManager.isLoggedIn) { newVal in
+        .onChange(of: authManager.isLoggedIn) { _, newVal in
             if newVal {
                 Task {
                     await FreeQuotaManager.shared.refresh(

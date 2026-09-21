@@ -405,15 +405,15 @@ struct ArticleDetailView: View {
             FontAdjustmentView().presentationDetents([.large])
         }
         // 语言/字号变更时预热新版本，避免下一帧同步构建
-        .onChange(of: isEnglishMode) { newValue in
+        .onChange(of: isEnglishMode) { _, newValue in
             ArticleBodyCache.shared.prefetch(article: article,
-                                             english: newValue,
-                                             fontSize: articleBodyFontSize)
+                                            english: newValue,
+                                            fontSize: articleBodyFontSize)
         }
-        .onChange(of: articleBodyFontSize) { newValue in
+        .onChange(of: articleBodyFontSize) { _, newValue in
             ArticleBodyCache.shared.prefetch(article: article,
-                                             english: isEnglishMode,
-                                             fontSize: newValue)
+                                            english: isEnglishMode,
+                                            fontSize: newValue)
         }
     }
 
@@ -818,7 +818,7 @@ struct ArticleImageView: View {
         .onDisappear {
             recoveryTask?.cancel(); recoveryTask = nil; isRecovering = false
         }
-        .onChange(of: resourceManager.isNetworkAvailable) { available in
+        .onChange(of: resourceManager.isNetworkAvailable) { _, available in
             if available && imageLoader.image == nil { startRecovery() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .articleImageDidDownload)) { note in

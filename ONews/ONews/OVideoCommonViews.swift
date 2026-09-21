@@ -473,7 +473,7 @@ struct CategoryVideoListView: View {
                     Color.clear.frame(height: 20)
                 }
             }
-            .onChange(of: sortOption) { _ in
+            .onChange(of: sortOption) {
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                     proxy.scrollTo("top_anchor", anchor: .top)
                 }
@@ -678,7 +678,7 @@ struct CategoryTabBar: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 8)
             }
-            .onChange(of: selectedIndex) { newIdx in
+            .onChange(of: selectedIndex) { _, newIdx in
                 withAnimation { proxy.scrollTo(newIdx, anchor: .center) }
             }
         }
@@ -763,7 +763,7 @@ struct VideoBrowseView: View {
         // ⭐ 隐藏系统导航栏，把空间让给分类栏
         .toolbar(.hidden, for: .navigationBar)
         // ★★★【需求1】切换栏目 / 切换排序时，静默刷新该栏目第一页
-        .onChange(of: selectedCategoryIndex) { idx in
+        .onChange(of: selectedCategoryIndex) { _, idx in
             guard idx >= 0, idx < dataManager.categoryNames.count else { return }
             let cat = dataManager.categoryNames[idx]
             Task {
@@ -771,7 +771,7 @@ struct VideoBrowseView: View {
                     category: cat, sort: sortOption, userId: userId, minInterval: 90)
             }
         }
-        .onChange(of: sortOption) { newSort in
+        .onChange(of: sortOption) { _, newSort in
             let idx = selectedCategoryIndex
             guard idx >= 0, idx < dataManager.categoryNames.count else { return }
             let cat = dataManager.categoryNames[idx]

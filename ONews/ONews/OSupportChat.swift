@@ -438,7 +438,7 @@ struct SupportThreadDetailView: View {
                     }
                     .padding(16)
                 }
-                .onChange(of: messages.count) { _ in
+                .onChange(of: messages.count) {
                     withAnimation { proxy.scrollTo("BOTTOM", anchor: .bottom) }
                 }
                 .onAppear {
