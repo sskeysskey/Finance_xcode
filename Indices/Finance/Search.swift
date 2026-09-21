@@ -372,12 +372,8 @@ struct SearchContentView: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            ToolButton(
-                title: "对比",
-                icon: "chart.line.uptrend.xyaxis",
-                color: .blue,
-                cardKey: "CompareTool"
-            ) {
+            ToolButton(title: "对比", icon: "chart.line.uptrend.xyaxis", color: .blue,
+                       cardKey: "CompareTool", pointAction: .compare) {          // 【需求6】
                 PointsCoordinator.shared.requireLogin(authManager: authManager) {
                     FinanceAnalytics.shared.track(cardKey: "对比", cardName: "对比", authManager: authManager)
                     showCompare = true
@@ -406,7 +402,8 @@ struct SearchContentView: View {
                 .shadow(color: Color.blue.opacity(0.3), radius: 5, x: 0, y: 3)
             }
             
-            ToolButton(title: "财报", icon: "calendar", color: .orange, cardKey: "EarningCalendar") {
+            ToolButton(title: "财报", icon: "calendar", color: .orange,
+                       cardKey: "EarningCalendar", pointAction: .openEarnings) { // 【需求6】
                 PointsCoordinator.shared.attempt(action: .openEarnings, itemKey: nil,
                     displayName: "财报发布日历", authManager: authManager) {
                     FinanceAnalytics.shared.track(cardKey: "财报", cardName: "财报", authManager: authManager)
@@ -414,7 +411,8 @@ struct SearchContentView: View {
                 }
             }
 
-            ToolButton(title: "复盘", icon: "clock.arrow.circlepath", color: .purple, cardKey: "HistoryRecap") {
+            ToolButton(title: "复盘", icon: "clock.arrow.circlepath", color: .purple,
+                       cardKey: "HistoryRecap", pointAction: .openHistory) {     // 【需求6】
                 PointsCoordinator.shared.attempt(action: .openHistory, itemKey: nil,
                     displayName: "复盘历史 (多组共振)", authManager: authManager) {
                     FinanceAnalytics.shared.track(cardKey: "复盘", cardName: "复盘", authManager: authManager)
@@ -448,26 +446,32 @@ struct ToolButton: View {
     let icon: String
     let color: Color
     let cardKey: String
+    /// 【需求6】用于显示点数角标
+    var pointAction: UsageAction? = nil
     let action: () -> Void
     
     @EnvironmentObject var dataService: DataService
+    @EnvironmentObject var usageManager: UsageManager
+    @EnvironmentObject var authManager: AuthManager
     @State private var glow = false
     
-    private var featuredLabel: String? { dataService.featuredCards[cardKey] }
-    private var isFeatured: Bool { featuredLabel != nil }
-    private var badgeText: String {
-        if let label = featuredLabel, !label.isEmpty { return label }
-        return "精选"
+    private var isFeatured: Bool { dataService.featuredCards[cardKey] != nil }
+    
+    private var costBadge: (text: String, colors: [Color])? {
+        guard let act = pointAction else { return nil }
+        if authManager.isSubscribed { return nil }
+        if usageManager.isUnlocked(action: act, itemKey: nil) { return ("已解锁", [.green, .teal]) }
+        if dataService.isFreeAccessDayServer == true { return ("今日免费", [.green, .mint]) }
+        let c = usageManager.cost(for: act, itemKey: nil)
+        if c <= 0 { return ("免费", [.green, .teal]) }
+        return ("\(c)点", [.orange, .pink])
     }
     
     var body: some View {
         Button(action: action) {
             VStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 20))
-                Text(title)
-                    .font(.caption2)
-                    .fontWeight(.bold)
+                Image(systemName: icon).font(.system(size: 20))
+                Text(title).font(.caption2).fontWeight(.bold)
             }
             .foregroundColor(color)
             .frame(width: 60, height: 56)
@@ -490,17 +494,16 @@ struct ToolButton: View {
             )
         }
         .overlay(alignment: .topTrailing) {
-            if isFeatured {
+            if let badge = costBadge {
                 HStack(spacing: 2) {
-                    Image(systemName: "star.fill").font(.system(size: 7))
-                    Text(badgeText).font(.system(size: 9, weight: .heavy))
+                    Image(systemName: badge.text.hasSuffix("点") ? "bolt.fill" : "checkmark.seal.fill")
+                        .font(.system(size: 7))
+                    Text(badge.text).font(.system(size: 9, weight: .heavy))
                 }
                 .foregroundColor(.white)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(
-                    LinearGradient(colors: [.orange, .pink], startPoint: .leading, endPoint: .trailing)
-                )
+                .background(LinearGradient(colors: badge.colors, startPoint: .leading, endPoint: .trailing))
                 .clipShape(Capsule())
                 .overlay(Capsule().stroke(Color.white.opacity(0.6), lineWidth: 0.5))
                 .offset(x: 3, y: -5)
@@ -509,9 +512,7 @@ struct ToolButton: View {
         }
         .onAppear {
             if isFeatured {
-                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                    glow = true
-                }
+                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { glow = true }
             }
         }
     }
@@ -991,7 +992,9 @@ struct SearchView: View {
             return
         }
 
-        PointsCoordinator.shared.presentConfirm(cost: cost, title: "搜索 \"\(trimmed)\"") {
+        PointsCoordinator.shared.confirmThenRun(cost: cost,
+                                                title: "搜索 \"\(trimmed)\"",
+                                                authManager: authManager) {
             self.executeSearch(trimmed, shouldDeduct: true)
         }
     }
@@ -1007,6 +1010,7 @@ struct SearchView: View {
             DispatchQueue.main.async {
                 if shouldDeduct && !groupedResults.isEmpty {
                     self.usageManager.commitDeduction(action: .search, itemKey: trimmed)
+                    PointsCoordinator.shared.noteAccess(type: "points", cost: self.usageManager.cost(for: .search, itemKey: nil))  // 【需求1】
                 }
 
                 withAnimation {

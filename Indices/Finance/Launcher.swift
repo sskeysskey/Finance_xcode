@@ -327,21 +327,23 @@ struct UserProfileView: View {
     @EnvironmentObject var usageManager: UsageManager
     @StateObject private var updateManager = UpdateManager.shared
     @StateObject private var networkMonitor = NetworkMonitor.shared
+    @ObservedObject private var pointsCoordinator = PointsCoordinator.shared   // 【需求7】
     
     @State private var showDownloadAlert = false
     @State private var showInvite = false
     @Environment(\.dismiss) var dismiss
     
-    // Toast 状态
     @State private var toastMessage: String? = nil
-    
-    // 【新增】清除离线数据库确认
     @State private var showDeleteDBConfirm = false
     
     @State private var showDeleteAccountConfirmation = false
     @State private var isDeletingAccount = false
     @State private var deleteErrorMessage = ""
     @State private var showDeleteError = false
+    
+    // 【需求5】
+    @State private var showUpdateSheet = false
+    @State private var isCheckingUpdate = false
     
     var body: some View {
         NavigationView {
@@ -385,23 +387,48 @@ struct UserProfileView: View {
                         .padding(.vertical, 10)
                     }
 
-                    // 【新增】常驻订阅入口：解决审核员找不到购买入口的问题
                     if !authManager.isSubscribed {
                         Section {
                             Button {
                                 authManager.showSubscriptionSheet = true
                             } label: {
                                 HStack {
-                                    Image(systemName: "crown.fill")
-                                        .foregroundColor(.orange)
+                                    Image(systemName: "crown.fill").foregroundColor(.orange)
                                     Text("升级专业版")
-                                        .foregroundColor(.primary)
-                                        .fontWeight(.medium)
+                                        .foregroundColor(.primary).fontWeight(.medium)
                                     Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption)
-                                        .foregroundColor(.gray)
+                                    Image(systemName: "chevron.right").font(.caption).foregroundColor(.gray)
                                 }
+                            }
+                        }
+                    }
+                    
+                    // 【需求7】点数设置
+                    if !authManager.isSubscribed {
+                        Section(
+                            header: Text("点数设置"),
+                            footer: Text("关闭后，点击需要消耗点数的模块会直接扣点、不再弹出确认框。\n注意：当日数据尚未更新时，为避免浪费点数，仍会弹出一次提醒。")
+                        ) {
+                            Toggle(isOn: Binding(
+                                get: { !pointsCoordinator.skipPointsConfirm },
+                                set: { pointsCoordinator.skipPointsConfirm = !$0 }
+                            )) {
+                                HStack {
+                                    Image(systemName: "bolt.badge.checkmark").foregroundColor(.orange)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("扣点前弹窗确认")
+                                        Text(pointsCoordinator.skipPointsConfirm ? "当前：直接扣点，不再提示" : "当前：每次扣点都会确认")
+                                            .font(.caption).foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            
+                            HStack {
+                                Image(systemName: "bolt.circle.fill").foregroundColor(.blue)
+                                Text("剩余点数")
+                                Spacer()
+                                Text("\(usageManager.remainingTotal)")
+                                    .fontWeight(.bold).foregroundColor(.blue)
                             }
                         }
                     }
@@ -414,43 +441,26 @@ struct UserProfileView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
                                 VStack(alignment: .leading) {
-                                    Text("离线数据库")
-                                        .font(.headline)
-                                    
-                                    // 根据状态显示更详细的文本
+                                    Text("离线数据库").font(.headline)
                                     if updateManager.isDownloadingDB {
-                                        Text("正在下载...")
-                                            .font(.caption)
-                                            .foregroundColor(.blue)
+                                        Text("正在下载...").font(.caption).foregroundColor(.blue)
                                     } else if updateManager.isPaused {
-                                        Text("已暂停 - 点击继续")
-                                            .font(.caption)
-                                            .foregroundColor(.orange)
+                                        Text("已暂停 - 点击继续").font(.caption).foregroundColor(.orange)
                                     } else {
-                                        Text(getOfflineStatusText())
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
+                                        Text(getOfflineStatusText()).font(.caption).foregroundColor(.secondary)
                                     }
                                 }
                                 Spacer()
                                 
-                                // 【核心修改】按钮交互逻辑
                                 if updateManager.isDownloadingDB {
-                                    // 状态 1: 下载中 -> 只显示取消/暂停按钮 (移除了圆环)
                                     Button {
-                                        // 点击触发取消逻辑
                                         updateManager.cancelDatabaseDownload()
                                     } label: {
-                                        Image(systemName: "pause.circle.fill") // 或者 "xmark.circle.fill"
-                                            .font(.title2)
-                                            .foregroundColor(.red)
+                                        Image(systemName: "pause.circle.fill").font(.title2).foregroundColor(.red)
                                     }
-                                    .buttonStyle(BorderlessButtonStyle()) // 防止点击穿透整个List Row
-                                    
+                                    .buttonStyle(BorderlessButtonStyle())
                                 } else {
-                                    // 状态 2: 未下载 或 已暂停 -> 显示下载/继续按钮
                                     Button(action: handleDownloadClick) {
-                                        // 如果有断点数据，显示“播放/继续”图标，否则显示“下载”图标
                                         Image(systemName: updateManager.isPaused ? "play.circle.fill" : "arrow.down.circle")
                                             .font(.title2)
                                             .foregroundColor(updateManager.isPaused ? .orange : .blue)
@@ -459,53 +469,39 @@ struct UserProfileView: View {
                                 }
                             }
                             
-                            // 进度条文本 (仅在下载或暂停且有进度时显示)
                             if updateManager.isDownloadingDB || (updateManager.isPaused && updateManager.dbDownloadProgress > 0) {
                                 HStack {
                                     ProgressView(value: updateManager.dbDownloadProgress)
                                         .progressViewStyle(LinearProgressViewStyle())
-                                    
                                     Text("\(Int(updateManager.dbDownloadProgress * 100))%")
-                                        .font(.caption)
-                                        .monospacedDigit() // 数字等宽，防止跳动
+                                        .font(.caption).monospacedDigit()
                                         .frame(width: 35, alignment: .trailing)
                                 }
                             }
                         }
                         .padding(.vertical, 4)
                         
-                        // 【新增】占用空间 + 手动清除
                         if updateManager.localDatabaseExists {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("占用空间")
-                                        .font(.subheadline)
+                                    Text("占用空间").font(.subheadline)
                                     Text(updateManager.localDBSizeText.isEmpty ? "计算中..." : updateManager.localDBSizeText)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                        .font(.caption).foregroundColor(.secondary)
                                 }
                                 Spacer()
                                 Button {
                                     showDeleteDBConfirm = true
                                 } label: {
-                                    Text("清除")
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.red)
+                                    Text("清除").font(.subheadline).fontWeight(.medium).foregroundColor(.red)
                                 }
                                 .buttonStyle(BorderlessButtonStyle())
                             }
                         }
                         
-                        // 【新增】自动清理提示
                         if let tip = updateManager.lastCleanupFreedText {
                             HStack(spacing: 6) {
-                                Image(systemName: "sparkles")
-                                    .foregroundColor(.green)
-                                    .font(.caption)
-                                Text(tip)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                                Image(systemName: "sparkles").foregroundColor(.green).font(.caption)
+                                Text(tip).font(.caption).foregroundColor(.secondary)
                             }
                         }
                     }
@@ -532,26 +528,18 @@ struct UserProfileView: View {
                     Section(header: Text("支持与反馈")) {
                         Button {
                             let email = "728308386@qq.com"
-                            if let url = URL(string: "mailto:\(email)") {
-                                if UIApplication.shared.canOpenURL(url) {
-                                    UIApplication.shared.open(url)
-                                }
+                            if let url = URL(string: "mailto:\(email)"), UIApplication.shared.canOpenURL(url) {
+                                UIApplication.shared.open(url)
                             }
                         } label: {
                             HStack {
-                                Image(systemName: "envelope.fill")
-                                    .foregroundColor(.blue)
+                                Image(systemName: "envelope.fill").foregroundColor(.blue)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("问题反馈")
-                                        .foregroundColor(.primary)
-                                    Text("728308386@qq.com")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                    Text("问题反馈").foregroundColor(.primary)
+                                    Text("728308386@qq.com").font(.caption).foregroundColor(.secondary)
                                 }
                                 Spacer()
-                                Image(systemName: "arrow.up.right")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
+                                Image(systemName: "arrow.up.right").font(.caption).foregroundColor(.gray)
                             }
                         }
                         .contextMenu {
@@ -576,7 +564,6 @@ struct UserProfileView: View {
                                 }
                             }
                             
-                            // 【新增】删除账号按钮
                             Button(role: .destructive) {
                                 showDeleteAccountConfirmation = true
                             } label: {
@@ -587,8 +574,58 @@ struct UserProfileView: View {
                             }
                         } else {
                             Text("您当前使用的是匿名模式")
-                                .font(.caption)
+                                .font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    // MARK: - 【需求2 + 需求5】关于 / 版本号
+                    Section(header: Text("关于"), footer: Text("美股精灵 · 感谢您的使用")) {
+                        HStack {
+                            Image(systemName: "info.circle").foregroundColor(.gray)
+                            Text("当前版本")
+                            Spacer()
+                            Text(updateManager.currentVersionDisplay)
+                                .font(.system(.subheadline, design: .monospaced))
                                 .foregroundColor(.secondary)
+                        }
+                        .contextMenu {
+                            Button {
+                                UIPasteboard.general.string = updateManager.currentVersionDisplay
+                            } label: { Label("复制版本号", systemImage: "doc.on.doc") }
+                        }
+                        
+                        if updateManager.newVersionAvailable {
+                            Button {
+                                showUpdateSheet = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "arrow.up.circle.fill").foregroundColor(.orange)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("发现新版本 \(updateManager.latestAppVersion)")
+                                            .foregroundColor(.primary).fontWeight(.medium)
+                                        Text("点击查看更新内容并前往 App Store")
+                                            .font(.caption).foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    Circle().fill(Color.red).frame(width: 8, height: 8)
+                                }
+                            }
+                        } else {
+                            Button {
+                                checkUpdateManually()
+                            } label: {
+                                HStack {
+                                    Image(systemName: "arrow.triangle.2.circlepath").foregroundColor(.blue)
+                                    Text("检查新版本").foregroundColor(.primary)
+                                    Spacer()
+                                    if isCheckingUpdate {
+                                        ProgressView().scaleEffect(0.7)
+                                    } else {
+                                        Text("已是最新").font(.caption).foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            .disabled(isCheckingUpdate)
                         }
                     }
                 }
@@ -599,11 +636,9 @@ struct UserProfileView: View {
                         Button("关闭") { dismiss() }
                     }
                 }
-                // 【新增】页面出现时刷新占用空间
                 .onAppear {
                     updateManager.refreshLocalDBSize()
                 }
-                // 【新增】清除离线库确认
                 .alert("清除离线数据库", isPresented: $showDeleteDBConfirm) {
                     Button("取消", role: .cancel) { }
                     Button("清除", role: .destructive) {
@@ -615,30 +650,24 @@ struct UserProfileView: View {
                 }
                 .alert("确认删除账号", isPresented: $showDeleteAccountConfirmation) {
                     Button("取消", role: .cancel) { }
-                    Button("永久删除", role: .destructive) {
-                        performAccountDeletion()
-                    }
+                    Button("永久删除", role: .destructive) { performAccountDeletion() }
                 } message: {
                     Text("此操作不可逆。您的所有数据和订阅状态将从我们的服务器上永久删除。")
                 }
-                // 【新增】删除失败弹窗
                 .alert("删除失败", isPresented: $showDeleteError) {
                     Button("确定", role: .cancel) { }
                 } message: {
                     Text(deleteErrorMessage)
                 }
                 
-                // Toast 覆盖层
                 if let message = toastMessage {
                     VStack {
                         Spacer()
-                        ToastView(message: message)
-                            .transition(.opacity)
+                        ToastView(message: message).transition(.opacity)
                     }
                     .zIndex(100)
                 }
                 
-                // 【新增】删除账号的 Loading 遮罩
                 if isDeletingAccount {
                     Color.black.opacity(0.6).ignoresSafeArea()
                     VStack(spacing: 20) {
@@ -653,7 +682,6 @@ struct UserProfileView: View {
                     title: Text("下载确认"),
                     message: Text("当前处于移动网络，下载数据库可能消耗较多流量（约 50MB+）。是否继续？"),
                     primaryButton: .default(Text("继续下载"), action: {
-                        // 【修改】处理 Alert 确认后的下载，并显示结果
                         Task {
                             let result = await updateManager.downloadDatabase(force: true)
                             handleDownloadResult(result)
@@ -663,10 +691,26 @@ struct UserProfileView: View {
                 )
             }
             .sheet(isPresented: $showInvite) { InviteView() }
+            .sheet(isPresented: $showUpdateSheet) { UpdateAvailableView() }   // 【需求5】
         }
     }
     
-    // 【新增】执行删除账号的逻辑
+    // 【需求5】手动检查
+    private func checkUpdateManually() {
+        isCheckingUpdate = true
+        Task {
+            _ = await updateManager.checkForUpdates(isManual: false)   // 静默拉版本，不弹 overlay
+            await MainActor.run {
+                isCheckingUpdate = false
+                if updateManager.newVersionAvailable {
+                    showUpdateSheet = true
+                } else {
+                    showToast("当前已是最新版本")
+                }
+            }
+        }
+    }
+    
     private func performAccountDeletion() {
         isDeletingAccount = true
         Task {
@@ -674,7 +718,7 @@ struct UserProfileView: View {
                 try await authManager.deleteAccount()
                 await MainActor.run {
                     isDeletingAccount = false
-                    dismiss() // 删除成功后关闭个人中心
+                    dismiss()
                 }
             } catch {
                 await MainActor.run {
@@ -696,50 +740,34 @@ struct UserProfileView: View {
         }
     }
     
-    // 【修改】处理下载点击
     private func handleDownloadClick() {
-        // 【新增】离线库仅登录用户可下载（服务端也已强制校验）
         guard authManager.isLoggedIn else {
             showToast("请先登录后再下载离线数据库")
             return
         }
-        // 1. 检查网络
         if networkMonitor.isWifi {
             Task {
-                // 获取返回值
                 let result = await updateManager.downloadDatabase()
                 handleDownloadResult(result)
             }
         } else {
-            // 蜂窝网络弹窗提示
             showDownloadAlert = true
         }
     }
     
-    // 【新增】统一处理下载结果并显示 Toast
     private func handleDownloadResult(_ result: DBDownloadResult) {
         switch result {
-        case .skippedAlreadyLatest:
-            showToast("当前数据库已是最新，无需下载")
-        case .success:
-            showToast("数据库下载完成")
-        case .failed:
-            showToast("下载失败，请检查网络")
-        case .cancelled:
-            showToast("已取消")
+        case .skippedAlreadyLatest: showToast("当前数据库已是最新，无需下载")
+        case .success: showToast("数据库下载完成")
+        case .failed: showToast("下载失败，请检查网络")
+        case .cancelled: showToast("已取消")
         }
     }
     
-    // 【新增】显示 Toast 的辅助方法
     private func showToast(_ message: String) {
-        withAnimation {
-            self.toastMessage = message
-        }
-        // 2秒后自动消失
+        withAnimation { self.toastMessage = message }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            withAnimation {
-                self.toastMessage = nil
-            }
+            withAnimation { self.toastMessage = nil }
         }
     }
 }
@@ -791,6 +819,9 @@ struct MainContentView: View {
     
     // 【新增】控制个人中心显示
     @State private var showProfileSheet = false
+
+    // 【需求5】发现新版本
+    @State private var showUpdateSheet = false
 
     // 【新增】控制“财经要闻”弹窗显示
     @State private var showNewsPromoSheet = false 
@@ -920,35 +951,58 @@ struct MainContentView: View {
                         }
                     }
 
-                    // 中间位置：自定义额度显示
+                    // 中间位置：点数胶囊（整块可点 → 点数中心）
                     ToolbarItem(placement: .principal) {
                         if !authManager.isSubscribed {
-                            HStack(spacing: 6) {
-                                Text("点数\(usageManager.remainingTotal)")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(.primary)
-                                Button {
-                                    pointsCoordinator.openInvite()
-                                } label: {
+                            Button {
+                                pointsCoordinator.presentPointsHub(authManager: authManager)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text("点数\(usageManager.remainingTotal)")
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundColor(.primary)
                                     Image(systemName: "plus.circle.fill")
                                         .font(.system(size: 16))
                                         .foregroundColor(.orange)
                                 }
-                                .buttonStyle(BorderlessButtonStyle())
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(Color(.tertiarySystemFill))
+                                        .overlay(Capsule().stroke(Color.primary.opacity(0.1), lineWidth: 0.5))
+                                )
+                                .fixedSize(horizontal: true, vertical: false)
+                                .contentShape(Capsule())     // 整个胶囊都可点
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                Capsule()
-                                    .fill(Color(.tertiarySystemFill))
-                                    .overlay(Capsule().stroke(Color.primary.opacity(0.1), lineWidth: 0.5))
-                            )
-                            .fixedSize(horizontal: true, vertical: false)
+                            .buttonStyle(.plain)
                         }
                     }
                     
                     ToolbarItem(placement: .navigationBarTrailing) {
                         HStack(spacing: 12) { // 稍微调整间距
+                            // 【需求5】只有存在新版本时才出现
+                            // if updateManager.newVersionAvailable {
+                            //     Button {
+                            //         showUpdateSheet = true
+                            //     } label: {
+                            //         HStack(spacing: 3) {
+                            //             Image(systemName: "arrow.up.circle.fill")
+                            //                 .font(.system(size: 12, weight: .bold))
+                            //             Text("升级")
+                            //                 .font(.system(size: 12, weight: .bold))
+                            //         }
+                            //         .padding(.vertical, 5)
+                            //         .padding(.horizontal, 8)
+                            //         .foregroundColor(.white)
+                            //         .background(
+                            //             LinearGradient(colors: [.orange, .red],
+                            //                            startPoint: .leading, endPoint: .trailing)
+                            //         )
+                            //         .clipShape(Capsule())
+                            //         .shadow(color: Color.orange.opacity(0.35), radius: 3, y: 2)
+                            //     }
+                            // }
                                 
 
                             // 1. 【修改】“新闻”按钮 -> “财经要闻”醒目文字按钮
@@ -1022,6 +1076,12 @@ struct MainContentView: View {
                 print("MainContentView .task triggered (Cold Start)")
                 await handleInitialDataLoad()
             }
+            .task {
+                print("MainContentView .task triggered (Cold Start)")
+                await handleInitialDataLoad()
+                try? await Task.sleep(nanoseconds: 2_000_000_000)   // 等首屏动画/首启弹窗
+                maybePromptAppUpdate()                              // 【需求5】
+            }
             // 保留 onChange 以处理从后台切回前台的情况
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 if newPhase == .active {
@@ -1074,6 +1134,8 @@ struct MainContentView: View {
         .sheet(isPresented: $authManager.showSubscriptionSheet) { SubscriptionView() }
         
         .sheet(isPresented: $showProfileSheet) { UserProfileView() } // 个人中心
+        // 【需求5】发现新版本
+        .sheet(isPresented: $showUpdateSheet) { UpdateAvailableView() }
 
         // 【新增】未登录用户的底部菜单
         .sheet(isPresented: $showGuestMenu) {
@@ -1215,6 +1277,19 @@ struct MainContentView: View {
         }
     }
 
+    /// 【需求5】每天最多弹一次；已跳过该版本 / 正在强更 / 有其它弹窗时都不打扰
+    private func maybePromptAppUpdate() {
+        guard updateManager.shouldPromptUpdate() else { return }
+        guard !updateManager.showForceUpdate,
+              !showInvitePrompt,
+              !authManager.showSubscriptionSheet,
+              !showProfileSheet, !showGuestMenu, !showNewsPromoSheet else { return }
+        updateManager.markUpdatePrompted()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            self.showUpdateSheet = true
+        }
+    }
+
     /// 【新增】从后台返回前台时执行的静默更新检查（数据已就绪场景专用）
     /// 与 handleInitialDataLoad 的关键区别：它不会因为"数据已加载"而提前 return，
     /// 因此能保证每次回到前台/首页都真正向服务器检查一次更新。
@@ -1237,6 +1312,7 @@ struct MainContentView: View {
 
         // 4. 刷新额度/点数
         await usageManager.refreshQuota()
+        maybePromptAppUpdate()
     }
 
     // 统一的数据加载逻辑
@@ -1563,5 +1639,97 @@ struct BorderlessButtonStyle: ButtonStyle {
         configuration.label
             .opacity(configuration.isPressed ? 0.5 : 1.0)
             // 关键：BorderlessButtonStyle 在 List 中可以独立响应点击，不触发 Cell 选中
+    }
+}
+
+// MARK: - 【需求5】发现新版本（软性提醒，可跳过）
+struct UpdateAvailableView: View {
+    @ObservedObject private var updateManager = UpdateManager.shared
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        ZStack {
+            LinearGradient(colors: [Color.blue.opacity(0.12), Color(UIColor.systemBackground)],
+                           startPoint: .top, endPoint: .center)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 22) {
+                Capsule().fill(Color.secondary.opacity(0.3))
+                    .frame(width: 40, height: 5).padding(.top, 10)
+                
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 66))
+                    .foregroundStyle(.linearGradient(colors: [.blue, .purple],
+                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .shadow(color: .blue.opacity(0.3), radius: 10, y: 5)
+                
+                VStack(spacing: 6) {
+                    Text("发现新版本").font(.title2.bold())
+                    HStack(spacing: 6) {
+                        Text("当前 \(updateManager.currentAppVersion)")
+                            .font(.footnote).foregroundColor(.secondary)
+                        Image(systemName: "arrow.right").font(.caption2).foregroundColor(.secondary)
+                        Text(updateManager.latestAppVersion)
+                            .font(.footnote.bold()).foregroundColor(.blue)
+                    }
+                }
+                
+                ScrollView {
+                    Text(updateManager.updateNotes.isEmpty
+                         ? "本次更新包含性能优化与问题修复，建议升级到最新版本以获得完整功能与数据支持。"
+                         : updateManager.updateNotes)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(Color(UIColor.secondarySystemGroupedBackground))
+                        )
+                        .padding(.horizontal, 20)
+                }
+                .frame(maxHeight: 220)
+                
+                Spacer(minLength: 0)
+                
+                VStack(spacing: 12) {
+                    Button {
+                        updateManager.markUpdatePrompted()
+                        updateManager.openAppStorePage()
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Image(systemName: "arrow.down.app.fill")
+                            Text("前往 App Store 更新").fontWeight(.bold)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity).frame(height: 52)
+                        .background(LinearGradient(colors: [.blue, .cyan],
+                                                   startPoint: .leading, endPoint: .trailing))
+                        .cornerRadius(26)
+                        .shadow(color: .blue.opacity(0.35), radius: 8, y: 4)
+                    }
+                    
+                    HStack(spacing: 18) {
+                        Button("稍后提醒我") {
+                            updateManager.markUpdatePrompted()
+                            dismiss()
+                        }
+                        .font(.subheadline).foregroundColor(.secondary)
+                        
+                        Text("|").foregroundColor(.secondary.opacity(0.4))
+                        
+                        Button("跳过此版本") {
+                            updateManager.skipCurrentVersion()
+                            dismiss()
+                        }
+                        .font(.subheadline).foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
+            }
+        }
     }
 }

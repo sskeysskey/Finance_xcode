@@ -5,6 +5,24 @@ final class PointsCoordinator: ObservableObject {
     static let shared = PointsCoordinator()
     private init() {}
 
+    // MARK: - 【需求1】最近一次"权限结算"上下文，供埋点使用
+    struct AccessContext {
+        let type: String   // subscription / free / free_day / unlocked_today / points_bonus / points_daily / points_mixed
+        let cost: Int
+    }
+    @Published private(set) var lastAccess = AccessContext(type: "unknown", cost: 0)
+    func noteAccess(type: String, cost: Int) {
+        self.lastAccess = AccessContext(type: type, cost: cost)
+    }
+
+    // MARK: - 【需求7】扣点确认弹窗开关（默认弹，用户勾选后不再弹）
+    private static let skipConfirmKey = "FinancePointsSkipConfirm"
+    @Published var skipPointsConfirm: Bool = UserDefaults.standard.bool(forKey: PointsCoordinator.skipConfirmKey) {
+        didSet { UserDefaults.standard.set(skipPointsConfirm, forKey: PointsCoordinator.skipConfirmKey) }
+    }
+    /// 弹窗里的"以后不再提示"勾选态（每次打开弹窗默认勾选）
+    @Published var confirmDontAskAgain: Bool = true
+
     // 确认弹窗
     @Published var showConfirmSheet = false
     @Published var confirmCost = 0
@@ -20,6 +38,8 @@ final class PointsCoordinator: ObservableObject {
     @Published var insufficientCost = 0
     @Published var insufficientRemaining = 0
     @Published var insufficientNeedLogin = false
+    /// 【需求3】true = 由"点数胶囊"主动唤起的推广面板（文案不同）
+    @Published var insufficientIsPromo = false
 
     // 结算中 / 错误
     @Published var isProcessing = false
@@ -37,19 +57,18 @@ final class PointsCoordinator: ObservableObject {
     weak var authManagerRef: AuthManager?
     private let usage = UsageManager.shared
 
-    // MARK: - 【新增】纯登录门禁：不扣点，但必须已登录（用于"对比 / 搜索"等入口）
+    // MARK: - 纯登录门禁：不扣点，但必须已登录（用于"对比 / 搜索"等入口）
     func requireLogin(authManager: AuthManager, onSuccess: @escaping () -> Void) {
         self.authManagerRef = authManager
-        if authManager.isSubscribed { onSuccess(); return }
-        if isLoggedInStrict(authManager) { onSuccess(); return }
+        if authManager.isSubscribed { noteAccess(type: "subscription", cost: 0); onSuccess(); return }
+        if isLoggedInStrict(authManager) { noteAccess(type: "free", cost: 0); onSuccess(); return }
         presentInsufficient(cost: 0, needLogin: true)
     }
 
-    /// 【新增】双重校验登录态：AuthManager 与 UsageManager 必须同时认为已登录
+    /// 双重校验登录态：AuthManager 与 UsageManager 必须同时认为已登录
     private func isLoggedInStrict(_ authManager: AuthManager) -> Bool {
         guard authManager.isLoggedIn else { return false }
         guard let uid = authManager.userIdentifier, !uid.isEmpty else { return false }
-        // dev_ / guest_ 前缀一律视为未登录（与服务器 is_real_login_user 保持一致）
         if uid.hasPrefix("dev_") || uid == "guest_user" { return false }
         guard usage.isLoggedIn else { return false }
         return true
@@ -64,9 +83,12 @@ final class PointsCoordinator: ObservableObject {
         self.authManagerRef = authManager
 
         // 0. 订阅用户：无限制
-        if authManager.isSubscribed { onSuccess(); return }
+        if authManager.isSubscribed {
+            noteAccess(type: "subscription", cost: 0)
+            onSuccess(); return
+        }
 
-        // 1. 【核心修复】未登录一律拦截 —— 必须排在 cost<=0 / 已解锁 / 免点日 之前
+        // 1. 未登录一律拦截
         if !isLoggedInStrict(authManager) {
             let c = usage.cost(for: action, itemKey: itemKey)
             presentInsufficient(cost: max(c, 1), needLogin: true)
@@ -74,43 +96,79 @@ final class PointsCoordinator: ObservableObject {
         }
 
         let cost = usage.cost(for: action, itemKey: itemKey)
-        if cost <= 0 { onSuccess(); return }
-        if usage.isUnlocked(action: action, itemKey: itemKey) { onSuccess(); return }
+        if cost <= 0 { noteAccess(type: "free", cost: 0); onSuccess(); return }
+        if usage.isUnlocked(action: action, itemKey: itemKey) {
+            noteAccess(type: "unlocked_today", cost: 0)
+            onSuccess(); return
+        }
 
         // 2. 旧数据免点日（只对已登录用户生效，且以服务器标志为准）
         if isFreeDayNow() {
+            noteAccess(type: "free_day", cost: 0)
             maybeShowFreeDayTip()
             onSuccess()
             return
         }
 
-        if usage.hasEnough(cost) {
-            presentConfirm(cost: cost, title: displayName) { [weak self] in
-                guard let self = self else { return }
-                self.isProcessing = true
-                Task {
-                    let result = await self.usage.consume(action: action, itemKey: itemKey)
-                    self.isProcessing = false
-                    switch result {
-                    case .success, .alreadyUnlocked, .free:
-                        onSuccess()
-                    case .insufficient:
-                        self.presentInsufficient(cost: cost, needLogin: false)
-                    case .notLoggedIn:
-                        self.presentInsufficient(cost: cost, needLogin: true)
-                    case .networkError:
-                        self.presentError("网络异常，扣点失败，请稍后再试")
-                    }
+        guard usage.hasEnough(cost) else {
+            presentInsufficient(cost: cost, needLogin: false)
+            return
+        }
+
+        let run: () -> Void = { [weak self] in
+            guard let self = self else { return }
+            self.isProcessing = true
+            Task {
+                let result = await self.usage.consume(action: action, itemKey: itemKey)
+                self.isProcessing = false
+                switch result {
+                case .success:
+                    let b = self.usage.lastConsumeUsedBonus
+                    let d = self.usage.lastConsumeUsedDaily
+                    let type: String
+                    if b > 0 && d > 0 { type = "points_mixed" }
+                    else if b > 0 { type = "points_bonus" }
+                    else if d > 0 { type = "points_daily" }
+                    else { type = "points" }
+                    self.noteAccess(type: type, cost: cost)
+                    onSuccess()
+                case .alreadyUnlocked:
+                    self.noteAccess(type: "unlocked_today", cost: 0)
+                    onSuccess()
+                case .free:
+                    self.noteAccess(type: "free", cost: 0)
+                    onSuccess()
+                case .insufficient:
+                    self.presentInsufficient(cost: cost, needLogin: false)
+                case .notLoggedIn:
+                    self.presentInsufficient(cost: cost, needLogin: true)
+                case .networkError:
+                    self.presentError("网络异常，扣点失败，请稍后再试")
                 }
             }
+        }
+
+        // 【需求7】用户已选择"不再提示"时直接扣点；
+        // 但"今日数据尚未更新"属于省钱提醒，仍然强制弹一次，避免用户白花点数。
+        if skipPointsConfirm && !isDataStale() {
+            run()
         } else {
-            presentInsufficient(cost: cost, needLogin: false)
+            presentConfirm(cost: cost, title: displayName, onConfirm: run)
+        }
+    }
+
+    /// 【需求7】给外部（如全文搜索）使用的统一确认入口
+    func confirmThenRun(cost: Int, title: String, authManager: AuthManager, run: @escaping () -> Void) {
+        self.authManagerRef = authManager
+        if skipPointsConfirm && !isDataStale() {
+            run()
+        } else {
+            presentConfirm(cost: cost, title: title, onConfirm: run)
         }
     }
 
     func isFree(action: UsageAction, itemKey: String?, authManager: AuthManager) -> Bool {
         if authManager.isSubscribed { return true }
-        // 【核心修复】未登录永远不算"免费"
         if !isLoggedInStrict(authManager) { return false }
         if usage.cost(for: action, itemKey: itemKey) <= 0 { return true }
         if usage.isUnlocked(action: action, itemKey: itemKey) { return true }
@@ -118,8 +176,7 @@ final class PointsCoordinator: ObservableObject {
         return false
     }
 
-    /// 【核心修复】只信任服务器当日下发的免点日标志。
-    /// 拿不到时保守返回 false（宁可多扣点，也不能让改系统日期的人白嫖）。
+    /// 只信任服务器当日下发的免点日标志
     private func isFreeDayNow() -> Bool {
         guard let auth = authManagerRef, isLoggedInStrict(auth) else { return false }
         if let serverFlag = DataService.shared.isFreeAccessDayServer {
@@ -161,6 +218,7 @@ final class PointsCoordinator: ObservableObject {
         self.confirmUsingBonus = usage.bonusRemaining > 0
         self.confirmDataStale = isDataStale()
         self.confirmDataTimestamp = DataService.shared.ecoDataTimestamp ?? ""
+        self.confirmDontAskAgain = true          // 【需求7】默认勾选
         self.confirmAction = onConfirm
         self.showConfirmSheet = true
     }
@@ -169,6 +227,21 @@ final class PointsCoordinator: ObservableObject {
         self.insufficientCost = cost
         self.insufficientRemaining = usage.remainingTotal
         self.insufficientNeedLogin = needLogin
+        self.insufficientIsPromo = false
+        self.showInsufficientSheet = true
+    }
+
+    /// 【需求3】点击顶部点数胶囊唤起的"点数中心"
+    func presentPointsHub(authManager: AuthManager) {
+        self.authManagerRef = authManager
+        if !isLoggedInStrict(authManager) {
+            presentInsufficient(cost: 0, needLogin: true)
+            return
+        }
+        self.insufficientCost = 0
+        self.insufficientRemaining = usage.remainingTotal
+        self.insufficientNeedLogin = false
+        self.insufficientIsPromo = true
         self.showInsufficientSheet = true
     }
 
@@ -179,6 +252,8 @@ final class PointsCoordinator: ObservableObject {
 
     func confirmYes() {
         showConfirmSheet = false
+        // 【需求7】记住用户选择
+        if confirmDontAskAgain { skipPointsConfirm = true }
         let act = confirmAction
         confirmAction = nil
         DispatchQueue.main.async { act?() }
@@ -344,7 +419,28 @@ struct PointsOverlayView: View {
                     .padding(.horizontal, 16).padding(.top, 14)
                 }
 
-                Divider().padding(.top, 18)
+                // 【需求7】以后不再提示
+                Button(action: { coordinator.confirmDontAskAgain.toggle() }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: coordinator.confirmDontAskAgain ? "checkmark.square.fill" : "square")
+                            .font(.system(size: 15))
+                            .foregroundColor(coordinator.confirmDontAskAgain ? .blue : .secondary)
+                        Text("以后不再显示此确认提示")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.top, 16)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Text("（可随时在「账户 → 点数设置」中重新开启）")
+                    .font(.system(size: 10)).foregroundColor(.secondary.opacity(0.8))
+                    .padding(.top, 4)
+
+                Divider().padding(.top, 16)
                 HStack(spacing: 0) {
                     Button(action: { coordinator.confirmNo() }) {
                         Text("取消").frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.secondary)
@@ -358,7 +454,7 @@ struct PointsOverlayView: View {
                 }
             }
             .background(Color(UIColor.secondarySystemGroupedBackground))
-            .cornerRadius(18).padding(.horizontal, 50).shadow(radius: 20)
+            .cornerRadius(18).padding(.horizontal, 40).shadow(radius: 20)
             .transition(.scale.combined(with: .opacity))
         }
     }
@@ -421,21 +517,33 @@ struct PointsOverlayView: View {
         }
     }
 
+    // MARK: - 点数不足 / 点数中心
     private var insufficientDialog: some View {
         ZStack {
             Color.black.opacity(0.45).ignoresSafeArea()
+                .onTapGesture {
+                    // 推广面板允许点遮罩关闭；真正"点数不足"保持原行为（需显式点按钮）
+                    if coordinator.insufficientIsPromo { coordinator.dismissInsufficient() }
+                }
             VStack(spacing: 0) {
-                Image(systemName: coordinator.insufficientNeedLogin ? "person.crop.circle.badge.plus" : "gift.fill")
+                Image(systemName: iconName)
                     .font(.system(size: 44)).foregroundStyle(.orange).padding(.top, 24)
 
-                Text(coordinator.insufficientNeedLogin ? "登录后即可免费领取大量点数" : "今日点数不足")
+                Text(titleText)
                     .font(.headline).padding(.top, 12)
 
-                Text(coordinator.insufficientNeedLogin
-                    ? "该功能需要登录后使用。登录即可一次性获赠大量免费点数，每天打卡还有免费点数赠送；参与「邀请中大奖」活动，双方还将各获得大量免费点数！"
-                    : "本次需要 \(coordinator.insufficientCost) 点，当前仅剩 \(coordinator.insufficientRemaining) 点。")
+                Text(messageText)
                     .font(.subheadline).foregroundColor(.secondary)
                     .multilineTextAlignment(.center).padding(.horizontal, 20).padding(.top, 8)
+
+                if coordinator.insufficientIsPromo {
+                    HStack(spacing: 4) {
+                        Text("当前剩余")
+                        Text("\(coordinator.insufficientRemaining)").fontWeight(.bold).foregroundColor(.blue)
+                        Text("点")
+                    }
+                    .font(.footnote).padding(.top, 10)
+                }
 
                 Button(action: {
                     if coordinator.insufficientNeedLogin {
@@ -476,7 +584,7 @@ struct PointsOverlayView: View {
                     }
                 } else {
                     Button(action: { coordinator.dismissInsufficient() }) {
-                        Text("再等等")
+                        Text(coordinator.insufficientIsPromo ? "关闭" : "再等等")
                             .frame(maxWidth: .infinity).padding(.vertical, 14).foregroundColor(.secondary)
                     }
                 }
@@ -485,5 +593,26 @@ struct PointsOverlayView: View {
             .cornerRadius(18).padding(.horizontal, 40).shadow(radius: 20)
             .transition(.scale.combined(with: .opacity))
         }
+    }
+
+    private var iconName: String {
+        if coordinator.insufficientNeedLogin { return "person.crop.circle.badge.plus" }
+        return coordinator.insufficientIsPromo ? "bolt.circle.fill" : "gift.fill"
+    }
+
+    private var titleText: String {
+        if coordinator.insufficientNeedLogin { return "登录后即可免费领取大量点数" }
+        return coordinator.insufficientIsPromo ? "点数中心" : "今日点数不足"
+    }
+
+    /// 【需求3】胶囊唤起时使用推广文案
+    private var messageText: String {
+        if coordinator.insufficientNeedLogin {
+            return "该功能需要登录后使用。登录即可一次性获赠大量免费点数，每天打卡还有免费点数赠送；参与「邀请中大奖」活动，双方还将各获得大量免费点数！"
+        }
+        if coordinator.insufficientIsPromo {
+            return "想要更多点数？\n可以邀请好友或直接订阅免除点数烦恼"
+        }
+        return "本次需要 \(coordinator.insufficientCost) 点，当前仅剩 \(coordinator.insufficientRemaining) 点。"
     }
 }

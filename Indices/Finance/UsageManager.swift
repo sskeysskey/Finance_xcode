@@ -44,6 +44,10 @@ class UsageManager: ObservableObject {
     // 登录状态（由 AuthManager 同步进来）
     @Published var isLoggedIn: Bool = false
 
+    // 【需求1】最近一次扣点明细：用于埋点区分"赠送点数 / 每日免费点数"
+    @Published private(set) var lastConsumeUsedBonus: Int = 0
+    @Published private(set) var lastConsumeUsedDaily: Int = 0
+
     // 单价配置（本地缓存，用于弹窗显示与预判；真正扣点以服务器为准）
     @Published var actionCosts: [String: Int] = [
         UsageAction.viewChart.rawValue: 2,
@@ -61,7 +65,8 @@ class UsageManager: ObservableObject {
     @Published var sectorCostOverrides: [String: Int] = [:]
 
     // 今日已解锁项（来自服务器）
-    private(set) var unlockedKeys: Set<String> = []
+    // 【需求6】改为 @Published，卡片角标才能实时从"N点"变成"已解锁"
+    @Published private(set) var unlockedKeys: Set<String> = []
     private var currentUserId: String? = nil
 
     private let serverBaseURL = "http://106.15.183.158:5001/api/Finance"
@@ -84,8 +89,6 @@ class UsageManager: ObservableObject {
         self.currentUserId = userId
         self.isLoggedIn = isLoggedIn
 
-        // 【新增】把已登录的 Apple ID 桥接到 UserDefaults，
-        // 供 DatabaseManager / UpdateManager 在网络请求中携带鉴权参数
         if let uid = userId, isLoggedIn,
         !uid.isEmpty, !uid.hasPrefix("dev_"), uid != "guest_user" {
             UserDefaults.standard.set(uid, forKey: UsageManager.authUserIdKey)
@@ -96,7 +99,6 @@ class UsageManager: ObservableObject {
         Task { await refreshQuota() }
     }
 
-    // 【新增】全局共享的登录 ID Key
     nonisolated static let authUserIdKey = "FinanceAuthUserId"
     nonisolated static var authedUserId: String? {
         UserDefaults.standard.string(forKey: UsageManager.authUserIdKey)
@@ -113,7 +115,6 @@ class UsageManager: ObservableObject {
         guard isLoggedIn, let uid = currentUserId,
               let encoded = uid.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "\(serverBaseURL)/quota/status?user_id=\(encoded)") else {
-            // 未登录 → 全部清零
             self.dailyCount = 0
             self.bonusRemaining = 0
             self.unlockedKeys = []
@@ -167,6 +168,8 @@ class UsageManager: ObservableObject {
             let bonus_remaining: Int?
             let daily_used: Int?
             let daily_limit: Int?
+            let used_bonus: Int?     // 【需求1】
+            let used_daily: Int?     // 【需求1】
         }
         do {
             let (respData, _) = try await URLSession.shared.data(for: req)
@@ -174,6 +177,8 @@ class UsageManager: ObservableObject {
             if let b = r.bonus_remaining { self.bonusRemaining = b }
             if let d = r.daily_used { self.dailyCount = d }
             if let l = r.daily_limit { self.maxFreeLimit = l }
+            self.lastConsumeUsedBonus = r.used_bonus ?? 0
+            self.lastConsumeUsedDaily = r.used_daily ?? 0
             switch r.status {
             case "success":
                 markUnlocked(action: action, itemKey: itemKey); return .success
@@ -193,7 +198,7 @@ class UsageManager: ObservableObject {
         }
     }
 
-    /// 兼容旧的同步调用（若有其他页面仍在用）：本地标记 + 服务器结算
+    /// 兼容旧的同步调用：本地标记 + 服务器结算
     func commitDeduction(action: UsageAction, itemKey: String?) {
         markUnlocked(action: action, itemKey: itemKey)
         Task { _ = await consume(action: action, itemKey: itemKey) }
@@ -226,8 +231,6 @@ class UsageManager: ObservableObject {
 
     // MARK: - 配置更新（版本接口下发）
     func updateLimit(_ limit: Int) { self.maxFreeLimit = limit }
-
-    // 服务器已按 version.json 发放，客户端不再本地发放；保留空实现兼容调用
     func updateBonus(_ amount: Int) { }
 
     func updateCosts(_ costs: [String: Int]) {

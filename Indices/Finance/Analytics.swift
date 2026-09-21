@@ -27,8 +27,14 @@ final class FinanceAnalytics {
     ///   - cardKey: 卡片/入口唯一标识 (如 "Bonds"、"对比"、"股票")
     ///   - cardName: 展示名称 (中文，可选)
     ///   - authManager: 用于判断登录状态 & 取 Apple ID
+    ///   - accessType: 【需求1】本次访问的权限来源；传 nil 时自动取 PointsCoordinator 记录的最近一次结算上下文
+    ///   - pointsCost: 【需求1】本次实际消耗的点数；传 nil 时同上
     @MainActor
-    func track(cardKey: String, cardName: String = "", authManager: AuthManager) {
+    func track(cardKey: String,
+               cardName: String = "",
+               authManager: AuthManager,
+               accessType: String? = nil,
+               pointsCost: Int? = nil) {
         let userId: String
         let userType: String
         if authManager.isLoggedIn, let uid = authManager.userIdentifier, !uid.isEmpty {
@@ -38,10 +44,20 @@ final class FinanceAnalytics {
             userId = deviceId
             userType = "device"
         }
-        send(userId: userId, userType: userType, cardKey: cardKey, cardName: cardName)
+        
+        // 【需求1】默认复用协调器里刚刚完成的结算上下文
+        let ctx = PointsCoordinator.shared.lastAccess
+        let finalType = accessType ?? ctx.type
+        let finalCost = pointsCost ?? ctx.cost
+        
+        send(userId: userId, userType: userType,
+             cardKey: cardKey, cardName: cardName,
+             accessType: finalType, pointsCost: finalCost)
     }
     
-    private func send(userId: String, userType: String, cardKey: String, cardName: String) {
+    private func send(userId: String, userType: String,
+                      cardKey: String, cardName: String,
+                      accessType: String, pointsCost: Int) {
         guard let url = URL(string: "\(serverBaseURL)/track") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -54,7 +70,9 @@ final class FinanceAnalytics {
             "card_key": cardKey,
             "card_name": cardName,
             "event_type": "click",
-            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""  // 【新增】
+            "access_type": accessType,     // 【需求1】
+            "points_cost": pointsCost,     // 【需求1】
+            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
         request.httpBody = data

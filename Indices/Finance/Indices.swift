@@ -311,16 +311,12 @@ struct IndicesContentView: View {
                             LazyVGrid(columns: gridLayout, spacing: 10) {
                                 ForEach(economySectors) { sector in
                                     Button { handleSectorClick(sector) } label: {
-                                        CompactSectorCard(sectorName: sector.name, icon: getIcon(for: sector.name), baseColor: .purple)
+                                        CompactSectorCard(sectorName: sector.name,
+                                                          icon: getIcon(for: sector.name),
+                                                          baseColor: .purple,
+                                                          action: .openSector)     // 【需求6】
                                     }
                                 }
-                                // 期权异动
-                                // Button {
-                                //     FinanceAnalytics.shared.track(cardKey: "期权异动", cardName: "期权异动", authManager: authManager)
-                                //     self.navigateToOptionsList = true
-                                // } label: {
-                                //     CompactSectorCard(sectorName: "期权异动", icon: "doc.text.magnifyingglass", baseColor: .purple, isSpecial: false, customGradient: [.purple, .blue])
-                                // }
                                 // 期权大单
                                 Button {
                                     PointsCoordinator.shared.attempt(action: .viewBigOrders, itemKey: "OptionBigOrder",
@@ -329,10 +325,12 @@ struct IndicesContentView: View {
                                         self.navigateToBigOrders = true
                                     }
                                 } label: {
-                                    CompactSectorCard(sectorName: "OptionBigOrder", icon: getIcon(for: "OptionBigOrder"), baseColor: .indigo, isSpecial: true, customGradient: [.blue, .purple])
+                                    CompactSectorCard(sectorName: "OptionBigOrder", icon: getIcon(for: "OptionBigOrder"),
+                                                      baseColor: .indigo, isSpecial: true, customGradient: [.blue, .purple],
+                                                      action: .viewBigOrders)      // 【需求6】
                                 }
 
-                                // ========== 新增 52周新低 卡片 ==========
+                                // 52周新低
                                 Button {
                                     PointsCoordinator.shared.attempt(action: .openSpecialList, itemKey: "52NewLow",
                                         displayName: dataService.groupDisplayMap["52NewLow"] ?? "52周新低", authManager: authManager) {
@@ -341,7 +339,9 @@ struct IndicesContentView: View {
                                         self.navigateToWeekLow = true
                                     }
                                 } label: {
-                                    CompactSectorCard(sectorName: "52NewLow", icon: getIcon(for: "52NewLow"), baseColor: .purple)
+                                    CompactSectorCard(sectorName: "52NewLow", icon: getIcon(for: "52NewLow"),
+                                                      baseColor: .purple,
+                                                      action: .openSpecialList)     // 【需求6】
                                 }
                             }
                         }
@@ -421,7 +421,8 @@ struct IndicesContentView: View {
                                 groupName == "Short" || groupName == "Short_W" || groupName == "PE_Volume_high",
                         customGradient: (groupName == "PE_Volume" || groupName == "PE_Volume_up" ||
                                         groupName == "Short" || groupName == "Short_W" || groupName == "PE_Volume_high")
-                                        ? [.blue, .purple] : nil
+                                        ? [.blue, .purple] : nil,
+                        action: .openSector                                  // 【需求6】
                     )
                 }
             }
@@ -433,16 +434,22 @@ struct IndicesContentView: View {
                     self.navigateToTenYearHigh = true
                 }
             } label: {
-                CompactSectorCard(sectorName: groupName, icon: getIcon(for: groupName), baseColor: .blue, isSpecial: false)
+                CompactSectorCard(sectorName: groupName, icon: getIcon(for: groupName),
+                                  baseColor: .blue, isSpecial: false,
+                                  action: .openSpecialList) 
             }
         } else if (groupName == "PE_Volume" || groupName == "PE_Volume_up" || groupName == "ETF_Volume_high" || groupName == "ETF_Volume_low" || groupName == "PE_Volume_high"),
               let sector = sectors.first(where: { $0.name == groupName }) {
             Button { handleSectorClick(sector) } label: {
-                CompactSectorCard(sectorName: sector.name, icon: getIcon(for: sector.name), baseColor: .indigo, isSpecial: true, customGradient: [.blue, .purple])
+                CompactSectorCard(sectorName: sector.name, icon: getIcon(for: sector.name),
+                                  baseColor: .indigo, isSpecial: true, customGradient: [.blue, .purple],
+                                  action: .openSector)
             }
         } else if let sector = sectors.first(where: { $0.name == groupName }) {
             Button { handleSectorClick(sector) } label: {
-                CompactSectorCard(sectorName: sector.name, icon: getIcon(for: sector.name), baseColor: .blue)
+                CompactSectorCard(sectorName: sector.name, icon: getIcon(for: sector.name),
+                                  baseColor: .blue,
+                                  action: .openSector)
             }
         }
     }
@@ -704,8 +711,14 @@ struct CompactSectorCard: View {
     let baseColor: Color
     var isSpecial: Bool = false
     var customGradient: [Color]? = nil
+    /// 【需求6】用于计算右上角点数角标；传 nil 则不显示角标
+    var action: UsageAction? = nil
+    /// 少数卡片的计价 key 与 sectorName 不一致时用它覆盖
+    var itemKeyOverride: String? = nil
 
     @EnvironmentObject var dataService: DataService
+    @EnvironmentObject var usageManager: UsageManager
+    @EnvironmentObject var authManager: AuthManager
     @State private var glow = false
 
     private var displayName: String {
@@ -713,12 +726,24 @@ struct CompactSectorCard: View {
         return sectorName.replacingOccurrences(of: "_", with: " ")
     }
 
-    // 【需求4】nil = 普通卡片；非 nil（含空串）= 需要特效
-    private var featuredLabel: String? { dataService.featuredCards[sectorName] }
-    private var isFeatured: Bool { featuredLabel != nil }
-    private var badgeText: String {
-        if let label = featuredLabel, !label.isEmpty { return label }
-        return "精选"
+    // 服务器仍可用 featured_cards 控制"发光高亮"，但文字角标统一改为点数
+    private var isFeatured: Bool { dataService.featuredCards[sectorName] != nil }
+
+    private var itemKey: String { itemKeyOverride ?? sectorName }
+
+    /// 【需求6】右上角角标：点数 / 免费 / 已解锁 / 今日免费；订阅用户不显示
+    private var costBadge: (text: String, colors: [Color])? {
+        guard let action = action else { return nil }
+        if authManager.isSubscribed { return nil }
+        if usageManager.isUnlocked(action: action, itemKey: itemKey) {
+            return ("已解锁", [.green, .teal])
+        }
+        if dataService.isFreeAccessDayServer == true {
+            return ("今日免费", [.green, .mint])
+        }
+        let c = usageManager.cost(for: action, itemKey: itemKey)
+        if c <= 0 { return ("免费", [.green, .teal]) }
+        return ("\(c)点", [.orange, .pink])
     }
 
     private var gradientColors: [Color] {
@@ -760,17 +785,18 @@ struct CompactSectorCard: View {
             .shadow(color: (isFeatured ? Color.orange : baseColor).opacity(isFeatured ? 0.55 : 0.2),
                     radius: isFeatured ? (glow ? 8 : 3) : 2, x: 0, y: 2)
 
-            // 【需求4】右上角徽标
-            if isFeatured {
+            // 【需求6】点数角标
+            if let badge = costBadge {
                 HStack(spacing: 2) {
-                    Image(systemName: "star.fill").font(.system(size: 7))
-                    Text(badgeText).font(.system(size: 9, weight: .heavy))
+                    Image(systemName: badge.text.hasSuffix("点") ? "bolt.fill" : "checkmark.seal.fill")
+                        .font(.system(size: 7))
+                    Text(badge.text).font(.system(size: 9, weight: .heavy))
                 }
                 .foregroundColor(.white)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
                 .background(
-                    LinearGradient(colors: [.orange, .pink], startPoint: .leading, endPoint: .trailing)
+                    LinearGradient(colors: badge.colors, startPoint: .leading, endPoint: .trailing)
                 )
                 .clipShape(Capsule())
                 .overlay(Capsule().stroke(Color.white.opacity(0.6), lineWidth: 0.5))

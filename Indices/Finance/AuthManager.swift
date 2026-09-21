@@ -16,36 +16,34 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     
     @Published var isLoggedIn: Bool = false
     @Published var isLoggingIn: Bool = false
-    // 【新增】订阅状态
     @Published var isSubscribed: Bool = false
     @Published var subscriptionExpiryDate: String?
+    /// 【新增】当前设备上是否真的存在有效的 Apple 订阅凭证（与"服务器端 VIP"区分开）
+    @Published var hasAppleEntitlement: Bool = false
     
     @Published var errorMessage: String?
-    @Published var showSubscriptionSheet: Bool = false // 控制是否显示订阅页
+    @Published var showSubscriptionSheet: Bool = false
 
-    // 存储从 Apple 获取的用户唯一标识符
     private(set) var userIdentifier: String?
     
-    // 【修改】Finance 专用的 Key
     private let userIdentifierKey = "zhangyan.Indices"
-    // 【修改】Finance 专用的 Product ID (需在 App Store Connect 创建)
     private let subscriptionProductID = "com.zhangyan.finance.subscription.monthly"
-    // 【修改】Finance API 地址
     private let serverBaseURL = "http://106.15.183.158:5001/api/Finance"
     
-    // 【新增】用于监听交易更新的任务
     private var updateListenerTask: Task<Void, Error>?
 
-    // 【新增】缓存 Key
+    // 缓存 Key
     private let cacheIsSubscribedKey = "AuthCache_IsSubscribed"
     private let cacheExpiryDateKey = "AuthCache_ExpiryDate"
+    private let cacheSavedAtKey = "AuthCache_SavedAt"          // 【新增】缓存写入时间
+    private let cacheGraceDays: Double = 3                      // 【新增】无到期时间的老缓存最多信任 3 天
+
+    /// 【修复 B2】只保存"来自 StoreKit 的真实到期时间"，绝不混入服务器/后门下发的时间
+    private var appleEntitlementExpiry: Date?
 
     override init() {
         super.init()
-        // 2. 检查登录状态
         checkUserInKeychain()
-        
-        // 【新增】启动交易监听器（处理应用外购买或自动续费）
         updateListenerTask = listenForTransactions()
     }
     
@@ -54,8 +52,6 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     }
 
     // MARK: - Invite Code Redemption (后门逻辑)
-    
-    /// 尝试兑换邀请码
     func redeemInviteCode(_ code: String) async throws -> Bool {
         guard let userId = userIdentifier else {
             throw NSError(domain: "AuthError", code: 401, userInfo: [NSLocalizedDescriptionKey: "请先登录后再使用兑换码"])
@@ -70,32 +66,27 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+        guard let httpResponse = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }
         
         if httpResponse.statusCode == 200 {
-            // 解析返回结果
             struct RedeemResponse: Codable {
                 let status: String
                 let is_subscribed: Bool
                 let subscription_expires_at: String?
             }
-            
             let result = try JSONDecoder().decode(RedeemResponse.self, from: data)
-            
             await MainActor.run {
                 if result.is_subscribed {
                     self.isSubscribed = true
                     self.subscriptionExpiryDate = result.subscription_expires_at
-                    // 兑换成功也更新缓存
                     self.saveSubscriptionCache(isSubscribed: true, expiryDate: result.subscription_expires_at)
                     print("AuthManager: 兑换码使用成功，已升级为 VIP")
                 }
             }
             return true
         } else {
-            // 处理错误消息
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let errorMsg = json["error"] as? String {
                 throw NSError(domain: "Server", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorMsg])
@@ -104,7 +95,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
 
-    // MARK: - 好友邀请码（拉新奖励：一次性发放点数，与后门 redeemInviteCode 分开）
+    // MARK: - 好友邀请码
     struct FriendRedeemResponse: Codable {
         let status: String?
         let reward_points: Int?
@@ -113,7 +104,6 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         let error: String?
     }
 
-    /// 兑换好友邀请码，成功后返回本次获得的点数
     func redeemFriendInviteCode(_ code: String) async throws -> Int {
         guard let userId = userIdentifier, isLoggedIn else {
             throw NSError(domain: "AuthError", code: 401,
@@ -130,7 +120,6 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
 
         if http.statusCode == 200, let d = decoded, d.status == "success" {
-            // 奖励是一次性赠送点数，刷新配额以更新点数显示
             await UsageManager.shared.refreshQuota()
             return d.reward_points ?? 0
         } else {
@@ -144,35 +133,21 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     private func checkUserInKeychain() {
         do {
             if let userId = try loadUserIdentifierFromKeychain() {
-                // 1. 先确立身份
                 self.userIdentifier = userId
                 self.isLoggedIn = true
                 print("AuthManager: 本地已登录，User ID: \(userId)")
                 UsageManager.shared.setCurrentUser(userId, isLoggedIn: true)
                 
-                // 【优化点 1】立即加载上次缓存的订阅状态
-                // 这样用户一打开 App 就能看到皇冠，不用等待网络请求
-                loadSubscriptionCache() 
+                loadSubscriptionCache()
                 
-                // 2. 启动后台检查
                 Task {
-                    // 【优化点 2】执行顺序很重要
-                    // 先查 Apple (StoreKit)
-                    // 如果你是亲友码，这里可能会把 isSubscribed 设为 false
                     await updateSubscriptionStatus()
-                    
-                    // 后查服务器 (Server)
-                    // 这一步是“最终裁决”。如果服务器说是 VIP，它会把 isSubscribed 改回 true
-                    // 这样就保证了亲友码用户的最终状态是正确的
                     await checkServerSubscriptionStatus()
                 }
             } else {
                 self.isLoggedIn = false
                 UsageManager.shared.setCurrentUser(nil, isLoggedIn: false)
-                // 即使未登录，也要检查本地是否有有效的 StoreKit 权限（匿名购买的情况）
-                Task {
-                    await updateSubscriptionStatus()
-                }
+                Task { await updateSubscriptionStatus() }
             }
         } catch {
             self.isLoggedIn = false
@@ -186,7 +161,7 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         isLoggingIn = true
         errorMessage = nil
         let request = ASAuthorizationAppleIDProvider().createRequest()
-        request.requestedScopes = [.fullName, .email] // 请求获取用户全名和邮箱
+        request.requestedScopes = [.fullName, .email]
 
         let controller = ASAuthorizationController(authorizationRequests: [request])
         controller.delegate = self
@@ -194,31 +169,20 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         controller.performRequests()
     }
     
-    // 【核心修复 1】登出逻辑优化
     func signOut() {
-        // 1. 仅清除“账号相关”的状态
         self.isLoggedIn = false
         UsageManager.shared.setCurrentUser(nil, isLoggedIn: false)
         self.userIdentifier = nil
-        self.subscriptionExpiryDate = nil // 清除服务器下发的过期时间
+        self.subscriptionExpiryDate = nil
         
-        // 2. 尝试删除钥匙串中的账号（不影响 VIP 状态）
         try? deleteUserIdentifierFromKeychain()
         
-        // 3. 【重要】不要在这里直接 clearSubscriptionCache()！
-        // 因为如果用户是通过 Apple 订阅的，缓存应该保留。
-        // 我们立即调用 updateSubscriptionStatus()，让它去决定是保留还是清除。
-        
         Task {
-            // 这次检查会决定：
-            // - 如果有 Apple 订阅 -> isSubscribed 保持 true，缓存更新。
-            // - 如果无 Apple 订阅 -> isSubscribed 变为 false，缓存清除。
             await updateSubscriptionStatus()
             print("AuthManager: 登出完成，已重新校验本地权限")
         }
     }
 
-    // 【新增】删除账号功能 (从 ONews 移植)
     func deleteAccount() async throws {
         guard let userId = userIdentifier else { throw URLError(.userAuthenticationRequired) }
         
@@ -236,27 +200,21 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             throw URLError(.badServerResponse)
         }
         
-        // 服务器删除成功后，在本地执行退出登录并清理数据
         await MainActor.run {
             self.signOut()
             print("AuthManager: 账号已彻底删除并登出。")
         }
     }
 
-    // MARK: - StoreKit 2 Payment Logic (核心修改)
-
-    // 【新增】监听交易流
+    // MARK: - StoreKit 2
     func listenForTransactions() -> Task<Void, Error> {
         return Task.detached {
-            // 【修复】StoreKit.Transaction.updates 的遍历不会抛出错误
             for await result in StoreKit.Transaction.updates {
                 await self.handleTransactionUpdate(result)
             }
         }
     }
     
-    // 辅助方法处理交易更新
-    // 【修复】参数类型明确指定 StoreKit.Transaction
     private func handleTransactionUpdate(_ result: VerificationResult<StoreKit.Transaction>) async {
         do {
             let transaction = try checkVerified(result)
@@ -267,25 +225,18 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
     
-    // 【核心修复 2】权限检查逻辑优化
-    // 这个方法现在不仅负责“开启”权限，也负责在没权限且未登录时“关闭”权限
     func updateSubscriptionStatus() async {
         var hasActiveSubscription = false
         var latestExpirationDate: Date? = nil
         
-        // 【修复】明确指定 StoreKit.Transaction
         for await result in StoreKit.Transaction.currentEntitlements {
             do {
                 let transaction = try checkVerified(result)
-                
-                // 检查是否是我们的订阅产品
                 if transaction.productID == subscriptionProductID {
-                    // 检查过期时间
-                    if let expirationDate = transaction.expirationDate {
-                        if expirationDate > Date() {
-                            hasActiveSubscription = true
+                    if let expirationDate = transaction.expirationDate, expirationDate > Date() {
+                        hasActiveSubscription = true
+                        if latestExpirationDate == nil || expirationDate > latestExpirationDate! {
                             latestExpirationDate = expirationDate
-                            print("AuthManager: 发现有效订阅，过期时间: \(expirationDate)")
                         }
                     }
                 }
@@ -294,31 +245,27 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             }
         }
         
-        // 更新 UI 状态
         let finalStatus = hasActiveSubscription
+        let finalDate = latestExpirationDate
         let finalDateStr = latestExpirationDate?.ISO8601Format()
         
         await MainActor.run {
+            // 【修复 B2】只有 StoreKit 的时间才写进 appleEntitlementExpiry
+            self.hasAppleEntitlement = finalStatus
+            self.appleEntitlementExpiry = finalDate
+            
             if finalStatus {
-                // 情况 A: 找到了有效的 Apple 订阅
-                // 无论是否登录，都视为 VIP，并更新缓存
                 self.isSubscribed = true
                 self.subscriptionExpiryDate = finalDateStr
-                // ✅ 保存缓存
                 self.saveSubscriptionCache(isSubscribed: true, expiryDate: finalDateStr)
                 print("AuthManager: 发现有效 Apple 订阅 (VIP)")
             } else {
-                // 情况 B: 没找到 Apple 订阅
-                // 这里要小心：如果用户是“服务器端 VIP”（比如安卓买的），我们不能因为 Apple 没查到就取消 VIP。
-                // 所以：只有在【未登录】的情况下，Apple 没查到，我们才敢断定他不是 VIP。
-                
                 if !self.isLoggedIn {
                     self.isSubscribed = false
                     self.subscriptionExpiryDate = nil
-                    self.clearSubscriptionCache() // 只有这时才真正清除缓存
+                    self.clearSubscriptionCache()
                     print("AuthManager: 无 Apple 订阅且未登录 -> 重置为免费版")
                 }
-                // 如果 isLoggedIn == true，我们不做任何操作，保留服务器可能下发的状态
             }
         }
     }
@@ -358,32 +305,31 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         guard let userId = userIdentifier else { throw URLError(.userAuthenticationRequired) }
         try await AppStore.sync()
         await updateSubscriptionStatus()
-        if isSubscribed {
+        // 【修复 B2】只有 Apple 侧确实有凭证才同步；服务器端 VIP 不需要也不应该回写
+        if hasAppleEntitlement {
             try await syncPurchaseToServer(userId: userId)
         }
+        // 无论如何再拉一次服务器权威状态
+        await checkServerSubscriptionStatus()
     }
 
     // MARK: - Server Sync
     private func syncPurchaseToServer(userId: String) async throws {
+        // 【修复 B2】只上报 StoreKit 真实到期时间
+        guard let realExpiry = appleEntitlementExpiry, realExpiry > Date() else {
+            print("AuthManager: 未取得 Apple 到期时间，跳过服务器同步（避免把后门/服务器时间回写）")
+            return
+        }
+        
         let url = URL(string: "\(serverBaseURL)/payment/subscribe")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        // 【核心修改】构建请求体
-        var body: [String: Any] = ["user_id": userId]
-        
-        // 检查 AuthManager 中是否已经有了从 Apple 获取的过期时间
-        // 注意：purchaseSubscription 和 restorePurchases 都会先调用 updateSubscriptionStatus
-        // 所以此时 self.subscriptionExpiryDate 应该是最新的真实时间
-        if let realExpiryDate = self.subscriptionExpiryDate {
-            // 传给服务器字段：explicit_expiry
-            body["explicit_expiry"] = realExpiryDate
-        } else {
-            // 如果实在拿不到时间（极少情况），再回退到加30天
-            body["days"] = 30
-        }
-        
+        let body: [String: Any] = [
+            "user_id": userId,
+            "explicit_expiry": realExpiry.ISO8601Format()
+        ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
         let (_, response) = try await URLSession.shared.data(for: request)
@@ -394,13 +340,17 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         print("服务器同步成功")
     }
     
-    // 【新增】检查服务器上的订阅状态
+    /// 服务器权威状态（手动改库 / 后门 / 安卓端购买 都走这里生效）
     func checkServerSubscriptionStatus() async {
-        guard let userId = userIdentifier else { return }
-        guard let url = URL(string: "\(serverBaseURL)/user/status?user_id=\(userId)") else { return }
+        guard let userId = userIdentifier,
+              let encoded = userId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return }
+        guard let url = URL(string: "\(serverBaseURL)/user/status?user_id=\(encoded)") else { return }
         
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            var req = URLRequest(url: url)
+            req.cachePolicy = .reloadIgnoringLocalCacheData   // 【新增】避免读到旧缓存
+            req.timeoutInterval = 10
+            let (data, _) = try await URLSession.shared.data(for: req)
             struct StatusResponse: Codable {
                 let is_subscribed: Bool
                 let subscription_expires_at: String?
@@ -409,26 +359,22 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             
             await MainActor.run {
                 if status.is_subscribed {
-                    // 1. 服务器确认是 VIP
                     self.isSubscribed = true
                     self.subscriptionExpiryDate = status.subscription_expires_at
-                    // ✅ 保存缓存
                     self.saveSubscriptionCache(isSubscribed: true, expiryDate: status.subscription_expires_at)
-                    print("AuthManager: 服务器确认 VIP")
+                    print("AuthManager: 服务器确认 VIP，到期 \(status.subscription_expires_at ?? "-")")
                 } else {
-                    // 2. 【修复这里】服务器说不是 VIP (过期了)
                     print("AuthManager: 服务器显示无订阅/已过期")
-                    
-                    // A. 先假设用户没权限，清理状态
-                    self.isSubscribed = false
-                    self.subscriptionExpiryDate = nil
-                    self.clearSubscriptionCache()
-                    
-                    // B. 但是！为了防止误杀 Apple 订阅用户
-                    // 立即重新触发一次 Apple 权限检查。
-                    // 如果用户有 Apple 订阅，updateSubscriptionStatus 会把 isSubscribed 重新设回 true。
-                    Task { [weak self] in
-                        await self?.updateSubscriptionStatus()
+                    // 服务器说没有 → 只保留本机 Apple 凭证这一条退路
+                    if self.hasAppleEntitlement {
+                        self.isSubscribed = true
+                        self.subscriptionExpiryDate = self.appleEntitlementExpiry?.ISO8601Format()
+                        self.saveSubscriptionCache(isSubscribed: true, expiryDate: self.subscriptionExpiryDate)
+                        print("AuthManager: 但本机存在有效 Apple 订阅，保持 VIP")
+                    } else {
+                        self.isSubscribed = false
+                        self.subscriptionExpiryDate = nil
+                        self.clearSubscriptionCache()
                     }
                 }
             }
@@ -437,31 +383,10 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         }
     }
     
-    // 辅助方法：快速检查当前内存中是否有有效的 Apple 订阅证据
-    // 你可以在 updateSubscriptionStatus 里维护一个变量，或者直接判断 subscriptionProductID
-    private func hasActiveAppleSubscription() -> Bool {
-        // 这是一个简化的判断，更严谨的做法是在 updateSubscriptionStatus 里记录一个 Bool 变量
-        // 这里我们可以假设：如果当前是 VIP，但服务器说是 false，
-        // 唯一的希望就是 Apple。如果 updateSubscriptionStatus 刚刚运行过，
-        // 且没找到 Apple 订阅，它虽然没改 isSubscribed (因为 loggedIn)，
-        // 但它肯定没更新 subscriptionExpiryDate (或者更新的是 nil)。
-        
-        // 最稳妥的方法：复用 updateSubscriptionStatus 的逻辑，
-        // 但为了不写重复代码，建议在类里加一个属性：
-        // @Published var hasAppleEntitlement: Bool = false
-        // 在 updateSubscriptionStatus 里更新这个属性。
-        
-        // 如果不想大改，可以用下面的临时逻辑：
-        // 如果当前是 VIP，我们假设它是服务器给的。现在服务器收回了，我们就收回。
-        // 除非... 用户刚刚买了 Apple。
-        // 鉴于你的架构，最简单的修补是：
-        // 既然 checkServerSubscriptionStatus 是最后一步“裁决者”，
-        // 如果服务器返回 false，我们应该信任服务器（前提是服务器知道 Apple 的购买状态）。
-        // 但如果服务器不知道 Apple 的状态（同步失败），这里直接 false 会误杀。
-        
-        // ⭐️ 最佳轻量级方案：
-        // 不要在这里纠结，而是修改 updateSubscriptionStatus
-        return false // 占位，看下面的“最终建议”
+    /// 【新增】一次性刷新全部权限（供下拉刷新 / 回前台调用）
+    func refreshSubscriptionAll() async {
+        await updateSubscriptionStatus()
+        await checkServerSubscriptionStatus()
     }
 
     // MARK: - ASAuthorization Delegate
@@ -474,33 +399,21 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
             
             Task {
                 do {
-                    // 1. 先保存 Keychain
                     try saveUserIdentifierToKeychain(userId)
                     
-                    // 2. 【关键修复】先在 UI 上确立“已登录”状态
-                    // 这样后续的检查就不会因为“未登录”而误删权限
                     await MainActor.run {
                         self.userIdentifier = userId
                         self.isLoggedIn = true
                         UsageManager.shared.setCurrentUser(userId, isLoggedIn: true)
-                        self.isLoggingIn = true // 保持 loading 状态直到服务器返回
+                        self.isLoggingIn = true
                     }
                     
-                    // 3. 请求服务器 (获取亲友码/服务器端 VIP 状态)
-                    // 如果服务器返回 VIP，这里会把 isSubscribed 设为 true
                     try await sendTokenToServer(token: identityToken, userId: userId)
+                    await updateSubscriptionStatus()
+                    await checkServerSubscriptionStatus()
                     
-                    // 4. 最后再同步 Apple 本地权限
-                    // 此时 isLoggedIn 已经是 true 了，所以即使 Apple 返回 false，
-                    // updateSubscriptionStatus 里的逻辑也不会清除服务器给的 VIP。
-                    await updateSubscriptionStatus() 
-                    
-                    // 5. 结束 Loading
-                    await MainActor.run {
-                        self.isLoggingIn = false
-                    }
+                    await MainActor.run { self.isLoggingIn = false }
                 } catch {
-                    // 如果出错，回滚状态
                     await MainActor.run {
                         self.isLoggedIn = false
                         self.userIdentifier = nil
@@ -553,24 +466,21 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
         let authResponse = try JSONDecoder().decode(AuthResponse.self, from: data)
         
         await MainActor.run {
-            // 如果服务器说是 VIP，直接覆盖本地状态
             if authResponse.is_subscribed {
                 self.isSubscribed = true
                 self.subscriptionExpiryDate = authResponse.subscription_expires_at
-                // 立即保存缓存，防止闪烁
                 self.saveSubscriptionCache(isSubscribed: true, expiryDate: authResponse.subscription_expires_at)
-                print("AuthManager: 服务器认证成功，用户是 VIP (亲友/订阅)")
+                print("AuthManager: 服务器认证成功，用户是 VIP")
             } else {
-                // 如果服务器说不是 VIP，我们暂时不设为 false，
-                // 因为可能还要等 updateSubscriptionStatus 检查 Apple 的收据
                 print("AuthManager: 服务器认证成功，用户暂无服务器端订阅")
             }
         }
     }
 
-    // MARK: - Caching
+    // MARK: - Caching（【修复 B1】缓存必须带过期校验）
     private func saveSubscriptionCache(isSubscribed: Bool, expiryDate: String?) {
         UserDefaults.standard.set(isSubscribed, forKey: cacheIsSubscribedKey)
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: cacheSavedAtKey)
         if let date = expiryDate {
             UserDefaults.standard.set(date, forKey: cacheExpiryDateKey)
         } else {
@@ -579,20 +489,53 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
     }
     
     private func loadSubscriptionCache() {
-        let cachedStatus = UserDefaults.standard.bool(forKey: cacheIsSubscribedKey)
+        guard UserDefaults.standard.bool(forKey: cacheIsSubscribedKey) else { return }
         let cachedExpiry = UserDefaults.standard.string(forKey: cacheExpiryDateKey)
         
-        if cachedStatus {
-            // 简单校验日期（可选），如果缓存是 true，先给权限，后续网络请求会校正
-            self.isSubscribed = true
-            self.subscriptionExpiryDate = cachedExpiry
-            print("AuthManager: 已加载本地缓存，暂时赋予 VIP 权限。")
+        if let s = cachedExpiry, let d = Self.parseISODate(s) {
+            // 有明确到期时间：过期直接作废，绝不"永久 VIP"
+            guard d > Date() else {
+                clearSubscriptionCache()
+                print("AuthManager: 本地缓存已过期(\(s))，不再赋予 VIP")
+                return
+            }
+        } else {
+            // 老缓存没有到期时间：只给有限宽限期
+            let savedAt = UserDefaults.standard.double(forKey: cacheSavedAtKey)
+            let age = Date().timeIntervalSince1970 - savedAt
+            guard savedAt > 0, age < cacheGraceDays * 86400 else {
+                clearSubscriptionCache()
+                print("AuthManager: 无到期时间的旧缓存已超过宽限期，作废")
+                return
+            }
         }
+        
+        self.isSubscribed = true
+        self.subscriptionExpiryDate = cachedExpiry
+        print("AuthManager: 已加载本地缓存，暂时赋予 VIP 权限（待服务器校正）")
     }
     
     private func clearSubscriptionCache() {
         UserDefaults.standard.removeObject(forKey: cacheIsSubscribedKey)
         UserDefaults.standard.removeObject(forKey: cacheExpiryDateKey)
+        UserDefaults.standard.removeObject(forKey: cacheSavedAtKey)
+    }
+    
+    /// 宽松解析服务器/StoreKit 的 ISO8601 时间
+    static func parseISODate(_ s: String) -> Date? {
+        let f1 = ISO8601DateFormatter()
+        f1.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f1.date(from: s) { return d }
+        let f2 = ISO8601DateFormatter()
+        if let d = f2.date(from: s) { return d }
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = TimeZone(identifier: "UTC")
+        for fmt in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd"] {
+            df.dateFormat = fmt
+            if let d = df.date(from: s) { return d }
+        }
+        return nil
     }
 
     // MARK: - Keychain Helpers
@@ -641,32 +584,27 @@ class AuthManager: NSObject, ObservableObject, ASAuthorizationControllerDelegate
 struct LoginView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
-    @Environment(\.colorScheme) var colorScheme // 获取当前系统模式
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         ZStack {
-            // 1. 使用系统背景色 (Light: 白, Dark: 黑)
             Color(UIColor.systemBackground)
                 .ignoresSafeArea()
 
             VStack(spacing: 30) {
                 Spacer()
 
-                // Logo 和标题
                 VStack(spacing: 15) {
                     Image(systemName: "newspaper.fill")
                         .font(.system(size: 80))
-                        // 2. 使用主色调或 Primary 颜色
                         .foregroundColor(.blue)
                     
                     Text("登录 【美股精灵】")
                         .font(.largeTitle.bold())
-                        // 3. 使用系统主文本颜色 (自动黑/白)
                         .foregroundColor(.primary)
                     
                     Text("成功登录后\n即使更换了设备\n也可以同步您的订阅状态")
                         .font(.headline)
-                        // 4. 使用系统次级文本颜色 (灰色)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
@@ -674,35 +612,22 @@ struct LoginView: View {
 
                 Spacer()
 
-                // 登录按钮区域
                 VStack(spacing: 20) {
                     if authManager.isLoggingIn {
-                        ProgressView()
-                            .scaleEffect(1.5)
+                        ProgressView().scaleEffect(1.5)
                     } else {
-                        // Apple 登录按钮
                         SignInWithAppleButton(
                             .signIn,
-                            onRequest: { request in
-                                // 可以在这里配置请求，但 AuthManager 中已配置
-                            },
-                            onCompletion: { result in
-                                // AuthManager 会通过代理处理结果，这里不需要代码
-                            }
+                            onRequest: { _ in },
+                            onCompletion: { _ in }
                         )
-                        .onTapGesture {
-                            // 实际的逻辑由 AuthManager 触发
-                            authManager.signInWithApple()
-                        }
-                        // 5. 按钮样式适配：亮色模式用黑按钮，深色模式用白按钮
+                        .onTapGesture { authManager.signInWithApple() }
                         .signInWithAppleButtonStyle(colorScheme == .light ? .black : .white)
                         .frame(height: 50)
                         .cornerRadius(10)
-                        // 添加阴影让按钮更有层次感
                         .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
                     }
 
-                    // 错误信息
                     if let errorMessage = authManager.errorMessage {
                         Text(errorMessage)
                             .foregroundColor(.red)
@@ -714,21 +639,14 @@ struct LoginView: View {
 
                 Spacer()
                 
-                // 关闭按钮
-                Button("稍后再说") {
-                    // 【核心修改】这里仅关闭视图，后续的支付跳转逻辑由父视图的 onDismiss 处理
-                    dismiss()
-                }
+                Button("稍后再说") { dismiss() }
                 .font(.subheadline)
-                .foregroundColor(.secondary) // 改为次级颜色
+                .foregroundColor(.secondary)
                 .padding(.bottom, 20)
             }
         }
-        // 移除 .preferredColorScheme(.dark) 以允许系统切换
         .onChange(of: authManager.isLoggedIn) { _, newValue in
-            if newValue {
-                dismiss()
-            }
+            if newValue { dismiss() }
         }
     }
 }
