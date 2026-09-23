@@ -317,29 +317,89 @@ struct VideoDetailView: View {
     @State private var selectedSeasonItem: OVideoItem? = nil
     @State private var navigateToSeason = false
 
-    // 计算某线路"去重后的实际集数"：把 粤语01/国语01 之类同集号的语种变体算作 1 集
-    private func distinctEpisodeCount(_ channel: OVideoChannel) -> Int {
-        var seen = Set<String>()
+    // MARK: - 智能季与集解析
+    /// 辅助：从单集名字提取 (Season, Episode)
+    private func parseSeasonAndEpisode(from key: String) -> (season: Int?, episodeNumber: Int?, normalizedKey: String) {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // 1. 匹配 S01E02 / s4e03 / S2 EP05
+        let sePattern = "(?i)S(\\d{1,2})\\s*E(?:P)?(\\d{1,4})"
+        if let regex = try? NSRegularExpression(pattern: sePattern),
+           let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+           let sRange = Range(match.range(at: 1), in: trimmed),
+           let eRange = Range(match.range(at: 2), in: trimmed),
+           let sNum = Int(trimmed[sRange]),
+           let eNum = Int(trimmed[eRange]) {
+            return (sNum, eNum, "s\(sNum)_e\(eNum)")
+        }
+
+        // 2. 匹配 "第1季第2集" / "第2部 第05集"
+        let cnSePattern = "第\\s*([0-9零一二三四五六七八九十]+)\\s*[季部].*?第\\s*([0-9零一二三四五六七八九十]+)\\s*集"
+        if let regex = try? NSRegularExpression(pattern: cnSePattern),
+           let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+           let sRange = Range(match.range(at: 1), in: trimmed),
+           let eRange = Range(match.range(at: 2), in: trimmed),
+           let sNum = chineseNumeralToInt(String(trimmed[sRange])),
+           let eNum = chineseNumeralToInt(String(trimmed[eRange])) {
+            return (sNum, eNum, "s\(sNum)_e\(eNum)")
+        }
+
+        // 3. 常规普通集数提取（如：第01集、粤语01、EP05、正片 等）
+        let digits = trimmed.filter { $0.isNumber }
+        if let n = Int(digits), !digits.isEmpty {
+            return (nil, n, "e\(n)")
+        }
+        
+        // 兜底（针对 正片、HD、预告 等无纯数字单集）
+        return (nil, nil, trimmed)
+    }
+
+    /// 分析某线路的剧集情况
+    private func channelEpisodeAnalysis(_ channel: OVideoChannel) -> (targetSeasonCount: Int, distinctTotalCount: Int) {
+        var seasonToEpisodes: [Int: Set<Int>] = [:]
+        var plainEpisodes = Set<String>()
+        var allDistinctKeys = Set<String>()
+
         for key in channel.episodes.keys {
-            let digits = key.filter { $0.isNumber }
-            if digits.isEmpty {
-                seen.insert(key)                 // 无数字(正片/HD等)按原名去重
-            } else if let n = Int(digits) {
-                seen.insert("n\(n)")             // "01"/"1" 归一为同一集
+            let parsed = parseSeasonAndEpisode(from: key)
+            allDistinctKeys.insert(parsed.normalizedKey)
+
+            if let s = parsed.season {
+                let ep = parsed.episodeNumber ?? 0
+                seasonToEpisodes[s, default: []].insert(ep)
             } else {
-                seen.insert(digits)
+                plainEpisodes.insert(parsed.normalizedKey)
             }
         }
-        return seen.count
+
+        // 如果包含 S01/S04 等明确多季标识
+        if !seasonToEpisodes.isEmpty {
+            // 如果片名有明确标注第几季，优先匹配对应季；否则取包含的最大/最新季
+            let currentItemSeason = videoSeriesInfo(from: item.name)?.season
+            let targetSeason: Int
+            if let cis = currentItemSeason, seasonToEpisodes[cis] != nil {
+                targetSeason = cis
+            } else {
+                targetSeason = seasonToEpisodes.keys.max() ?? 1
+            }
+            let latestSeasonEpCount = seasonToEpisodes[targetSeason]?.count ?? 0
+            return (targetSeasonCount: latestSeasonEpCount, distinctTotalCount: allDistinctKeys.count)
+        }
+
+        // 没有区分多季（如：第01集~第08集）：最新季集数即为该源总有效集数
+        return (targetSeasonCount: plainEpisodes.count, distinctTotalCount: allDistinctKeys.count)
     }
 
     private var sortedPlaylist: [OVideoChannel] {
         let indexedChannels = loadedChannels.enumerated().map {
             (index, channel) -> (index: Int, channel: OVideoChannel,
-                                distinctCount: Int, totalCount: Int, qualityScore: Int) in
-            let distinctCount = distinctEpisodeCount(channel)   // 实际集数（去重语种）
-            let totalCount = channel.episodes.count             // 总链接数（作次级依据）
+                                latestSeasonCount: Int, qualityScore: Int) in
+            
+            // 核心评估：计算当前季/目标季的有效更新集数
+            let analysis = channelEpisodeAnalysis(channel)
+            let latestSeasonCount = analysis.targetSeasonCount
 
+            // 画质评分：枪版/预告降权，正片/高清加权
             var qualityScore = 1
             let episodeKeys = channel.episodes.keys
             let hasLowQuality = episodeKeys.contains { key in
@@ -353,14 +413,20 @@ struct VideoDetailView: View {
             if hasLowQuality { qualityScore = 0 }
             else if hasHighQuality { qualityScore = 2 }
 
-            return (index, channel, distinctCount, totalCount, qualityScore)
+            return (index, channel, latestSeasonCount, qualityScore)
         }
 
         let sortedIndexed = indexedChannels.sorted { a, b in
-            if a.distinctCount != b.distinctCount { return a.distinctCount > b.distinctCount } // 1. 实际集数
-            if a.totalCount   != b.totalCount     { return a.totalCount   > b.totalCount }     // 2. 总链接数
-            if a.qualityScore != b.qualityScore   { return a.qualityScore > b.qualityScore }   // 3. 画质
-            return a.index < b.index                                                           // 4. 原始顺序
+            // 1. 最新季/目标季有效集数多者优先（如：8集 > 4集）
+            if a.latestSeasonCount != b.latestSeasonCount {
+                return a.latestSeasonCount > b.latestSeasonCount
+            }
+            // 2. 集数相同时，画质优者优先（正片/HD > 普通 > TC抢先）
+            if a.qualityScore != b.qualityScore {
+                return a.qualityScore > b.qualityScore
+            }
+            // 3. 【核心修正】：集数与画质完全一致时，严格遵守 JSON 原始顺序（排在前面的优先）
+            return a.index < b.index
         }
         return sortedIndexed.map { $0.channel }
     }
