@@ -49,8 +49,8 @@ struct FreeTagView: View {
         .foregroundColor(Color(red: 0.08, green: 0.68, blue: 0.28))
         .padding(.horizontal, compact ? 6 : 8)
         .padding(.vertical, compact ? 2 : 4)
-        .background(Capsule().fill(Color(red:0.18, green:0.82, blue:0.38).opacity(0.12)))
-        .overlay(Capsule().stroke(Color(red:0.18, green:0.82, blue:0.38).opacity(0.38), lineWidth: 0.6))
+        .background(Capsule().fill(Color(red: 0.18, green: 0.82, blue: 0.38).opacity(0.12)))
+        .overlay(Capsule().stroke(Color(red: 0.18, green: 0.82, blue: 0.38).opacity(0.38), lineWidth: 0.6))
     }
 }
 
@@ -76,11 +76,37 @@ struct ArticleItem: Identifiable {
     }
 }
 
-/// 预分组模型，减轻 body 渲染期压力
 struct ArticleDateGroup: Identifiable {
     var id: String { timestamp }
     let timestamp: String
     let items: [ArticleItem]
+}
+
+// ==================== 日期格式化（按语言缓存，切换中英即时生效） ====================
+@MainActor
+enum ONewsDateText {
+    private static var cache: [String: DateFormatter] = [:]
+    private static let parser: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyMMdd"
+        return f
+    }()
+
+    static func string(_ timestamp: String, format: String, locale: Locale) -> String {
+        guard let date = parser.date(from: timestamp) else { return timestamp }
+        let key = format + "|" + locale.identifier
+        let f: DateFormatter
+        if let hit = cache[key] {
+            f = hit
+        } else {
+            f = DateFormatter()
+            f.locale = locale
+            f.dateFormat = format
+            cache[key] = f
+        }
+        return f.string(from: date)
+    }
 }
 
 // ==================== 撤销条（Gmail 式 Undo Snackbar） ====================
@@ -114,8 +140,15 @@ final class ArticleUndoCenter: ObservableObject {
     func hide() {
         hideTask?.cancel(); hideTask = nil
         undoAction = nil
+        guard isVisible else { return }
         withAnimation(.easeInOut(duration: 0.2)) { isVisible = false }
     }
+}
+
+/// 永不 publish 的持有者（同 ReaderAudioHolder 思路）：列表不因撤销条显隐而整页重算
+@MainActor
+final class ArticleUndoHolder: ObservableObject {
+    let center = ArticleUndoCenter()
 }
 
 struct UndoSnackBar: View {
@@ -141,6 +174,36 @@ struct UndoSnackBar: View {
         .background(Capsule().fill(Color.black.opacity(0.88)))
         .shadow(color: .black.opacity(0.25), radius: 10, x: 0, y: 4)
         .padding(.horizontal, 16)
+    }
+}
+
+/// 只有这棵小子树观察撤销状态
+private struct UndoSnackOverlay: View {
+    @ObservedObject var center: ArticleUndoCenter
+    let raised: Bool
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            if center.isVisible {
+                UndoSnackBar(message: center.message, onUndo: { center.performUndo() })
+                    .padding(.bottom, raised ? 130 : 70)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+    }
+}
+
+/// 只有这棵小子树观察 ResourceManager（它在图片下载期间高频 publish）
+private struct NotificationBannerHost: View {
+    @ObservedObject var resourceManager: ResourceManager
+
+    var body: some View {
+        if let message = resourceManager.activeNotification {
+            NotificationBannerView(message: message) {
+                resourceManager.dismissNotification()
+            }
+            .background(Color.viewBackground)
+        }
     }
 }
 
@@ -207,9 +270,7 @@ private struct SelectionChipButtonStyle: ButtonStyle {
             .padding(.horizontal, 16)
             .padding(.vertical, 11)
             .frame(minWidth: 96, minHeight: 44)
-            .background(
-                Capsule().fill(Color.primary.opacity(configuration.isPressed ? 0.14 : 0.06))
-            )
+            .background(Capsule().fill(Color.primary.opacity(configuration.isPressed ? 0.14 : 0.06)))
             .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 0.8))
             .contentShape(Capsule())
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
@@ -255,10 +316,8 @@ struct SelectionActionBar: View {
 
                 Spacer(minLength: 4)
 
-                Button(action: onCancel) {
-                    Text(isEn ? "Cancel" : "取消")
-                }
-                .buttonStyle(SelectionChipButtonStyle())
+                Button(action: onCancel) { Text(isEn ? "Cancel" : "取消") }
+                    .buttonStyle(SelectionChipButtonStyle())
             }
 
             Button(action: { isMarkRead ? onMarkRead() : onMarkUnread() }) {
@@ -317,16 +376,20 @@ struct ArticleRowCardView: View {
         return article.topic
     }
 
+    private var displaySourceName: String? {
+        guard let name = sourceName else { return nil }
+        if showEnglish, let en = sourceNameEN, !en.isEmpty { return en }
+        return name
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                if let name = sourceName {
-                    let finalName = (showEnglish && sourceNameEN != nil && !sourceNameEN!.isEmpty) ? sourceNameEN! : name
+                if let finalName = displaySourceName {
                     Text(finalName.replacingOccurrences(of: "_", with: " ").uppercased())
                         .font(.system(size: 11, weight: .bold))
                         .tracking(0.5)
                         .foregroundColor(isReadEffective ? .secondary.opacity(0.7) : .blue.opacity(0.8))
-                        .animation(.none, value: showEnglish)
                 }
                 Spacer()
                 if isLocked {
@@ -349,7 +412,6 @@ struct ArticleRowCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                     .opacity(isReadEffective ? 0.8 : 1.0)
-                    .animation(.none, value: showEnglish)
                 Spacer(minLength: 0)
             }
 
@@ -369,351 +431,109 @@ struct ArticleRowCardView: View {
                 .shadow(color: Color.black.opacity(isReadEffective ? 0.02 : 0.06), radius: 8, x: 0, y: 4)
         )
         .opacity(isLocked ? 0.7 : 1.0)
+        .transaction { $0.animation = nil }   // 中英切换时标题不做跨行插值动画
     }
 }
 
-// ==================== 列表内容 ====================
-struct ArticleListContent: View {
-    let groups: [ArticleDateGroup]
-    let allVisibleArticles: [ArticleItem]
-    let filterMode: ArticleFilterMode
-    let expandedTimestamps: Set<String>
-    let viewModel: NewsViewModel
-    let authManager: AuthManager
-    let showEnglish: Bool
-    let isSelectionMode: Bool
-    let selectedIDs: Set<UUID>
-    let onToggleTimestamp: (String) -> Void
-    let onPlayTimestamp: (String) -> Void
-    let onArticleTap: (ArticleItem) async -> Void
-    let onToggleSelect: (ArticleItem) -> Void
-    let onToggleGroupSelect: ([ArticleItem]) -> Void
-    let onEnterSelection: (ArticleItem) -> Void
-    let onMarkRead: (ArticleItem) -> Void
-    let onMarkUnread: (ArticleItem) -> Void
-
-    private func isGroupLocked(_ group: [ArticleItem], timestamp: String) -> Bool {
-        guard NewsPointsCoordinator.shouldShowLock(timestamp: timestamp,
-                                                  auth: authManager,
-                                                  viewModel: viewModel) else { return false }
-        if group.isEmpty { return true }
-        return group.contains { !NewsPointsCoordinator.canAccess($0.article,
-                                                                auth: authManager,
-                                                                viewModel: viewModel) }
-    }
-
-    private func groupState(_ group: [ArticleItem]) -> GroupSelectionState {
-        guard !group.isEmpty else { return .none }
-        let hit = group.filter { selectedIDs.contains($0.id) }.count
-        if hit == 0 { return .none }
-        return hit == group.count ? .all : .partial
-    }
-
-    var body: some View {
-        ForEach(groups) { group in
-            let timestamp = group.timestamp
-            let list = group.items
-
-            Section {
-                if expandedTimestamps.contains(timestamp) {
-                    ForEach(list) { item in
-                        ArticleRowButton(
-                            item: item,
-                            filterMode: filterMode,
-                            viewModel: viewModel,
-                            authManager: authManager,
-                            filteredArticles: allVisibleArticles,
-                            onTap: { await onArticleTap(item) },
-                            showEnglish: showEnglish,
-                            isSelectionMode: isSelectionMode,
-                            isSelected: selectedIDs.contains(item.id),
-                            onToggleSelect: { onToggleSelect(item) },
-                            onEnterSelection: { onEnterSelection(item) },
-                            onMarkRead: { onMarkRead(item) },
-                            onMarkUnread: { onMarkUnread(item) }
-                        )
-                    }
-                }
-            } header: {
-                TimestampHeader(
-                    timestamp: timestamp,
-                    count: list.count,
-                    isExpanded: expandedTimestamps.contains(timestamp),
-                    isLocked: isGroupLocked(list, timestamp: timestamp),
-                    isFree: NewsFreeBadge.isFree(timestamp: timestamp,
-                                                 auth: authManager,
-                                                 viewModel: viewModel),
-                    isSelectionMode: isSelectionMode,
-                    groupState: groupState(list),
-                    onToggle: { onToggleTimestamp(timestamp) },
-                    onPlay: { onPlayTimestamp(timestamp) },
-                    onToggleGroupSelect: { onToggleGroupSelect(list) }
-                )
-            }
-        }
+// ==================== 行（Equatable：输入不变就跳过重算） ====================
+private struct ArticleRowPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .opacity(configuration.isPressed ? 0.9 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
-// ==================== 搜索结果 ====================
-struct SearchResultsList: View {
-    let results: [ArticleItem]
-    let viewModel: NewsViewModel
-    let authManager: AuthManager
-    let showEnglish: Bool
-    let onArticleTap: (ArticleItem) async -> Void
-    let onMarkRead: (ArticleItem) -> Void
-    let onMarkUnread: (ArticleItem) -> Void
-
-    private static let parsingFormatter: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "yyMMdd"; return f
-    }()
-
-    private static let displayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Localized.currentLocale
-        f.dateFormat = Localized.dateFormatFull
-        return f
-    }()
-
-    private func isGroupLocked(_ group: [ArticleItem], timestamp: String) -> Bool {
-        guard NewsPointsCoordinator.shouldShowLock(timestamp: timestamp,
-                                                  auth: authManager,
-                                                  viewModel: viewModel) else { return false }
-        if group.isEmpty { return true }
-        return group.contains { !NewsPointsCoordinator.canAccess($0.article,
-                                                                auth: authManager,
-                                                                viewModel: viewModel) }
-    }
-
-    var body: some View {
-        if results.isEmpty {
-            Section {
-                Text(Localized.noMatch)
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 12)
-                    .listRowBackground(Color.clear)
-            } header: {
-                Text(Localized.searchResults)
-                    .font(.headline)
-                    .foregroundColor(.blue.opacity(0.7))
-                    .padding(.vertical, 4)
-            }
-        } else {
-            let grouped = Dictionary(grouping: results, by: { $0.article.timestamp })
-                .mapValues { Array($0.reversed()) }
-            let timestamps = grouped.keys.sorted(by: >)
-
-            ForEach(timestamps, id: \.self) { timestamp in
-                let list = grouped[timestamp] ?? []
-                Section(header:
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(Localized.searchResults)
-                            .font(.subheadline)
-                            .foregroundColor(.blue.opacity(0.7))
-                        HStack(spacing: 6) {
-                            Text("\(formatTimestamp(timestamp)) (\(list.count))")
-                                .font(.headline)
-                                .foregroundColor(.blue.opacity(0.85))
-                            if isGroupLocked(list, timestamp: timestamp) {
-                                Image(systemName: "lock.fill")
-                                    .foregroundColor(.yellow.opacity(0.8))
-                                    .font(.footnote)
-                            } else if NewsFreeBadge.isFree(timestamp: timestamp,
-                                                           auth: authManager,
-                                                           viewModel: viewModel) {
-                                FreeTagView(compact: true)
-                            }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                ) {
-                    ForEach(list) { item in
-                        ArticleRowButton(
-                            item: item,
-                            filterMode: .unread,
-                            viewModel: viewModel,
-                            authManager: authManager,
-                            filteredArticles: results,
-                            onTap: { await onArticleTap(item) },
-                            showEnglish: showEnglish,
-                            onMarkRead: { onMarkRead(item) },
-                            onMarkUnread: { onMarkUnread(item) }
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    private func formatTimestamp(_ timestamp: String) -> String {
-        guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp }
-        return Self.displayFormatter.string(from: date)
-    }
-}
-
-// ==================== 行（原生 swipeActions：左滑到底松手即执行，丝滑零冲突） ====================
-struct ArticleRowButton: View {
+struct ArticleRowView: View, Equatable {
     let item: ArticleItem
-    let filterMode: ArticleFilterMode
-    let viewModel: NewsViewModel
-    let authManager: AuthManager
-    let filteredArticles: [ArticleItem]
-    let onTap: () async -> Void
+    let isRead: Bool
+    let isLocked: Bool
+    let isFree: Bool
     let showEnglish: Bool
     let isSelectionMode: Bool
     let isSelected: Bool
+    let allowBulkMarks: Bool
+
+    let onTap: () -> Void
     let onToggleSelect: () -> Void
     let onEnterSelection: () -> Void
-    let onMarkRead: () -> Void
-    let onMarkUnread: () -> Void
+    let onToggleRead: () -> Void
+    let onMarkAbove: () -> Void
+    let onMarkBelow: () -> Void
 
-    init(item: ArticleItem,
-         filterMode: ArticleFilterMode,
-         viewModel: NewsViewModel,
-         authManager: AuthManager,
-         filteredArticles: [ArticleItem],
-         onTap: @escaping () async -> Void,
-         showEnglish: Bool,
-         isSelectionMode: Bool = false,
-         isSelected: Bool = false,
-         onToggleSelect: @escaping () -> Void = {},
-         onEnterSelection: @escaping () -> Void = {},
-         onMarkRead: @escaping () -> Void = {},
-         onMarkUnread: @escaping () -> Void = {}) {
-        self.item = item
-        self.filterMode = filterMode
-        self.viewModel = viewModel
-        self.authManager = authManager
-        self.filteredArticles = filteredArticles
-        self.onTap = onTap
-        self.showEnglish = showEnglish
-        self.isSelectionMode = isSelectionMode
-        self.isSelected = isSelected
-        self.onToggleSelect = onToggleSelect
-        self.onEnterSelection = onEnterSelection
-        self.onMarkRead = onMarkRead
-        self.onMarkUnread = onMarkUnread
+    static func == (l: ArticleRowView, r: ArticleRowView) -> Bool {
+        l.item.id == r.item.id
+            && l.item.isContentMatch == r.item.isContentMatch
+            && l.item.sourceName == r.item.sourceName
+            && l.isRead == r.isRead
+            && l.isLocked == r.isLocked
+            && l.isFree == r.isFree
+            && l.showEnglish == r.showEnglish
+            && l.isSelectionMode == r.isSelectionMode
+            && l.isSelected == r.isSelected
+            && l.allowBulkMarks == r.allowBulkMarks
     }
 
-    private var isReadEffective: Bool { viewModel.isArticleEffectivelyRead(item.article) }
+    private var toggleTitle: String { isRead ? Localized.markAsUnread_text : Localized.markAsRead_text }
 
     var body: some View {
-        let isLocked = NewsPointsCoordinator.shouldShowLock(timestamp: item.article.timestamp,
-                                                           auth: authManager,
-                                                           viewModel: viewModel)
-            && !NewsPointsCoordinator.canAccess(item.article,
-                                                auth: authManager,
-                                                viewModel: viewModel)
-        let isFree = !isLocked && NewsFreeBadge.isFree(timestamp: item.article.timestamp,
-                                                      auth: authManager,
-                                                      viewModel: viewModel)
-
-        HStack(spacing: 10) {
-            if isSelectionMode {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 24, weight: .regular))
-                    .foregroundColor(isSelected ? .blue : .secondary.opacity(0.45))
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+        Button(action: { isSelectionMode ? onToggleSelect() : onTap() }) {
+            HStack(spacing: 10) {
+                if isSelectionMode {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 24, weight: .regular))
+                        .foregroundColor(isSelected ? .blue : .secondary.opacity(0.45))
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+                ArticleRowCardView(
+                    article: item.article,
+                    sourceName: item.sourceName,
+                    sourceNameEN: item.sourceNameEN,
+                    isReadEffective: isRead,
+                    isContentMatch: item.isContentMatch,
+                    isLocked: isLocked,
+                    isFree: isFree,
+                    showEnglish: showEnglish
+                )
             }
-
-            ArticleRowCardView(
-                article: item.article,
-                sourceName: item.sourceName,
-                sourceNameEN: item.sourceNameEN,
-                isReadEffective: isReadEffective,
-                isContentMatch: item.isContentMatch,
-                isLocked: isLocked,
-                isFree: isFree,
-                showEnglish: showEnglish
-            )
+            .contentShape(Rectangle())
         }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if isSelectionMode { onToggleSelect() } else { Task { await onTap() } }
-        }
-        // ★ 原生系统滑动：allowsFullSwipe = true 支持滑动到底直接松手执行，无任何阻断
+        .buttonStyle(ArticleRowPressStyle())
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
             if !isSelectionMode {
-                Button {
-                    if isReadEffective { onMarkUnread() } else { onMarkRead() }
-                } label: {
-                    Label(
-                        isReadEffective ? Localized.markAsUnread_text : Localized.markAsRead_text,
-                        systemImage: isReadEffective ? "envelope.badge.fill" : "checkmark.circle.fill"
-                    )
+                Button(action: onToggleRead) {
+                    Label(toggleTitle, systemImage: isRead ? "envelope.badge.fill" : "checkmark.circle.fill")
                 }
-                .tint(isReadEffective ? .orange : .blue)
+                .tint(isRead ? .orange : .blue)
             }
-        }
-        .id(item.article.id)
-        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
-        .accessibilityAction(named: Text(isReadEffective ? Localized.markAsUnread_text
-                                                         : Localized.markAsRead_text)) {
-            if isReadEffective { onMarkUnread() } else { onMarkRead() }
         }
         .contextMenu {
             if !isSelectionMode {
-                ArticleContextMenu(
-                    article: item.article,
-                    filterMode: filterMode,
-                    viewModel: viewModel,
-                    filteredArticles: filteredArticles.map { $0.article },
-                    onMarkRead: onMarkRead,
-                    onMarkUnread: onMarkUnread,
-                    onEnterSelection: onEnterSelection
-                )
-            }
-        }
-    }
-}
-
-// ==================== 长按菜单 ====================
-struct ArticleContextMenu: View {
-    let article: Article
-    let filterMode: ArticleFilterMode
-    let viewModel: NewsViewModel
-    let filteredArticles: [Article]
-    let onMarkRead: () -> Void
-    let onMarkUnread: () -> Void
-    let onEnterSelection: () -> Void
-
-    var body: some View {
-        if viewModel.isArticleEffectivelyRead(article) {
-            Button(action: onMarkUnread) {
-                Label(Localized.markAsUnread_text, systemImage: "circle")
-            }
-        } else {
-            Button(action: onMarkRead) {
-                Label(Localized.markAsRead_text, systemImage: "checkmark.circle")
-            }
-
-            if filterMode == .unread && !filteredArticles.isEmpty {
+                Button(action: onToggleRead) {
+                    Label(toggleTitle, systemImage: isRead ? "circle" : "checkmark.circle")
+                }
+                if !isRead && allowBulkMarks {
+                    Divider()
+                    Button(action: onMarkAbove) {
+                        Label(Localized.readAbove, systemImage: "arrow.up.to.line.compact")
+                    }
+                    Button(action: onMarkBelow) {
+                        Label(Localized.readBelow, systemImage: "arrow.down.to.line.compact")
+                    }
+                }
                 Divider()
-                Button {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        viewModel.markAllAboveAsRead(articleID: article.id, inVisibleList: filteredArticles)
-                    }
-                } label: { Label(Localized.readAbove, systemImage: "arrow.up.to.line.compact") }
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        viewModel.markAllBelowAsRead(articleID: article.id, inVisibleList: filteredArticles)
-                    }
-                } label: { Label(Localized.readBelow, systemImage: "arrow.down.to.line.compact") }
+                Button(action: onEnterSelection) {
+                    Label(Localized.isEnglish ? "Select Articles…" : "选择文章…",
+                          systemImage: "checkmark.circle.badge.questionmark")
+                }
             }
         }
-
-        Divider()
-        Button(action: onEnterSelection) {
-            Label(Localized.isEnglish ? "Select Articles…" : "选择文章…",
-                  systemImage: "checkmark.circle.badge.questionmark")
-        }
+        .accessibilityAction(named: Text(toggleTitle), onToggleRead)
     }
 }
 
-// ==================== 日期分组头 ====================
+// ==================== 日期分组头（★ 恢复为吸顶 Section header，带防"文字消失"保护） ====================
 struct TimestampHeader: View {
     let timestamp: String
     let count: Int
@@ -726,17 +546,6 @@ struct TimestampHeader: View {
     let onPlay: () -> Void
     let onToggleGroupSelect: () -> Void
 
-    private static let parsingFormatter: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "yyMMdd"; return f
-    }()
-
-    private static let displayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = Localized.dateFormatShort
-        f.locale = Localized.currentLocale
-        return f
-    }()
-
     private var groupIcon: String {
         switch groupState {
         case .none: return "circle"
@@ -745,7 +554,23 @@ struct TimestampHeader: View {
         }
     }
 
+    private var toggleAnimation: Animation { .easeInOut(duration: 0.25) }
+
     var body: some View {
+        card
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity)
+            // ★ 吸顶时遮住下方滚动内容；纯色而非毛玻璃（实时模糊每帧都很贵）
+            .background(Color.viewBackground)
+            // ★ plain List 的 header 默认会把文字转大写（英文日期会变 "JAN 5"）
+            .textCase(nil)
+            // ★ 核心防护：header 内任何文字 / 颜色变化都不做插值动画。
+            //   复用的 header 视图若在淡入淡出途中被回收，文字会卡在 opacity 0 → "标题消失"。
+            .transaction { $0.animation = nil }
+    }
+
+    private var card: some View {
         HStack(spacing: 0) {
             if isSelectionMode {
                 Button(action: onToggleGroupSelect) {
@@ -763,7 +588,7 @@ struct TimestampHeader: View {
                     .padding(.leading, 12)
             }
 
-            Text(formatTimestamp(timestamp))
+            Text(ONewsDateText.string(timestamp, format: Localized.dateFormatShort, locale: Localized.currentLocale))
                 .font(.system(size: 18, weight: .heavy, design: .rounded))
                 .foregroundColor(isExpanded ? .blue : .primary.opacity(0.85))
                 .padding(.leading, 12)
@@ -774,10 +599,10 @@ struct TimestampHeader: View {
                 FreeTagView(compact: true).padding(.leading, 8)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             if count > 0 && !isSelectionMode {
-                Button(action: { onPlay() }) {
+                Button(action: onPlay) {
                     Image(systemName: "play.fill")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(isExpanded ? .blue : .gray)
@@ -800,43 +625,75 @@ struct TimestampHeader: View {
                                                           : Color.secondary.opacity(0.15)))
 
                 if isSelectionMode {
-                    Button(action: { withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { onToggle() } }) {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(.secondary.opacity(0.6))
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                            .padding(4)
-                            .contentShape(Rectangle())
+                    Button(action: { withAnimation(toggleAnimation) { onToggle() } }) {
+                        chevron(opacity: 0.6).padding(4).contentShape(Rectangle())
                     }
                     .buttonStyle(PlainButtonStyle())
                 } else {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.secondary.opacity(0.5))
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    chevron(opacity: 0.5)
                 }
             }
             .padding(.trailing, 12)
         }
         .padding(.vertical, 10)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-        .padding(.horizontal, 3)
-        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.cardBackground)
+                .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
+        )
         .contentShape(Rectangle())
         .onTapGesture {
             if isSelectionMode {
                 onToggleGroupSelect()
             } else {
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) { onToggle() }
+                withAnimation(toggleAnimation) { onToggle() }
             }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 
-    private func formatTimestamp(_ timestamp: String) -> String {
-        guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp }
-        return Self.displayFormatter.string(from: date)
+    /// ★ 只有箭头旋转保留动画（纯几何变换，无文字淡入淡出风险）
+    private func chevron(opacity: Double) -> some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 14, weight: .bold))
+            .foregroundColor(.secondary.opacity(opacity))
+            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            .animation(toggleAnimation, value: isExpanded)
+    }
+}
+
+// ==================== 搜索分组头（★ 同样吸顶 + 同样防护） ====================
+struct SearchGroupHeader: View {
+    let timestamp: String
+    let count: Int
+    let isLocked: Bool
+    let isFree: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(Localized.searchResults)
+                .font(.subheadline)
+                .foregroundColor(.blue.opacity(0.7))
+            HStack(spacing: 6) {
+                Text("\(ONewsDateText.string(timestamp, format: Localized.dateFormatFull, locale: Localized.currentLocale)) (\(count))")
+                    .font(.headline)
+                    .foregroundColor(.blue.opacity(0.85))
+                if isLocked {
+                    Image(systemName: "lock.fill")
+                        .foregroundColor(.yellow.opacity(0.8))
+                        .font(.footnote)
+                } else if isFree {
+                    FreeTagView(compact: true)
+                }
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.viewBackground)
+        .textCase(nil)
+        .transaction { $0.animation = nil }
     }
 }
 
@@ -880,176 +737,155 @@ struct EmptyStateView: View {
     }
 }
 
-// ==================== 单一来源列表 ====================
-struct ArticleListView: View {
-    let sourceName: String
+// ============================================================================
+// MARK: - 统一列表页（单源 / 全部 共用）
+// ============================================================================
+enum ArticleListScope: Equatable {
+    case source(String)
+    case all
+}
+
+struct ArticleListScreen: View {
+    let scope: ArticleListScope
     @ObservedObject var viewModel: NewsViewModel
-    @ObservedObject var resourceManager: ResourceManager
+    /// ★ 不观察：只用来调方法 / 交给 NotificationBannerHost 局部观察
+    let resourceManager: ResourceManager
+
     @EnvironmentObject var authManager: AuthManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-
-    @Environment(\.appNavPath) var appNavPath
+    @Environment(\.appNavPath) private var appNavPath
 
     @State private var filterMode: ArticleFilterMode = .unread
     @State private var isSearching = false
     @State private var searchText = ""
     @State private var isSearchActive = false
-    @State private var showErrorAlert = false
-    @State private var errorMessage = ""
-    @State private var isDownloadingImages = false
-    @State private var downloadProgress: Double = 0.0
-    @State private var downloadProgressText = ""
-
+    @State private var searchHits: [ArticleItem] = []
     @State private var showProfileSheet = false
     @State private var hasPerformedAutoExpansion = false
 
+    /// ★ 吸顶 header 的"自愈纪元"：结构变化 / 从详情返回后递增一次，
+    ///   让所有 header 以全新身份重建（等价于你手动"来回切换界面"，但用户无感）
+    @State private var headerEpoch = 0
+
     @StateObject private var selection = ArticleSelectionModel()
-    @StateObject private var undo = ArticleUndoCenter()
+    @StateObject private var undoHolder = ArticleUndoHolder()
+    private var undo: ArticleUndoCenter { undoHolder.center }
 
-    private var displayTitle: String {
-        guard let source = source else { return sourceName }
-        return isGlobalEnglishMode ? source.name_en : source.name
-    }
+    // MARK: 一次成型的数据快照（每次 body 只算一遍）
+    private struct Snapshot {
+        var sourceAvailable = true
+        var visible: [ArticleItem] = []
+        var groups: [ArticleDateGroup] = []
+        var unreadCount = 0
+        var readCount = 0
 
-    private var source: NewsSource? {
-        viewModel.sources.first(where: { $0.name == sourceName })
-    }
-
-    private func getCount(for mode: ArticleFilterMode) -> Int {
-        mode == .unread ? unreadCount : readCount
-    }
-
-    private var baseFilteredArticles: [ArticleItem] {
-        guard let source = source else { return [] }
-        return source.articles
-            .filter { article in
-                let isReadEff = viewModel.isArticleEffectivelyRead(article)
-                return (filterMode == .unread) ? !isReadEff : isReadEff
-            }
-            .map { ArticleItem(article: $0, sourceName: nil) }
-    }
-
-    private var groupedArticles: [ArticleDateGroup] {
-        let items = baseFilteredArticles
-        let dict = Dictionary(grouping: items, by: { $0.article.timestamp })
-        let orderedKeys = dict.keys.sorted(by: >)
-        return orderedKeys.map { key in
-            let raw = dict[key] ?? []
-            let finalItems = (filterMode == .read) ? Array(raw.reversed()) : raw
-            return ArticleDateGroup(timestamp: key, items: finalItems)
+        /// ★ 分组结构签名（日期 + 数量），变化即触发 header 自愈
+        var groupSignature: String {
+            groups.map { "\($0.timestamp):\($0.items.count)" }.joined(separator: ",")
         }
     }
 
-    private var searchResults: [ArticleItem] {
-        guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let source = source else { return [] }
-        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return source.articles.compactMap { article -> ArticleItem? in
-            if article.topic.lowercased().contains(keyword) {
-                return ArticleItem(article: article, sourceName: nil, isContentMatch: false)
-            }
-            if article.article.lowercased().contains(keyword) {
-                return ArticleItem(article: article, sourceName: nil, isContentMatch: true)
-            }
-            return nil
+    private var expansionKey: String {
+        switch scope {
+        case .source(let n): return n
+        case .all: return viewModel.allArticlesKey
         }
     }
 
-    private var unreadCount: Int {
-        source?.articles.filter { !viewModel.isArticleEffectivelyRead($0) }.count ?? 0
-    }
-    private var readCount: Int {
-        source?.articles.filter { viewModel.isArticleEffectivelyRead($0) }.count ?? 0
+    private var currentSource: NewsSource? {
+        guard case .source(let n) = scope else { return nil }
+        return viewModel.sources.first { $0.name == n }
     }
 
+    private var navTitle: String {
+        switch scope {
+        case .all: return ""
+        case .source(let n):
+            guard let s = currentSource else { return n.replacingOccurrences(of: "_", with: " ") }
+            return (isGlobalEnglishMode ? s.name_en : s.name).replacingOccurrences(of: "_", with: " ")
+        }
+    }
+
+    private func makeSnapshot() -> Snapshot {
+        var snap = Snapshot()
+        let wantRead = (filterMode == .read)
+
+        switch scope {
+        case .source:
+            guard let s = currentSource else { snap.sourceAvailable = false; return snap }
+            snap.visible.reserveCapacity(s.articles.count)
+            for a in s.articles {
+                let r = viewModel.isArticleEffectivelyRead(a)
+                if r { snap.readCount += 1 } else { snap.unreadCount += 1 }
+                if r == wantRead { snap.visible.append(ArticleItem(article: a)) }
+            }
+        case .all:
+            let all = viewModel.allArticlesSortedForDisplay
+            snap.visible.reserveCapacity(all.count)
+            for it in all {
+                let r = viewModel.isArticleEffectivelyRead(it.article)
+                if r { snap.readCount += 1 } else { snap.unreadCount += 1 }
+                if r == wantRead {
+                    snap.visible.append(ArticleItem(article: it.article,
+                                                    sourceName: it.sourceName,
+                                                    sourceNameEN: it.sourceNameEN))
+                }
+            }
+        }
+
+        var buckets: [String: [ArticleItem]] = [:]
+        for item in snap.visible { buckets[item.article.timestamp, default: []].append(item) }
+        snap.groups = buckets.keys.sorted(by: >).map { ts in
+            let raw = buckets[ts] ?? []
+            return ArticleDateGroup(timestamp: ts, items: wantRead ? Array(raw.reversed()) : raw)
+        }
+        return snap
+    }
+
+    // MARK: Body
     var body: some View {
-        if source == nil {
-            VStack { Text(Localized.sourceUnavailable).foregroundColor(.secondary) }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.viewBackground.ignoresSafeArea())
-        } else {
-            mainContent
-        }
-    }
+        let snap = makeSnapshot()
 
-    private var mainContent: some View {
-        ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                if isSearching && !selection.isActive {
-                    SearchBarInline(
-                        text: $searchText,
-                        placeholder: Localized.searchPlaceholder,
-                        onCommit: {
-                            isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        },
-                        onCancel: {
-                            withAnimation { isSearching = false; isSearchActive = false; searchText = "" }
-                        }
-                    )
-                }
-
-                if let message = resourceManager.activeNotification {
-                    NotificationBannerView(message: message) {
-                        resourceManager.dismissNotification()
-                    }
-                    .background(Color.viewBackground)
-                }
-
-                listArea
-
-                bottomBar
-            }
-            .background(Color.viewBackground.ignoresSafeArea())
-
-            if undo.isVisible {
-                UndoSnackBar(message: undo.message, onUndo: { undo.performUndo() })
-                    .padding(.bottom, selection.isActive ? 130 : 70)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .zIndex(60)
+        Group {
+            if snap.sourceAvailable {
+                mainContent(snap)
+            } else {
+                VStack { Text(Localized.sourceUnavailable).foregroundColor(.secondary) }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.viewBackground.ignoresSafeArea())
             }
         }
+        .navigationTitle(navTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { toolbarContent }
+        .sheet(isPresented: $showProfileSheet) { UserProfileView() }
         .onAppear {
-            viewModel.finishReadingIfNeeded()
+            // ★ 从详情页返回时"标记已读"会让分组消失；
+            //   不带动画执行，避免与 pop 转场 + header 复用叠加
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { viewModel.finishReadingIfNeeded() }
+
             if !hasPerformedAutoExpansion {
                 autoExpandGroups(); hasPerformedAutoExpansion = true
             }
-            Task { await resourceManager.silentRefresh(minInterval: 60, reason: "source-list-appear") }
+            // ★ pop 转场（≈0.35s）结束后兜底重建一次 header
+            scheduleHeaderRefresh(after: 0.45)
+
+            let reason = (scope == .all) ? "all-list-appear" : "source-list-appear"
+            Task { await resourceManager.silentRefresh(minInterval: 60, reason: reason) }
         }
-        .navigationTitle(displayTitle.replacingOccurrences(of: "_", with: " "))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                UserStatusToolbarItem(showProfileSheet: $showProfileSheet)
-            }
-            ToolbarItem(placement: .principal) {
-                if !selection.isActive && authManager.isLoggedIn && !authManager.isSubscribed {
-                    NewsPointsPill()
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                if !selection.isActive {
-                    ArticleListToolbarActions(
-                        isGlobalEnglishMode: $isGlobalEnglishMode,
-                        onEnterSelection: { enterSelection(preselect: nil) },
-                        onToggleSearch: {
-                            withAnimation {
-                                isSearching.toggle()
-                                if !isSearching { isSearchActive = false; searchText = "" }
-                            }
-                        }
-                    )
-                }
-            }
+        .onChange(of: snap.groupSignature) { _, _ in
+            // ★ 分组增删 / 数量变化：等列表删除动画播完再自愈
+            scheduleHeaderRefresh(after: 0.4)
         }
-        .overlay(
-            DownloadOverlay(isDownloading: isDownloadingImages,
-                            progress: downloadProgress,
-                            progressText: downloadProgressText)
-        )
-        .alert("", isPresented: $showErrorAlert,
-               actions: { Button(Localized.confirm, role: .cancel) { } },
-               message: { Text(errorMessage) })
-        .sheet(isPresented: $showProfileSheet) { UserProfileView() }
+        .onChange(of: filterMode) { _, _ in
+            ONewsHaptics.selection()
+            autoExpandGroups()
+        }
+        .onChange(of: viewModel.allArticlesSortedForDisplay.count) { _, _ in
+            if isSearchActive { runSearch() }   // 数据刷新后搜索结果同步
+        }
         .onChange(of: authManager.isLoggedIn) { _, newValue in
             if newValue {
                 Task {
@@ -1060,134 +896,357 @@ struct ArticleListView: View {
         }
     }
 
-    @ViewBuilder
-    private var listArea: some View {
-        if !isSearchActive && baseFilteredArticles.isEmpty {
-            EmptyStateView(filterMode: filterMode)
-        } else {
-            List {
-                if isSearchActive {
-                    SearchResultsList(
-                        results: searchResults,
-                        viewModel: viewModel,
-                        authManager: authManager,
-                        showEnglish: isGlobalEnglishMode,
-                        onArticleTap: { item in await handleArticleTap(item, autoPlay: false) },
-                        onMarkRead: { markOne($0, asRead: true) },
-                        onMarkUnread: { markOne($0, asRead: false) }
-                    )
-                } else {
-                    ArticleListContent(
-                        groups: groupedArticles,
-                        allVisibleArticles: baseFilteredArticles,
-                        filterMode: filterMode,
-                        expandedTimestamps: viewModel.expandedTimestampsBySource[sourceName, default: Set<String>()],
-                        viewModel: viewModel,
-                        authManager: authManager,
-                        showEnglish: isGlobalEnglishMode,
-                        isSelectionMode: selection.isActive,
-                        selectedIDs: selection.selected,
-                        onToggleTimestamp: { timestamp in
-                            viewModel.toggleTimestampExpansion(for: sourceName, timestamp: timestamp)
-                        },
-                        onPlayTimestamp: { timestamp in
-                            if let firstItem = baseFilteredArticles.first(where: { $0.article.timestamp == timestamp }) {
-                                Task { await handleArticleTap(firstItem, autoPlay: true) }
-                            }
-                        },
-                        onArticleTap: { item in await handleArticleTap(item, autoPlay: false) },
-                        onToggleSelect: { selection.toggle($0.id) },
-                        onToggleGroupSelect: { group in selection.toggleGroup(group.map { $0.id }) },
-                        onEnterSelection: { item in enterSelection(preselect: item.id) },
-                        onMarkRead: { markOne($0, asRead: true) },
-                        onMarkUnread: { markOne($0, asRead: false) }
+    private func mainContent(_ snap: Snapshot) -> some View {
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                if isSearching && !selection.isActive {
+                    SearchBarInline(
+                        text: $searchText,
+                        placeholder: Localized.searchPlaceholder,
+                        onCommit: { runSearch() },
+                        onCancel: { withAnimation { closeSearch() } }
                     )
                 }
+
+                NotificationBannerHost(resourceManager: resourceManager)
+
+                listArea(snap)
+
+                bottomBar(snap)
             }
-            .listStyle(PlainListStyle())
-            .environment(\.defaultMinListRowHeight, 0)
+            .background(Color.viewBackground.ignoresSafeArea())
+
+            UndoSnackOverlay(center: undo, raised: selection.isActive)
+                .zIndex(60)
+        }
+    }
+
+    // MARK: 列表
+    @ViewBuilder
+    private func listArea(_ snap: Snapshot) -> some View {
+        if isSearchActive {
+            List { searchRows }
+                .listStyle(.plain)   // ★ plain 样式下 Section header 自动吸顶
+                .environment(\.defaultMinListRowHeight, 0)
+                .environment(\.defaultMinListHeaderHeight, 0)
+        } else if snap.visible.isEmpty {
+            EmptyStateView(filterMode: filterMode)
+        } else {
+            List { groupRows(snap) }
+                .listStyle(.plain)
+                .environment(\.defaultMinListRowHeight, 0)
+                .environment(\.defaultMinListHeaderHeight, 0)
         }
     }
 
     @ViewBuilder
-    private var bottomBar: some View {
+    private func groupRows(_ snap: Snapshot) -> some View {
+        let expanded = viewModel.expandedTimestampsBySource[expansionKey, default: Set<String>()]
+        let inSelection = selection.isActive
+        let selected = selection.selected
+        let isReadList = (filterMode == .read)
+        let epoch = headerEpoch
+
+        ForEach(snap.groups) { group in
+            let ts = group.timestamp
+            let isExpanded = expanded.contains(ts)
+            let ids = group.items.map(\.id)
+            // 锁 / 免费只与日期有关 → 每组算一次
+            let showLock = NewsPointsCoordinator.shouldShowLock(timestamp: ts, auth: authManager, viewModel: viewModel)
+            let groupFree = NewsFreeBadge.isFree(timestamp: ts, auth: authManager, viewModel: viewModel)
+            let groupLocked = showLock && (group.items.isEmpty || group.items.contains {
+                !NewsPointsCoordinator.canAccess($0.article, auth: authManager, viewModel: viewModel)
+            })
+
+            Section {
+                if isExpanded {
+                    ForEach(group.items) { item in
+                        let locked = showLock && !NewsPointsCoordinator.canAccess(item.article, auth: authManager, viewModel: viewModel)
+                        row(item,
+                            isRead: isReadList,
+                            isLocked: locked,
+                            isFree: !locked && groupFree,
+                            inSelection: inSelection,
+                            isSelected: selected.contains(item.id),
+                            allowBulk: !isReadList)
+                    }
+                }
+            } header: {
+                TimestampHeader(
+                    timestamp: ts,
+                    count: group.items.count,
+                    isExpanded: isExpanded,
+                    isLocked: groupLocked,
+                    isFree: groupFree,
+                    isSelectionMode: inSelection,
+                    groupState: selection.groupState(ids),
+                    onToggle: { viewModel.toggleTimestampExpansion(for: expansionKey, timestamp: ts) },
+                    onPlay: { playGroup(ts) },
+                    onToggleGroupSelect: { selection.toggleGroup(ids) }
+                )
+                // ★ 身份绑定"日期 + 纪元"：复用给别的日期 / 自愈时都是全新子树，不继承残留动画状态
+                .id("\(ts)#\(epoch)")
+                .listRowInsets(EdgeInsets())
+            }
+            .listSectionSeparator(.hidden)
+        }
+    }
+
+    private var searchGroups: [ArticleDateGroup] {
+        let dict = Dictionary(grouping: searchHits, by: { $0.article.timestamp })
+        return dict.keys.sorted(by: >).map {
+            ArticleDateGroup(timestamp: $0, items: Array((dict[$0] ?? []).reversed()))
+        }
+    }
+
+    @ViewBuilder
+    private var searchRows: some View {
+        if searchHits.isEmpty {
+            Text(Localized.noMatch)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 30)
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+        } else {
+            let epoch = headerEpoch
+            ForEach(searchGroups) { group in
+                let ts = group.timestamp
+                let showLock = NewsPointsCoordinator.shouldShowLock(timestamp: ts, auth: authManager, viewModel: viewModel)
+                let groupFree = NewsFreeBadge.isFree(timestamp: ts, auth: authManager, viewModel: viewModel)
+                let groupLocked = showLock && group.items.contains {
+                    !NewsPointsCoordinator.canAccess($0.article, auth: authManager, viewModel: viewModel)
+                }
+
+                Section {
+                    ForEach(group.items) { item in
+                        let locked = showLock && !NewsPointsCoordinator.canAccess(item.article, auth: authManager, viewModel: viewModel)
+                        row(item,
+                            isRead: viewModel.isArticleEffectivelyRead(item.article),
+                            isLocked: locked,
+                            isFree: !locked && groupFree,
+                            inSelection: false,
+                            isSelected: false,
+                            allowBulk: false)
+                    }
+                } header: {
+                    SearchGroupHeader(timestamp: ts, count: group.items.count,
+                                      isLocked: groupLocked, isFree: groupFree)
+                        .id("search-\(ts)#\(epoch)")
+                        .listRowInsets(EdgeInsets())
+                }
+                .listSectionSeparator(.hidden)
+            }
+        }
+    }
+
+    private func row(_ item: ArticleItem, isRead: Bool, isLocked: Bool, isFree: Bool,
+                     inSelection: Bool, isSelected: Bool, allowBulk: Bool) -> some View {
+        ArticleRowView(
+            item: item,
+            isRead: isRead,
+            isLocked: isLocked,
+            isFree: isFree,
+            showEnglish: isGlobalEnglishMode,
+            isSelectionMode: inSelection,
+            isSelected: isSelected,
+            allowBulkMarks: allowBulk,
+            onTap: { openArticle(item, autoPlay: false) },
+            onToggleSelect: { selection.toggle(item.id) },
+            onEnterSelection: { enterSelection(preselect: item.id) },
+            onToggleRead: { markOne(item, asRead: !isRead) },
+            onMarkAbove: { markAround(item, above: true) },
+            onMarkBelow: { markAround(item, above: false) }
+        )
+        .equatable()
+        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+    }
+
+    // MARK: ★ header 自愈（无动画地换一次身份）
+    private func scheduleHeaderRefresh(after delay: Double) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { headerEpoch &+= 1 }
+        }
+    }
+
+    // MARK: 底部
+    @ViewBuilder
+    private func bottomBar(_ snap: Snapshot) -> some View {
         if selection.isActive {
             SelectionActionBar(
                 selectedCount: selection.selected.count,
-                totalCount: baseFilteredArticles.count,
+                totalCount: snap.visible.count,
                 filterMode: filterMode,
-                onSelectAll: { selection.selected = Set(baseFilteredArticles.map { $0.id }) },
+                onSelectAll: { selection.selected = Set(snap.visible.map(\.id)) },
                 onClearAll: { selection.selected.removeAll() },
                 onMarkRead: { applySelection(asRead: true) },
                 onMarkUnread: { applySelection(asRead: false) },
-                onCancel: { exitSelection() }
+                onCancel: { selection.exit() }
             )
         } else if !isSearchActive {
             Picker("Filter", selection: $filterMode) {
                 ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                    Text("\(mode.localizedName) (\(self.getCount(for: mode)))").tag(mode)
+                    Text("\(mode.localizedName) (\(mode == .unread ? snap.unreadCount : snap.readCount))").tag(mode)
                 }
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
             .padding(.top, 6)
             .padding(.bottom, 10)
-            .onChange(of: filterMode) {
-                ONewsHaptics.selection()
-                autoExpandGroups()
+        }
+    }
+
+    // MARK: 工具栏
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            UserStatusToolbarItem(showProfileSheet: $showProfileSheet)
+        }
+        ToolbarItem(placement: .principal) {
+            if !selection.isActive && authManager.isLoggedIn && !authManager.isSubscribed {
+                NewsPointsPill()
+            }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            if !selection.isActive {
+                ArticleListToolbarActions(
+                    isGlobalEnglishMode: $isGlobalEnglishMode,
+                    onEnterSelection: { enterSelection(preselect: nil) },
+                    onToggleSearch: {
+                        withAnimation {
+                            if isSearching { closeSearch() } else { isSearching = true }
+                        }
+                    }
+                )
             }
         }
     }
 
-    // MARK: - 多选处理
+    // MARK: 搜索（仅提交时计算一次；中英文标题 / 正文都匹配）
+    private func runSearch() {
+        let kw = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !kw.isEmpty else { isSearchActive = false; searchHits = []; return }
+
+        let pool: [ArticleItem]
+        switch scope {
+        case .source:
+            pool = (currentSource?.articles ?? []).map { ArticleItem(article: $0) }
+        case .all:
+            pool = viewModel.allArticlesSortedForDisplay.map {
+                ArticleItem(article: $0.article, sourceName: $0.sourceName, sourceNameEN: $0.sourceNameEN)
+            }
+        }
+
+        let opts: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        func hit(_ s: String?) -> Bool {
+            guard let s = s, !s.isEmpty else { return false }
+            return s.range(of: kw, options: opts) != nil
+        }
+
+        searchHits = pool.compactMap { item in
+            let a = item.article
+            if hit(a.topic) || hit(a.topic_eng) {
+                return ArticleItem(article: a, sourceName: item.sourceName,
+                                   sourceNameEN: item.sourceNameEN, isContentMatch: false)
+            }
+            if hit(a.article) || hit(a.article_eng) {
+                return ArticleItem(article: a, sourceName: item.sourceName,
+                                   sourceNameEN: item.sourceNameEN, isContentMatch: true)
+            }
+            return nil
+        }
+        isSearchActive = true
+    }
+
+    private func closeSearch() {
+        isSearching = false
+        isSearchActive = false
+        searchText = ""
+        searchHits = []
+    }
+
+    // MARK: 多选
     private func enterSelection(preselect: UUID?) {
         undo.hide()
         selection.enter(preselect: preselect)
     }
 
-    private func exitSelection() {
-        selection.exit()
-    }
-
     private func applySelection(asRead: Bool) {
         let ids = selection.selected
-        guard !ids.isEmpty else { exitSelection(); return }
-        let articles = baseFilteredArticles.filter { ids.contains($0.id) }.map { $0.article }
-        guard !articles.isEmpty else { exitSelection(); return }
+        guard !ids.isEmpty else { selection.exit(); return }
+        let articles = makeSnapshot().visible.filter { ids.contains($0.id) }.map(\.article)
+        guard !articles.isEmpty else { selection.exit(); return }
 
         ONewsHaptics.success()
         withAnimation(.easeInOut(duration: 0.28)) { viewModel.markArticles(articles, asRead: asRead) }
-        exitSelection()
+        selection.exit()
 
         let n = articles.count
         let msg = isGlobalEnglishMode
             ? "\(n) marked as \(asRead ? "read" : "unread")"
             : "已将 \(n) 篇标记为\(asRead ? "已读" : "未读")"
-        undo.show(msg) {
+        undo.show(msg) { [viewModel] in
             withAnimation(.easeInOut(duration: 0.28)) { viewModel.markArticles(articles, asRead: !asRead) }
         }
     }
 
-    // MARK: - 单篇标记（带撤销，滑动 / 长按菜单 / VoiceOver 共用）
+    // MARK: 单篇 / 以上 / 以下
     private func markOne(_ item: ArticleItem, asRead: Bool) {
         ONewsHaptics.light()
         let a = item.article
-        // 直接更新状态，无需 withAnimation，原生 swipeActions 会平滑收起此行
-        viewModel.markArticles([a], asRead: asRead)
+        viewModel.markArticles([a], asRead: asRead)   // 原生 swipeActions 会平滑收起此行
         let msg = isGlobalEnglishMode
             ? (asRead ? "Marked as read" : "Marked as unread")
             : (asRead ? "已标记为已读" : "已标记为未读")
-        undo.show(msg) {
+        undo.show(msg) { [viewModel] in
             withAnimation(.easeInOut(duration: 0.25)) { viewModel.markArticles([a], asRead: !asRead) }
         }
     }
 
-    private func handleArticleTap(_ item: ArticleItem, autoPlay: Bool = false) async {
+    /// 调用时才读取最新可见列表（避免 Equatable 行持有过期的闭包数据）
+    private func markAround(_ item: ArticleItem, above: Bool) {
+        let list = makeSnapshot().visible.map(\.article)
+        guard let pivot = list.firstIndex(where: { $0.id == item.id }) else { return }
+        let targets: [Article] = above
+            ? Array(list[..<pivot])
+            : (pivot + 1 < list.count ? Array(list[(pivot + 1)...]) : [])
+        guard !targets.isEmpty else { return }
+
+        ONewsHaptics.success()
+        withAnimation(.easeInOut(duration: 0.25)) { viewModel.markArticles(targets, asRead: true) }
+        let n = targets.count
+        let msg = isGlobalEnglishMode ? "\(n) marked as read" : "已将 \(n) 篇标记为已读"
+        undo.show(msg) { [viewModel] in
+            withAnimation(.easeInOut(duration: 0.25)) { viewModel.markArticles(targets, asRead: false) }
+        }
+    }
+
+    // MARK: 打开文章
+    private func playGroup(_ timestamp: String) {
+        if let first = makeSnapshot().visible.first(where: { $0.article.timestamp == timestamp }) {
+            openArticle(first, autoPlay: true)
+        }
+    }
+
+    private func openArticle(_ item: ArticleItem, autoPlay: Bool) {
         let article = item.article
+        let srcName: String
+        let ctx: String
+        switch scope {
+        case .source(let n):
+            srcName = n; ctx = "source"
+        case .all:
+            guard let n = item.sourceName else { return }
+            srcName = n; ctx = "all"
+        }
 
         if !NewsPointsCoordinator.canAccess(article, auth: authManager, viewModel: viewModel) {
             NewsPointsCoordinator.shared.attemptUnlockArticle(article, auth: authManager, viewModel: viewModel) {
-                Task { await self.handleArticleTap(item, autoPlay: autoPlay) }
+                Task { @MainActor in self.openArticle(item, autoPlay: autoPlay) }
             }
             return
         }
@@ -1200,28 +1259,43 @@ struct ArticleListView: View {
                                                   imageNames: article.images,
                                                   priority: true)
         }
-        // ★★★ 新增：点击瞬间就在后台把正文排版算好，push 动画结束时内容已就位（无占位、无跳版）
-        ArticleBodyCache.shared.prefetch(article: article)
+        ArticleBodyCache.shared.prefetch(article: article)   // push 动画结束前正文已排好
 
-        await MainActor.run {
-            appNavPath?.wrappedValue.append(
-                NavigationTarget.articleDetail(article, self.sourceName, "source", autoPlay))
-        }
+        appNavPath?.wrappedValue.append(NavigationTarget.articleDetail(article, srcName, ctx, autoPlay))
     }
 
+    // MARK: 自动展开（值不变不写，避免无谓的 publish）
     private func autoExpandGroups() {
-        let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
-        let sortedTimestamps = groupedArticles.keys.sorted(by: >)
+        let ts = makeSnapshot().groups.map(\.timestamp)
+        let value: Set<String>
         if authManager.isSubscribed {
-            viewModel.expandedTimestampsBySource[sourceName] =
-                sortedTimestamps.first.map { [$0] } ?? []
+            value = ts.first.map { [$0] } ?? []
         } else {
-            if sortedTimestamps.count == 1, let s = sortedTimestamps.first {
-                viewModel.expandedTimestampsBySource[sourceName] = [s]
-            } else {
-                viewModel.expandedTimestampsBySource[sourceName] = []
-            }
+            value = ts.count == 1 ? [ts[0]] : []
         }
+        if viewModel.expandedTimestampsBySource[expansionKey] != value {
+            viewModel.expandedTimestampsBySource[expansionKey] = value
+        }
+    }
+}
+
+// ==================== 对外入口（签名保持不变，Source_List 无需改动） ====================
+struct ArticleListView: View {
+    let sourceName: String
+    let viewModel: NewsViewModel
+    let resourceManager: ResourceManager
+
+    var body: some View {
+        ArticleListScreen(scope: .source(sourceName), viewModel: viewModel, resourceManager: resourceManager)
+    }
+}
+
+struct AllArticlesListView: View {
+    let viewModel: NewsViewModel
+    let resourceManager: ResourceManager
+
+    var body: some View {
+        ArticleListScreen(scope: .all, viewModel: viewModel, resourceManager: resourceManager)
     }
 }
 
@@ -1247,342 +1321,12 @@ struct ArticleListToolbarActions: View {
             }
             .accessibilityLabel(isGlobalEnglishMode ? "Chinese" : "English")
 
-            Button(action: onEnterSelection) {
-                Image(systemName: "checklist")
-            }
-            .accessibilityLabel(isGlobalEnglishMode ? "Select" : "选择文章")
+            Button(action: onEnterSelection) { Image(systemName: "checklist") }
+                .accessibilityLabel(isGlobalEnglishMode ? "Select" : "选择文章")
 
-            Button(action: onToggleSearch) {
-                Image(systemName: "magnifyingglass")
-            }
-            .accessibilityLabel(Localized.search)
+            Button(action: onToggleSearch) { Image(systemName: "magnifyingglass") }
+                .accessibilityLabel(Localized.search)
         }
         .foregroundColor(.primary)
-    }
-}
-
-// ==================== 全部文章列表 ====================
-struct AllArticlesListView: View {
-    @ObservedObject var viewModel: NewsViewModel
-    @ObservedObject var resourceManager: ResourceManager
-    @EnvironmentObject var authManager: AuthManager
-
-    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    @Environment(\.appNavPath) var appNavPath
-
-    @State private var filterMode: ArticleFilterMode = .unread
-    @State private var isSearching = false
-    @State private var searchText = ""
-    @State private var isSearchActive = false
-    @State private var showErrorAlert = false
-    @State private var errorMessage = ""
-    @State private var isDownloadingImages = false
-    @State private var downloadProgress: Double = 0.0
-    @State private var downloadProgressText = ""
-    @State private var showProfileSheet = false
-    @State private var hasPerformedAutoExpansion = false
-
-    @StateObject private var selection = ArticleSelectionModel()
-    @StateObject private var undo = ArticleUndoCenter()
-
-    private var baseFilteredArticles: [ArticleItem] {
-        viewModel.allArticlesSortedForDisplay
-            .filter { item in
-                let isReadEff = viewModel.isArticleEffectivelyRead(item.article)
-                return (filterMode == .unread) ? !isReadEff : isReadEff
-            }
-            .map { ArticleItem(article: $0.article, sourceName: $0.sourceName, sourceNameEN: $0.sourceNameEN) }
-    }
-
-    private var groupedArticles: [ArticleDateGroup] {
-        let items = baseFilteredArticles
-        let dict = Dictionary(grouping: items, by: { $0.article.timestamp })
-        let orderedKeys = dict.keys.sorted(by: >)
-        return orderedKeys.map { key in
-            let raw = dict[key] ?? []
-            let finalItems = (filterMode == .read) ? Array(raw.reversed()) : raw
-            return ArticleDateGroup(timestamp: key, items: finalItems)
-        }
-    }
-
-    private var totalUnreadCount: Int {
-        viewModel.allArticlesSortedForDisplay.filter { !viewModel.isArticleEffectivelyRead($0.article) }.count
-    }
-    private var totalReadCount: Int {
-        viewModel.allArticlesSortedForDisplay.filter { viewModel.isArticleEffectivelyRead($0.article) }.count
-    }
-
-    private var searchResults: [ArticleItem] {
-        guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
-        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return viewModel.allArticlesSortedForDisplay.compactMap { item -> ArticleItem? in
-            if item.article.topic.lowercased().contains(keyword) {
-                return ArticleItem(article: item.article, sourceName: item.sourceName,
-                                   sourceNameEN: item.sourceNameEN, isContentMatch: false)
-            }
-            if item.article.article.lowercased().contains(keyword) {
-                return ArticleItem(article: item.article, sourceName: item.sourceName,
-                                   sourceNameEN: item.sourceNameEN, isContentMatch: true)
-            }
-            return nil
-        }
-    }
-
-    private func getCount(for mode: ArticleFilterMode) -> Int {
-        mode == .unread ? totalUnreadCount : totalReadCount
-    }
-
-    private func getFilterTitle(for mode: ArticleFilterMode) -> String {
-        "\(mode.localizedName) (\(getCount(for: mode)))"
-    }
-
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                if isSearching && !selection.isActive {
-                    SearchBarInline(
-                        text: $searchText,
-                        placeholder: Localized.searchPlaceholder,
-                        onCommit: {
-                            isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        },
-                        onCancel: {
-                            withAnimation { isSearching = false; isSearchActive = false; searchText = "" }
-                        }
-                    )
-                }
-
-                if let message = resourceManager.activeNotification {
-                    NotificationBannerView(message: message) {
-                        resourceManager.dismissNotification()
-                    }
-                    .background(Color.viewBackground)
-                }
-
-                listArea
-
-                bottomBar
-            }
-            .background(Color.viewBackground.ignoresSafeArea())
-
-            if undo.isVisible {
-                UndoSnackBar(message: undo.message, onUndo: { undo.performUndo() })
-                    .padding(.bottom, selection.isActive ? 130 : 70)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .zIndex(60)
-            }
-        }
-        .onAppear {
-            viewModel.finishReadingIfNeeded()
-            if !hasPerformedAutoExpansion {
-                autoExpandGroups(); hasPerformedAutoExpansion = true
-            }
-            Task { await resourceManager.silentRefresh(minInterval: 60, reason: "all-list-appear") }
-        }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                UserStatusToolbarItem(showProfileSheet: $showProfileSheet)
-            }
-            ToolbarItem(placement: .principal) {
-                if !selection.isActive && authManager.isLoggedIn && !authManager.isSubscribed {
-                    NewsPointsPill()
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                if !selection.isActive {
-                    ArticleListToolbarActions(
-                        isGlobalEnglishMode: $isGlobalEnglishMode,
-                        onEnterSelection: { enterSelection(preselect: nil) },
-                        onToggleSearch: {
-                            withAnimation {
-                                isSearching.toggle()
-                                if !isSearching { isSearchActive = false; searchText = "" }
-                            }
-                        }
-                    )
-                }
-            }
-        }
-        .overlay(
-            DownloadOverlay(isDownloading: isDownloadingImages,
-                            progress: downloadProgress,
-                            progressText: downloadProgressText)
-        )
-        .alert("", isPresented: $showErrorAlert,
-               actions: { Button(Localized.confirm, role: .cancel) { } },
-               message: { Text(errorMessage) })
-        .sheet(isPresented: $showProfileSheet) { UserProfileView() }
-        .onChange(of: authManager.isLoggedIn) { _, newValue in
-            if newValue {
-                Task {
-                    await NewsQuotaManager.shared.refresh(
-                        userId: NewsQuotaManager.currentUserId(auth: authManager))
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var listArea: some View {
-        if !isSearchActive && baseFilteredArticles.isEmpty {
-            EmptyStateView(filterMode: filterMode)
-        } else {
-            List {
-                if isSearchActive {
-                    SearchResultsList(
-                        results: searchResults,
-                        viewModel: viewModel,
-                        authManager: authManager,
-                        showEnglish: isGlobalEnglishMode,
-                        onArticleTap: { item in await handleArticleTap(item, autoPlay: false) },
-                        onMarkRead: { markOne($0, asRead: true) },
-                        onMarkUnread: { markOne($0, asRead: false) }
-                    )
-                } else {
-                    ArticleListContent(
-                        groups: groupedArticles,
-                        allVisibleArticles: baseFilteredArticles,
-                        filterMode: filterMode,
-                        expandedTimestamps: viewModel.expandedTimestampsBySource[viewModel.allArticlesKey, default: Set<String>()],
-                        viewModel: viewModel,
-                        authManager: authManager,
-                        showEnglish: isGlobalEnglishMode,
-                        isSelectionMode: selection.isActive,
-                        selectedIDs: selection.selected,
-                        onToggleTimestamp: { timestamp in
-                            viewModel.toggleTimestampExpansion(for: viewModel.allArticlesKey, timestamp: timestamp)
-                        },
-                        onPlayTimestamp: { timestamp in
-                            if let firstItem = baseFilteredArticles.first(where: { $0.article.timestamp == timestamp }) {
-                                Task { await handleArticleTap(firstItem, autoPlay: true) }
-                            }
-                        },
-                        onArticleTap: { item in await handleArticleTap(item, autoPlay: false) },
-                        onToggleSelect: { selection.toggle($0.id) },
-                        onToggleGroupSelect: { group in selection.toggleGroup(group.map { $0.id }) },
-                        onEnterSelection: { item in enterSelection(preselect: item.id) },
-                        onMarkRead: { markOne($0, asRead: true) },
-                        onMarkUnread: { markOne($0, asRead: false) }
-                    )
-                }
-            }
-            .listStyle(PlainListStyle())
-            .environment(\.defaultMinListRowHeight, 0)
-        }
-    }
-
-    @ViewBuilder
-    private var bottomBar: some View {
-        if selection.isActive {
-            SelectionActionBar(
-                selectedCount: selection.selected.count,
-                totalCount: baseFilteredArticles.count,
-                filterMode: filterMode,
-                onSelectAll: { selection.selected = Set(baseFilteredArticles.map { $0.id }) },
-                onClearAll: { selection.selected.removeAll() },
-                onMarkRead: { applySelection(asRead: true) },
-                onMarkUnread: { applySelection(asRead: false) },
-                onCancel: { exitSelection() }
-            )
-        } else if !isSearchActive {
-            Picker("Filter", selection: $filterMode) {
-                ForEach(ArticleFilterMode.allCases, id: \.self) { mode in
-                    Text(getFilterTitle(for: mode)).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.top, 6)
-            .padding(.bottom, 10)
-            .onChange(of: filterMode) {
-                ONewsHaptics.selection()
-                autoExpandGroups()
-            }
-        }
-    }
-
-    // MARK: - 多选处理
-    private func enterSelection(preselect: UUID?) {
-        undo.hide()
-        selection.enter(preselect: preselect)
-    }
-
-    private func exitSelection() {
-        selection.exit()
-    }
-
-    private func applySelection(asRead: Bool) {
-        let ids = selection.selected
-        guard !ids.isEmpty else { exitSelection(); return }
-        let articles = baseFilteredArticles.filter { ids.contains($0.id) }.map { $0.article }
-        guard !articles.isEmpty else { exitSelection(); return }
-
-        ONewsHaptics.success()
-        withAnimation(.easeInOut(duration: 0.28)) { viewModel.markArticles(articles, asRead: asRead) }
-        exitSelection()
-
-        let n = articles.count
-        let msg = isGlobalEnglishMode
-            ? "\(n) marked as \(asRead ? "read" : "unread")"
-            : "已将 \(n) 篇标记为\(asRead ? "已读" : "未读")"
-        undo.show(msg) {
-            withAnimation(.easeInOut(duration: 0.28)) { viewModel.markArticles(articles, asRead: !asRead) }
-        }
-    }
-
-    private func markOne(_ item: ArticleItem, asRead: Bool) {
-        ONewsHaptics.light()
-        let a = item.article
-        // 直接更新状态，无需 withAnimation，原生 swipeActions 会平滑收起此行
-        viewModel.markArticles([a], asRead: asRead)
-        let msg = isGlobalEnglishMode
-            ? (asRead ? "Marked as read" : "Marked as unread")
-            : (asRead ? "已标记为已读" : "已标记为未读")
-        undo.show(msg) {
-            withAnimation(.easeInOut(duration: 0.25)) { viewModel.markArticles([a], asRead: !asRead) }
-        }
-    }
-
-    private func handleArticleTap(_ item: ArticleItem, autoPlay: Bool = false) async {
-        let article = item.article
-        guard let sourceName = item.sourceName else { return }
-
-        if !NewsPointsCoordinator.canAccess(article, auth: authManager, viewModel: viewModel) {
-            NewsPointsCoordinator.shared.attemptUnlockArticle(article, auth: authManager, viewModel: viewModel) {
-                Task { await self.handleArticleTap(item, autoPlay: autoPlay) }
-            }
-            return
-        }
-
-        AnonFreeReadTracker.note(article, auth: authManager, viewModel: viewModel)
-        undo.hide()
-
-        if !article.images.isEmpty {
-            resourceManager.enqueueImageDownloads(timestamp: article.timestamp,
-                                                  imageNames: article.images,
-                                                  priority: true)
-        }
-        ArticleBodyCache.shared.prefetch(article: article)   // ★★★ 新增
-
-        await MainActor.run {
-            appNavPath?.wrappedValue.append(
-                NavigationTarget.articleDetail(article, sourceName, "all", autoPlay))
-        }
-    }
-
-    private func autoExpandGroups() {
-        let key = viewModel.allArticlesKey
-        let groupedArticles = Dictionary(grouping: baseFilteredArticles, by: { $0.article.timestamp })
-        let sortedTimestamps = groupedArticles.keys.sorted(by: >)
-        if authManager.isSubscribed {
-            viewModel.expandedTimestampsBySource[key] = sortedTimestamps.first.map { [$0] } ?? []
-        } else {
-            if sortedTimestamps.count == 1, let s = sortedTimestamps.first {
-                viewModel.expandedTimestampsBySource[key] = [s]
-            } else {
-                viewModel.expandedTimestampsBySource[key] = []
-            }
-        }
     }
 }

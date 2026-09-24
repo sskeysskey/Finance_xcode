@@ -354,7 +354,7 @@ struct ArticleDetailView: View {
                 }
                 .padding(.vertical)
             }
-            .scrollIndicators(.hidden)
+            .scrollIndicators(.visible)   // ★ 显示右侧位置指示条；长文按住指示条还可以拖动快速定位（系统原生能力）
             .coordinateSpace(name: "Scroll")
             // 仅 VIP 才付出滚动监听成本
             .modifier(StickyTitleObserver(enabled: showStickyTitle) { visible in

@@ -3,6 +3,7 @@
 import SwiftUI
 import AVKit
 import MediaPlayer
+import CoreMedia   // ⭐ 新增：kCMMetadataBaseDataType_JPEG
 
 // MARK: - ⭐️ 主线程跳板
 // 所有来自系统（KVO / AVFoundation / UIKit / NotificationCenter）的回调都先过这里。
@@ -125,6 +126,29 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
     private(set) var currentAssetURL: URL?
     private var positionKey = ""
 
+    // ⭐ 拆除 / 复活：拆除后引擎进入「冬眠」，任何系统回调都不得把它唤醒
+    private struct LastSession {
+        let url: URL
+        let key: String
+        let isLocal: Bool
+        let wasPlaying: Bool
+    }
+    private(set) var isTornDown = false
+    private var lastSession: LastSession?
+    private var autoPlayWhenReady = true
+
+    // ⭐ 锁屏 / 控制中心元数据（AVPlayerViewController 读取 item.externalMetadata 自动发布）
+    private var npTitle: String?
+    private var npSubtitle: String?
+    private var npArtworkSource: String?
+    private var npArtworkData: Data?
+    private var artworkTask: Task<Void, Never>?
+    private static let artworkCache: NSCache<NSString, NSData> = {
+        let c = NSCache<NSString, NSData>()
+        c.countLimit = 20
+        return c
+    }()
+
     private var currentTime: Double = 0
     private var duration: Double = 0
     private var lastSaved: Double = -100
@@ -142,7 +166,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
     private var periodicObs: Any?
     private var itemNotes: [NSObjectProtocol] = []
 
-    // 监督器（取代原来的 Task 看门狗 + 两个 Timer）
+    // 监督器
     private var supervisor: Timer?
     private var busySince: Date?
     private var didAutoRecoverForThisBusy = false
@@ -171,10 +195,14 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         NotificationCenter.default.removeObserver(self)
         for n in itemNotes { NotificationCenter.default.removeObserver(n) }
         supervisor?.invalidate()
+        artworkTask?.cancel()
         if let t = periodicObs { player.removeTimeObserver(t) }
         statusObs?.invalidate(); bufferEmptyObs?.invalidate(); keepUpObs?.invalidate()
         tcsObs?.invalidate(); waitObs?.invalidate()
         rateObs?.invalidate(); defaultRateObs?.invalidate()
+        // ⭐ 兜底：引擎销毁时彻底释放 item，锁屏不留残影
+        player.pause()
+        player.replaceCurrentItem(with: nil)
     }
 
     private func configureAudioSession() {
@@ -183,15 +211,105 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         try? session.setActive(true)
     }
 
+    // MARK: 锁屏元数据
+    /// 在 prepare 之前调用：标题 = 剧名，副标题 = 集数，artwork = 封面（http / 本地路径都支持）
+    func setNowPlaying(title: String, subtitle: String?, artwork: String?) {
+        npTitle = title
+        npSubtitle = subtitle
+        let art = (artwork?.isEmpty == false) ? artwork : nil
+        if art != npArtworkSource {
+            npArtworkSource = art
+            npArtworkData = nil
+            loadArtwork()
+        }
+        if let item = player.currentItem { applyNowPlayingMetadata(to: item) }
+    }
+
+    private func loadArtwork() {
+        artworkTask?.cancel(); artworkTask = nil
+        guard let src = npArtworkSource else { return }
+        if let cached = OVideoPlayerEngine.artworkCache.object(forKey: src as NSString) {
+            npArtworkData = cached as Data
+            return
+        }
+        artworkTask = Task.detached(priority: .utility) { [weak self] in
+            guard let data = await OVideoPlayerEngine.fetchArtworkData(src), !Task.isCancelled else { return }
+            OVideoPlayerEngine.artworkCache.setObject(data as NSData, forKey: src as NSString)
+            onMainThread {
+                guard let self = self, self.npArtworkSource == src, !self.isTornDown else { return }
+                self.npArtworkData = data
+                if let item = self.player.currentItem { self.applyNowPlayingMetadata(to: item) }
+            }
+        }
+    }
+
+    private static func fetchArtworkData(_ src: String) async -> Data? {
+        var raw: Data?
+        if src.hasPrefix("/") {
+            raw = FileManager.default.contents(atPath: src)
+        } else if let u = URL(string: src) {
+            if u.isFileURL {
+                raw = try? Data(contentsOf: u)
+            } else if u.scheme?.lowercased().hasPrefix("http") == true {
+                let req = URLRequest(url: u, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 12)
+                raw = try? await URLSession.shared.data(for: req).0
+            }
+        }
+        guard let raw = raw, let img = UIImage(data: raw) else { return nil }
+        // 降采样到 600px，锁屏足够清晰，内存也小
+        let longest = max(img.size.width, img.size.height)
+        guard longest > 0 else { return nil }
+        let scale = min(1, 600 / longest)
+        let size = CGSize(width: floor(img.size.width * scale), height: floor(img.size.height * scale))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let out = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            img.draw(in: CGRect(origin: .zero, size: size))
+        }
+        return out.jpegData(compressionQuality: 0.85)
+    }
+
+    private func applyNowPlayingMetadata(to item: AVPlayerItem) {
+        guard let title = npTitle, !title.isEmpty else { return }
+        var list: [AVMetadataItem] = [Self.metadataItem(.commonIdentifierTitle, title as NSString)]
+        if let sub = npSubtitle, !sub.isEmpty {
+            // 播放器全屏 UI 读 TrackSubTitle；锁屏第二行读 Artist —— 两个都给
+            list.append(Self.metadataItem(.iTunesMetadataTrackSubTitle, sub as NSString))
+            list.append(Self.metadataItem(.commonIdentifierArtist, sub as NSString))
+        }
+        if let d = npArtworkData {
+            list.append(Self.metadataItem(.commonIdentifierArtwork, d as NSData,
+                                          dataType: kCMMetadataBaseDataType_JPEG as String))
+        }
+        item.externalMetadata = list
+    }
+
+    private static func metadataItem(_ id: AVMetadataIdentifier,
+                                     _ value: NSCopying & NSObjectProtocol,
+                                     dataType: String? = nil) -> AVMetadataItem {
+        let m = AVMutableMetadataItem()
+        m.identifier = id
+        m.value = value
+        m.extendedLanguageTag = "und"
+        if let dataType = dataType { m.dataType = dataType }
+        return (m.copy() as? AVMetadataItem) ?? m
+    }
+
     // MARK: 准备播放
     func prepare(url: URL,
                  positionKey: String,
                  isLocal: Bool,
                  resolver: (@Sendable () async throws -> String)? = nil,
                  startAt: Double? = nil,
-                 resetRecovery: Bool = true) {
+                 resetRecovery: Bool = true,
+                 autoPlay: Bool = true) {
 
         teardownItemObservers()
+
+        let wasTornDown = isTornDown
+        isTornDown = false
+        autoPlayWhenReady = autoPlay
+        if wasTornDown { configureAudioSession() }   // teardown 时会话已被释放
 
         self.currentAssetURL = url
         self.positionKey = positionKey
@@ -216,6 +334,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
 
         let item = AVPlayerItem(asset: AVURLAsset(url: url))
         if !isLocal { item.preferredForwardBufferDuration = networkForwardBuffer }
+        applyNowPlayingMetadata(to: item)   // ⭐ 锁屏标题 / 集数 / 封面
 
         player.actionAtItemEnd = .pause
         player.automaticallyWaitsToMinimizeStalling = !isLocal
@@ -325,6 +444,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
     }
 
     private func handleStatus(_ status: AVPlayerItem.Status, message: String?) {
+        guard !isTornDown else { return }
         switch status {
         case .readyToPlay:
             isPreparing = false
@@ -338,7 +458,11 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
                 player.seek(to: CMTime(seconds: start, preferredTimescale: 600))
                 currentTime = start
             }
-            playAtPreferredRate()
+            if autoPlayWhenReady {
+                playAtPreferredRate()
+            } else {
+                autoPlayWhenReady = true   // 仅本次保持暂停（复活时用户之前是暂停的）
+            }
             recomputePhase()
 
         case .failed:
@@ -373,6 +497,13 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
 
     // MARK: 状态机
     private func recomputePhase() {
+        // ⭐⭐ 冬眠中：任何 KVO 都不能把 phase 从 .idle 拉回来（旧版残影的根因之一）
+        if isTornDown {
+            if phase != .idle { phase = .idle }
+            if isBuffering { isBuffering = false }
+            return
+        }
+
         let newPhase: Phase
         if errorText != nil {
             newPhase = .failed
@@ -393,7 +524,6 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         let b = (newPhase == .buffering)
         if isBuffering != b { isBuffering = b }
 
-        // ⭐ 关键：暂停 / 播放中一律不算「忙」，彻底避免暂停+后台回来永久转圈
         if !b, !isPreparing { resetBusyFlags() }
     }
 
@@ -419,7 +549,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
     }
 
     private func supervisorTick() {
-        guard errorText == nil else { return }
+        guard !isTornDown, errorText == nil else { return }
 
         if isBusyNow {
             if busySince == nil { busySince = Date(); didAutoRecoverForThisBusy = false }
@@ -439,7 +569,6 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         stallCheck()
     }
 
-    /// 「在播但时间不走」的黑屏/卡死自愈
     private func stallCheck() {
         guard errorText == nil, player.currentItem != nil else { return }
         guard player.timeControlStatus == .playing else {
@@ -467,7 +596,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
 
     // MARK: 自愈
     private func recoverNow(hard: Bool) {
-        guard !isRecovering, errorText == nil, recoveryAttempts < 3,
+        guard !isTornDown, !isRecovering, errorText == nil, recoveryAttempts < 3,
               currentAssetURL != nil, phase != .idle else { return }
         isRecovering = true
         recoveryAttempts += 1
@@ -479,11 +608,11 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
             isRecovering = false
         } else {
             player.pause()
-            // ⚠️ seek 的 completion 由 AVFoundation 在内部队列回调 → 必须过主线程跳板
             player.seek(to: CMTime(seconds: at, preferredTimescale: 600)) { [weak self] _ in
                 onMainThread {
                     guard let self = self else { return }
                     self.isRecovering = false
+                    guard !self.isTornDown else { return }
                     self.playAtPreferredRate()
                     self.recomputePhase()
                 }
@@ -500,7 +629,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
             Task { [weak self] in
                 let resolved = try? await r()
                 onMainThread {
-                    guard let self = self else { return }
+                    guard let self = self, !self.isTornDown else { return }
                     if let resolved = resolved, let u = URL(string: resolved) {
                         self.prepare(url: u, positionKey: key, isLocal: false,
                                      startAt: startAt, resetRecovery: false)
@@ -521,13 +650,13 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// 重建后刷新 AVKit 控制层；⚠️ 全屏时绝不动，否则控制层会与 presentation 失联
     private func bumpControlsRefresh() {
         guard !isFullScreen, !isPiPActive else { return }
         controlsRefreshToken += 1
     }
 
     func retryNow() {
+        if isTornDown { reviveIfNeeded(); return }
         errorText = nil
         offerManualRetry = false
         recoveryAttempts = 0
@@ -538,7 +667,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
 
     // MARK: 进度
     private func tick(_ sec: Double) {
-        guard sec.isFinite, sec >= 0 else { return }
+        guard !isTornDown, sec.isFinite, sec >= 0 else { return }
         currentTime = sec
         if sec > 0, !hasStartedPlaying { hasStartedPlaying = true }
 
@@ -556,6 +685,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
     }
 
     private func saveProgress() {
+        guard player.currentItem != nil else { return }
         let t = player.currentTime().seconds
         if t.isFinite, t > 0 { PlaybackPositionStore.save(t, forKey: positionKey) }
     }
@@ -573,7 +703,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
 
     @objc private func appDidEnterBackground() {
         onMainThread { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, !self.isTornDown else { return }
             self.wasPlayingBeforeBackground = (self.player.timeControlStatus != .paused)
             self.saveProgress()
         }
@@ -581,7 +711,8 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
 
     @objc private func appWillEnterForeground() {
         onMainThread { [weak self] in
-            guard let self = self, !self.isPiPActive,
+            // ⭐⭐ 冬眠中绝不自愈 —— 旧版正是这里在「解锁回前台」时把已关闭的视频又拉起来
+            guard let self = self, !self.isTornDown, !self.isPiPActive,
                   self.currentAssetURL != nil, self.phase != .idle else { return }
             self.configureAudioSession()
 
@@ -599,18 +730,19 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// ⚠️ 这条通知可能从非主线程 post，必须先跳主线程再动 UI/播放器
     @objc private func mediaServicesWereReset() {
         onMainThread { [weak self] in
-            guard let self = self, let u = self.currentAssetURL else { return }
-            self.configureAudioSession()
+            guard let self = self else { return }
             let at = max(0, self.currentTime)
+            // 无论是否冬眠都必须换一个新的 AVPlayer（旧的已失效）
             self.teardownItemObservers()
             self.teardownPlayerObservers()
             self.player.replaceCurrentItem(with: nil)
             self.player = AVPlayer()
             self.attachPlayerObservers()
             self.playerGeneration += 1
+            guard !self.isTornDown, let u = self.currentAssetURL else { return }
+            self.configureAudioSession()
             self.prepare(url: u, positionKey: self.positionKey,
                          isLocal: self.isLocal, startAt: at, resetRecovery: false)
         }
@@ -622,20 +754,40 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         saveProgress()
     }
 
-    /// ⭐⭐ 关键：AVKit 进入全屏会让 SwiftUI 误报 onDisappear。
-    /// 全屏 / 画中画期间一律不做任何清理，否则会在转场中途抽掉 item + 音频会话 → 崩溃。
-    func teardown() {
-        guard !isPiPActive, !isFullScreen else { return }
-        player.pause()
+    /// 离开播放页：彻底释放 item + 音频会话 + 锁屏信息，并进入冬眠。
+    /// - force: 只有 dismantle（视图真正被移除）时传 true；onDisappear 可能是 AVKit 全屏误报，需要挡住。
+    func teardown(force: Bool = false) {
+        if !force { guard !isPiPActive, !isFullScreen else { return } }
+        guard !isTornDown else { return }
+
+        let wasPlaying = player.timeControlStatus != .paused
         saveProgress()
+        if let u = currentAssetURL {
+            lastSession = LastSession(url: u, key: positionKey, isLocal: isLocal, wasPlaying: wasPlaying)
+        }
+
+        isTornDown = true
+        player.pause()
         resetBusyFlags()
         teardownItemObservers()
+        player.currentItem?.externalMetadata = []
         player.replaceCurrentItem(with: nil)
+        currentAssetURL = nil
+        isPreparing = false
+        if isBuffering { isBuffering = false }
+        if phase != .idle { phase = .idle }
+
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        isPreparing = false
-        isBuffering = false
-        phase = .idle
+    }
+
+    /// 页面重新出现（从新闻页返回 / 关闭举报全屏页）时恢复：
+    /// 从记忆的进度继续；离开前是暂停的就保持暂停。
+    @discardableResult
+    func reviveIfNeeded() -> Bool {
+        guard isTornDown, let s = lastSession else { return false }
+        prepare(url: s.url, positionKey: s.key, isLocal: s.isLocal, autoPlay: s.wasPlaying)
+        return true
     }
 
     // MARK: UI 便利属性
@@ -673,6 +825,7 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let c = LifecycleAVPlayerViewController()
         c.allowsPictureInPicturePlayback = true
+        c.updatesNowPlayingInfoCenter = true      // ⭐ 显式声明：由 AVKit 用 externalMetadata 发布锁屏信息
         c.delegate = context.coordinator
         c.videoGravity = .resizeAspect
         c.player = engine.player
@@ -686,8 +839,6 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
 
     func updateUIViewController(_ vc: AVPlayerViewController, context: Context) {
         context.coordinator.parent = self
-        // 只有真正换了 AVPlayer 对象（media services reset）才重挂，
-        // 普通刷新一律不碰 player，避免全屏 presentation 里控制层失联。
         if vc.player !== engine.player { vc.player = engine.player }
         context.coordinator.syncOverlay()
         context.coordinator.syncControlsRefresh(token: engine.controlsRefreshToken)
@@ -706,6 +857,7 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
         private var lastControlsToken = 0
         private var orientationWork: DispatchWorkItem?
         private var targetMask: UIInterfaceOrientationMask?
+        private var isDismantled = false
 
         private var engine: OVideoPlayerEngine { parent.engine }
 
@@ -719,7 +871,6 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
             engine.pauseForDisappear()
         }
 
-        // MARK: 全屏内可见的加载提示（放进 contentOverlayView 会跟随进入全屏）
         func installOverlay() {
             guard let c = controller else { return }
             c.loadViewIfNeeded()
@@ -748,7 +899,6 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
             box.addSubview(label)
             overlay.addSubview(box)
 
-            // ⭐ 可满足的约束组（旧版 >=120 + label 等距会互斥，产生一堆约束冲突日志）
             let hug = box.widthAnchor.constraint(equalTo: label.widthAnchor, constant: 28)
             hug.priority = UILayoutPriority(999)
 
@@ -757,10 +907,8 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
                 box.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
                 box.widthAnchor.constraint(greaterThanOrEqualToConstant: 130),
                 hug,
-
                 spinner.topAnchor.constraint(equalTo: box.topAnchor, constant: 16),
                 spinner.centerXAnchor.constraint(equalTo: box.centerXAnchor),
-
                 label.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 10),
                 label.centerXAnchor.constraint(equalTo: box.centerXAnchor),
                 label.widthAnchor.constraint(lessThanOrEqualToConstant: 240),
@@ -785,19 +933,22 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
             DispatchQueue.main.async { c.showsPlaybackControls = true }
         }
 
+        /// dismantle = 视图真正被移除（不是全屏误报），此时必须强制拆除
         func cleanup() {
+            isDismantled = true
             orientationWork?.cancel()
             overlayBox?.removeFromSuperview()
             overlayBox = nil; overlayLabel = nil
             if !engine.isPiPActive {
-                // 终极兜底：离开播放器一律解除横屏锁，防止设备被永久锁在横屏
                 engine.isFullScreen = false
+                engine.teardown(force: true)       // ⭐ 不再被卡住的 isFullScreen 挡掉
+                controller?.player = nil           // ⭐ 断开 AVKit 与 player，锁屏会话随之结束
                 AppDelegate.orientationLock = .portrait
                 performRotation(mask: .portrait)
             }
         }
 
-        // MARK: 全屏代理（⚠️ isCancelled 必须在 completion 里同步读取，不能带进异步）
+        // MARK: 全屏代理
         func playerViewController(_ pvc: AVPlayerViewController,
                                   willBeginFullScreenPresentationWithAnimationCoordinator
                                   coordinator: UIViewControllerTransitionCoordinator) {
@@ -826,7 +977,6 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
             engine.isFullScreen = v
             syncOverlay()
             let cb = parent.onFullScreenChanged
-            // 异步派发：绝不在 AVKit 转场回调里同步触发 SwiftUI 状态更新
             DispatchQueue.main.async { cb?(v) }
         }
 
@@ -839,6 +989,13 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
 
         func playerViewControllerDidStopPictureInPicture(_ pvc: AVPlayerViewController) {
             engine.isPiPActive = false
+            // ⭐ 页面早已离开、用户直接关掉画中画 → 此时没人会再调用 teardown，必须在这里收尾
+            if isDismantled || pvc.viewIfLoaded?.window == nil {
+                engine.isFullScreen = false
+                engine.teardown(force: true)
+                pvc.player = nil
+                return
+            }
             if !engine.isFullScreen {
                 DispatchQueue.main.async { [weak self] in
                     self?.applyOrientation(fullScreen: false)
@@ -851,7 +1008,7 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
                                   completionHandler: @escaping (Bool) -> Void) {
             setFullScreen(false)
             applyOrientation(fullScreen: false)
-            completionHandler(true)
+            completionHandler(!isDismantled)
         }
 
         // MARK: 旋转
@@ -874,8 +1031,6 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
                         .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene
                 else { return }
                 scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-                // ⚠️ errorHandler 由 UIKit 在任意队列回调；标 @Sendable 断掉 actor 隔离推断，
-                //    否则在 @MainActor 上下文里会触发 executor assumption 崩溃。
                 scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { @Sendable error in
                     #if DEBUG
                     print("requestGeometryUpdate: \(error.localizedDescription)")
@@ -1169,7 +1324,10 @@ struct VideoPlayerPageView: View {
         .onChange(of: authManager.isSubscribed) { _, newValue in
             if newValue && realURL == nil { Task { await resolve() } }
         }
-        .onAppear { NotificationPermissionManager.shared.suppress(true) }
+        .onAppear {
+            NotificationPermissionManager.shared.suppress(true)
+            engine.reviveIfNeeded()     // ⭐ 从新闻页/举报页回来：按记忆进度恢复
+        }
         .onDisappear {
             NotificationPermissionManager.shared.suppress(false)
             ReviewManager.shared.recordVideoInteraction()
@@ -1452,6 +1610,8 @@ struct VideoPlayerPageView: View {
     }
 
     private func startPlayback(real: String) {
+        // ⭐ 锁屏：剧名 + 集数 + 封面
+        engine.setNowPlaying(title: seriesBaseTitle, subtitle: activeEpisodeName, artwork: coverImage)
         let key = activeEpisodeURL
         if let local = downloadManager.getLocalURL(for: real) {
             engine.prepare(url: local, positionKey: key, isLocal: true, resolver: nil)
@@ -1719,7 +1879,7 @@ struct CachedVideoPlayerView: View {
         }
         .onAppear {
             NotificationPermissionManager.shared.suppress(true)
-            startInitialPlaybackIfNeeded()
+            if !engine.reviveIfNeeded() { startInitialPlaybackIfNeeded() }
         }
         // ⭐ 本地文件不弹「反馈修复」：本地不存在网络慢的问题
         .onChange(of: engine.offerManualRetry) { _, offer in
@@ -1798,6 +1958,7 @@ struct CachedVideoPlayerView: View {
         resolveError = nil
         if let local = localURL(forOriginal: activeKey) {
             hasPlayable = true
+            updateNowPlaying()
             engine.prepare(url: local, positionKey: activeKey, isLocal: true, resolver: nil)
             return
         }
@@ -1817,10 +1978,12 @@ struct CachedVideoPlayerView: View {
 
         if let local = downloadManager.getLocalURL(for: realURL) {
             hasPlayable = true
+            updateNowPlaying()
             engine.prepare(url: local, positionKey: posKey, isLocal: true, resolver: nil)
             recordPlayback()
         } else if let u = URL(string: realURL) {
             hasPlayable = true
+            updateNowPlaying()
             engine.prepare(url: u, positionKey: posKey, isLocal: false,
                            resolver: { try await OVideoAPI.resolveRealURL(episodeURL: posKey) })
             recordPlayback()
@@ -1850,6 +2013,7 @@ struct CachedVideoPlayerView: View {
         if let local = localURL(forOriginal: ep.url) {
             activeKey = ep.url; activeName = ep.name; resolveError = nil
             hasPlayable = true
+            updateNowPlaying()
             engine.prepare(url: local, positionKey: ep.url, isLocal: true, resolver: nil)
             recordPlayback()
             return
@@ -1884,6 +2048,7 @@ struct CachedVideoPlayerView: View {
                 isResolvingOnline = false
                 if let resolved = resolved, let u = URL(string: resolved) {
                     hasPlayable = true
+                    updateNowPlaying()
                     engine.prepare(url: u, positionKey: ep.url, isLocal: false,
                                    resolver: { try await OVideoAPI.resolveRealURL(episodeURL: ep.url) })
                     recordPlayback()
@@ -1915,6 +2080,12 @@ struct CachedVideoPlayerView: View {
             if let u = downloadManager.getLocalURL(for: key) { return u }
         }
         return nil
+    }
+
+    private func updateNowPlaying() {
+        let cover = downloadManager.cacheMetadata[activeKey]?.coverImage
+            ?? downloadManager.cacheMetadata[realURL]?.coverImage
+        engine.setNowPlaying(title: baseTitle, subtitle: activeName, artwork: cover)
     }
 
     private func recordPlayback() {
