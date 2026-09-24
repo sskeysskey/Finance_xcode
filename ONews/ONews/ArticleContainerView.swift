@@ -4,7 +4,7 @@ import SwiftUI
 // MARK: - 音频容器：把"高频 publish"隔离在 Overlay 子树内
 // ============================================================================
 
-/// 永不 publish 的持有者。容器用 @StateObject 持有它 → 容器不会因音频进度而重绘。
+/// 永不 publish 的持有者。容器用 @StateObject 持有它 → 容器不会因音频状态而重绘。
 @MainActor
 final class ReaderAudioHolder: ObservableObject {
     let controller = ReaderAudioController()
@@ -22,15 +22,17 @@ final class ReaderAudioController: ObservableObject {
     }
 
     var isActive: Bool { player.isPlaybackActive }
+
     func start(text: String, title: String, language: String) {
-        isCollapsed = false
+        if isCollapsed { isCollapsed = false }      // 值不变不写，避免无谓 publish
         player.startPlayback(text: text, title: title, language: language)
     }
+    /// 空闲时 AudioPlayerManager.stop() 会立即返回，零成本
     func stop() { player.stop() }
     func prepareForNext() { player.prepareForNextTransition() }
 }
 
-/// 只有这棵子树观察音频状态
+/// 只有这棵子树观察音频状态（进度又进一步隔离在 AudioProgressRow 里）
 private struct ReaderAudioOverlay: View {
     @ObservedObject var controller: ReaderAudioController
     @ObservedObject var player: AudioPlayerManager
@@ -96,10 +98,7 @@ struct ArticleContainerView: View {
     @AppStorage("isGlobalEnglishMode") private var isEnglishMode = false
     @AppStorage("articleBodyFontSize") private var articleBodyFontSize: Double = 25
 
-    // ★★★ 关键性能修复：不再 @ObservedObject。
-    // ResourceManager 下载图片时高频 publish，NewsViewModel 标记已读时 publish，
-    // 一旦观察，详情页整棵树（几十个 UITextView）就会跟着反复重排。
-    // 这里只需要"调用方法"，因此用普通引用即可。
+    // 不观察：只调方法（避免 ResourceManager / NewsViewModel 的 publish 让详情页重排）
     let viewModel: NewsViewModel
     let resourceManager: ResourceManager
 
@@ -113,7 +112,6 @@ struct ArticleContainerView: View {
 
     @State private var showNoNextToast = false
     @State private var didCommitOnDisappear = false
-    /// 自己维护一份"场景是否活跃"，比在 onDisappear 里读 @Environment 更可靠
     @State private var isSceneActive = true
 
     @State private var showErrorAlert = false
@@ -138,7 +136,6 @@ struct ArticleContainerView: View {
 
     private var controller: ReaderAudioController { audioHolder.controller }
 
-    /// 顶部导航栏的来源名（中/英）——详情页不再持有 viewModel
     private var displaySourceName: String {
         if isEnglishMode,
            let s = viewModel.sources.first(where: { $0.name == currentSourceName }) {
@@ -160,7 +157,6 @@ struct ArticleContainerView: View {
                 requestNextArticle: { await switchToNextArticleAndStopAudio() }
             )
             .id(currentArticle.id)
-            // ★ 位移转场对大视图太贵，改为纯透明度
             .transition(.opacity)
 
             if showNoNextToast { ToastView(message: Localized.noMore).zIndex(5) }
@@ -177,7 +173,6 @@ struct ArticleContainerView: View {
             didCommitOnDisappear = false
             isSceneActive = (scenePhase == .active)
 
-            // ★ 开启阅读会话：只在内存，绝不落盘
             viewModel.beginReading(currentArticle)
             updateUnreadCounts()
 
@@ -193,7 +188,9 @@ struct ArticleContainerView: View {
             }
 
             if autoPlayOnAppear {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                // ★ 合成已全部移到后台，无需再等 0.6s；只错开 push 动画的前几帧即可
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 250_000_000)
                     if !controller.isActive { startPlayback() }
                 }
             }
@@ -202,9 +199,7 @@ struct ArticleContainerView: View {
             isSceneActive = (phase == .active)
         }
         .onDisappear {
-            // ★★★ 核心修复 ★★★
-            // SwiftUI 的 onDisappear 在 App 进入后台 / 被系统回收时也会触发。
-            // 只有"App 仍在前台"时的 disappear 才是真正的"用户返回列表"。
+            // 只有"App 仍在前台"时的 disappear 才是真正的"用户返回列表"
             guard isSceneActive, scenePhase == .active else {
                 print("⏸️ [阅读会话] 因 App 离开前台而 disappear —— 不标记已读，保持未读。")
                 return
@@ -213,7 +208,6 @@ struct ArticleContainerView: View {
             didCommitOnDisappear = true
 
             controller.stop()
-            // 先同步落盘，最后才解冻数据重建（顺序不能反）
             viewModel.finishReading(markCurrentAsRead: true)
             AnonymousSubscribePromptManager.shared.flushIfNeeded()
         }
@@ -238,19 +232,14 @@ struct ArticleContainerView: View {
     }
 
     // MARK: - 播放
+    /// 只做"选语言"；分段规整 / 读音预处理全部由 AudioPlayerManager 在后台完成
     private func playbackPayload(for article: Article) -> (String, String, String) {
-        let rawText: String, title: String, language: String
         if isEnglishMode,
            let engText = article.article_eng, !engText.isEmpty,
            let engTitle = article.topic_eng {
-            rawText = engText; title = engTitle; language = "en-US"
-        } else {
-            rawText = article.article; title = article.topic; language = "zh-CN"
+            return (engText, engTitle, "en-US")
         }
-        let fullText = rawText.components(separatedBy: .newlines)
-            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .joined(separator: "\n\n")
-        return (fullText, title, language)
+        return (article.article, article.topic, "zh-CN")
     }
 
     private func startPlayback() {
@@ -261,11 +250,7 @@ struct ArticleContainerView: View {
     }
 
     private func updateUnreadCounts() {
-        let name: String?
-        switch navigationContext {
-        case .fromSource(let n): name = n
-        case .fromAllArticles: name = nil
-        }
+        let name = contextSourceName
         unreadCountForGroup = viewModel.getUnreadCountForDateGroup(
             timestamp: currentArticle.timestamp, inSource: name)
         totalUnreadCountForContext = viewModel.getEffectiveUnreadCount(inSource: name)
@@ -280,7 +265,7 @@ struct ArticleContainerView: View {
 
     // MARK: - 下一篇
     private func switchToNextArticleAndStopAudio() async {
-        controller.stop()
+        controller.stop()   // 空闲时零成本
         await switchToNextArticle(shouldAutoplayNext: false, triggerViewTrack: true)
     }
 
@@ -290,7 +275,6 @@ struct ArticleContainerView: View {
         ReviewManager.shared.recordInteraction()
         if shouldAutoplayNext { controller.prepareForNext() }
 
-        // ★ 点"下一篇" / 音频跳下一篇 = 明确读完 → 立即落盘
         viewModel.markArticleAsRead(currentArticle)
 
         Task { await resourceManager.silentRefresh(minInterval: 180, reason: "next-article") }
@@ -331,12 +315,17 @@ struct ArticleContainerView: View {
                                           shouldAutoplayNext: Bool,
                                           triggerViewTrack: Bool,
                                           triggerListenTrack: Bool) async {
+        // ★ 先启动音频（后台合成与页面切换并行），缩短"下一篇开口"的等待
+        if shouldAutoplayNext {
+            let (text, title, lang) = playbackPayload(for: next.article)
+            controller.start(text: text, title: title, language: lang)
+        }
+
         if !next.article.images.isEmpty {
             resourceManager.enqueueImageDownloads(timestamp: next.article.timestamp,
                                                   imageNames: next.article.images,
                                                   priority: true)
         }
-        // ★ 保证切过去时正文已在缓存里（0 卡顿）
         ArticleBodyCache.shared.prefetch(article: next.article,
                                          english: isEnglishMode,
                                          fontSize: articleBodyFontSize)
@@ -353,14 +342,8 @@ struct ArticleContainerView: View {
             NewsTrackingManager.shared.track(event: .listen, article: next.article,
                                              sourceId: next.article.source_id)
         }
-
-        if shouldAutoplayNext {
-            let (text, title, lang) = playbackPayload(for: next.article)
-            controller.start(text: text, title: title, language: lang)
-        }
     }
 
-    /// 预热下一篇：图片 + 正文排版
     private func prefetchNext() {
         guard let next = viewModel.findNextUnread(after: currentArticle.id,
                                                   inSource: contextSourceName) else { return }

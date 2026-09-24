@@ -2,32 +2,290 @@ import Foundation
 import AVFoundation
 import Combine
 import SwiftUI
+import UIKit
 import MediaPlayer
 import NaturalLanguage
 
+// ============================================================================
+// MARK: - 音频会话：专用串行队列执行，绝不阻塞主线程（setActive 是跨进程调用，可能耗时几十毫秒）
+// ============================================================================
+enum AudioSessionController {
+    private static let queue = DispatchQueue(label: "com.onews.audio.session", qos: .userInitiated)
+
+    private static func configureAndActivate() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            if session.category != .playback || session.mode != .spokenAudio {
+                try session.setCategory(.playback, mode: .spokenAudio, options: [])
+            }
+            try session.setActive(true, options: [])
+        } catch {
+            print("🎧 [AudioSession] 激活失败: \(error.localizedDescription)")
+        }
+    }
+
+    /// 异步激活（开始播放时与文本预处理并行执行）
+    static func activate() async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            queue.async {
+                configureAndActivate()
+                cont.resume()
+            }
+        }
+    }
+
+    /// 同步激活（仅在被打断后恢复播放时使用，保证 play() 前会话已就绪）
+    static func activateSync() {
+        queue.sync { configureAndActivate() }
+    }
+
+    static func deactivate() {
+        queue.async {
+            do {
+                try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            } catch {
+                print("🎧 [AudioSession] 释放失败: \(error.localizedDescription)")
+            }
+        }
+    }
+}
+
+// ============================================================================
+// MARK: - 合成块写入器：在合成器回调线程里直接写文件，主线程只在"完成"时收到一次通知
+// ============================================================================
+final class SpeechChunkWriter: @unchecked Sendable {
+    enum Event: Sendable {
+        case finished(url: URL, duration: TimeInterval, hasAudio: Bool)
+        case failed(String)
+    }
+
+    let url: URL
+    private let lock = NSLock()
+    private var file: AVAudioFile?
+    private var frames: AVAudioFramePosition = 0
+    private var sampleRate: Double = 0
+    private var done = false
+    private var _lastActivity = Date()
+
+    init(url: URL) { self.url = url }
+
+    var lastActivity: Date {
+        lock.lock(); defer { lock.unlock() }
+        return _lastActivity
+    }
+
+    func cancel() {
+        lock.lock()
+        done = true
+        file = nil
+        lock.unlock()
+    }
+
+    /// 返回 nil 表示"继续写"，非 nil 表示需要通知主线程
+    func consume(_ buffer: AVAudioBuffer) -> Event? {
+        lock.lock(); defer { lock.unlock() }
+        guard !done else { return nil }
+        _lastActivity = Date()
+
+        guard let pcm = buffer as? AVAudioPCMBuffer else {
+            done = true; file = nil
+            return .failed(Localized.errPCMBuffer)
+        }
+
+        if pcm.frameLength == 0 {
+            done = true
+            file = nil   // 释放即关闭文件、刷盘
+            let duration = sampleRate > 0 ? Double(frames) / sampleRate : 0
+            return .finished(url: url, duration: duration, hasAudio: frames > 0)
+        }
+
+        do {
+            if file == nil {
+                // 处理格式与 buffer 完全一致，任何音色（Int16 / Float32）都能写
+                file = try AVAudioFile(forWriting: url,
+                                       settings: pcm.format.settings,
+                                       commonFormat: pcm.format.commonFormat,
+                                       interleaved: pcm.format.isInterleaved)
+                sampleRate = pcm.format.sampleRate
+            }
+            try file?.write(from: pcm)
+            frames += AVAudioFramePosition(pcm.frameLength)
+            return nil
+        } catch {
+            done = true; file = nil
+            return .failed("\(Localized.errPlayerFailed): \(error.localizedDescription)")
+        }
+    }
+}
+
+/// 后台预处理结果
+struct PreparedSpeech: Sendable {
+    let chunks: [String]
+    let charCounts: [Int]
+    let voiceIdentifier: String?
+    let fallbackLanguage: String
+}
+
+// ============================================================================
+// MARK: - 高频进度状态（独立对象：只有进度条那一行观察它）
+// ============================================================================
+@MainActor
+final class AudioProgressState: ObservableObject {
+    @Published private(set) var progress: Double = 0
+    @Published private(set) var currentTimeString = "00:00"
+    @Published private(set) var durationString = "00:00"
+    @Published private(set) var totalSeconds: TimeInterval = 0
+
+    private var lastCurrentSec = 0
+    private var lastTotalSec = 0
+
+    /// 值不变不写 → 不 publish；时间字符串只在"秒"变化时重新格式化
+    func update(progress p: Double, currentSeconds: TimeInterval, totalSeconds total: TimeInterval) {
+        let clamped = p.isFinite ? min(max(p, 0), 1) : 0
+        if clamped != progress { progress = clamped }
+
+        let cs = currentSeconds.isFinite ? max(0, Int(currentSeconds)) : 0
+        if cs != lastCurrentSec {
+            lastCurrentSec = cs
+            currentTimeString = Self.format(cs)
+        }
+        let ts = total.isFinite ? max(0, Int(total)) : 0
+        if ts != lastTotalSec {
+            lastTotalSec = ts
+            durationString = Self.format(ts)
+            totalSeconds = Double(ts)
+        }
+    }
+
+    func reset() {
+        if progress != 0 { progress = 0 }
+        lastCurrentSec = 0
+        lastTotalSec = 0
+        if currentTimeString != "00:00" { currentTimeString = "00:00" }
+        if durationString != "00:00" { durationString = "00:00" }
+        if totalSeconds != 0 { totalSeconds = 0 }
+    }
+
+    static func format(_ seconds: Int) -> String {
+        let s = max(0, seconds)
+        let h = s / 3600, m = (s % 3600) / 60, sec = s % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%02d:%02d", m, sec)
+    }
+}
+
+// ============================================================================
+// MARK: - 锁屏 / 耳机远程控制：全局只注册一次，转发给"当前播放器"
+// （旧实现每次播放都 addTarget，且 teardown 漏删 skipBackward → 后退 15 秒会被叠加执行）
+// ============================================================================
+@MainActor
+final class AudioRemoteCommandRouter {
+    static let shared = AudioRemoteCommandRouter()
+    private weak var owner: AudioPlayerManager?
+    private var registered = false
+
+    func activate(_ manager: AudioPlayerManager) {
+        owner = manager
+        registerIfNeeded()
+        setEnabled(true)
+    }
+
+    func deactivate(_ manager: AudioPlayerManager) {
+        guard owner == nil || owner === manager else { return }
+        owner = nil
+        setEnabled(false)
+    }
+
+    fileprivate func route(_ body: (AudioPlayerManager) -> MPRemoteCommandHandlerStatus) -> MPRemoteCommandHandlerStatus {
+        guard let o = owner else { return .noActionableNowPlayingItem }
+        return body(o)
+    }
+
+    private func setEnabled(_ on: Bool) {
+        let cc = MPRemoteCommandCenter.shared()
+        cc.playCommand.isEnabled = on
+        cc.pauseCommand.isEnabled = on
+        cc.togglePlayPauseCommand.isEnabled = on
+        cc.stopCommand.isEnabled = on
+        cc.nextTrackCommand.isEnabled = on
+        cc.previousTrackCommand.isEnabled = false
+        cc.skipBackwardCommand.isEnabled = on
+        cc.skipForwardCommand.isEnabled = false          // 保持原设计：锁屏右侧显示"下一篇"
+        cc.changePlaybackPositionCommand.isEnabled = on  // 新增：锁屏可拖动进度
+    }
+
+    private func registerIfNeeded() {
+        guard !registered else { return }
+        registered = true
+        let cc = MPRemoteCommandCenter.shared()
+        cc.skipBackwardCommand.preferredIntervals = [15]
+        cc.skipForwardCommand.preferredIntervals = [15]
+
+        cc.playCommand.addTarget { _ in
+            MainActor.assumeIsolated { AudioRemoteCommandRouter.shared.route { $0.remotePlay() } }
+        }
+        cc.pauseCommand.addTarget { _ in
+            MainActor.assumeIsolated { AudioRemoteCommandRouter.shared.route { $0.remotePause() } }
+        }
+        cc.togglePlayPauseCommand.addTarget { _ in
+            MainActor.assumeIsolated { AudioRemoteCommandRouter.shared.route { $0.remoteToggle() } }
+        }
+        cc.stopCommand.addTarget { _ in
+            MainActor.assumeIsolated { AudioRemoteCommandRouter.shared.route { $0.remoteStop() } }
+        }
+        cc.nextTrackCommand.addTarget { _ in
+            MainActor.assumeIsolated { AudioRemoteCommandRouter.shared.route { $0.remoteNext() } }
+        }
+        cc.skipBackwardCommand.addTarget { _ in
+            MainActor.assumeIsolated { AudioRemoteCommandRouter.shared.route { $0.remoteSkip(by: -15) } }
+        }
+        cc.skipForwardCommand.addTarget { _ in
+            MainActor.assumeIsolated { AudioRemoteCommandRouter.shared.route { $0.remoteSkip(by: 15) } }
+        }
+        cc.changePlaybackPositionCommand.addTarget { event in
+            let t = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
+            return MainActor.assumeIsolated {
+                AudioRemoteCommandRouter.shared.route { m in
+                    guard let t else { return .commandFailed }
+                    return m.remoteSeek(to: t)
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// MARK: - AudioPlayerManager
+// ============================================================================
 @MainActor
 class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
-    // MARK: - Published Properties for UI
+
+    // MARK: 低频 UI 状态（值不变不写）
     @Published var isPlaybackActive = false
     @Published var isPlaying = false
     @Published var isSynthesizing = false
-    // 用户为不同语言挑选的语音：key 用语言前缀，例如 "zh" / "en"
     @Published var preferredVoiceIdentifiers: [String: String] = [:]
-    private let preferredVoicesKey = "audio.preferredVoices"
 
-    @Published var progress: Double = 0.0
-    @Published var currentTimeString: String = "00:00"
-    @Published var durationString: String = "00:00"
+    /// ★ 高频进度独立出去；下面三个只读属性保持旧 API 兼容
+    let progressState = AudioProgressState()
+    var progress: Double { progressState.progress }
+    var currentTimeString: String { progressState.currentTimeString }
+    var durationString: String { progressState.durationString }
 
     // 回调
     var onPlaybackFinished: (() -> Void)?
     var onNextRequested: (() -> Void)?
     var onToggleRepeatRequested: (() -> Void)?
 
-    @Published var isAutoPlayEnabled = false {
+    nonisolated static let autoPlayEnabledKey = "audio.autoPlayEnabled"
+    nonisolated static let playbackRateKey = "audio.playbackRate"
+    private let preferredVoicesKey = "audio.preferredVoices"
+
+    /// ★ 默认 = 连续播放（true）。用户手动切换后会被记住。
+    @Published var isAutoPlayEnabled = true {
         didSet {
-            UserDefaults.standard.set(isAutoPlayEnabled, forKey: autoPlayEnabledKey)
-            updateRepeatStateInNowPlaying()
+            guard oldValue != isAutoPlayEnabled else { return }
+            UserDefaults.standard.set(isAutoPlayEnabled, forKey: Self.autoPlayEnabledKey)
+            updateNowPlayingInfo()
         }
     }
 
@@ -36,260 +294,179 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
             if playbackRate < 0.5 { playbackRate = 0.5 }
             else if playbackRate > 2.0 { playbackRate = 2.0 }
             applyPlaybackRate()
-            refreshNowPlayingInfo()
+            UserDefaults.standard.set(Double(playbackRate), forKey: Self.playbackRateKey)
+            updateNowPlayingInfo()
         }
     }
 
-    // MARK: - Private Properties
+    // MARK: 私有状态
+    private enum ChunkState { case pending, ready(URL), empty }
+
     private var speechSynthesizer = AVSpeechSynthesizer()
     private var audioPlayer: AVAudioPlayer?
-    private var displayLink: CADisplayLink?
-    private let autoPlayEnabledKey = "audio.autoPlayEnabled"
-    private var remoteCommandsRegistered = false
+    private var preparedNext: (index: Int, player: AVAudioPlayer)?
+    private var progressTimer: Timer?
+    private var watchdogTimer: Timer?
+    private var observers: [NSObjectProtocol] = []
     private var nowPlayingTitle: String = Localized.playingArticle
-    private var synthesisWatchdogTimer: Timer?
-    private var synthesisLastWriteAt: Date?
 
-    // ▶ 新增：分块流式合成相关属性
-    private var textChunks: [String] = []
-    private var chunkFileURLs: [URL?] = []         // nil = 尚未合成完毕
-    private var chunkDurations: [TimeInterval] = [] // 0 = 尚未获取
+    private var chunkTexts: [String] = []
+    private var chunkCharCounts: [Int] = []
+    private var chunkStates: [ChunkState] = []
+    private var chunkDurations: [TimeInterval] = []
     private var currentPlayingChunkIndex = 0
-    private var currentSynthesizingChunkIndex = 0
-    private var isAllSynthesized = false
+    private var synthesizingIndex: Int?
+    private var currentWriter: SpeechChunkWriter?
+    private var synthesisRetryCount = 0
     private var waitingForChunk = false
+    private var hasFinished = false
     private var selectedVoice: AVSpeechSynthesisVoice?
-    private var currentChunkAudioFile: AVAudioFile?
-    private var currentChunkFileURL: URL?
-    private var synthesisGeneration: Int = 0        // 防止旧的合成回调干扰新播放
+    private var synthesisGeneration = 0
 
-    // ▶ 新增：计算属性 - 估算总时长
-    private var totalEstimatedDuration: TimeInterval {
-        let knownDuration = chunkDurations.reduce(0, +)
-        guard !textChunks.isEmpty else { return knownDuration }
-        if isAllSynthesized { return knownDuration }
+    private var totalDuration: TimeInterval = 0
+    private var elapsedBeforeCurrentChunk: TimeInterval = 0
 
-        // 用已知块的「时长/字符数」比值来估算未合成块的时长
-        let synthesizedIndices = chunkDurations.enumerated().filter { $0.element > 0 }
-        guard !synthesizedIndices.isEmpty else { return 0 }
+    private var sessionNeedsReactivation = true
+    private var resumeAfterInterruption = false
+    private var isInBackground = false
 
-        let synthesizedCharCount = synthesizedIndices.reduce(0) { $0 + textChunks[$1.offset].count }
-        guard synthesizedCharCount > 0 else { return knownDuration }
-        let avgDurationPerChar = knownDuration / Double(synthesizedCharCount)
-
-        let remainingCharCount = textChunks.enumerated()
-            .filter { chunkDurations[$0.offset] == 0 }
-            .reduce(0) { $0 + $1.element.count }
-
-        return knownDuration + avgDurationPerChar * Double(remainingCharCount)
+    override init() {
+        UserDefaults.standard.register(defaults: [
+            Self.autoPlayEnabledKey: true,     // ★ 默认连续播放
+            Self.playbackRateKey: 1.0
+        ])
+        super.init()
+        speechSynthesizer.delegate = self
+        isAutoPlayEnabled = UserDefaults.standard.bool(forKey: Self.autoPlayEnabledKey)
+        let savedRate = Float(UserDefaults.standard.double(forKey: Self.playbackRateKey))
+        playbackRate = (0.5...2.0).contains(savedRate) ? savedRate : 1.0
+        if let saved = UserDefaults.standard.dictionary(forKey: preferredVoicesKey) as? [String: String] {
+            preferredVoiceIdentifiers = saved
+        }
+        setupObservers()
     }
 
-    // ▶ 新增：安全重置语音合成器，防止中断 write 导致的底层死锁
-    private func resetSpeechSynthesizer() {
-        // 先关闭当前正在进行的操作并解除代理
+    deinit {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        progressTimer?.invalidate()
+        watchdogTimer?.invalidate()
+        currentWriter?.cancel()
+        audioPlayer?.stop()
+        audioPlayer?.delegate = nil
         speechSynthesizer.stopSpeaking(at: .immediate)
         speechSynthesizer.delegate = nil
-        
-        // 重新初始化一个干净的实例
+        var urls: [URL] = []
+        for s in chunkStates { if case .ready(let u) = s { urls.append(u) } }
+        if let w = currentWriter { urls.append(w.url) }
+        if !urls.isEmpty {
+            DispatchQueue.global(qos: .utility).async {
+                urls.forEach { try? FileManager.default.removeItem(at: $0) }
+            }
+        }
+    }
+
+    // MARK: - 工具
+    private func setIfChanged<T: Equatable>(_ kp: ReferenceWritableKeyPath<AudioPlayerManager, T>, _ value: T) {
+        if self[keyPath: kp] != value { self[keyPath: kp] = value }
+    }
+
+    private static func removeFilesInBackground(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            urls.forEach { try? FileManager.default.removeItem(at: $0) }
+        }
+    }
+
+    private static func makePlayer(url: URL, rate: Float) throws -> AVAudioPlayer {
+        let p = try AVAudioPlayer(contentsOf: url)
+        p.enableRate = true          // 必须在 prepareToPlay 之前
+        p.prepareToPlay()
+        p.rate = rate
+        return p
+    }
+
+    static func rateText(_ r: Float) -> String {
+        var s = String(format: "%.2f", r)
+        while s.hasSuffix("0") { s.removeLast() }
+        if s.hasSuffix(".") { s.removeLast() }
+        return s + "x"
+    }
+
+    private func isEmptyChunk(_ i: Int) -> Bool {
+        if case .empty = chunkStates[i] { return true }
+        return false
+    }
+
+    private func resetSpeechSynthesizer() {
+        speechSynthesizer.stopSpeaking(at: .immediate)
+        speechSynthesizer.delegate = nil
         speechSynthesizer = AVSpeechSynthesizer()
         speechSynthesizer.delegate = self
     }
 
-    // ▶ 新增：当前播放块之前所有块的累计时长
-    private var elapsedTimeBeforeCurrentChunk: TimeInterval {
-        guard currentPlayingChunkIndex > 0 else { return 0 }
-        return chunkDurations.prefix(currentPlayingChunkIndex).reduce(0, +)
-    }
-
-    override init() {
-        super.init()
-        self.speechSynthesizer.delegate = self
-        if UserDefaults.standard.object(forKey: autoPlayEnabledKey) != nil {
-            self.isAutoPlayEnabled = UserDefaults.standard.bool(forKey: autoPlayEnabledKey)
-        } else {
-            self.isAutoPlayEnabled = true
-        }
-        // ▶ 新增：加载用户的语音偏好
-        if let saved = UserDefaults.standard.dictionary(forKey: preferredVoicesKey) as? [String: String] {
-            self.preferredVoiceIdentifiers = saved
-        }
-        setupRemoteTransportControls()
-        setupNotifications()
-    }
-
-    deinit {
-        audioPlayer?.stop()
-        audioPlayer?.delegate = nil
-        audioPlayer = nil
-        speechSynthesizer.stopSpeaking(at: .immediate)
-        speechSynthesizer.delegate = nil
-        for url in chunkFileURLs {
-            if let url = url { try? FileManager.default.removeItem(at: url) }
-        }
-    }
-
-    func prepareForNextTransition() {
-        synthesisGeneration += 1
-        resetSpeechSynthesizer()
-        
-        audioPlayer?.stop()
-        isPlaying = false
-        isSynthesizing = false
-        waitingForChunk = false
-        isAllSynthesized = false
-        
-        stopDisplayLink()
-        cleanupAllChunkFiles()
-        invalidateSynthesisWatchdog()
-        
-        textChunks = []
-        chunkDurations = []
-        currentPlayingChunkIndex = 0
-        currentSynthesizingChunkIndex = 0
-    }
-
     private func applyPlaybackRate() {
-        guard let player = audioPlayer else { return }
-        player.enableRate = true
-        player.rate = playbackRate
+        audioPlayer?.rate = playbackRate
+        preparedNext?.player.rate = playbackRate
     }
 
-    // MARK: - Remote Command Center
-    private func setupRemoteTransportControls() {
-        guard !remoteCommandsRegistered else { return }
-        let commandCenter = MPRemoteCommandCenter.shared()
+    // MARK: - 系统通知（打断 / 耳机拔出 / 前后台）
+    private func setupObservers() {
+        let nc = NotificationCenter.default
 
-        commandCenter.playCommand.isEnabled = true
-        commandCenter.pauseCommand.isEnabled = true
-        commandCenter.stopCommand.isEnabled = true
-        commandCenter.nextTrackCommand.isEnabled = true
-        commandCenter.previousTrackCommand.isEnabled = false
+        observers.append(nc.addObserver(forName: AVAudioSession.interruptionNotification,
+                                        object: nil, queue: .main) { [weak self] note in
+            let typeRaw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            let optRaw = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt
+            MainActor.assumeIsolated { self?.handleInterruption(typeRaw: typeRaw, optionsRaw: optRaw) }
+        })
 
-        commandCenter.playCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
-            if !self.isPlaying {
-                self.playPause()
-                return .success
+        observers.append(nc.addObserver(forName: AVAudioSession.routeChangeNotification,
+                                        object: nil, queue: .main) { [weak self] note in
+            let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            MainActor.assumeIsolated {
+                // 拔耳机 / 断开蓝牙 → 自动暂停（Apple HIG 要求）
+                if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+                   self?.isPlaying == true {
+                    self?.pausePlayback()
+                }
             }
-            return .commandFailed
-        }
+        })
 
-        commandCenter.pauseCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
-            if self.isPlaying {
-                self.playPause()
-                return .success
+        observers.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                                        object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.isInBackground = true
+                self?.stopProgressTimer()        // 后台不需要刷 UI，锁屏由系统推算
             }
-            return .commandFailed
-        }
+        })
 
-        commandCenter.stopCommand.addTarget { [weak self] _ in
-            self?.stop()
-            return .success
-        }
-
-        commandCenter.nextTrackCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
-            self.onNextRequested?()
-            return .success
-        }
-
-        commandCenter.skipForwardCommand.preferredIntervals = [15]
-        commandCenter.skipForwardCommand.isEnabled = false
-        commandCenter.skipForwardCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
-            self.seekBy(seconds: 15)
-            return .success
-        }
-
-        commandCenter.skipBackwardCommand.preferredIntervals = [15]
-        commandCenter.skipBackwardCommand.isEnabled = true
-        commandCenter.skipBackwardCommand.addTarget { [weak self] _ in
-            guard let self = self else { return .commandFailed }
-            self.seekBy(seconds: -15)
-            return .success
-        }
-
-        remoteCommandsRegistered = true
-    }
-
-    private func teardownRemoteTransportControls() {
-        let cc = MPRemoteCommandCenter.shared()
-        cc.playCommand.removeTarget(nil)
-        cc.pauseCommand.removeTarget(nil)
-        cc.stopCommand.removeTarget(nil)
-        cc.nextTrackCommand.removeTarget(nil)
-        cc.skipForwardCommand.removeTarget(nil)
-        remoteCommandsRegistered = false
-    }
-
-    private func updateRepeatStateInNowPlaying() {
-        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        info[MPMediaItemPropertyTitle] = nowPlayingTitle
-        if let player = audioPlayer {
-            let overallTime = elapsedTimeBeforeCurrentChunk + player.currentTime
-            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = overallTime
-            info[MPMediaItemPropertyPlaybackDuration] = totalEstimatedDuration
-            info[MPNowPlayingInfoPropertyPlaybackRate] = player.isPlaying ? Double(playbackRate) : 0.0
-        }
-        info[MPMediaItemPropertyArtist] = isAutoPlayEnabled ? Localized.autoPlay : Localized.singlePlay
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-    }
-
-    private func refreshNowPlayingInfo(playbackRate explicitRate: Double? = nil) {
-        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        info[MPMediaItemPropertyTitle] = nowPlayingTitle
-
-        let speedText = String(format: "%.2fx", playbackRate).replacingOccurrences(of: ".00", with: "x")
-        let modeText = isAutoPlayEnabled ? Localized.autoPlay : Localized.singlePlay
-        info[MPMediaItemPropertyArtist] = "\(modeText) • \(speedText)"
-        info[MPMediaItemPropertyAlbumTitle] = "Speed \(speedText)"
-
-        let totalDur = totalEstimatedDuration
-        if let player = audioPlayer {
-            let overallTime = elapsedTimeBeforeCurrentChunk + player.currentTime
-            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = overallTime
-            info[MPMediaItemPropertyPlaybackDuration] = totalDur
-            let rate: Double
-            if let explicitRate = explicitRate {
-                rate = explicitRate
-            } else {
-                rate = player.isPlaying ? Double(self.playbackRate) : 0.0
+        observers.append(nc.addObserver(forName: UIApplication.willEnterForegroundNotification,
+                                        object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.isInBackground = false
+                self.publishProgressNow()
+                if self.isPlaying { self.startProgressTimer() }
             }
-            info[MPNowPlayingInfoPropertyPlaybackRate] = rate
-        } else {
-            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = 0
-            info[MPMediaItemPropertyPlaybackDuration] = totalDur
-            info[MPNowPlayingInfoPropertyPlaybackRate] = 0
-        }
-
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        })
     }
 
-    // MARK: - Notifications
-    private func setupNotifications() {
-        NotificationCenter.default.addObserver(self,
-            selector: #selector(handleInterruption),
-            name: AVAudioSession.interruptionNotification,
-            object: nil)
-    }
-
-    @objc private func handleInterruption(notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
-            return
-        }
-
+    private func handleInterruption(typeRaw: UInt?, optionsRaw: UInt?) {
+        guard let raw = typeRaw, let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
         switch type {
         case .began:
-            if isPlaying { playPause() }
-        case .ended:
-            guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
-            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-            if options.contains(.shouldResume) {
-                if !isPlaying { playPause() }
+            sessionNeedsReactivation = true
+            if isPlaying {
+                resumeAfterInterruption = true
+                pausePlayback()
             }
+        case .ended:
+            let opts = AVAudioSession.InterruptionOptions(rawValue: optionsRaw ?? 0)
+            // 只有"打断前正在播"才自动恢复；用户自己暂停的不擅自恢复
+            if opts.contains(.shouldResume) && resumeAfterInterruption {
+                resumePlayback()
+            }
+            resumeAfterInterruption = false
         @unknown default:
             break
         }
@@ -299,10 +476,148 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = hasNext
     }
 
-    // MARK: - ▶ 分块文本拆分
+    // MARK: - 远程控制入口（Router 调用）
+    fileprivate func remotePlay() -> MPRemoteCommandHandlerStatus {
+        guard audioPlayer != nil || hasFinished else { return .noActionableNowPlayingItem }
+        if !isPlaying { resumePlayback() }
+        return .success
+    }
+    fileprivate func remotePause() -> MPRemoteCommandHandlerStatus {
+        if isPlaying { pausePlayback() }
+        return .success
+    }
+    fileprivate func remoteToggle() -> MPRemoteCommandHandlerStatus {
+        guard audioPlayer != nil || hasFinished else { return .noActionableNowPlayingItem }
+        playPause()
+        return .success
+    }
+    fileprivate func remoteStop() -> MPRemoteCommandHandlerStatus {
+        stop()
+        return .success
+    }
+    fileprivate func remoteNext() -> MPRemoteCommandHandlerStatus {
+        guard let cb = onNextRequested else { return .commandFailed }
+        cb()
+        return .success
+    }
+    fileprivate func remoteSkip(by seconds: TimeInterval) -> MPRemoteCommandHandlerStatus {
+        seekBy(seconds: seconds)
+        return .success
+    }
+    fileprivate func remoteSeek(to time: TimeInterval) -> MPRemoteCommandHandlerStatus {
+        seekToTime(max(0, min(time, totalDuration)))
+        return .success
+    }
+
+    // MARK: - 锁屏信息（只在状态变化时写，不再逐帧写）
+    private func updateNowPlayingInfo(elapsedOverride: TimeInterval? = nil) {
+        guard isPlaybackActive else { return }
+        var info: [String: Any] = [:]
+        let speedText = Self.rateText(playbackRate)
+        let modeText = isAutoPlayEnabled ? Localized.autoPlay : Localized.singlePlay
+        info[MPMediaItemPropertyTitle] = nowPlayingTitle
+        info[MPMediaItemPropertyArtist] = "\(modeText) • \(speedText)"
+        info[MPMediaItemPropertyAlbumTitle] = "Speed \(speedText)"
+        let elapsed = elapsedOverride ?? (elapsedBeforeCurrentChunk + (audioPlayer?.currentTime ?? 0))
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
+        info[MPMediaItemPropertyPlaybackDuration] = max(totalDuration, elapsed)
+        // ★ 用真实倍速，系统据此推算锁屏进度，不会漂移
+        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(playbackRate) : 0.0
+        info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
+        info[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    // MARK: - 进度刷新（4Hz，替代 60/120Hz 的 CADisplayLink）
+    private func startProgressTimer() {
+        guard progressTimer == nil, !isInBackground else { return }
+        let t = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.publishProgressNow() }
+        }
+        t.tolerance = 0.05
+        RunLoop.main.add(t, forMode: .common)
+        progressTimer = t
+    }
+
+    private func stopProgressTimer() {
+        progressTimer?.invalidate()
+        progressTimer = nil
+    }
+
+    private func publishProgressNow() {
+        let total = totalDuration
+        let current = elapsedBeforeCurrentChunk + (audioPlayer?.currentTime ?? 0)
+        progressState.update(progress: total > 0 ? min(current / total, 1) : 0,
+                             currentSeconds: current,
+                             totalSeconds: max(total, current))
+    }
+
+    private func recomputeTotalDuration() {
+        var known: TimeInterval = 0
+        var knownChars = 0
+        var unknownChars = 0
+        for i in chunkStates.indices {
+            switch chunkStates[i] {
+            case .pending:
+                unknownChars += chunkCharCounts[i]
+            case .ready, .empty:
+                known += chunkDurations[i]
+                knownChars += chunkCharCounts[i]
+            }
+        }
+        if unknownChars == 0 || knownChars == 0 || known <= 0 {
+            totalDuration = known
+        } else {
+            totalDuration = known + known / Double(knownChars) * Double(unknownChars)
+        }
+    }
+
+    // MARK: - 会话清理（stop / 切下一篇 / 重新开始 共用）
+    private func teardownCurrentSession() {
+        synthesisGeneration += 1
+        var trash: [URL] = []
+
+        let wasSynthesizing = synthesizingIndex != nil || currentWriter != nil
+        if let w = currentWriter { w.cancel(); trash.append(w.url) }
+        currentWriter = nil
+        synthesizingIndex = nil
+        invalidateWatchdog()
+        // 只有真的在合成时才重建合成器（防止中断 write 导致底层死锁；空闲时无需付出这个成本）
+        if wasSynthesizing { resetSpeechSynthesizer() }
+
+        audioPlayer?.delegate = nil
+        audioPlayer?.stop()
+        audioPlayer = nil
+        preparedNext = nil
+        stopProgressTimer()
+
+        for s in chunkStates { if case .ready(let u) = s { trash.append(u) } }
+        chunkTexts = []
+        chunkCharCounts = []
+        chunkStates = []
+        chunkDurations = []
+        currentPlayingChunkIndex = 0
+        totalDuration = 0
+        elapsedBeforeCurrentChunk = 0
+        waitingForChunk = false
+        hasFinished = false
+        synthesisRetryCount = 0
+
+        Self.removeFilesInBackground(trash)
+    }
+
+    func prepareForNextTransition() {
+        teardownCurrentSession()
+        setIfChanged(\.isPlaying, false)
+        setIfChanged(\.isSynthesizing, true)   // 保持播放器面板，显示"合成中"
+        progressState.reset()
+    }
+
+    // MARK: - 文本分块（首块更小 → 更快出声）
     nonisolated private func splitIntoChunks(_ text: String) -> [String] {
-        let firstChunkTarget = 300
-        let normalChunkTarget = 800
+        let firstChunkTarget = 160
+        let secondChunkTarget = 450
+        let normalChunkTarget = 900
 
         guard text.count > firstChunkTarget else { return [text] }
 
@@ -312,15 +627,8 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
 
         for char in text {
             current.append(char)
-            if sentenceEnders.contains(char) {
-                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    sentences.append(current)
-                    current = ""
-                }
-            } else if char == "\n" {
-                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
+            if sentenceEnders.contains(char) || char == "\n" {
+                if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     sentences.append(current)
                     current = ""
                 }
@@ -329,236 +637,361 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             sentences.append(current)
         }
-
         guard sentences.count > 1 else { return [text] }
 
         var chunks: [String] = []
         var currentChunk = ""
+        var currentCount = 0
 
         for sentence in sentences {
-            let target = chunks.isEmpty ? firstChunkTarget : normalChunkTarget
-            if currentChunk.count + sentence.count > target && !currentChunk.isEmpty {
+            let target: Int
+            switch chunks.count {
+            case 0: target = firstChunkTarget
+            case 1: target = secondChunkTarget
+            default: target = normalChunkTarget
+            }
+            let sCount = sentence.count
+            if currentCount + sCount > target && currentCount > 0 {
                 chunks.append(currentChunk)
                 currentChunk = sentence
+                currentCount = sCount
             } else {
                 currentChunk += sentence
+                currentCount += sCount
             }
         }
-        if !currentChunk.isEmpty {
-            chunks.append(currentChunk)
-        }
-
+        if currentCount > 0 { chunks.append(currentChunk) }
         return chunks
     }
 
-    // MARK: - ▶ 核心：流式分块播放入口
+    /// 全部在后台线程：分段规整 + 读音预处理 + 分块 + 选择音色
+    nonisolated private func prepareSpeechOffMain(text: String, language: String,
+                                                  preferredVoices: [String: String]) -> PreparedSpeech {
+        let normalized = text.components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n\n")
+        let processed = preprocessText(normalized, language: language)
+        let chunks = splitIntoChunks(processed).filter { $0.contains { !$0.isWhitespace } }
+        let voice = Self.resolveVoice(for: normalized, language: language, preferredVoices: preferredVoices)
+        return PreparedSpeech(chunks: chunks,
+                              charCounts: chunks.map { $0.count },
+                              voiceIdentifier: voice.identifier,
+                              fallbackLanguage: voice.language)
+    }
+
+    nonisolated private static func resolveVoice(for text: String, language: String,
+                                                 preferredVoices: [String: String]) -> (identifier: String?, language: String) {
+        if language.hasPrefix("en") {
+            if let id = preferredVoices["en"], AVSpeechSynthesisVoice(identifier: id) != nil {
+                return (id, "en-US")
+            }
+            return (AVSpeechSynthesisVoice(language: "en-US")?.identifier, "en-US")
+        }
+
+        // 语言检测只需取样，不必扫全文
+        let sample = String(text.prefix(3000))
+        let forDetection = sample.replacingOccurrences(of: "https?://[^\\s]+", with: "", options: .regularExpression)
+        var code = "zh-CN"
+        if forDetection.range(of: "\\p{Han}", options: .regularExpression) == nil {
+            let recognizer = NLLanguageRecognizer()
+            recognizer.processString(forDetection)
+            code = recognizer.dominantLanguage?.rawValue
+                ?? (Locale.current.language.languageCode?.identifier ?? "zh-CN")
+        }
+
+        let langKey = String(code.prefix(2))
+        if let id = preferredVoices[langKey], AVSpeechSynthesisVoice(identifier: id) != nil {
+            return (id, code)
+        }
+        let matches = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.starts(with: code) }
+        if let v = matches.first(where: { $0.quality == .premium })
+            ?? matches.first(where: { $0.quality == .enhanced })
+            ?? matches.first {
+            return (v.identifier, code)
+        }
+        return (AVSpeechSynthesisVoice(language: code)?.identifier, "zh-CN")
+    }
+
+    // MARK: - ▶ 播放入口
     func startPlayback(text: String, title: String? = nil, language: String = "zh-CN") {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard text.contains(where: { !$0.isWhitespace }) else {
             handleError(Localized.errEmptyText)
             return
         }
 
-        synthesisGeneration += 1
-        resetSpeechSynthesizer()
-        
-        audioPlayer?.stop()
-        audioPlayer?.delegate = nil
-        audioPlayer = nil
-        stopDisplayLink()
-        cleanupAllChunkFiles()
-        invalidateSynthesisWatchdog()
+        teardownCurrentSession()
+        let generation = synthesisGeneration
+        nowPlayingTitle = (title?.isEmpty == false) ? title! : Localized.playingArticle
+        waitingForChunk = true
 
-        self.nowPlayingTitle = title?.isEmpty == false ? title! : Localized.playingArticle
+        // ★ 立即给 UI 反馈：面板马上出现并显示"合成中"
+        setIfChanged(\.isPlaybackActive, true)
+        setIfChanged(\.isSynthesizing, true)
+        setIfChanged(\.isPlaying, false)
+        progressState.reset()
+        AudioRemoteCommandRouter.shared.activate(self)
+        updateNowPlayingInfo()
 
-        if language.starts(with: "en") {
-            if let prefId = preferredVoiceIdentifiers["en"],
-            let v = AVSpeechSynthesisVoice(identifier: prefId) {
-                selectedVoice = v
-            } else {
-                selectedVoice = AVSpeechSynthesisVoice(language: "en-US")
-            }
-        } else {
-            selectedVoice = getBestVoice(for: text) ?? AVSpeechSynthesisVoice(language: "zh-CN")
-        }
-
-        Task {
-            let chunks = await Task.detached { [weak self = self] () -> [String] in
-                guard let self = self else { return [] }
-                let processedText = self.preprocessText(text, language: language)
-                return self.splitIntoChunks(processedText)
+        let prefs = preferredVoiceIdentifiers
+        Task { @MainActor in
+            // 会话激活 与 文本预处理 并行
+            async let sessionReady: Void = AudioSessionController.activate()
+            let prepared = await Task.detached(priority: .userInitiated) { [self] in
+                self.prepareSpeechOffMain(text: text, language: language, preferredVoices: prefs)
             }.value
-            
-            guard !chunks.isEmpty else { return }
-            
-            self.textChunks = chunks
-            self.chunkFileURLs = Array(repeating: nil, count: self.textChunks.count)
-            self.chunkDurations = Array(repeating: 0.0, count: self.textChunks.count)
-            self.currentPlayingChunkIndex = 0
-            self.currentSynthesizingChunkIndex = 0
-            self.isAllSynthesized = false
-            self.waitingForChunk = false
-            self.isSynthesizing = true
-            self.isPlaybackActive = true
-            
-            do {
-                let session = AVAudioSession.sharedInstance()
-                try session.setCategory(.playback, mode: .spokenAudio)
-                try session.setActive(true, options: [])
-            } catch {
-                print("Session setup failed: \(error.localizedDescription)")
+            await sessionReady
+
+            // ★ 期间用户已停止 / 切换 → 丢弃（旧实现会"关掉后自己又响起来"）
+            guard self.synthesisGeneration == generation else { return }
+            guard !prepared.chunks.isEmpty else {
+                self.handleError(Localized.errEmptyText)
+                return
             }
-            self.refreshNowPlayingInfo(playbackRate: 0.0)
-            
+
+            self.sessionNeedsReactivation = false
+            if let id = prepared.voiceIdentifier, let v = AVSpeechSynthesisVoice(identifier: id) {
+                self.selectedVoice = v
+            } else {
+                self.selectedVoice = AVSpeechSynthesisVoice(language: prepared.fallbackLanguage)
+            }
+
+            self.chunkTexts = prepared.chunks
+            self.chunkCharCounts = prepared.charCounts
+            self.chunkStates = Array(repeating: .pending, count: prepared.chunks.count)
+            self.chunkDurations = Array(repeating: 0, count: prepared.chunks.count)
+            self.currentPlayingChunkIndex = 0
             self.synthesizeChunk(at: 0)
         }
     }
 
-    // MARK: - ▶ 合成单个块
+    // MARK: - 合成
+    nonisolated private static func makeBufferCallback(
+        writer: SpeechChunkWriter,
+        onEvent: @escaping @Sendable (SpeechChunkWriter.Event) -> Void
+    ) -> AVSpeechSynthesizer.BufferCallback {
+        return { buffer in
+            if let event = writer.consume(buffer) { onEvent(event) }
+        }
+    }
+
     private func synthesizeChunk(at index: Int) {
-        guard index < textChunks.count else {
-            isAllSynthesized = true
-            invalidateSynthesisWatchdog()
-            durationString = formatTime(totalEstimatedDuration)
+        guard index < chunkTexts.count else {
+            synthesizingIndex = nil
+            invalidateWatchdog()
             return
         }
 
-        currentSynthesizingChunkIndex = index
-        let chunkText = textChunks[index]
+        synthesizingIndex = index
         let generation = synthesisGeneration
+        let chunkText = chunkTexts[index]
 
         let utterance = AVSpeechUtterance(string: chunkText)
-        utterance.voice = selectedVoice
-        if selectedVoice == nil {
+        if let voice = selectedVoice {
+            utterance.voice = voice
+        } else {
             let hasChinese = chunkText.range(of: "\\p{Han}", options: .regularExpression) != nil
             utterance.voice = AVSpeechSynthesisVoice(language: hasChinese ? "zh-CN" : "en-US")
         }
-        
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.pitchMultiplier = 1.0
         utterance.postUtteranceDelay = 0.05
         utterance.preUtteranceDelay = 0.05
 
-        let tempDir = FileManager.default.temporaryDirectory
-        let fileName = "chunk_\(index)_\(UUID().uuidString).caf"
-        let fileURL = tempDir.appendingPathComponent(fileName)
-        currentChunkFileURL = fileURL
-        currentChunkAudioFile = nil
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chunk_\(index)_\(UUID().uuidString).caf")
+        let writer = SpeechChunkWriter(url: url)
+        currentWriter = writer
+        startWatchdogIfNeeded()
 
-        synthesisLastWriteAt = Date()
-        if index == 0 { startSynthesisWatchdog() }
-
-        speechSynthesizer.write(utterance) { [weak self] buffer in
-            Task { @MainActor in
-                guard let self = self else { return }
-                guard self.synthesisGeneration == generation else { return }
-
-                guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
-                    self.handleError(Localized.errPCMBuffer)
-                    return
-                }
-
-                self.synthesisLastWriteAt = Date()
-
-                if pcmBuffer.frameLength == 0 {
-                    self.onChunkSynthesisComplete(at: index, fileURL: fileURL)
-                } else {
-                    if self.currentChunkAudioFile == nil {
-                        do {
-                            self.currentChunkAudioFile = try AVAudioFile(forWriting: fileURL, settings: pcmBuffer.format.settings)
-                        } catch {
-                            self.handleError("\(Localized.errPlayerFailed): \(error)")
-                            return
-                        }
-                    }
-                    do {
-                        try self.currentChunkAudioFile?.write(from: pcmBuffer)
-                    } catch {
-                        self.handleError("\(Localized.unknownError): \(error)")
-                    }
-                }
+        let callback = Self.makeBufferCallback(writer: writer) { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.handleWriterEvent(event, index: index, generation: generation, writer: writer)
             }
         }
+        speechSynthesizer.write(utterance, toBufferCallback: callback)
     }
 
-    // MARK: - ▶ 单块合成完成回调
-    private func onChunkSynthesisComplete(at index: Int, fileURL: URL) {
-        currentChunkAudioFile = nil
-        chunkFileURLs[index] = fileURL
+    private func handleWriterEvent(_ event: SpeechChunkWriter.Event, index: Int,
+                                   generation: Int, writer: SpeechChunkWriter) {
+        guard generation == synthesisGeneration,
+              writer === currentWriter,
+              index < chunkStates.count else { return }
+        currentWriter = nil
 
-        if let tempPlayer = try? AVAudioPlayer(contentsOf: fileURL) {
-            chunkDurations[index] = tempPlayer.duration
-        }
+        switch event {
+        case .failed(let message):
+            if retryChunk(index) { return }
+            handleError(message)
 
-        durationString = formatTime(totalEstimatedDuration)
+        case .finished(let url, let duration, let hasAudio):
+            synthesisRetryCount = 0
+            if hasAudio {
+                chunkStates[index] = .ready(url)
+                chunkDurations[index] = duration
+            } else {
+                chunkStates[index] = .empty      // 空块直接跳过，不再整篇报错
+                chunkDurations[index] = 0
+                Self.removeFilesInBackground([url])
+            }
+            recomputeTotalDuration()
 
-        if index == currentPlayingChunkIndex && (!isPlaying || waitingForChunk) {
-            waitingForChunk = false
-            isSynthesizing = false
-            startPlayingCurrentChunk()
-        }
-
-        let nextIndex = index + 1
-        if nextIndex < textChunks.count {
-            synthesizeChunk(at: nextIndex)
-        } else {
-            isAllSynthesized = true
-            invalidateSynthesisWatchdog()
-            durationString = formatTime(totalEstimatedDuration)
+            if waitingForChunk && index == currentPlayingChunkIndex {
+                playChunk(at: index, startTime: 0, shouldPlay: true)
+            } else if audioPlayer != nil {
+                prepareNextPlayerIfPossible()
+                publishProgressNow()
+                updateNowPlayingInfo()
+            }
+            synthesizeChunk(at: index + 1)
         }
     }
 
-    // MARK: - ▶ 播放当前块
-    private func startPlayingCurrentChunk() {
-        guard currentPlayingChunkIndex < chunkFileURLs.count,
-              let url = chunkFileURLs[currentPlayingChunkIndex] else {
+    /// 合成失败 / 超时：自动重试一次
+    private func retryChunk(_ index: Int) -> Bool {
+        guard synthesisRetryCount < 1 else { return false }
+        synthesisRetryCount += 1
+        print("🔁 [TTS] 第 \(index) 块合成异常，重试一次")
+        currentWriter?.cancel()
+        if let w = currentWriter { Self.removeFilesInBackground([w.url]) }
+        currentWriter = nil
+        resetSpeechSynthesizer()
+        synthesizeChunk(at: index)
+        return true
+    }
+
+    private func startWatchdogIfNeeded() {
+        guard watchdogTimer == nil else { return }
+        let t = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.watchdogTick() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        watchdogTimer = t
+    }
+
+    private func watchdogTick() {
+        guard let index = synthesizingIndex, let w = currentWriter else {
+            invalidateWatchdog()
+            return
+        }
+        if Date().timeIntervalSince(w.lastActivity) > 15 {
+            if retryChunk(index) { return }
+            handleError(Localized.errSynthesisTimeout)
+        }
+    }
+
+    private func invalidateWatchdog() {
+        watchdogTimer?.invalidate()
+        watchdogTimer = nil
+    }
+
+    // MARK: - 播放
+    private func playChunk(at requestedIndex: Int, startTime: TimeInterval, shouldPlay: Bool) {
+        var index = requestedIndex
+        while index < chunkStates.count && isEmptyChunk(index) { index += 1 }
+        guard index < chunkStates.count else { finishNaturally(); return }
+
+        currentPlayingChunkIndex = index
+        elapsedBeforeCurrentChunk = chunkDurations.prefix(index).reduce(0, +)
+
+        guard case .ready(let url) = chunkStates[index] else {
+            // 该块尚未合成完 → 等待
+            audioPlayer?.delegate = nil
+            audioPlayer?.stop()
+            audioPlayer = nil
             waitingForChunk = true
-            isSynthesizing = true
+            stopProgressTimer()
+            setIfChanged(\.isPlaying, false)
+            setIfChanged(\.isSynthesizing, true)
             return
         }
 
-        do {
-            try setupAudioSession()
-            audioPlayer = try AVAudioPlayer(contentsOf: url)
-            audioPlayer?.delegate = self
-            audioPlayer?.enableRate = true
-            audioPlayer?.prepareToPlay()
-            applyPlaybackRate()
-            audioPlayer?.play()
-            isPlaying = true
-            isSynthesizing = false
-            startDisplayLink()
+        let player: AVAudioPlayer
+        if let p = preparedNext, p.index == index {
+            player = p.player                      // ★ 预热好的播放器 → 块间几乎无缝
+        } else {
+            do { player = try Self.makePlayer(url: url, rate: playbackRate) }
+            catch { handleError("\(Localized.errPlayerFailed): \(error)"); return }
+        }
+        preparedNext = nil
 
-            setupRemoteTransportControls()
-            enableRemoteCommandsForActivePlayback()
-            refreshNowPlayingInfo(playbackRate: 1.0)
-        } catch {
-            handleError("\(Localized.errPlayerFailed): \(error)")
+        if let old = audioPlayer, old !== player {
+            old.delegate = nil
+            old.stop()
+        }
+        audioPlayer = player
+        player.delegate = self
+        player.rate = playbackRate
+        player.currentTime = startTime > 0 ? min(startTime, max(0, player.duration - 0.05)) : 0
+
+        waitingForChunk = false
+        hasFinished = false
+
+        if shouldPlay {
+            if sessionNeedsReactivation {
+                AudioSessionController.activateSync()
+                sessionNeedsReactivation = false
+            }
+            player.play()
+            setIfChanged(\.isPlaying, true)
+            startProgressTimer()
+        } else {
+            setIfChanged(\.isPlaying, false)
+            stopProgressTimer()
+        }
+        setIfChanged(\.isSynthesizing, false)
+
+        AudioRemoteCommandRouter.shared.activate(self)
+        publishProgressNow()
+        updateNowPlayingInfo()
+        prepareNextPlayerIfPossible()
+    }
+
+    private func prepareNextPlayerIfPossible() {
+        guard !chunkStates.isEmpty else { return }
+        var next = currentPlayingChunkIndex + 1
+        while next < chunkStates.count && isEmptyChunk(next) { next += 1 }
+        guard next < chunkStates.count, case .ready(let url) = chunkStates[next] else { return }
+        if let p = preparedNext, p.index == next { return }
+        if let player = try? Self.makePlayer(url: url, rate: playbackRate) {
+            preparedNext = (next, player)
         }
     }
 
-    // MARK: - ▶ 用户语音偏好
-    func availableVoicesGrouped() -> [(language: String, voices: [AVSpeechSynthesisVoice])] {
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        guard player === audioPlayer else { return }
+        let next = currentPlayingChunkIndex + 1
+        if next < chunkStates.count {
+            playChunk(at: next, startTime: 0, shouldPlay: true)
+        } else {
+            finishNaturally()
+        }
+    }
+
+    // MARK: - 用户语音偏好
+    nonisolated static func groupVoices() -> [(language: String, voices: [AVSpeechSynthesisVoice])] {
         let voices = AVSpeechSynthesisVoice.speechVoices()
         let grouped = Dictionary(grouping: voices, by: { $0.language })
         return grouped.map { (lang, list) in
             let sorted = list.sorted { a, b in
-                if a.quality.rawValue != b.quality.rawValue {
-                    return a.quality.rawValue > b.quality.rawValue
-                }
+                if a.quality.rawValue != b.quality.rawValue { return a.quality.rawValue > b.quality.rawValue }
                 return a.name < b.name
             }
             return (lang, sorted)
         }
         .sorted { lhs, rhs in
-            let zhPriority: (String) -> Int = {
+            let priority: (String) -> Int = {
                 if $0.hasPrefix("zh") { return 0 }
                 if $0.hasPrefix("en") { return 1 }
                 return 2
             }
-            let pl = zhPriority(lhs.language), pr = zhPriority(rhs.language)
+            let pl = priority(lhs.language), pr = priority(rhs.language)
             if pl != pr { return pl < pr }
             return lhs.language < rhs.language
         }
+    }
+
+    func availableVoicesGrouped() -> [(language: String, voices: [AVSpeechSynthesisVoice])] {
+        Self.groupVoices()
     }
 
     func setPreferredVoice(_ voice: AVSpeechSynthesisVoice) {
@@ -577,286 +1010,132 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
         return preferredVoiceIdentifiers[langKey] == voice.identifier
     }
 
-    private func getBestVoice(for text: String) -> AVSpeechSynthesisVoice? {
-        let textForDetection = text.replacingOccurrences(of: "https?://[^\\s]+", with: "", options: .regularExpression)
-        let hasChineseChar = textForDetection.range(of: "\\p{Han}", options: .regularExpression) != nil
-
-        var finalLanguageCode = "zh-CN"
-        if hasChineseChar {
-            finalLanguageCode = "zh-CN"
-        } else {
-            let recognizer = NLLanguageRecognizer()
-            recognizer.processString(textForDetection)
-            if let detected = recognizer.dominantLanguage?.rawValue {
-                finalLanguageCode = detected
-            } else {
-                finalLanguageCode = Locale.current.language.languageCode?.identifier ?? "zh-CN"
-            }
-        }
-
-        let langKey = String(finalLanguageCode.prefix(2))
-        if let prefId = preferredVoiceIdentifiers[langKey],
-        let voice = AVSpeechSynthesisVoice(identifier: prefId) {
-            return voice
-        }
-
-        let voices = AVSpeechSynthesisVoice.speechVoices()
-        let matches = voices.filter { $0.language.starts(with: finalLanguageCode) }
-        if let v = matches.first(where: { $0.quality == .premium }) { return v }
-        if let v = matches.first(where: { $0.quality == .enhanced }) { return v }
-        if let v = matches.first { return v }
-        return AVSpeechSynthesisVoice(language: finalLanguageCode)
+    // MARK: - 播放控制
+    func playPause() {
+        if isPlaying { pausePlayback() } else { resumePlayback() }
     }
 
-    func playPause() {
-        guard let player = audioPlayer else { return }
-        if player.isPlaying {
-            player.pause()
-            isPlaying = false
-            stopDisplayLink()
-            refreshNowPlayingInfo(playbackRate: 0.0)
-        } else {
-            do {
-                try setupAudioSession()
-                player.play()
-                applyPlaybackRate()
-                isPlaying = true
-                startDisplayLink()
-                setupRemoteTransportControls()
-                enableRemoteCommandsForActivePlayback()
-                refreshNowPlayingInfo(playbackRate: 1.0)
-            } catch {
-                handleError("\(Localized.errPlayerFailed): \(error)")
-            }
+    private func pausePlayback() {
+        audioPlayer?.pause()
+        setIfChanged(\.isPlaying, false)
+        stopProgressTimer()
+        publishProgressNow()
+        updateNowPlayingInfo()
+    }
+
+    private func resumePlayback() {
+        if hasFinished {                       // 单篇模式播完后再点播放 → 从头重播
+            playChunk(at: 0, startTime: 0, shouldPlay: true)
+            return
         }
+        guard let player = audioPlayer else { return }
+        if sessionNeedsReactivation {
+            AudioSessionController.activateSync()
+            sessionNeedsReactivation = false
+        }
+        player.rate = playbackRate
+        player.play()
+        setIfChanged(\.isPlaying, true)
+        startProgressTimer()
+        AudioRemoteCommandRouter.shared.activate(self)
+        updateNowPlayingInfo()
     }
 
     func stop() {
-        synthesisGeneration += 1
-        resetSpeechSynthesizer()
-        
-        audioPlayer?.stop()
+        // ★ 空闲时直接返回（旧实现每次"下一篇 / 返回列表"都会重建合成器 + 同步释放会话 → 卡顿）
+        let hasWork = isPlaybackActive || isPlaying || isSynthesizing
+            || audioPlayer != nil || !chunkStates.isEmpty || currentWriter != nil
+        guard hasWork else { return }
 
-        isPlaying = false
-        isPlaybackActive = false
-        isSynthesizing = false
-        waitingForChunk = false
-        isAllSynthesized = false
-
-        progress = 0.0
-        currentTimeString = "00:00"
-        durationString = "00:00"
+        teardownCurrentSession()
+        setIfChanged(\.isPlaying, false)
+        setIfChanged(\.isSynthesizing, false)
+        setIfChanged(\.isPlaybackActive, false)
+        progressState.reset()
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-
-        let commandCenter = MPRemoteCommandCenter.shared()
-        commandCenter.playCommand.isEnabled = false
-        commandCenter.pauseCommand.isEnabled = false
-        commandCenter.stopCommand.isEnabled = false
-        teardownRemoteTransportControls()
-
-        stopDisplayLink()
-        cleanupAllChunkFiles()
-        deactivateAudioSession()
-        invalidateSynthesisWatchdog()
-
-        audioPlayer?.delegate = nil
-        audioPlayer = nil
-        
-        textChunks = []
-        chunkFileURLs = []
-        chunkDurations = []
-        currentPlayingChunkIndex = 0
-        currentSynthesizingChunkIndex = 0
+        AudioRemoteCommandRouter.shared.deactivate(self)
+        AudioSessionController.deactivate()
+        sessionNeedsReactivation = true
+        resumeAfterInterruption = false
     }
 
     private func finishNaturally() {
         audioPlayer?.stop()
-        isPlaying = false
-        isSynthesizing = false
-        stopDisplayLink()
+        stopProgressTimer()
+        hasFinished = true
+        waitingForChunk = false
+        setIfChanged(\.isPlaying, false)
+        setIfChanged(\.isSynthesizing, false)
 
-        progress = 1.0
-        currentTimeString = formatTime(totalEstimatedDuration)
-        refreshNowPlayingInfo(playbackRate: 0.0)
-        enableRemoteCommandsForActivePlayback()
+        let total = totalDuration
+        progressState.update(progress: 1, currentSeconds: total, totalSeconds: total)
+        updateNowPlayingInfo(elapsedOverride: total)
 
-        if isAutoPlayEnabled {
+        if isAutoPlayEnabled {          // ★ 连续播放：自动下一篇
             onNextRequested?()
         }
         onPlaybackFinished?()
     }
 
-    private func seekToTime(_ targetTime: TimeInterval) {
-        let totalDur = totalEstimatedDuration
-        guard totalDur > 0 else { return }
-
-        var cumulative: TimeInterval = 0
-        var targetChunk = 0
-        var timeWithinChunk: TimeInterval = 0
-
-        for i in 0..<chunkDurations.count {
-            let dur = chunkDurations[i]
-            if dur <= 0 { break }
-            if cumulative + dur > targetTime {
-                targetChunk = i
-                timeWithinChunk = targetTime - cumulative
-                break
-            }
-            cumulative += dur
-            if i == chunkDurations.count - 1 {
-                targetChunk = i
-                timeWithinChunk = min(dur, targetTime - cumulative + dur)
-            }
-        }
-
-        guard chunkFileURLs[targetChunk] != nil else { return }
-
-        if targetChunk == currentPlayingChunkIndex {
-            audioPlayer?.currentTime = timeWithinChunk
-            updateProgress()
-        } else {
-            audioPlayer?.stop()
-            stopDisplayLink()
-            currentPlayingChunkIndex = targetChunk
-            startPlayingCurrentChunk()
-            audioPlayer?.currentTime = timeWithinChunk
-            updateProgress()
-        }
-    }
-
+    // MARK: - Seek
     func seek(to value: Double) {
-        let totalDur = totalEstimatedDuration
-        guard totalDur > 0 else { return }
-        let targetTime = totalDur * value
-        seekToTime(targetTime)
+        guard totalDuration > 0 else { return }
+        seekToTime(totalDuration * min(max(value, 0), 1))
     }
 
     func seekBy(seconds: TimeInterval) {
-        guard let player = audioPlayer else { return }
-        let totalDur = totalEstimatedDuration
-        guard totalDur > 0 else { return }
-
-        let currentOverallTime = elapsedTimeBeforeCurrentChunk + player.currentTime
-        let targetTime = max(0, min(totalDur, currentOverallTime + seconds))
-        seekToTime(targetTime)
+        guard let player = audioPlayer, totalDuration > 0 else { return }
+        let current = elapsedBeforeCurrentChunk + player.currentTime
+        seekToTime(max(0, min(totalDuration, current + seconds)))
     }
 
-    private func cleanupAllChunkFiles() {
-        currentChunkAudioFile = nil
-        for url in chunkFileURLs {
-            if let url = url {
-                try? FileManager.default.removeItem(at: url)
-            }
-        }
-        chunkFileURLs = []
-        if let url = currentChunkFileURL {
-            try? FileManager.default.removeItem(at: url)
-            currentChunkFileURL = nil
-        }
-    }
-
-    private func startSynthesisWatchdog(timeout: TimeInterval = 15) {
-        invalidateSynthesisWatchdog()
-        synthesisWatchdogTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                guard self.isSynthesizing || self.currentSynthesizingChunkIndex < self.textChunks.count else {
-                    self.invalidateSynthesisWatchdog()
+    /// ★ 修复：目标位置落在"尚未合成"的区域时，停在已合成部分的末尾（旧实现会跳回开头）
+    private func seekToTime(_ target: TimeInterval) {
+        guard !chunkStates.isEmpty else { return }
+        var cumulative: TimeInterval = 0
+        var lastReady: Int?
+        var i = 0
+        scan: while i < chunkStates.count {
+            switch chunkStates[i] {
+            case .pending:
+                break scan
+            case .empty:
+                break
+            case .ready:
+                let d = chunkDurations[i]
+                if target < cumulative + d {
+                    jump(to: i, time: max(0, target - cumulative))
                     return
                 }
-                guard let last = self.synthesisLastWriteAt else { return }
-                let elapsed = Date().timeIntervalSince(last)
-                if elapsed > timeout {
-                    self.handleError(Localized.errSynthesisTimeout)
-                }
+                cumulative += d
+                lastReady = i
             }
+            i += 1
         }
-        RunLoop.main.add(synthesisWatchdogTimer!, forMode: .common)
+        if let last = lastReady {
+            jump(to: last, time: max(0, chunkDurations[last] - 0.25))
+        }
     }
 
-    private func invalidateSynthesisWatchdog() {
-        synthesisWatchdogTimer?.invalidate()
-        synthesisWatchdogTimer = nil
-        synthesisLastWriteAt = nil
-    }
-
-    private func enableRemoteCommandsForActivePlayback() {
-        let commandCenter = MPRemoteCommandCenter.shared()
-        commandCenter.playCommand.isEnabled = true
-        commandCenter.pauseCommand.isEnabled = true
-        commandCenter.stopCommand.isEnabled = true
-        commandCenter.nextTrackCommand.isEnabled = true
-        commandCenter.skipForwardCommand.isEnabled = false
-        commandCenter.skipBackwardCommand.isEnabled = true
-    }
-
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        currentPlayingChunkIndex += 1
-
-        if currentPlayingChunkIndex < textChunks.count {
-            if chunkFileURLs.indices.contains(currentPlayingChunkIndex),
-               chunkFileURLs[currentPlayingChunkIndex] != nil {
-                startPlayingCurrentChunk()
-            } else {
-                waitingForChunk = true
-                isSynthesizing = true
-                isPlaying = false
-                stopDisplayLink()
-            }
+    private func jump(to index: Int, time: TimeInterval) {
+        if index == currentPlayingChunkIndex, let player = audioPlayer, !hasFinished {
+            player.currentTime = time
+            publishProgressNow()
+            updateNowPlayingInfo()
         } else {
-            finishNaturally()
-        }
-    }
-
-    private func startDisplayLink() {
-        stopDisplayLink()
-        displayLink = CADisplayLink(target: self, selector: #selector(updateProgress))
-        displayLink?.add(to: .current, forMode: .common)
-    }
-
-    private func stopDisplayLink() {
-        displayLink?.invalidate()
-        displayLink = nil
-    }
-
-    @objc private func updateProgress() {
-        guard let player = audioPlayer, player.duration > 0 else { return }
-        let totalDur = totalEstimatedDuration
-        guard totalDur > 0 else { return }
-
-        let overallTime = elapsedTimeBeforeCurrentChunk + player.currentTime
-        progress = min(overallTime / totalDur, 1.0)
-        currentTimeString = formatTime(overallTime)
-        durationString = formatTime(totalDur)
-        refreshNowPlayingInfo()
-    }
-
-    private func setupAudioSession() throws {
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playback, mode: .spokenAudio)
-        try session.setActive(true)
-    }
-
-    private func deactivateAudioSession() {
-        do {
-            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        } catch {
-            print("释放音频会话失败: \(error)")
+            playChunk(at: index, startTime: time, shouldPlay: isPlaying || waitingForChunk)
         }
     }
 
     private func handleError(_ message: String) {
         print("错误: \(message)")
-        self.stop()
+        stop()
     }
 
-    private func formatTime(_ time: TimeInterval) -> String {
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        return String(format: "%02d:%02d", minutes, seconds)
-    }
-
+    // ========================================================================
+    // MARK: - 文本预处理（原样保留，均为 nonisolated，在后台线程执行）
+    // ========================================================================
     nonisolated private func removeCommasFromNumbers(_ text: String) -> String {
         let pattern = #"(\d),(\d{3})"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
@@ -1398,15 +1677,55 @@ class AudioPlayerManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegat
     }
 }
 
-// MARK: - AudioPlayerView
+// ============================================================================
+// MARK: - 进度行（唯一高频重绘的视图）
+// ============================================================================
+private struct AudioProgressRow: View {
+    @ObservedObject var state: AudioProgressState
+    let onSeek: (Double) -> Void
+
+    @State private var sliderValue: Double = 0
+    @State private var isEditing = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            // 拖动时实时显示目标时间
+            Text(isEditing
+                 ? AudioProgressState.format(Int(sliderValue * state.totalSeconds))
+                 : state.currentTimeString)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+
+            Slider(value: $sliderValue, in: 0...1, onEditingChanged: { editing in
+                isEditing = editing
+                if !editing { onSeek(sliderValue) }
+            })
+            .tint(.white)
+
+            Text(state.durationString)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+        }
+        .onAppear { sliderValue = state.progress }
+        .onChange(of: state.progress) { _, newValue in
+            if !isEditing { sliderValue = newValue }
+        }
+    }
+}
+
+// ============================================================================
+// MARK: - AudioPlayerView（只观察低频状态）
+// ============================================================================
 struct AudioPlayerView: View {
     @ObservedObject var playerManager: AudioPlayerManager
-    @State private var sliderValue: Double = 0.0
-    @State private var isEditingSlider = false
     @State private var showVoicePicker = false
+    @State private var modeHint: String?
+    @State private var hintTask: Task<Void, Never>?
     private let rates: [Float] = [1.0, 1.25, 1.5, 1.75, 2.0]
     var playNextAndStart: (() -> Void)?
     var toggleCollapse: (() -> Void)?
+
+    private var controlsDisabled: Bool {
+        !playerManager.isPlaybackActive || playerManager.isSynthesizing
+    }
 
     private var playPauseIconName: String {
         playerManager.isPlaying ? "pause.circle.fill" : "play.circle.fill"
@@ -1414,34 +1733,30 @@ struct AudioPlayerView: View {
 
     private func nextRate(from current: Float) -> Float {
         if let idx = rates.firstIndex(of: current) {
-            let next = (idx + 1) % rates.count
-            return rates[next]
+            return rates[(idx + 1) % rates.count]
         }
         return 1.0
     }
 
-    private var rateLabel: String {
-        String(format: "%.2fx", playerManager.playbackRate)
-            .replacingOccurrences(of: ".00", with: "")
+    private var rateLabel: String { AudioPlayerManager.rateText(playerManager.playbackRate) }
+
+    private func toggleAutoPlay() {
+        playerManager.isAutoPlayEnabled.toggle()
+        ONewsHaptics.selection()
+        let text = playerManager.isAutoPlayEnabled ? Localized.autoPlay : Localized.singlePlay
+        hintTask?.cancel()
+        withAnimation(.easeOut(duration: 0.15)) { modeHint = text }
+        hintTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_300_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.2)) { modeHint = nil }
+        }
     }
 
     var body: some View {
         VStack(spacing: 12) {
-            HStack(spacing: 10) {
-                Text(playerManager.currentTimeString)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-
-                Slider(value: $sliderValue, in: 0...1, onEditingChanged: { editing in
-                    self.isEditingSlider = editing
-                    if !editing {
-                        playerManager.seek(to: sliderValue)
-                    }
-                })
-                .tint(.white)
-
-                Text(playerManager.durationString)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-            }
+            AudioProgressRow(state: playerManager.progressState,
+                             onSeek: { playerManager.seek(to: $0) })
 
             if playerManager.isSynthesizing {
                 HStack(spacing: 10) {
@@ -1450,37 +1765,40 @@ struct AudioPlayerView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
+                .frame(height: 66)
             } else {
                 HStack(spacing: 40) {
                     Button(action: { playerManager.seekBy(seconds: -15) }) {
                         Image(systemName: "gobackward.15")
                             .font(.system(size: 32, weight: .regular))
                     }
-                    .disabled(!playerManager.isPlaybackActive || playerManager.isSynthesizing)
-                    .opacity(!playerManager.isPlaybackActive || playerManager.isSynthesizing ? 0.6 : 1.0)
+                    .disabled(controlsDisabled)
+                    .opacity(controlsDisabled ? 0.6 : 1.0)
 
                     Button(action: { playerManager.playPause() }) {
                         Image(systemName: playPauseIconName)
                             .font(.system(size: 52, weight: .regular))
+                            .contentTransition(.symbolEffect(.replace))
                     }
-                    .disabled(playerManager.isSynthesizing || !playerManager.isPlaybackActive)
-                    .opacity(playerManager.isSynthesizing || !playerManager.isPlaybackActive ? 0.6 : 1.0)
+                    .disabled(controlsDisabled)
+                    .opacity(controlsDisabled ? 0.6 : 1.0)
 
                     Button(action: { playerManager.seekBy(seconds: 15) }) {
                         Image(systemName: "goforward.15")
                             .font(.system(size: 32, weight: .regular))
                     }
-                    .disabled(!playerManager.isPlaybackActive || playerManager.isSynthesizing)
-                    .opacity(!playerManager.isPlaybackActive || playerManager.isSynthesizing ? 0.6 : 1.0)
+                    .disabled(controlsDisabled)
+                    .opacity(controlsDisabled ? 0.6 : 1.0)
                 }
                 .frame(height: 66)
 
                 HStack {
                     HStack {
-                        Button(action: {
-                            playerManager.isAutoPlayEnabled.toggle()
-                        }) {
-                            Image(systemName: playerManager.isAutoPlayEnabled ? "repeat.circle.fill" : "repeat.1.circle.fill")
+                        Button(action: toggleAutoPlay) {
+                            // 连续播放 = repeat；单篇 = 播到头就停（不再用会被误解为"单曲循环"的 repeat.1）
+                            Image(systemName: playerManager.isAutoPlayEnabled
+                                  ? "repeat.circle.fill"
+                                  : "arrow.right.to.line.circle.fill")
                                 .font(.system(size: 30, weight: .semibold))
                                 .symbolRenderingMode(.hierarchical)
                                 .foregroundColor(playerManager.isAutoPlayEnabled ? .white : .white.opacity(0.45))
@@ -1505,11 +1823,11 @@ struct AudioPlayerView: View {
                     HStack {
                         Spacer(minLength: 0)
                         Button(action: {
-                            let newRate = nextRate(from: playerManager.playbackRate)
-                            playerManager.playbackRate = newRate
+                            playerManager.playbackRate = nextRate(from: playerManager.playbackRate)
                         }) {
                             Text(rateLabel)
                                 .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                .monospacedDigit()
                                 .foregroundColor(.white)
                                 .padding(.vertical, 6)
                                 .padding(.horizontal, 10)
@@ -1523,15 +1841,13 @@ struct AudioPlayerView: View {
 
                     HStack {
                         Spacer(minLength: 0)
-                        Button(action: {
-                            playNextAndStart?()
-                        }) {
+                        Button(action: { playNextAndStart?() }) {
                             Image(systemName: "forward.end.fill")
                                 .font(.system(size: 21, weight: .semibold))
                                 .symbolRenderingMode(.hierarchical)
                         }
-                        .disabled(!playerManager.isPlaybackActive || playerManager.isSynthesizing)
-                        .opacity((!playerManager.isPlaybackActive || playerManager.isSynthesizing) ? 0.6 : 1.0)
+                        .disabled(controlsDisabled)
+                        .opacity(controlsDisabled ? 0.6 : 1.0)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -1541,6 +1857,17 @@ struct AudioPlayerView: View {
         .padding(EdgeInsets(top: 28, leading: 16, bottom: 10, trailing: 16))
         .background(.black.opacity(0.8))
         .cornerRadius(18)
+        .overlay(alignment: .top) {
+            if let hint = modeHint {
+                Text(hint)
+                    .font(.caption.weight(.bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Capsule().fill(Color.white.opacity(0.2)))
+                    .padding(.top, 6)
+                    .transition(.opacity)
+            }
+        }
         .overlay(
             Button(action: { toggleCollapse?() }) {
                 Image(systemName: "minus")
@@ -1568,49 +1895,38 @@ struct AudioPlayerView: View {
         )
         .offset(y: -18)
         .padding(.horizontal, 12)
-        // ✅ 修复：iOS 17+ 双参 onChange
-        .onChange(of: playerManager.progress) { _, newValue in
-            if !isEditingSlider { self.sliderValue = newValue }
-        }
-        .safeAreaInset(edge: .bottom) {
-            Color.clear.frame(height: 0)
-        }
         .sheet(isPresented: $showVoicePicker) {
             VoicePickerView(playerManager: playerManager)
         }
+        .onDisappear { hintTask?.cancel() }
     }
 }
 
+// ============================================================================
+// MARK: - 迷你耳机气泡（系统 symbolEffect，替代手写 repeatForever 动画）
+// ============================================================================
 struct MiniAudioBubbleView: View {
     let isPlaybackActive: Bool
     let onTap: () -> Void
-    @State private var isPulsing = false
 
     var body: some View {
-        VStack {
-            Spacer()
-            Button(action: onTap) {
-                Image(systemName: isPlaybackActive ? "headphones.circle" : "headphones.circle.fill")
-                    .font(.system(size: 40))
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
-                    .scaleEffect(isPulsing && isPlaybackActive ? 1.1 : 1.0)
-                    .animation(
-                        isPlaybackActive ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default,
-                        value: isPulsing
-                    )
-            }
-            .padding(.leading, 16)
-            .padding(.bottom, 16)
-            .onAppear {
-                self.isPulsing = true
-            }
+        Button(action: onTap) {
+            Image(systemName: isPlaybackActive ? "headphones.circle" : "headphones.circle.fill")
+                .font(.system(size: 40))
+                .foregroundColor(.white)
+                .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
+                .symbolEffect(.pulse, options: .repeating, isActive: isPlaybackActive)
+                .contentShape(Circle())
         }
+        .padding(.leading, 16)
+        .padding(.bottom, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        .allowsHitTesting(true)
     }
 }
 
+// ============================================================================
+// MARK: - 声音选择
+// ============================================================================
 struct VoicePickerView: View {
     @ObservedObject var playerManager: AudioPlayerManager
     @Environment(\.dismiss) private var dismiss
@@ -1619,43 +1935,49 @@ struct VoicePickerView: View {
 
     var body: some View {
         NavigationView {
-            List {
-                ForEach(groups, id: \.language) { group in
-                    Section(header: Text(sectionTitle(for: group.language))) {
-                        ForEach(group.voices, id: \.identifier) { voice in
-                            Button(action: {
-                                playerManager.setPreferredVoice(voice)
-                                preview(voice)
-                            }) {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        HStack(spacing: 6) {
-                                            Text(voice.name)
-                                                .font(.body)
-                                                .foregroundColor(.primary)
-                                            if let gender = genderLabel(voice) {
-                                                Text(gender)
-                                                    .font(.caption2)
-                                                    .padding(.horizontal, 6)
-                                                    .padding(.vertical, 1)
-                                                    .background(Color.secondary.opacity(0.15))
-                                                    .clipShape(Capsule())
+            Group {
+                if groups.isEmpty {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List {
+                        ForEach(groups, id: \.language) { group in
+                            Section(header: Text(sectionTitle(for: group.language))) {
+                                ForEach(group.voices, id: \.identifier) { voice in
+                                    Button(action: {
+                                        playerManager.setPreferredVoice(voice)
+                                        preview(voice)
+                                    }) {
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                HStack(spacing: 6) {
+                                                    Text(voice.name)
+                                                        .font(.body)
+                                                        .foregroundColor(.primary)
+                                                    if let gender = genderLabel(voice) {
+                                                        Text(gender)
+                                                            .font(.caption2)
+                                                            .padding(.horizontal, 6)
+                                                            .padding(.vertical, 1)
+                                                            .background(Color.secondary.opacity(0.15))
+                                                            .clipShape(Capsule())
+                                                    }
+                                                }
+                                                Text("\(voice.language) · \(qualityLabel(voice.quality))")
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            Spacer()
+                                            if playerManager.isPreferredVoice(voice) {
+                                                Image(systemName: "checkmark")
+                                                    .foregroundColor(.accentColor)
+                                                    .fontWeight(.semibold)
                                             }
                                         }
-                                        Text("\(voice.language) · \(qualityLabel(voice.quality))")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
+                                        .contentShape(Rectangle())
                                     }
-                                    Spacer()
-                                    if playerManager.isPreferredVoice(voice) {
-                                        Image(systemName: "checkmark")
-                                            .foregroundColor(.accentColor)
-                                            .fontWeight(.semibold)
-                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -1666,8 +1988,9 @@ struct VoicePickerView: View {
                     Button("完成") { dismiss() }
                 }
             }
-            .onAppear {
-                groups = playerManager.availableVoicesGrouped()
+            // 先让 sheet 弹出动画跑完，再加载列表
+            .task {
+                if groups.isEmpty { groups = playerManager.availableVoicesGrouped() }
             }
             .onDisappear {
                 previewSynth.stopSpeaking(at: .immediate)
@@ -1683,7 +2006,7 @@ struct VoicePickerView: View {
         } else if voice.language.hasPrefix("en") {
             sample = "Hello, this is a voice preview."
         } else if voice.language.hasPrefix("ja") {
-            sample = "こんにちは、这是音声のプレビューです。"
+            sample = "こんにちは、これは音声のプレビューです。"
         } else {
             sample = "Hello."
         }

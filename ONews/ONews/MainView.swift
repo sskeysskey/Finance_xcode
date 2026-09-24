@@ -733,7 +733,11 @@ class NewsViewModel: ObservableObject {
     }
 
     var totalUnreadCount: Int {
-        sources.flatMap { $0.articles }.filter { !isArticleEffectivelyRead($0) }.count
+        var n = 0
+        for s in sources {
+            for a in s.articles where !isArticleEffectivelyRead(a) { n += 1 }
+        }
+        return n
     }
 
     // MARK: - 下一篇（★不再每次全量排序）

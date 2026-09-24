@@ -716,284 +716,213 @@ struct UserStatusToolbarItem: View {
 }
 
 // MARK: - Main Source List View
+// ============================================================================
+// ★ 性能重构：
+//   旧实现里 SourceListView 既是 NavigationStack 宿主，又观察 ResourceManager（图片下载时高频变化），
+//   导致你在详情页阅读 / 听音频时，整个导航根（含详情页、列表页）被反复重算。
+//   现在拆成：
+//     SourceListView  —— 薄壳：只把引用往下传（Equatable 截断重算）
+//     SourceListRoot  —— NavigationStack + 导航目的地：不观察任何高频对象
+//     SourceHomeView  —— 首页本体：只观察 NewsViewModel
+//     若干小 Host     —— 横幅 / 刷新按钮 / HUD / 视频卡 / 更新时间，各自局部观察 ResourceManager
+// ============================================================================
 struct SourceListView: View {
-    @EnvironmentObject var viewModel: NewsViewModel
-    @EnvironmentObject var resourceManager: ResourceManager
-    // 【新增】获取认证管理器
-    @EnvironmentObject var authManager: AuthManager
-    // 【新增】Prediction 管理器
-    @EnvironmentObject var predictionSyncManager: PredictionSyncManager
-    @EnvironmentObject var prefManager: PreferenceManager
-    @EnvironmentObject var transManager: TranslationManager
-    
-    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    @AppStorage("hasCompletedPredictionOnboarding") private var hasCompletedPredictionOnboarding = false
-    
-    @State private var showErrorAlert = false
-    @State private var errorMessage = ""
+    @EnvironmentObject private var viewModel: NewsViewModel
+    @EnvironmentObject private var resourceManager: ResourceManager
 
-    // 【新增】全局导航路径
-    @State private var navPath = NavigationPath()
-
-    // 【新增】导航深度追踪，用于"返回时静默刷新"
-    @State private var lastNavDepth = 0
-    @State private var didInitialSync = false
-    
-    @State private var showAddSourceSheet = false
-    
-    // 【新增】控制已登录用户的个人中心
-    @State private var showProfileSheet = false
-    
-    @State private var isSearching: Bool = false
-    @State private var searchText: String = ""
-    @State private var isSearchActive: Bool = false
-    
-    // 【修改】移除 selectedArticleItem 和 isNavigationActive，不再需要它们了
-    @State private var isDownloadingImages = false
-    @State private var downloadProgress: Double = 0.0
-    @State private var downloadProgressText = ""
-    @ObservedObject private var newsQuota = NewsQuotaManager.shared
-    // 【新增】用于承接横幅「回复」等处调用 SupportChatManager.openChat(type:) 时的弹窗
-    @ObservedObject private var supportManager = SupportChatManager.shared
-    
-    private var searchResults: [(article: Article, sourceName: String, sourceNameEN: String, isContentMatch: Bool)] {
-        guard isSearchActive, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return []
-        }
-        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        
-        // 这里的 compactMap 签名也对应更新
-        return viewModel.allArticlesSortedForDisplay.compactMap { item -> (Article, String, String, Bool)? in
-            if item.article.topic.lowercased().contains(keyword) {
-                // item 现在包含 (article, sourceName, sourceNameEN)
-                return (item.article, item.sourceName, item.sourceNameEN, false)
-            }
-            if item.article.article.lowercased().contains(keyword) {
-                return (item.article, item.sourceName, item.sourceNameEN, true)
-            }
-            return nil
-        }
-    }
-
-    // 【修改】更新分组逻辑以适应新的元组结构
-    private func groupedSearchByTimestamp() -> [String: [(article: Article, sourceName: String, sourceNameEN: String, isContentMatch: Bool)]] {
-        var initial = Dictionary(grouping: searchResults, by: { $0.article.timestamp })
-        initial = initial.mapValues { Array($0.reversed()) }
-        return initial
-    }
-
-    // 【修改】类型增加 sourceNameEN
-    private func sortedSearchTimestamps(for groups: [String: [(article: Article, sourceName: String, sourceNameEN: String, isContentMatch: Bool)]]) -> [String] {
-        return groups.keys.sorted(by: >)
-    }
-    
     var body: some View {
-        // 【修改】绑定全局导航路径
+        SourceListRoot(viewModel: viewModel, resourceManager: resourceManager)
+            .equatable()
+    }
+}
+
+private struct SourceListRoot: View, Equatable {
+    let viewModel: NewsViewModel
+    let resourceManager: ResourceManager
+
+    @State private var navPath = NavigationPath()
+    @State private var lastNavDepth = 0
+
+    static func == (l: SourceListRoot, r: SourceListRoot) -> Bool {
+        l.viewModel === r.viewModel && l.resourceManager === r.resourceManager
+    }
+
+    var body: some View {
         NavigationStack(path: $navPath) {
-            VStack(spacing: 0) {
-                // 1. 搜索栏
-                if isSearching {
-                    SearchBarInline(
-                        text: $searchText,
-                        placeholder: Localized.searchPlaceholder,
-                        onCommit: {
-                            isSearchActive = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        },
-                        onCancel: {
-                            withAnimation {
-                                isSearching = false
-                                isSearchActive = false
-                                searchText = ""
-                            }
-                        }
-                    )
-                    .padding(.bottom, 8)
-                    .background(Color.viewBackground)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+            SourceHomeView(viewModel: viewModel, resourceManager: resourceManager)
+                .navigationDestination(for: NavigationTarget.self) { target in
+                    destination(for: target)
                 }
-                
-                // 【新增】2. 通知条 (插入在这里)
-                // 只有当有内容时才显示
-                if let message = resourceManager.activeNotification {
-                    NotificationBannerView(message: message) {
-                        resourceManager.dismissNotification()
-                    }
-                }
-
-                // 【新增】2.5 寻片回复横幅（与系统通知并存，互不影响）
-                WishReplyBanner(userId: authManager.userIdentifier)
-
-                // 【新增】2.6 举报回复横幅
-                ReportReplyBanner(userId: authManager.userIdentifier)
-                
-                // 3. 主内容区
-                if isSearchActive {
-                    searchResultsView
-                } else {
-                    sourceAndAllArticlesView
-                }
-            }
-            // 【新增】在线客服悬浮按钮（仅首页显示，可长按拖动）
-            // 后续如需在新闻首页恢复悬浮球，直接取消下面这行注释即可。
-            .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
-            // 【修改】使用系统背景色
-            .background(Color.viewBackground.ignoresSafeArea())
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                // 【修改】将用户状态按钮更新为新的逻辑
-                ToolbarItem(placement: .navigationBarLeading) {
-                    UserStatusToolbarItem(showProfileSheet: $showProfileSheet)
-                }
-
-                // ③ toolbar principal：未登录但已匿名订阅时不需要点数胶囊，改成
-                ToolbarItem(placement: .principal) {
-                    if authManager.isLoggedIn && !authManager.isSubscribed { NewsPointsPill() }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack(spacing: 16) {
-                        // ✅ 【新增】中英切换按钮 (放在最左边，作为第一个元素)
-                        Button(action: {
-                            withAnimation(.spring()) {
-                                isGlobalEnglishMode.toggle()
-                            }
-                        }) {
-                            ZStack {
-                                Circle()
-                                    .strokeBorder(Color.primary, lineWidth: 1.5)
-                                    // 【修改】逻辑反转：!isGlobalEnglishMode (即中文模式) 时实心
-                                    .background(!isGlobalEnglishMode ? Color.primary : Color.clear)
-                                    .clipShape(Circle())
-                                
-                                // 【修改】逻辑反转：中文模式下显示“中”，英文模式下显示“英”
-                                Text(isGlobalEnglishMode ? "中" : "英")
-                                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                                    // 【修改】逻辑反转：!isGlobalEnglishMode (即中文模式) 时文字反色
-                                    .foregroundColor(!isGlobalEnglishMode ? Color.viewBackground : Color.primary)
-                            }
-                            .frame(width: 24, height: 24)
-                        }
-                        
-                        Button {
-                            withAnimation {
-                                isSearching.toggle()
-                                if !isSearching { isSearchActive = false; searchText = "" }
-                            }
-                        } label: {
-                            Image(systemName: isSearching ? "xmark.circle.fill" : "magnifyingglass")
-                                .font(.system(size: 16, weight: .medium))
-                        }
-                        
-                        Button { showAddSourceSheet = true } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 18, weight: .medium))
-                        }
-                        
-                        Button {
-                            // 【核心修改】点击刷新时，同时同步资源和用户状态
-                            Task { 
-                                await syncResources(isManual: true) 
-                                await authManager.checkServerSubscriptionStatus()
-                                let uid = FreeQuotaManager.currentUserId(auth: authManager)
-                                await FreeQuotaManager.shared.refresh(userId: uid)
-                                await NewsQuotaManager.shared.refresh(userId: uid)
-                            }
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 16, weight: .medium))
-                        }
-                        .disabled(resourceManager.isSyncing)
-                    }
-                    .foregroundColor(.primary)
-                }
-            }
-            // 【修改】统一在这里处理所有的导航目标
-            .navigationDestination(for: NavigationTarget.self) { target in
-                switch target {
-                case .allArticles:
-                    AllArticlesListView(viewModel: viewModel, resourceManager: resourceManager)
-                case .source(let sourceName):
-                    ArticleListView(sourceName: sourceName, viewModel: viewModel, resourceManager: resourceManager)
-                case .articleDetail(let article, let sourceName, let contextStr, let autoPlay):
-                    ArticleContainerView(
-                        article: article,
-                        sourceName: sourceName,
-                        context: contextStr == "all" ? .fromAllArticles : .fromSource(sourceName),
-                        viewModel: viewModel,
-                        resourceManager: resourceManager,
-                        autoPlayOnAppear: autoPlay
-                    )
-                // 【修改】Prediction 入口，接收参数并传递给 EntryView
-                case .predictionEntry(let source):
-                    PredictionEntryView(initialSource: source)
-                case .videoModule:
-                    VideoModuleView(showBackButton: true)
-                case .videoSearch: // 【新增】
-                    VideoSearchDestinationView()
-                }
-            }
         }
-        // 【新增】将导航路径注入环境，供子视图使用
         .environment(\.appNavPath, $navPath)
         .tint(.blue)
-        .onAppear {
-            viewModel.finishReadingIfNeeded()   // ★ 新增，必须在 loadNews 之前
-            viewModel.loadNews()
-
-            // ★★★【需求1】首启用带遮罩的正常同步；之后每次回到首页只做静默刷新 ★★★
-            if !didInitialSync {
-                didInitialSync = true
-                Task { await syncResources() }
-            } else {
-                Task { await resourceManager.silentRefresh(minInterval: 45, reason: "home-appear") }
-            }
-
-            Task { await SupportChatManager.shared.refresh(
-                userId: SupportIdentity.userId(appleId: authManager.userIdentifier)) }
-            Task { await predictionSyncManager.refreshAvailabilityFromServer() }
-            Task { await WishReplyManager.shared.refresh(userId: authManager.userIdentifier) }
-            Task { await ReportReplyManager.shared.refresh(userId: authManager.userIdentifier) }
-            Task { await FreeQuotaManager.shared.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
-            Task { await NewsQuotaManager.shared.refresh(
-                userId: NewsQuotaManager.currentUserId(auth: authManager)) }
-        }
-        // ★★★【需求1】导航栈回退监听：回到大首页(0) / 回到列表页(1) 都静默刷新一次 ★★★
+        .modifier(SupportChatSheetHost())
+        .overlay(SyncHUDOverlay(resourceManager: resourceManager))
         .onChange(of: navPath.count) { _, newDepth in
             let isBack = newDepth < lastNavDepth
             lastNavDepth = newDepth
             guard isBack else { return }
 
-            // ★★★ 兜底：任何形式的返回（手势返回 / 返回按钮 / 系统 pop），
-            //     都强制把详情页的"已读"同步落盘，然后才允许数据重建。
+            // 任何形式的返回都强制把详情页"已读"同步落盘
             viewModel.finishReadingIfNeeded()
 
+            let auth = AuthManager.shared
             Task {
                 await resourceManager.silentRefresh(minInterval: 45, reason: "nav-back(\(newDepth))")
-                await NewsQuotaManager.shared.refresh(
-                    userId: NewsQuotaManager.currentUserId(auth: authManager))
+                await NewsQuotaManager.shared.refresh(userId: NewsQuotaManager.currentUserId(auth: auth))
             }
 
-            // ★【补丁·需求b】离开详情页 = 最安全的弹窗时机；优先级高于通知预弹窗
             if AnonymousSubscribePromptManager.shared.hasPending {
                 AnonymousSubscribePromptManager.shared.flushIfNeeded()
             } else {
                 NotificationPermissionManager.shared.record(newDepth == 0 ? .newsHomeReturn : .newsListReturn)
             }
         }
-        .sheet(isPresented: $showAddSourceSheet, onDismiss: { viewModel.loadNews() }) {
-            NavigationView {
-                AddSourceView(isFirstTimeSetup: false)
+    }
+
+    @ViewBuilder
+    private func destination(for target: NavigationTarget) -> some View {
+        switch target {
+        case .allArticles:
+            AllArticlesListView(viewModel: viewModel, resourceManager: resourceManager)
+        case .source(let sourceName):
+            ArticleListView(sourceName: sourceName, viewModel: viewModel, resourceManager: resourceManager)
+        case .articleDetail(let article, let sourceName, let contextStr, let autoPlay):
+            ArticleContainerView(
+                article: article,
+                sourceName: sourceName,
+                context: contextStr == "all" ? .fromAllArticles : .fromSource(sourceName),
+                viewModel: viewModel,
+                resourceManager: resourceManager,
+                autoPlayOnAppear: autoPlay
+            )
+        case .predictionEntry(let source):
+            PredictionEntryView(initialSource: source)
+        case .videoModule:
+            VideoModuleView(showBackButton: true)
+        case .videoSearch:
+            VideoSearchDestinationView()
+        }
+    }
+}
+
+// MARK: - 首页本体
+private struct HomeSearchHit: Identifiable, Sendable {
+    let id: UUID
+    let article: Article
+    let sourceName: String
+    let sourceNameEN: String
+    let isContentMatch: Bool
+}
+
+private struct HomeSearchGroup: Identifiable, Sendable {
+    var id: String { timestamp }
+    let timestamp: String
+    let items: [HomeSearchHit]
+}
+
+private struct SourceHomeView: View {
+    @ObservedObject var viewModel: NewsViewModel
+    let resourceManager: ResourceManager        // ★ 不观察
+
+    @EnvironmentObject var authManager: AuthManager
+    @EnvironmentObject var predictionSyncManager: PredictionSyncManager
+    @Environment(\.appNavPath) private var appNavPath
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
+    @State private var didBootstrap = false
+    @State private var showAddSourceSheet = false
+    @State private var showProfileSheet = false
+
+    @State private var isSearching = false
+    @State private var searchText = ""
+    @State private var isSearchActive = false
+    @State private var searchGroups: [HomeSearchGroup] = []
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if isSearching {
+                SearchBarInline(
+                    text: $searchText,
+                    placeholder: Localized.searchPlaceholder,
+                    onCommit: { runSearch() },
+                    onCancel: { withAnimation { closeSearch() } }
+                )
+                .padding(.bottom, 8)
+                .background(Color.viewBackground)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
-            .environmentObject(resourceManager)
+
+            HomeNotificationBannerHost(resourceManager: resourceManager)
+            WishReplyBanner(userId: authManager.userIdentifier)
+            ReportReplyBanner(userId: authManager.userIdentifier)
+
+            if isSearchActive {
+                searchResultsView
+            } else {
+                HomeContentGate(resourceManager: resourceManager,
+                                onAddSource: { showAddSourceSheet = true }) {
+                    HomeSourceList(viewModel: viewModel, resourceManager: resourceManager)
+                        .equatable()
+                }
+            }
         }
-        // 【新增】接管全局 openChat(type:)：寻片/举报横幅的「回复」按钮依赖它
-        .sheet(isPresented: $supportManager.showChat) {
-            SupportChatView(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
+        .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
+        .background(Color.viewBackground.ignoresSafeArea())
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                UserStatusToolbarItem(showProfileSheet: $showProfileSheet)
+            }
+            ToolbarItem(placement: .principal) {
+                if authManager.isLoggedIn && !authManager.isSubscribed { NewsPointsPill() }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                HStack(spacing: 16) {
+                    Button(action: { withAnimation(.spring()) { isGlobalEnglishMode.toggle() } }) {
+                        ZStack {
+                            Circle()
+                                .strokeBorder(Color.primary, lineWidth: 1.5)
+                                .background(!isGlobalEnglishMode ? Color.primary : Color.clear)
+                                .clipShape(Circle())
+                            Text(isGlobalEnglishMode ? "中" : "英")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .foregroundColor(!isGlobalEnglishMode ? Color.viewBackground : Color.primary)
+                        }
+                        .frame(width: 24, height: 24)
+                    }
+
+                    Button {
+                        withAnimation {
+                            if isSearching { closeSearch() } else { isSearching = true }
+                        }
+                    } label: {
+                        Image(systemName: isSearching ? "xmark.circle.fill" : "magnifyingglass")
+                            .font(.system(size: 16, weight: .medium))
+                    }
+
+                    Button { showAddSourceSheet = true } label: {
+                        Image(systemName: "plus").font(.system(size: 18, weight: .medium))
+                    }
+
+                    HomeRefreshButton(resourceManager: resourceManager) { manualRefresh() }
+                }
+                .foregroundColor(.primary)
+            }
         }
-        // 【新增】个人中心
+        .onAppear { bootstrapIfNeeded() }
+        .onChange(of: viewModel.allArticlesSortedForDisplay.count) { _, _ in
+            if isSearchActive { runSearch() }
+        }
+        .sheet(isPresented: $showAddSourceSheet, onDismiss: { viewModel.loadNews() }) {
+            NavigationView { AddSourceView(isFirstTimeSetup: false) }
+                .environmentObject(resourceManager)
+        }
         .fullScreenCover(isPresented: $showProfileSheet) { UserProfileView() }
         .onChange(of: authManager.isLoggedIn) { _, newValue in
-            if newValue == true {
+            if newValue {
                 Task {
                     let uid = FreeQuotaManager.currentUserId(auth: authManager)
                     await FreeQuotaManager.shared.refresh(userId: uid)
@@ -1001,68 +930,422 @@ struct SourceListView: View {
                 }
             }
         }
-        .overlay(
-            // 【修改】将两个遮罩层组合在一起，避免互相覆盖
-            ZStack {
-                // 1. 同步状态遮罩：只在"真正下载文件（带进度条）"时显示。
-                //    网络检查/加载中的"正在加载..."弹窗不再显示，但底层的同步逻辑（isSyncing）照常执行。
-                if resourceManager.isSyncing && resourceManager.isDownloading && !resourceManager.showAlreadyUpToDateAlert {
-                    VStack(spacing: 15) {
-                        Text(resourceManager.syncMessage).font(.headline).foregroundColor(.white)
-                        ProgressView(value: resourceManager.downloadProgress)
-                            .progressViewStyle(LinearProgressViewStyle(tint: .white))
-                            .padding(.horizontal, 50)
-                    }
-                    .frame(width: 200, height: 160) // 小巧的 HUD 尺寸
-                    .background(Material.ultraThinMaterial)
-                    .background(Color.black.opacity(0.4))
-                    .cornerRadius(20)
-                }
-                
-                // 2. 【新增】"已是最新" 的自动消失弹窗
-                if resourceManager.showAlreadyUpToDateAlert {
-                    VStack(spacing: 15) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 50))
-                            .foregroundColor(.green) // 或者 .white
-                        
-                        // 这里直接调用 Localized.upToDate
-                        Text(Localized.upToDate) // "已是最新版本"
-                            .font(.headline)
-                            .foregroundColor(.white)
-                    }
-                    .frame(width: 180, height: 160) // 方形 HUD
-                    .background(Material.ultraThinMaterial)
-                    .background(Color.black.opacity(0.6)) // 深色背景
-                    .cornerRadius(20)
-                    .transition(.opacity.combined(with: .scale)) // 出现动画
-                    .zIndex(100) // 确保在最上层
-                }
-                
-                // 3. 图片下载遮罩
-                DownloadOverlay(isDownloading: isDownloadingImages, progress: downloadProgress, progressText: downloadProgressText)
-            }
-            // 添加动画支持
-            .animation(.easeInOut, value: resourceManager.isSyncing)
-            .animation(.easeInOut, value: resourceManager.showAlreadyUpToDateAlert)
-        )
-        .alert(Localized.ok, isPresented: $showErrorAlert, actions: { Button(Localized.ok, role: .cancel) { } }, message: { Text(errorMessage) })
+        .alert(Localized.ok, isPresented: $showErrorAlert,
+               actions: { Button(Localized.ok, role: .cancel) { } },
+               message: { Text(errorMessage) })
     }
 
-    // 【新增】辅助函数：格式化显示时间文案
-    private func formatUpdateTime(_ rawTime: String) -> String {
-        // 如果是英文模式
-        if isGlobalEnglishMode {
-            return "Updated: \(rawTime)"
-        } else {
-            // 中文模式
-            return "更新时间: \(rawTime)"
+    // MARK: 启动（只执行一次，与旧版 NavigationStack.onAppear 语义一致）
+    private func bootstrapIfNeeded() {
+        guard !didBootstrap else { return }
+        didBootstrap = true
+
+        viewModel.finishReadingIfNeeded()   // 必须在 loadNews 之前
+        viewModel.loadNews()
+
+        let vm = viewModel, rm = resourceManager, english = isGlobalEnglishMode
+        Task { _ = await HomeSyncRunner.run(isManual: false, viewModel: vm, resourceManager: rm, english: english) }
+
+        let uid = authManager.userIdentifier
+        Task { await SupportChatManager.shared.refresh(userId: SupportIdentity.userId(appleId: uid)) }
+        Task { await predictionSyncManager.refreshAvailabilityFromServer() }
+        Task { await WishReplyManager.shared.refresh(userId: uid) }
+        Task { await ReportReplyManager.shared.refresh(userId: uid) }
+        Task { await FreeQuotaManager.shared.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
+        Task { await NewsQuotaManager.shared.refresh(userId: NewsQuotaManager.currentUserId(auth: authManager)) }
+    }
+
+    private func manualRefresh() {
+        let vm = viewModel, rm = resourceManager, english = isGlobalEnglishMode
+        Task {
+            if let msg = await HomeSyncRunner.run(isManual: true, viewModel: vm, resourceManager: rm, english: english) {
+                errorMessage = msg
+                showErrorAlert = true
+            }
+            await authManager.checkServerSubscriptionStatus()
+            let uid = FreeQuotaManager.currentUserId(auth: authManager)
+            await FreeQuotaManager.shared.refresh(userId: uid)
+            await NewsQuotaManager.shared.refresh(userId: uid)
         }
     }
 
-    // MARK: - 视频模块入口卡片 (华丽设计)
-    private var videoModuleCard: some View {
-        // 审核伪装：标题"视频模块"，副标题"老片新看"
+    // MARK: 搜索（★ 只在提交时后台计算一次，不再每次重绘都扫全文）
+    private func runSearch() {
+        let kw = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !kw.isEmpty else { isSearchActive = false; searchGroups = []; return }
+        let pool = viewModel.allArticlesSortedForDisplay
+        Task {
+            let groups = await Task.detached(priority: .userInitiated) {
+                SourceHomeView.search(pool: pool, keyword: kw)
+            }.value
+            guard searchText.trimmingCharacters(in: .whitespacesAndNewlines) == kw else { return }
+            searchGroups = groups
+            isSearchActive = true
+        }
+    }
+
+    nonisolated private static func search(
+        pool: [(article: Article, sourceName: String, sourceNameEN: String)],
+        keyword kw: String
+    ) -> [HomeSearchGroup] {
+        let opts: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        func hit(_ s: String?) -> Bool {
+            guard let s, !s.isEmpty else { return false }
+            return s.range(of: kw, options: opts) != nil
+        }
+        var hits: [HomeSearchHit] = []
+        for item in pool {
+            let a = item.article
+            if hit(a.topic) || hit(a.topic_eng) {
+                hits.append(HomeSearchHit(id: a.id, article: a, sourceName: item.sourceName,
+                                          sourceNameEN: item.sourceNameEN, isContentMatch: false))
+            } else if hit(a.article) || hit(a.article_eng) {
+                hits.append(HomeSearchHit(id: a.id, article: a, sourceName: item.sourceName,
+                                          sourceNameEN: item.sourceNameEN, isContentMatch: true))
+            }
+        }
+        let dict = Dictionary(grouping: hits, by: { $0.article.timestamp })
+        return dict.keys.sorted(by: >).map {
+            HomeSearchGroup(timestamp: $0, items: Array((dict[$0] ?? []).reversed()))
+        }
+    }
+
+    private func closeSearch() {
+        isSearching = false
+        isSearchActive = false
+        searchText = ""
+        searchGroups = []
+    }
+
+    private func formatTimestamp(_ timestamp: String) -> String {
+        ONewsDateText.string(timestamp,
+                             format: isGlobalEnglishMode ? "MMM d, yyyy, EEEE" : "yyyy年M月d日, EEEE",
+                             locale: Locale(identifier: isGlobalEnglishMode ? "en_US" : "zh_CN"))
+    }
+
+    private var searchResultsView: some View {
+        List {
+            if searchGroups.isEmpty {
+                Section {
+                    Text(Localized.noMatch)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 30)
+                        .listRowBackground(Color.clear)
+                }
+            } else {
+                ForEach(searchGroups) { group in
+                    Section(header:
+                        HStack {
+                            Text(Localized.searchResults)
+                            Spacer()
+                            Text(formatTimestamp(group.timestamp))
+                                .font(.caption.bold())
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    ) {
+                        ForEach(group.items) { item in
+                            let isRead = viewModel.isArticleEffectivelyRead(item.article)
+                            let isLocked = NewsPointsCoordinator.shouldShowLock(timestamp: item.article.timestamp,
+                                                                                auth: authManager, viewModel: viewModel)
+                                && !NewsPointsCoordinator.canAccess(item.article, auth: authManager, viewModel: viewModel)
+                            let isFree = !isLocked && NewsFreeBadge.isFree(timestamp: item.article.timestamp,
+                                                                           auth: authManager, viewModel: viewModel)
+                            Button(action: {
+                                HomeArticleOpener.open(item.article, sourceName: item.sourceName,
+                                                       autoPlay: false, isFromAll: true,
+                                                       viewModel: viewModel, resourceManager: resourceManager,
+                                                       navPath: appNavPath)
+                            }) {
+                                ArticleRowCardView(
+                                    article: item.article,
+                                    sourceName: item.sourceName,
+                                    sourceNameEN: item.sourceNameEN,
+                                    isReadEffective: isRead,
+                                    isContentMatch: item.isContentMatch,
+                                    isLocked: isLocked,
+                                    isFree: isFree,
+                                    showEnglish: isGlobalEnglishMode
+                                )
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .contextMenu {
+                                if isRead {
+                                    Button { withAnimation { viewModel.markAsUnread(article: item.article) } }
+                                        label: { Label(Localized.markAsUnread_text, systemImage: "circle") }
+                                } else {
+                                    Button { withAnimation { viewModel.markAsRead(article: item.article) } }
+                                        label: { Label(Localized.markAsRead_text, systemImage: "checkmark.circle") }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+        .background(Color.viewBackground)
+        .transition(.opacity.animation(.easeInOut))
+    }
+}
+
+// MARK: - 首页列表（Equatable：父视图重绘时引用不变就跳过；自身仍随 NewsViewModel 刷新）
+private struct HomeSourceList: View, Equatable {
+    @ObservedObject var viewModel: NewsViewModel
+    let resourceManager: ResourceManager
+
+    @Environment(\.appNavPath) private var appNavPath
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+
+    static func == (l: HomeSourceList, r: HomeSourceList) -> Bool {
+        l.viewModel === r.viewModel && l.resourceManager === r.resourceManager
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 16) {
+                HomeVideoCardHost(resourceManager: resourceManager)
+
+                onewsAllCard
+                    .padding(.horizontal, 16)
+
+                HomeUpdateTimeRow(resourceManager: resourceManager)
+
+                VStack(spacing: 1) {
+                    ForEach(viewModel.sources) { source in
+                        NavigationLink(value: NavigationTarget.source(source.name)) {
+                            HStack(spacing: 15) {
+                                SourceIconView(sourceName: source.name)
+                                Text(isGlobalEnglishMode ? source.name_en : source.name)
+                                    .font(.body.weight(.medium))
+                                    .foregroundColor(.primary)
+                                    .animation(.none, value: isGlobalEnglishMode)
+                                Spacer()
+                                let unread = source.unreadCount
+                                if unread > 0 {
+                                    Text("\(unread)")
+                                        .font(.caption.bold())
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.blue.opacity(0.1))
+                                        .foregroundColor(.blue)
+                                        .clipShape(Capsule())
+                                } else {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary.opacity(0.5))
+                                }
+                                Button(action: { playSource(source.name) }) {
+                                    Image(systemName: "play.fill")
+                                        .font(.system(size: 14, weight: .bold))
+                                        .symbolRenderingMode(.hierarchical)
+                                        .foregroundStyle(.primary)
+                                        .padding(8)
+                                        .background(Circle().fill(Color.secondary.opacity(0.12)))
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 16)
+                            .background(Color.cardBackground)
+                        }
+
+                        if source.id != viewModel.sources.last?.id {
+                            Divider()
+                                .padding(.leading, 110)
+                                .background(Color.cardBackground)
+                        }
+                    }
+                }
+                .cornerRadius(16)
+                .padding(.horizontal, 16)
+                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+
+                Spacer().frame(height: 40)
+            }
+            .padding(.top, 10)
+        }
+    }
+
+    private var onewsAllCard: some View {
+        NavigationLink(value: NavigationTarget.allArticles) {
+            HStack(alignment: .center, spacing: 1) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(Localized.allArticlesDesc)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
+                    HStack(alignment: .lastTextBaseline, spacing: 3) {
+                        Text("\(viewModel.totalUnreadCount)")
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        Text(Localized.unread)
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.white.opacity(0.7))
+                            .padding(.bottom, 2)
+                    }
+                }
+
+                Spacer()
+
+                HStack(spacing: 10) {
+                    Button(action: { playAll() }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "play.fill").font(.system(size: 11))
+                            Text(isGlobalEnglishMode ? "Play" : "音频播报")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.white)
+                        .cornerRadius(16)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+
+                    Button(action: { appNavPath?.wrappedValue.append(NavigationTarget.allArticles) }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "text.book.closed.fill").font(.system(size: 11))
+                            Text(isGlobalEnglishMode ? "Read" : "文本阅读")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.white)
+                        .cornerRadius(16)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+                .fixedSize()
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                LinearGradient(gradient: Gradient(colors: [Color.blue, Color.purple]),
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+            )
+            .cornerRadius(18)
+            .shadow(color: .blue.opacity(0.25), radius: 8, x: 0, y: 4)
+        }
+        .buttonStyle(ScaleButtonStyle())
+    }
+
+    private func playAll() {
+        guard let target = viewModel.allArticlesSortedForDisplay.first(where: {
+            !viewModel.isArticleEffectivelyRead($0.article)
+        }) else {
+            print("没有未读文章，无需播放。")
+            return
+        }
+        ONewsHaptics.light()
+        HomeArticleOpener.open(target.article, sourceName: target.sourceName,
+                               autoPlay: true, isFromAll: true,
+                               viewModel: viewModel, resourceManager: resourceManager,
+                               navPath: appNavPath)
+    }
+
+    private func playSource(_ sourceName: String) {
+        guard let source = viewModel.sources.first(where: { $0.name == sourceName }) else { return }
+        guard let target = source.articles.first(where: { !viewModel.isArticleEffectivelyRead($0) }) else {
+            appNavPath?.wrappedValue.append(NavigationTarget.source(sourceName))
+            return
+        }
+        ONewsHaptics.light()
+        HomeArticleOpener.open(target, sourceName: sourceName,
+                               autoPlay: true, isFromAll: false,
+                               viewModel: viewModel, resourceManager: resourceManager,
+                               navPath: appNavPath)
+    }
+}
+
+// MARK: - 局部观察 ResourceManager 的小视图
+private struct HomeNotificationBannerHost: View {
+    @ObservedObject var resourceManager: ResourceManager
+    var body: some View {
+        if let message = resourceManager.activeNotification {
+            NotificationBannerView(message: message) { resourceManager.dismissNotification() }
+        }
+    }
+}
+
+private struct HomeRefreshButton: View {
+    @ObservedObject var resourceManager: ResourceManager
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.clockwise").font(.system(size: 16, weight: .medium))
+        }
+        .disabled(resourceManager.isSyncing)
+    }
+}
+
+private struct HomeContentGate<Content: View>: View {
+    @ObservedObject var resourceManager: ResourceManager
+    let onAddSource: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if SubscriptionManager.shared.subscribedSourceIDs.isEmpty && !resourceManager.isSyncing {
+            VStack(spacing: 20) {
+                Image(systemName: "newspaper")
+                    .font(.system(size: 60))
+                    .foregroundColor(.secondary.opacity(0.3))
+                Text(Localized.noSubscriptions)
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                Button(action: onAddSource) {
+                    Text(Localized.addSubscriptionBtn)
+                        .fontWeight(.semibold)
+                        .padding(.horizontal, 30)
+                        .padding(.vertical, 12)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(25)
+                }
+            }
+            .frame(maxHeight: .infinity)
+        } else {
+            content()
+        }
+    }
+}
+
+private struct HomeUpdateTimeRow: View {
+    @ObservedObject var resourceManager: ResourceManager
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+
+    var body: some View {
+        if !resourceManager.serverUpdateTime.isEmpty {
+            HStack {
+                Text(isGlobalEnglishMode
+                     ? "Updated: \(resourceManager.serverUpdateTime)"
+                     : "更新时间: \(resourceManager.serverUpdateTime)")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+            .transition(.opacity)
+        }
+    }
+}
+
+private struct HomeVideoCardHost: View {
+    @ObservedObject var resourceManager: ResourceManager
+    @EnvironmentObject var authManager: AuthManager
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+
+    var body: some View {
+        if (resourceManager.showVideoModule || authManager.isPermanentVIP) && !authManager.isVideoModuleBlocked {
+            card.padding(.horizontal, 16)
+        }
+    }
+
+    private var card: some View {
         let disguise = resourceManager.useReviewDisguise
         let titleText = disguise
             ? (isGlobalEnglishMode ? "Video" : "视频模块")
@@ -1073,32 +1356,22 @@ struct SourceListView: View {
 
         return NavigationLink(value: NavigationTarget.videoModule) {
             HStack(spacing: 14) {
-                // 左侧：图标带光晕
                 ZStack {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.pink.opacity(0.9), Color.orange.opacity(0.9)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                        .fill(LinearGradient(colors: [Color.pink.opacity(0.9), Color.orange.opacity(0.9)],
+                                             startPoint: .topLeading, endPoint: .bottomTrailing))
                         .frame(width: 44, height: 44)
                         .shadow(color: .pink.opacity(0.5), radius: 6, x: 0, y: 3)
-
                     Image(systemName: "play.rectangle.fill")
                         .font(.system(size: 22, weight: .bold))
                         .foregroundColor(.white)
                 }
 
-                // 中间：文字
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 4) {
                         Text(titleText)
                             .font(.system(size: 16, weight: .bold))
                             .foregroundColor(.white)
-
-                        // HOT 小标签（伪装时隐藏）
                         if !disguise {
                             Text("HOT")
                                 .font(.system(size: 9, weight: .heavy))
@@ -1109,7 +1382,6 @@ struct SourceListView: View {
                                 .cornerRadius(4)
                         }
                     }
-
                     Text(subtitleText)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white.opacity(0.85))
@@ -1125,424 +1397,145 @@ struct SourceListView: View {
             .padding(.vertical, 14)
             .background(
                 ZStack {
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.15, green: 0.15, blue: 0.35),
-                            Color(red: 0.35, green: 0.12, blue: 0.45),
-                            Color(red: 0.50, green: 0.15, blue: 0.35)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                    RadialGradient(
-                        colors: [Color.white.opacity(0.15), Color.clear],
-                        center: .topLeading,
-                        startRadius: 5,
-                        endRadius: 150
-                    )
+                    LinearGradient(colors: [Color(red: 0.15, green: 0.15, blue: 0.35),
+                                            Color(red: 0.35, green: 0.12, blue: 0.45),
+                                            Color(red: 0.50, green: 0.15, blue: 0.35)],
+                                   startPoint: .leading, endPoint: .trailing)
+                    RadialGradient(colors: [Color.white.opacity(0.15), Color.clear],
+                                   center: .topLeading, startRadius: 5, endRadius: 150)
                 }
             )
             .cornerRadius(16)
             .shadow(color: Color.purple.opacity(0.3), radius: 8, x: 0, y: 4)
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
-                    .stroke(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.3), Color.white.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
+                    .stroke(LinearGradient(colors: [Color.white.opacity(0.3), Color.white.opacity(0.05)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing),
+                            lineWidth: 1)
             )
         }
         .buttonStyle(ScaleButtonStyle())
     }
+}
 
-    // MARK: - 搜索结果视图 (使用新的卡片)
-    private var searchResultsView: some View {
-        List {
-            let grouped = groupedSearchByTimestamp()
-            let timestamps = sortedSearchTimestamps(for: grouped)
-            
-            if searchResults.isEmpty {
-                Section {
-                    Text(Localized.noMatch) // 【双语化】
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 30)
-                        .listRowBackground(Color.clear)
-                }
-            } else {
-                ForEach(timestamps, id: \.self) { timestamp in
-                    Section(header:
-                        HStack {
-                            Text(Localized.searchResults) // 【双语化】
-                            Spacer()
-                            Text(formatTimestamp(timestamp))
-                                .font(.caption.bold())
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.vertical, 4)
-                    ) {
-                        // 【核心修改】将 NavigationLink 替换为 Button，并调用 handleArticleTap
-                        ForEach(grouped[timestamp] ?? [], id: \.article.id) { item in
-                            Button(action: {
-                                // 注意：handleArticleTap 的参数是一个 3 元素的元组，这里 item 是 4 元素
-                                // 我们需要重新构建一下参数传给它
-                                let tapItem = (article: item.article, sourceName: item.sourceName, isContentMatch: item.isContentMatch)
-                                // 【修改】传入 isFromAll: true，确保搜索结果中阅读/播放时在混合列表中轮询
-                                Task { await handleArticleTap(tapItem, autoPlay: false, isFromAll: true) }
-                            }) {
-                                let isLocked = NewsPointsCoordinator.shouldShowLock(timestamp: item.article.timestamp,
-                                                   auth: authManager, viewModel: viewModel)
-                                    && !NewsPointsCoordinator.canAccess(item.article, auth: authManager, viewModel: viewModel)
-                                let isFree = !isLocked && NewsFreeBadge.isFree(timestamp: item.article.timestamp,
-                                                                            auth: authManager, viewModel: viewModel)
+/// 同步 HUD：只有这一层观察 isSyncing / showAlreadyUpToDateAlert
+private struct SyncHUDOverlay: View {
+    @ObservedObject var resourceManager: ResourceManager
 
-                                ArticleRowCardView(
-                                    article: item.article,
-                                    sourceName: item.sourceName,
-                                    sourceNameEN: item.sourceNameEN,
-                                    isReadEffective: viewModel.isArticleEffectivelyRead(item.article),
-                                    isContentMatch: item.isContentMatch,
-                                    isLocked: isLocked,
-                                    isFree: isFree,
-                                    showEnglish: isGlobalEnglishMode
-                                )
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                            .contextMenu {
-                                if viewModel.isArticleEffectivelyRead(item.article) {
-                                    Button { withAnimation { viewModel.markAsUnread(article: item.article) } }
-                                        label: { Label(Localized.markAsUnread_text, systemImage: "circle") }
-                                } else {
-                                    Button { withAnimation { viewModel.markAsRead(article: item.article) } }
-                                        label: { Label(Localized.markAsRead_text, systemImage: "checkmark.circle") }
-                                }
-                            }
-                        }
-                    }
+    var body: some View {
+        ZStack {
+            if resourceManager.isSyncing && resourceManager.isDownloading && !resourceManager.showAlreadyUpToDateAlert {
+                VStack(spacing: 15) {
+                    Text(resourceManager.syncMessage).font(.headline).foregroundColor(.white)
+                    ProgressView(value: resourceManager.downloadProgress)
+                        .progressViewStyle(LinearProgressViewStyle(tint: .white))
+                        .padding(.horizontal, 50)
                 }
+                .frame(width: 200, height: 160)
+                .background(Material.ultraThinMaterial)
+                .background(Color.black.opacity(0.4))
+                .cornerRadius(20)
             }
-        }
-        .listStyle(.plain)
-        // .scrollContentBackground(.hidden) // 可以保留或移除，Plain 样式下通常需要处理背景
-        .background(Color.viewBackground)
-        .transition(.opacity.animation(.easeInOut))
-    }
-    
-    // MARK: - 主列表视图 (UI核心重构)
-    private var sourceAndAllArticlesView: some View {
-        Group {
-            if SubscriptionManager.shared.subscribedSourceIDs.isEmpty && !resourceManager.isSyncing {
-                VStack(spacing: 20) {
-                    Image(systemName: "newspaper")
-                        .font(.system(size: 60))
-                        .foregroundColor(.secondary.opacity(0.3))
-                    Text(Localized.noSubscriptions)
+
+            if resourceManager.showAlreadyUpToDateAlert {
+                VStack(spacing: 15) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 50))
+                        .foregroundColor(.green)
+                    Text(Localized.upToDate)
                         .font(.headline)
-                        .foregroundColor(.secondary)
-                    Button(action: { showAddSourceSheet = true }) {
-                        Text(Localized.addSubscriptionBtn)
-                            .fontWeight(.semibold)
-                            .padding(.horizontal, 30)
-                            .padding(.vertical, 12)
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(25)
-                    }
-                }
-                .frame(maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 16) {
-                        // 1. 影视频道（通栏，置顶）
-                        if (resourceManager.showVideoModule || authManager.isPermanentVIP) && !authManager.isVideoModuleBlocked {
-                            videoModuleCard
-                                .padding(.horizontal, 16)
-                        }
-
-                        // 2. 汇聚全部新闻源（通栏，扁平）
-                        onewsAllCard
-                            .padding(.horizontal, 16)
-
-                        // 3. 更新时间条
-                        if !resourceManager.serverUpdateTime.isEmpty {
-                            HStack {
-                                Text(formatUpdateTime(resourceManager.serverUpdateTime))
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 24)
-                            .transition(.opacity)
-                        }
-
-                        // 4. 分源列表（与原来一致）
-                        VStack(spacing: 1) {
-                            ForEach(viewModel.sources) { source in
-                                NavigationLink(value: NavigationTarget.source(source.name)) {
-                                    HStack(spacing: 15) {
-                                        SourceIconView(sourceName: source.name)
-                                        Text(isGlobalEnglishMode ? source.name_en : source.name)
-                                            .font(.body.weight(.medium))
-                                            .foregroundColor(.primary)
-                                            .animation(.none, value: isGlobalEnglishMode)
-                                        Spacer()
-                                        if source.unreadCount > 0 {
-                                            Text("\(source.unreadCount)")
-                                                .font(.caption.bold())
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 4)
-                                                .background(Color.blue.opacity(0.1))
-                                                .foregroundColor(.blue)
-                                                .clipShape(Capsule())
-                                        } else {
-                                            Image(systemName: "checkmark")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary.opacity(0.5))
-                                        }
-                                        Button(action: {
-                                            Task { await handlePlaySource(source.name) }
-                                        }) {
-                                            Image(systemName: "play.fill")
-                                                .font(.system(size: 14, weight: .bold))
-                                                .symbolRenderingMode(.hierarchical)
-                                                .foregroundStyle(.primary)
-                                                .padding(8)
-                                                .background(Circle().fill(Color.secondary.opacity(0.12)))
-                                        }
-                                        .buttonStyle(PlainButtonStyle())
-                                    }
-                                    .padding(.vertical, 12)
-                                    .padding(.horizontal, 16)
-                                    .background(Color.cardBackground)
-                                }
-
-                                if source.id != viewModel.sources.last?.id {
-                                    Divider()
-                                        .padding(.leading, 110)
-                                        .background(Color.cardBackground)
-                                }
-                            }
-                        }
-                        .cornerRadius(16)
-                        .padding(.horizontal, 16)
-                        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-
-                        Spacer().frame(height: 40)
-                    }
-                    .padding(.top, 10)
-                }
-            }
-        }
-    }
-    
-    // MARK: - 右侧 ONews ALL 卡片
-    private var onewsAllCard: some View {
-        NavigationLink(value: NavigationTarget.allArticles) {
-            HStack(alignment: .center, spacing: 1) {
-                // 左侧：标题 + 未读（上下两行）
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(Localized.allArticlesDesc)   // “汇聚全部新闻源”
-                        .font(.system(size: 16, weight: .bold))
                         .foregroundColor(.white)
-                    HStack(alignment: .lastTextBaseline, spacing: 3) {
-                        Text("\(viewModel.totalUnreadCount)")
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                        Text(Localized.unread)
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.white.opacity(0.7))
-                            .padding(.bottom, 2)
-                    }
                 }
-                
-                Spacer()
-                
-                // 右侧：两个按钮同一行
-                HStack(spacing: 10) {
-                    Button(action: {
-                        Task { await handlePlayAll() }
-                    }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "play.fill")
-                                .font(.system(size: 11))
-                            Text(isGlobalEnglishMode ? "Play" : "音频播报")
-                                .font(.system(size: 12, weight: .bold))
-                        }
-                        .foregroundColor(.blue)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Color.white)
-                        .cornerRadius(16)
-                    }
-                    .buttonStyle(PlainButtonStyle())
+                .frame(width: 180, height: 160)
+                .background(Material.ultraThinMaterial)
+                .background(Color.black.opacity(0.6))
+                .cornerRadius(20)
+                .transition(.opacity.combined(with: .scale))
+                .zIndex(100)
+            }
+        }
+        .animation(.easeInOut, value: resourceManager.isSyncing)
+        .animation(.easeInOut, value: resourceManager.showAlreadyUpToDateAlert)
+    }
+}
 
-                    Button(action: {
-                        navPath.append(NavigationTarget.allArticles)
-                    }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "text.book.closed.fill")
-                                .font(.system(size: 11))
-                            Text(isGlobalEnglishMode ? "Read" : "文本阅读")
-                                .font(.system(size: 12, weight: .bold))
-                        }
-                        .foregroundColor(.blue)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Color.white)
-                        .cornerRadius(16)
-                    }
-                    .buttonStyle(PlainButtonStyle())
+/// 在线客服弹窗：ViewModifier 自己观察 SupportChatManager，不牵连导航根
+private struct SupportChatSheetHost: ViewModifier {
+    @ObservedObject private var supportManager = SupportChatManager.shared
+    @EnvironmentObject private var authManager: AuthManager
+
+    func body(content: Content) -> some View {
+        content.sheet(isPresented: $supportManager.showChat) {
+            SupportChatView(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
+        }
+    }
+}
+
+// MARK: - 打开文章（首页 / 搜索 / 播放按钮共用）
+@MainActor
+enum HomeArticleOpener {
+    static func open(_ article: Article, sourceName: String, autoPlay: Bool, isFromAll: Bool,
+                     viewModel: NewsViewModel, resourceManager: ResourceManager,
+                     navPath: Binding<NavigationPath>?) {
+        let auth = AuthManager.shared
+        if !NewsPointsCoordinator.canAccess(article, auth: auth, viewModel: viewModel) {
+            NewsPointsCoordinator.shared.attemptUnlockArticle(article, auth: auth, viewModel: viewModel) {
+                Task { @MainActor in
+                    proceed(article, sourceName: sourceName, autoPlay: autoPlay, isFromAll: isFromAll,
+                            viewModel: viewModel, resourceManager: resourceManager, navPath: navPath)
                 }
-                .fixedSize() // 自动适配按钮宽度，不压缩文字
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                LinearGradient(
-                    gradient: Gradient(colors: [Color.blue, Color.purple]),
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .cornerRadius(18)
-            .shadow(color: .blue.opacity(0.25), radius: 8, x: 0, y: 4)
-        }
-        .buttonStyle(ScaleButtonStyle())
-    }
-
-    // 【修改】处理点击“Play All”按钮的逻辑
-    private func handlePlayAll() async {
-        // 1. 获取所有排序后的文章列表
-        let allItems = viewModel.allArticlesSortedForDisplay
-        
-        // 2. 筛选出所有“未读”的文章
-        let unreadItems = allItems.filter { item in
-            !viewModel.isArticleEffectivelyRead(item.article)
-        }
-        
-        guard let targetItem = unreadItems.first else {
-            print("没有未读文章，无需播放。")
-            return
-        }
-        
-        // 6. 构造数据结构并跳转
-        let itemToPlay = (article: targetItem.article, sourceName: targetItem.sourceName, isContentMatch: false)
-        
-        // 【修改】开启自动播放导航，并明确指定 isFromAll: true
-        await handleArticleTap(itemToPlay, autoPlay: true, isFromAll: true)
-    }
-    
-    // 【新增】处理点击单个新闻源的“播放”按钮逻辑
-    private func handlePlaySource(_ sourceName: String) async {
-        guard let source = viewModel.sources.first(where: { $0.name == sourceName }) else { return }
-        
-        // 筛选出该新闻源下所有未读的文章
-        let unreadItems = source.articles.filter { !viewModel.isArticleEffectivelyRead($0) }
-        
-        guard let targetArticle = unreadItems.first else { 
-            print("该新闻源没有未读文章，跳转到空状态页。")
-            await MainActor.run {
-                navPath.append(NavigationTarget.source(sourceName))
-            }
-            return 
-        }
-        
-        // 构造数据结构并跳转，开启自动播放 (分源播放，isFromAll 保持默认值 false)
-        let itemToPlay = (article: targetArticle, sourceName: sourceName, isContentMatch: false)
-        await handleArticleTap(itemToPlay, autoPlay: true, isFromAll: false)
-    }
-
-    // 【修改】更新函数签名，增加 isFromAll 参数来区分播放/阅读上下文
-    private func handleArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool), autoPlay: Bool = false, isFromAll: Bool = false) async {
-        let article = item.article
-        if !NewsPointsCoordinator.canAccess(article, auth: authManager, viewModel: viewModel) {
-            NewsPointsCoordinator.shared.attemptUnlockArticle(article, auth: authManager, viewModel: viewModel) {
-                Task { await self.proceedArticleTap(item, autoPlay: autoPlay, isFromAll: isFromAll) }
             }
             return
         }
-        await proceedArticleTap(item, autoPlay: autoPlay, isFromAll: isFromAll)
+        proceed(article, sourceName: sourceName, autoPlay: autoPlay, isFromAll: isFromAll,
+                viewModel: viewModel, resourceManager: resourceManager, navPath: navPath)
     }
 
-    private func proceedArticleTap(_ item: (article: Article, sourceName: String, isContentMatch: Bool),
-                               autoPlay: Bool, isFromAll: Bool) async {
-        let article = item.article
-        let sourceName = item.sourceName
-        let contextStr = isFromAll ? "all" : sourceName
-
-        // ★【补丁·需求b】
-        AnonFreeReadTracker.note(article, auth: authManager, viewModel: viewModel)
-
+    private static func proceed(_ article: Article, sourceName: String, autoPlay: Bool, isFromAll: Bool,
+                                viewModel: NewsViewModel, resourceManager: ResourceManager,
+                                navPath: Binding<NavigationPath>?) {
+        AnonFreeReadTracker.note(article, auth: AuthManager.shared, viewModel: viewModel)
         if !article.images.isEmpty {
             resourceManager.enqueueImageDownloads(timestamp: article.timestamp,
-                                                imageNames: article.images,
-                                                priority: true)
+                                                  imageNames: article.images,
+                                                  priority: true)
         }
-        ArticleBodyCache.shared.prefetch(article: article)   // ★★★ 新增
-
-        await MainActor.run {
-            self.navPath.append(NavigationTarget.articleDetail(article, sourceName, contextStr, autoPlay))
-        }
+        ArticleBodyCache.shared.prefetch(article: article)
+        navPath?.wrappedValue.append(
+            NavigationTarget.articleDetail(article, sourceName, isFromAll ? "all" : sourceName, autoPlay))
     }
-    
-    private func syncResources(isManual: Bool = false) async {
+}
+
+// MARK: - 同步（首启 / 手动刷新共用）
+@MainActor
+enum HomeSyncRunner {
+    /// 返回需要提示给用户的错误文案（仅手动同步时会返回）
+    static func run(isManual: Bool, viewModel: NewsViewModel,
+                    resourceManager: ResourceManager, english: Bool) async -> String? {
         do {
             try await resourceManager.checkAndDownloadUpdates(isManual: isManual)
-            // 【修改】同步完成后，确保 ViewModel 也更新了配置
             viewModel.loadNews()
+            return nil
         } catch {
-            // 只有手动同步才弹窗报错，自动同步失败（如没网）则静默失败，加载本地旧数据
-            if isManual {
-                await MainActor.run {
-                    // 确保遮罩消失
-                    resourceManager.isSyncing = false
-                    
-                    switch error {
-                    case is DecodingError:
-                        self.errorMessage = isGlobalEnglishMode ? "Data parsing failed." : "数据解析失败。"
-                        self.showErrorAlert = true
-                    case let urlError as URLError where
-                        urlError.code == .cannotConnectToHost ||
-                        urlError.code == .timedOut ||
-                        urlError.code == .notConnectedToInternet:
-                        self.errorMessage = Localized.networkError
-                        self.showErrorAlert = true
-                    default:
-                        self.errorMessage = isGlobalEnglishMode ? "Unknown error." : "发生未知错误。"
-                        self.showErrorAlert = true
-                    }
-                }
-                print("手动同步失败: \(error)")
-            } else {
+            resourceManager.isSyncing = false
+            guard isManual else {
                 print("自动同步失败 (离线模式): \(error)")
-                // 即使同步失败，也要加载本地已有的新闻
-                await MainActor.run {
-                    resourceManager.isSyncing = false
-                    viewModel.loadNews()
-                }
+                viewModel.loadNews()
+                return nil
+            }
+            print("手动同步失败: \(error)")
+            switch error {
+            case is DecodingError:
+                return english ? "Data parsing failed." : "数据解析失败。"
+            case let urlError as URLError where
+                urlError.code == .cannotConnectToHost ||
+                urlError.code == .timedOut ||
+                urlError.code == .notConnectedToInternet:
+                return Localized.networkError
+            default:
+                return english ? "Unknown error." : "发生未知错误。"
             }
         }
-    }
-    
-    private func formatTimestamp(_ timestamp: String) -> String {
-        let parsingFormatter = DateFormatter()
-        parsingFormatter.dateFormat = "yyMMdd"
-        
-        guard let date = parsingFormatter.date(from: timestamp) else { return timestamp }
-        
-        let displayFormatter = DateFormatter()
-        // 【双语化修复】根据当前模式选择区域
-        displayFormatter.locale = Locale(identifier: isGlobalEnglishMode ? "en_US" : "zh_CN")
-        displayFormatter.dateFormat = isGlobalEnglishMode ? "MMM d, yyyy, EEEE" : "yyyy年M月d日, EEEE"
-        
-        return displayFormatter.string(from: date)
     }
 }
 
