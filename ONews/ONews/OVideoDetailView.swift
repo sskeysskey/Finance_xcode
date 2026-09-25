@@ -34,51 +34,54 @@ let videoSeriesNoSplitBases: Set<String> = [
 ]
 
 // ============================================================
-// 【实现区】一般不需要改
+// 【实现区】一般不需要改（⭐ 性能版：正则预编译 + 结果缓存，线程安全）
 // ============================================================
 
-/// 片名归一化：trim + 去空格 + 半角冒号转全角，用于查表 / 去重
 func normalizedTitleKey(_ s: String) -> String {
     s.trimmingCharacters(in: .whitespacesAndNewlines)
         .replacingOccurrences(of: ":",  with: "：")
         .replacingOccurrences(of: " ",  with: "")
-        .replacingOccurrences(of: "\u{3000}", with: "")   // 全角空格
+        .replacingOccurrences(of: "\u{3000}", with: "")
 }
 
 private let videoSeriesOverrideMap: [String: (base: String, season: Int?)] = {
     var m: [String: (base: String, season: Int?)] = [:]
-    for o in videoSeriesOverrides {
-        m[normalizedTitleKey(o.title)] = (o.base, o.season)
-    }
+    for o in videoSeriesOverrides { m[normalizedTitleKey(o.title)] = (o.base, o.season) }
     return m
 }()
 
-private let videoSeriesNoSplitKeys: Set<String> = Set(
-    videoSeriesNoSplitBases.map { normalizedTitleKey($0) }
-)
+private let videoSeriesNoSplitKeys: Set<String> = Set(videoSeriesNoSplitBases.map { normalizedTitleKey($0) })
 
-/// 命中的是哪种规则（用来决定 UI 上叫"第N季"还是"第N部"）
 enum VideoSeriesMarker {
-    case manual          // 手动映射表
-    case explicitSeason  // 第X季 / 第X部（显式标记）
-    case roman           // 冲上云霄II
-    case arabic          // 海洋奇缘2
-    case chinese         // 绝望二
-    case subtitleOnly    // 海洋奇缘：启航（有副标题、无编号）
-    case none            // 完全无标记，视为第 1 部
+    case manual, explicitSeason, roman, arabic, chinese, subtitleOnly, none
 }
 
 struct VideoSeriesInfo {
     let raw: String
-    let base: String          // 系列基础名：同系列必须完全相等
-    let season: Int?          // nil = 序号未知（排最后）
-    let subtitle: String?     // 副标题，如"启航"
+    let base: String
+    let season: Int?
+    let subtitle: String?
     let marker: VideoSeriesMarker
-    /// 排序用：未知序号丢到最后
     var seasonSortKey: Int { season ?? Int.max }
 }
 
-// 中文数字转阿拉伯数字（够用到 99）
+/// ⭐ 预编译正则（NSRegularExpression 匹配是线程安全的）
+private enum VideoRegex {
+    static let explicitSeason = make("第\\s*([0-9零一二三四五六七八九十百]+)\\s*[季部]")
+    static let romanSuffix    = make("^(.*?)\\s*([IVXL]{1,7})$")
+    static let arabicSuffix   = make("^(\\D+?)([0-9]{1,3})(?:[：:\\s\\-—·].*)?$")
+    static let chineseSuffix  = make("^(.*?[^零一二三四五六七八九十])([零一二三四五六七八九十]{1,3})$")
+    static let languageSuffix = make("^(.*?)[\\s\\-_·]?(国语|粤语|普通话|国粤双语|英语|双语)(?:版)?$")
+    static let episodeSxE     = make("(?i)S(\\d{1,2})\\s*E(?:P)?(\\d{1,4})")
+    static let episodeCnSE    = make("第\\s*([0-9零一二三四五六七八九十]+)\\s*[季部].*?第\\s*([0-9零一二三四五六七八九十]+)\\s*集")
+    private static func make(_ p: String) -> NSRegularExpression? { try? NSRegularExpression(pattern: p) }
+}
+
+private func firstMatch(_ re: NSRegularExpression?, in s: String) -> NSTextCheckingResult? {
+    guard let re else { return nil }
+    return re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s))
+}
+
 func chineseNumeralToInt(_ raw: String) -> Int? {
     let s = raw.trimmingCharacters(in: .whitespaces)
     if let n = Int(s) { return n }
@@ -102,7 +105,6 @@ func chineseNumeralToInt(_ raw: String) -> Int? {
     return val
 }
 
-// 罗马数字转整数（I V X L 组合）
 func romanNumeralToInt(_ raw: String) -> Int? {
     let map: [Character: Int] = ["I":1,"V":5,"X":10,"L":50,"C":100,"D":500,"M":1000]
     let chars = Array(raw.uppercased())
@@ -115,46 +117,30 @@ func romanNumeralToInt(_ raw: String) -> Int? {
     return total > 0 ? total : nil
 }
 
-/// ⭐ 新增核心：副标题剥离
-/// "海洋奇缘：启航"      -> ("海洋奇缘", "启航")
-/// "海洋奇缘2：启航"     -> ("海洋奇缘2", "启航")   ← 再交给数字规则处理
-/// "海洋奇缘"           -> ("海洋奇缘", nil)
 private func splitSeriesSubtitle(_ name: String) -> (head: String, subtitle: String?) {
     guard let idx = name.firstIndex(where: { videoSubtitleSeparators.contains($0) }) else {
         return (name, nil)
     }
     let head = String(name[name.startIndex..<idx]).trimmingCharacters(in: .whitespaces)
     let sub  = String(name[name.index(after: idx)...]).trimmingCharacters(in: .whitespaces)
-    // 保护：系列名太短（如"我：xxx"）或副标题为空，都不拆
     guard head.count >= 2, !sub.isEmpty else { return (name, nil) }
-    // 保护：在禁止拆分名单里
     if videoSeriesNoSplitKeys.contains(normalizedTitleKey(head)) { return (name, nil) }
     return (head, sub)
 }
 
-// 5. 常见语言后缀识别（如：死无对证国语 / 无间道 粤语版）
 private func seasonByLanguageSuffix(_ name: String) -> (base: String, lang: String)? {
-    let pattern = "^(.*?)[\\s\\-_·]?(国语|粤语|普通话|国粤双语|英语|双语)(?:版)?$"
-    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-    let full = NSRange(name.startIndex..., in: name)
-    guard let match = regex.firstMatch(in: name, range: full),
-          let baseRange = Range(match.range(at: 1), in: name),
-          let langRange = Range(match.range(at: 2), in: name) else { return nil }
-    
-    let base = String(name[baseRange]).trimmingCharacters(in: .whitespaces)
-    let lang = String(name[langRange]).trimmingCharacters(in: .whitespaces)
-    guard base.count >= 2 else { return nil } // 基础名至少2个字，防止误伤
-    return (base, lang)
+    guard let m = firstMatch(VideoRegex.languageSuffix, in: name),
+          let b = Range(m.range(at: 1), in: name),
+          let l = Range(m.range(at: 2), in: name) else { return nil }
+    let base = String(name[b]).trimmingCharacters(in: .whitespaces)
+    guard base.count >= 2 else { return nil }
+    return (base, String(name[l]).trimmingCharacters(in: .whitespaces))
 }
 
-// 1. 显式标记：第X季 / 第X部
 private func seasonByExplicitMarker(_ name: String) -> (base: String, season: Int)? {
-    let pattern = "第\\s*([0-9零一二三四五六七八九十百]+)\\s*[季部]"
-    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-    let full = NSRange(name.startIndex..., in: name)
-    guard let match = regex.firstMatch(in: name, range: full),
-          let numRange = Range(match.range(at: 1), in: name),
-          let matchRange = Range(match.range, in: name),
+    guard let m = firstMatch(VideoRegex.explicitSeason, in: name),
+          let numRange = Range(m.range(at: 1), in: name),
+          let matchRange = Range(m.range, in: name),
           let season = chineseNumeralToInt(String(name[numRange])) else { return nil }
     var base = name
     base.removeSubrange(matchRange)
@@ -163,115 +149,162 @@ private func seasonByExplicitMarker(_ name: String) -> (base: String, season: In
     return (base, season)
 }
 
-// 2. 结尾罗马数字：冲上云霄II
 private func seasonByRomanSuffix(_ name: String) -> (base: String, season: Int)? {
-    let pattern = "^(.*?)\\s*([IVXL]{1,7})$"
-    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-    let full = NSRange(name.startIndex..., in: name)
-    guard let match = regex.firstMatch(in: name, range: full),
-          let baseRange = Range(match.range(at: 1), in: name),
-          let romanRange = Range(match.range(at: 2), in: name) else { return nil }
-    let base = String(name[baseRange]).trimmingCharacters(in: .whitespaces)
+    guard let m = firstMatch(VideoRegex.romanSuffix, in: name),
+          let b = Range(m.range(at: 1), in: name),
+          let r = Range(m.range(at: 2), in: name) else { return nil }
+    let base = String(name[b]).trimmingCharacters(in: .whitespaces)
     guard !base.isEmpty else { return nil }
-    // base 结尾若是 ASCII 字母，多半是英文单词末尾（如 MIX），放弃
     if let last = base.last, last.isLetter, last.isASCII { return nil }
-    guard let season = romanNumeralToInt(String(name[romanRange])),
-          season >= 1, season <= 39 else { return nil }
+    guard let season = romanNumeralToInt(String(name[r])), season >= 1, season <= 39 else { return nil }
     return (base, season)
 }
 
-// 3. 结尾阿拉伯数字（可带空格副标题）：洛奇2 / 洛奇4 最后的决战
 private func seasonByArabicSuffix(_ name: String) -> (base: String, season: Int)? {
-    let pattern = "^(\\D+?)([0-9]{1,3})(?:[：:\\s\\-—·].*)?$"
-    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-    let full = NSRange(name.startIndex..., in: name)
-    guard let match = regex.firstMatch(in: name, range: full),
-          let baseRange = Range(match.range(at: 1), in: name),
-          let numRange = Range(match.range(at: 2), in: name) else { return nil }
-    let base = String(name[baseRange]).trimmingCharacters(in: .whitespaces)
-    guard !base.isEmpty, let season = Int(String(name[numRange])),
-          season >= 1, season <= 99 else { return nil }
+    guard let m = firstMatch(VideoRegex.arabicSuffix, in: name),
+          let b = Range(m.range(at: 1), in: name),
+          let n = Range(m.range(at: 2), in: name) else { return nil }
+    let base = String(name[b]).trimmingCharacters(in: .whitespaces)
+    guard !base.isEmpty, let season = Int(String(name[n])), season >= 1, season <= 99 else { return nil }
     return (base, season)
 }
 
-// 4. 结尾中文数字：绝望一 / 唐人街探案三
 private func seasonByChineseSuffix(_ name: String) -> (base: String, season: Int)? {
-    let numerals = "零一二三四五六七八九十"
-    let pattern = "^(.*?[^\(numerals)])([\(numerals)]{1,3})$"
-    guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-    let full = NSRange(name.startIndex..., in: name)
-    guard let match = regex.firstMatch(in: name, range: full),
-          let baseRange = Range(match.range(at: 1), in: name),
-          let numRange = Range(match.range(at: 2), in: name) else { return nil }
-    let base = String(name[baseRange]).trimmingCharacters(in: .whitespaces)
-    guard !base.isEmpty, let season = chineseNumeralToInt(String(name[numRange])),
+    guard let m = firstMatch(VideoRegex.chineseSuffix, in: name),
+          let b = Range(m.range(at: 1), in: name),
+          let n = Range(m.range(at: 2), in: name) else { return nil }
+    let base = String(name[b]).trimmingCharacters(in: .whitespaces)
+    guard !base.isEmpty, let season = chineseNumeralToInt(String(name[n])),
           season >= 1, season <= 99 else { return nil }
     return (base, season)
 }
 
-/// ⭐⭐ 新的统一入口：把片名解析成 系列信息
-/// 优先级：手动表 → 剥副标题 → 第X季 → 罗马 → 阿拉伯 → 中文数字 → 仅副标题 → 兜底第1部
+/// ⭐ 解析结果缓存（加锁，可在后台线程使用）
+private final class VideoSeriesInfoCache: @unchecked Sendable {
+    static let shared = VideoSeriesInfoCache()
+    private let lock = NSLock()
+    private var storage: [String: VideoSeriesInfo] = [:]
+    func get(_ k: String) -> VideoSeriesInfo? {
+        lock.lock(); defer { lock.unlock() }
+        return storage[k]
+    }
+    func set(_ v: VideoSeriesInfo, for k: String) {
+        lock.lock(); defer { lock.unlock() }
+        if storage.count > 4000 { storage.removeAll(keepingCapacity: true) }
+        storage[k] = v
+    }
+}
+
 func videoSeriesInfo(from name: String) -> VideoSeriesInfo? {
     let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
-
-    // 0) 手动映射表（最高优先级）
-    if let ov = videoSeriesOverrideMap[normalizedTitleKey(trimmed)] {
-        return VideoSeriesInfo(raw: trimmed, base: ov.base, season: ov.season,
-                               subtitle: splitSeriesSubtitle(trimmed).subtitle,
-                               marker: .manual)
-    }
-
-    // 1) 先剥离副标题，再对前半段套编号规则
-    let (head, subtitle) = splitSeriesSubtitle(trimmed)
-
-    if let r = seasonByExplicitMarker(head) {
-        return VideoSeriesInfo(raw: trimmed, base: r.base, season: r.season,
-                               subtitle: subtitle, marker: .explicitSeason)
-    }
-    if let r = seasonByRomanSuffix(head) {
-        return VideoSeriesInfo(raw: trimmed, base: r.base, season: r.season,
-                               subtitle: subtitle, marker: .roman)
-    }
-    if let r = seasonByArabicSuffix(head) {
-        return VideoSeriesInfo(raw: trimmed, base: r.base, season: r.season,
-                               subtitle: subtitle, marker: .arabic)
-    }
-    if let r = seasonByChineseSuffix(head) {
-        return VideoSeriesInfo(raw: trimmed, base: r.base, season: r.season,
-                               subtitle: subtitle, marker: .chinese)
-    }
-
-    // ⭐ 新增：命中语言版本（如：死无对证国语 -> base: 死无对证, subtitle: 国语）
-    if let r = seasonByLanguageSuffix(head) {
-        return VideoSeriesInfo(raw: trimmed, base: r.base, season: nil,
-                               subtitle: r.lang, marker: .subtitleOnly)
-    }
-
-    // 2) 只有副标题、没有编号
-    if let sub = subtitle {
-        return VideoSeriesInfo(raw: trimmed, base: head, season: nil,
-                               subtitle: sub, marker: .subtitleOnly)
-    }
-
-    // 3) 完全没有任何标记 → 视为第 1 部
-    return VideoSeriesInfo(raw: trimmed, base: trimmed, season: 1,
-                           subtitle: nil, marker: .none)
+    if let hit = VideoSeriesInfoCache.shared.get(trimmed) { return hit }
+    let info = computeVideoSeriesInfo(trimmed)
+    VideoSeriesInfoCache.shared.set(info, for: trimmed)
+    return info
 }
 
-/// 兼容旧签名（若项目里其它文件还在调用 videoSeasonInfo，不用改它们）
+private func computeVideoSeriesInfo(_ trimmed: String) -> VideoSeriesInfo {
+    if let ov = videoSeriesOverrideMap[normalizedTitleKey(trimmed)] {
+        return VideoSeriesInfo(raw: trimmed, base: ov.base, season: ov.season,
+                               subtitle: splitSeriesSubtitle(trimmed).subtitle, marker: .manual)
+    }
+    let (head, subtitle) = splitSeriesSubtitle(trimmed)
+    if let r = seasonByExplicitMarker(head) {
+        return VideoSeriesInfo(raw: trimmed, base: r.base, season: r.season, subtitle: subtitle, marker: .explicitSeason)
+    }
+    if let r = seasonByRomanSuffix(head) {
+        return VideoSeriesInfo(raw: trimmed, base: r.base, season: r.season, subtitle: subtitle, marker: .roman)
+    }
+    if let r = seasonByArabicSuffix(head) {
+        return VideoSeriesInfo(raw: trimmed, base: r.base, season: r.season, subtitle: subtitle, marker: .arabic)
+    }
+    if let r = seasonByChineseSuffix(head) {
+        return VideoSeriesInfo(raw: trimmed, base: r.base, season: r.season, subtitle: subtitle, marker: .chinese)
+    }
+    if let r = seasonByLanguageSuffix(head) {
+        return VideoSeriesInfo(raw: trimmed, base: r.base, season: nil, subtitle: r.lang, marker: .subtitleOnly)
+    }
+    if let sub = subtitle {
+        return VideoSeriesInfo(raw: trimmed, base: head, season: nil, subtitle: sub, marker: .subtitleOnly)
+    }
+    return VideoSeriesInfo(raw: trimmed, base: trimmed, season: 1, subtitle: nil, marker: .none)
+}
+
 func videoSeasonInfo(from name: String) -> (base: String, season: Int)? {
     guard let info = videoSeriesInfo(from: name) else { return nil }
     return (info.base, info.season ?? 999)
 }
 
+// MARK: - ⭐ 单集名解析（原 VideoDetailView.parseSeasonAndEpisode，改为全局纯函数）
+struct VideoEpisodeParse {
+    let season: Int?
+    let episode: Int?
+    let normalizedKey: String
+}
+
+func parseVideoEpisodeKey(_ key: String) -> VideoEpisodeParse {
+    let t = key.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let m = firstMatch(VideoRegex.episodeSxE, in: t),
+       let s = Range(m.range(at: 1), in: t), let e = Range(m.range(at: 2), in: t),
+       let sn = Int(t[s]), let en = Int(t[e]) {
+        return VideoEpisodeParse(season: sn, episode: en, normalizedKey: "s\(sn)_e\(en)")
+    }
+    if let m = firstMatch(VideoRegex.episodeCnSE, in: t),
+       let s = Range(m.range(at: 1), in: t), let e = Range(m.range(at: 2), in: t),
+       let sn = chineseNumeralToInt(String(t[s])), let en = chineseNumeralToInt(String(t[e])) {
+        return VideoEpisodeParse(season: sn, episode: en, normalizedKey: "s\(sn)_e\(en)")
+    }
+    let digits = t.filter { $0.isNumber }
+    if !digits.isEmpty, let n = Int(digits) {
+        return VideoEpisodeParse(season: nil, episode: n, normalizedKey: "e\(n)")
+    }
+    return VideoEpisodeParse(season: nil, episode: nil, normalizedKey: t)
+}
+
+/// ⭐ 线路排序：目标季有效集数多者优先 → 画质 → 原始顺序。纯函数，可在后台线程执行
+func rankVideoChannels(_ channels: [OVideoChannel], itemName: String?) -> [OVideoChannel] {
+    let nameSeason = itemName.flatMap { videoSeriesInfo(from: $0)?.season }
+    struct Scored { let index: Int; let channel: OVideoChannel; let count: Int; let quality: Int }
+
+    let scored = channels.enumerated().map { idx, ch -> Scored in
+        var seasonToEpisodes: [Int: Set<Int>] = [:]
+        var plain = Set<String>()
+        var hasLow = false, hasHigh = false
+        for key in ch.episodes.keys {
+            let p = parseVideoEpisodeKey(key)
+            if let s = p.season { seasonToEpisodes[s, default: []].insert(p.episode ?? 0) }
+            else { plain.insert(p.normalizedKey) }
+            let u = key.uppercased()
+            if !hasLow, u.contains("TC") || u.contains("TS") || u.contains("HC") || u.contains("抢先") { hasLow = true }
+            if !hasHigh, u.contains("HD") || u.contains("正片") { hasHigh = true }
+        }
+        let count: Int
+        if !seasonToEpisodes.isEmpty {
+            let target: Int
+            if let s = nameSeason, seasonToEpisodes[s] != nil { target = s }
+            else { target = seasonToEpisodes.keys.max() ?? 1 }
+            count = seasonToEpisodes[target]?.count ?? 0
+        } else {
+            count = plain.count
+        }
+        return Scored(index: idx, channel: ch, count: count, quality: hasLow ? 0 : (hasHigh ? 2 : 1))
+    }
+    return scored.sorted { a, b in
+        if a.count != b.count { return a.count > b.count }
+        if a.quality != b.quality { return a.quality > b.quality }
+        return a.index < b.index
+    }.map(\.channel)
+}
+
 // MARK: - 视频详情页
 struct VideoDetailView: View {
     let item: OVideoItem
-    @ObservedObject var dataManager: OVideoDataManager
+    let dataManager: OVideoDataManager
     var playSource: String = "unknown"
-    @ObservedObject private var downloadManager = HLSDownloadManager.shared
-    @ObservedObject private var network = NetworkMonitor.shared          // ⭐ 单集直接下载：网络判断
+    private let downloadManager = HLSDownloadManager.shared
+    @ObservedObject private var downloadIndex = HLSDownloadManager.shared.statusIndex  // ⭐ 只在"已缓存/占用"成员变化时刷新
+    private let network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     @AppStorage("OVideo_IsEpisodeAscending") private var isEpisodeAscending = true
@@ -311,125 +344,14 @@ struct VideoDetailView: View {
     @State private var selectedEpisode: (name: String, url: String)? = nil
     @State private var loadedChannels: [OVideoChannel] = []
     @State private var isLoadingPlaylist = true
+    @State private var sortedChannels: [OVideoChannel] = []   // ⭐ 排序结果只算一次
 
     // ⭐ 同系列其它季
     @State private var seasonSiblings: [OVideoItem] = []
     @State private var selectedSeasonItem: OVideoItem? = nil
     @State private var navigateToSeason = false
 
-    // MARK: - 智能季与集解析
-    /// 辅助：从单集名字提取 (Season, Episode)
-    private func parseSeasonAndEpisode(from key: String) -> (season: Int?, episodeNumber: Int?, normalizedKey: String) {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // 1. 匹配 S01E02 / s4e03 / S2 EP05
-        let sePattern = "(?i)S(\\d{1,2})\\s*E(?:P)?(\\d{1,4})"
-        if let regex = try? NSRegularExpression(pattern: sePattern),
-           let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
-           let sRange = Range(match.range(at: 1), in: trimmed),
-           let eRange = Range(match.range(at: 2), in: trimmed),
-           let sNum = Int(trimmed[sRange]),
-           let eNum = Int(trimmed[eRange]) {
-            return (sNum, eNum, "s\(sNum)_e\(eNum)")
-        }
-
-        // 2. 匹配 "第1季第2集" / "第2部 第05集"
-        let cnSePattern = "第\\s*([0-9零一二三四五六七八九十]+)\\s*[季部].*?第\\s*([0-9零一二三四五六七八九十]+)\\s*集"
-        if let regex = try? NSRegularExpression(pattern: cnSePattern),
-           let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
-           let sRange = Range(match.range(at: 1), in: trimmed),
-           let eRange = Range(match.range(at: 2), in: trimmed),
-           let sNum = chineseNumeralToInt(String(trimmed[sRange])),
-           let eNum = chineseNumeralToInt(String(trimmed[eRange])) {
-            return (sNum, eNum, "s\(sNum)_e\(eNum)")
-        }
-
-        // 3. 常规普通集数提取（如：第01集、粤语01、EP05、正片 等）
-        let digits = trimmed.filter { $0.isNumber }
-        if let n = Int(digits), !digits.isEmpty {
-            return (nil, n, "e\(n)")
-        }
-        
-        // 兜底（针对 正片、HD、预告 等无纯数字单集）
-        return (nil, nil, trimmed)
-    }
-
-    /// 分析某线路的剧集情况
-    private func channelEpisodeAnalysis(_ channel: OVideoChannel) -> (targetSeasonCount: Int, distinctTotalCount: Int) {
-        var seasonToEpisodes: [Int: Set<Int>] = [:]
-        var plainEpisodes = Set<String>()
-        var allDistinctKeys = Set<String>()
-
-        for key in channel.episodes.keys {
-            let parsed = parseSeasonAndEpisode(from: key)
-            allDistinctKeys.insert(parsed.normalizedKey)
-
-            if let s = parsed.season {
-                let ep = parsed.episodeNumber ?? 0
-                seasonToEpisodes[s, default: []].insert(ep)
-            } else {
-                plainEpisodes.insert(parsed.normalizedKey)
-            }
-        }
-
-        // 如果包含 S01/S04 等明确多季标识
-        if !seasonToEpisodes.isEmpty {
-            // 如果片名有明确标注第几季，优先匹配对应季；否则取包含的最大/最新季
-            let currentItemSeason = videoSeriesInfo(from: item.name)?.season
-            let targetSeason: Int
-            if let cis = currentItemSeason, seasonToEpisodes[cis] != nil {
-                targetSeason = cis
-            } else {
-                targetSeason = seasonToEpisodes.keys.max() ?? 1
-            }
-            let latestSeasonEpCount = seasonToEpisodes[targetSeason]?.count ?? 0
-            return (targetSeasonCount: latestSeasonEpCount, distinctTotalCount: allDistinctKeys.count)
-        }
-
-        // 没有区分多季（如：第01集~第08集）：最新季集数即为该源总有效集数
-        return (targetSeasonCount: plainEpisodes.count, distinctTotalCount: allDistinctKeys.count)
-    }
-
-    private var sortedPlaylist: [OVideoChannel] {
-        let indexedChannels = loadedChannels.enumerated().map {
-            (index, channel) -> (index: Int, channel: OVideoChannel,
-                                latestSeasonCount: Int, qualityScore: Int) in
-            
-            // 核心评估：计算当前季/目标季的有效更新集数
-            let analysis = channelEpisodeAnalysis(channel)
-            let latestSeasonCount = analysis.targetSeasonCount
-
-            // 画质评分：枪版/预告降权，正片/高清加权
-            var qualityScore = 1
-            let episodeKeys = channel.episodes.keys
-            let hasLowQuality = episodeKeys.contains { key in
-                let k = key.uppercased()
-                return k.contains("TC") || k.contains("TS") || k.contains("HC") || k.contains("抢先")
-            }
-            let hasHighQuality = episodeKeys.contains { key in
-                let k = key.uppercased()
-                return k.contains("HD") || k.contains("正片")
-            }
-            if hasLowQuality { qualityScore = 0 }
-            else if hasHighQuality { qualityScore = 2 }
-
-            return (index, channel, latestSeasonCount, qualityScore)
-        }
-
-        let sortedIndexed = indexedChannels.sorted { a, b in
-            // 1. 最新季/目标季有效集数多者优先（如：8集 > 4集）
-            if a.latestSeasonCount != b.latestSeasonCount {
-                return a.latestSeasonCount > b.latestSeasonCount
-            }
-            // 2. 集数相同时，画质优者优先（正片/HD > 普通 > TC抢先）
-            if a.qualityScore != b.qualityScore {
-                return a.qualityScore > b.qualityScore
-            }
-            // 3. 【核心修正】：集数与画质完全一致时，严格遵守 JSON 原始顺序（排在前面的优先）
-            return a.index < b.index
-        }
-        return sortedIndexed.map { $0.channel }
-    }
+    private var sortedPlaylist: [OVideoChannel] { sortedChannels }
     
     private var isMultiEpisodeVideo: Bool {
         if let firstChannel = loadedChannels.first {
@@ -438,14 +360,7 @@ struct VideoDetailView: View {
         return false
     }
 
-    private var cachedOriginalURLs: Set<String> {
-        var s = Set<String>()
-        for (key, meta) in downloadManager.cacheMetadata where downloadManager.localBookmarks[key] != nil {
-            s.insert(key)
-            if let orig = meta.originalEpisodeURL, !orig.isEmpty { s.insert(orig) }
-        }
-        return s
-    }
+    private var cachedOriginalURLs: Set<String> { downloadIndex.cachedKeys }
     
     var body: some View {
         ZStack {
@@ -481,7 +396,7 @@ struct VideoDetailView: View {
             }
         }
         .navigationDestination(isPresented: $navigateToPlayer) {
-            if let episode = selectedEpisode {
+            if let episode = selectedEpisode, selectedChannelIndex < sortedPlaylist.count {
                 let channel = sortedPlaylist[selectedChannelIndex]
                 VideoPlayerPageView(
                     episodeURL: episode.url,
@@ -623,32 +538,7 @@ struct VideoDetailView: View {
                 showBonusWelcome = true
             }
         }
-        .task {
-            await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
-            if quotaManager.pendingBonusWelcome > 0 {
-                if authManager.isSubscribed {
-                    quotaManager.clearBonusWelcome()      // ⭐ 会员不弹礼包
-                } else {
-                    bonusWelcomeAmount = quotaManager.pendingBonusWelcome
-                    showBonusWelcome = true
-                }
-            }
-            if loadedChannels.isEmpty {
-                let channels = await dataManager.fetchPlaylist(url: item.url)
-                await MainActor.run {
-                    loadedChannels = channels
-                    isLoadingPlaylist = false
-                }
-            }
-            if !hasSeenPlaylistLineHint {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                        showLineHint = true
-                    }
-                }
-            }
-            await loadSeasonSiblingsIfNeeded()
-        }
+        .task { await initialLoad() }
     }
 
     // MARK: - ⭐ 下载按钮点击：单集直接下载 / 多集弹批量界面
@@ -669,16 +559,55 @@ struct VideoDetailView: View {
         }
     }
 
+    // MARK: - ⭐ 首屏并行加载（点数 / 剧集列表 / 同系列 三路互不阻塞）
+    @MainActor
+    private func initialLoad() async {
+        scheduleLineHintIfNeeded()
+        async let q: Void = refreshQuotaAndBonus()
+        async let p: Void = loadPlaylistIfNeeded()
+        async let s: Void = loadSeasonSiblingsIfNeeded()
+        _ = await (q, p, s)
+    }
+
+    @MainActor
+    private func refreshQuotaAndBonus() async {
+        await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
+        guard quotaManager.pendingBonusWelcome > 0 else { return }
+        if authManager.isSubscribed {
+            quotaManager.clearBonusWelcome()
+        } else if !showBonusWelcome {
+            bonusWelcomeAmount = quotaManager.pendingBonusWelcome
+            showBonusWelcome = true
+        }
+    }
+
+    @MainActor
+    private func loadPlaylistIfNeeded() async {
+        guard loadedChannels.isEmpty else { return }
+        isLoadingPlaylist = true
+        let channels = await dataManager.fetchPlaylist(url: item.url)
+        if Task.isCancelled { return }      // ⭐ 页面被推走导致取消 → 不要误显示"洽谈中"，返回后会重拉
+        let name = item.name
+        let ranked = await Task.detached(priority: .userInitiated) {
+            rankVideoChannels(channels, itemName: name)
+        }.value
+        loadedChannels = channels
+        sortedChannels = ranked
+        if selectedChannelIndex >= ranked.count { selectedChannelIndex = 0 }
+        isLoadingPlaylist = false
+    }
+
+    private func scheduleLineHintIfNeeded() {
+        guard !hasSeenPlaylistLineHint, !showLineHint else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            guard !hasSeenPlaylistLineHint else { return }
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showLineHint = true }
+        }
+    }
+
     // 判断该集是否已在下载队列或已缓存（与 BatchDownloadView 判定逻辑一致）
     private func isEpisodeOccupied(_ ep: (name: String, url: String)) -> Bool {
-        let title = "\(item.name) · \(ep.name)"
-        for url in downloadManager.downloadProgress.keys {
-            if downloadManager.cacheMetadata[url]?.title == title { return true }
-        }
-        for url in downloadManager.localBookmarks.keys {
-            if downloadManager.cacheMetadata[url]?.title == title { return true }
-        }
-        return false
+        downloadIndex.statusByTitle["\(item.name) · \(ep.name)"] != nil
     }
 
     // 单集直接下载：先做订阅/点数判断
@@ -751,7 +680,7 @@ struct VideoDetailView: View {
     }
 
     // MARK: - ⭐ 加载同系列其它季 / 其它部
-    private func loadSeasonSiblingsIfNeeded() async {
+    @MainActor private func loadSeasonSiblingsIfNeeded() async {
         guard seasonSiblings.isEmpty,
               let info = videoSeriesInfo(from: item.name),
               info.base.count >= 2 else { return }
@@ -794,9 +723,8 @@ struct VideoDetailView: View {
             return a.name.count < b.name.count
         }
 
-        await MainActor.run {
-            seasonSiblings = sorted.count > 1 ? sorted : []
-        }
+        if Task.isCancelled { return }
+        seasonSiblings = sorted.count > 1 ? sorted : []
     }
 
     /// 该系列里出现过"第X季/第X部"显式标记 → 用"季"，否则（电影续集）用"部"
@@ -1248,12 +1176,14 @@ struct VideoDetailView: View {
                 if selectedChannelIndex < sortedPlaylist.count {
                     let channel = sortedPlaylist[selectedChannelIndex]
                     let sortedEps = channel.sortedEpisodes(ascending: isEpisodeAscending)
+                    let cachedSet = cachedOriginalURLs          // ⭐ 只算一次
+                    let subscribed = authManager.isSubscribed
+                    let noQuota = quotaManager.remaining <= 0
 
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 10)], spacing: 10) {
                         ForEach(sortedEps, id: \.url) { episode in
                             Button {
                                 selectedEpisode = episode
-                                // 【需求3】点剧集是高价值互动（权重 2），但不在这里弹
                                 NotificationPermissionManager.shared.record(.videoEpisodeTap)
                                 attemptPlay(episode: episode)
                             } label: {
@@ -1268,43 +1198,16 @@ struct VideoDetailView: View {
                                         .frame(height: 46)
                                         .padding(.horizontal, 4)
                                         .background(
-                                            LinearGradient(
-                                                colors: [Color(.systemIndigo), Color(.systemPurple)],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
+                                            LinearGradient(colors: [Color(.systemIndigo), Color(.systemPurple)],
+                                                           startPoint: .topLeading, endPoint: .bottomTrailing)
                                         )
                                         .cornerRadius(10)
                                         .shadow(color: Color(.systemPurple).opacity(0.35), radius: 5, x: 0, y: 2)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 10)
-                                                .stroke(Color.white.opacity(0.25), lineWidth: 1)
-                                        )
+                                        .overlay(RoundedRectangle(cornerRadius: 10)
+                                            .stroke(Color.white.opacity(0.25), lineWidth: 1))
 
-                                    if cachedOriginalURLs.contains(episode.url) {
-                                        Image(systemName: "arrow.down.circle.fill")
-                                            .font(.system(size: 8))
-                                            .foregroundColor(.white)
-                                            .padding(3)
-                                            .background(Circle().fill(Color.blue))
-                                            .offset(x: 3, y: -3)
-                                    } else if !authManager.isSubscribed {
-                                        if quotaManager.isUnlocked(episode.url) {
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .font(.system(size: 8))
-                                                .foregroundColor(.white)
-                                                .padding(3)
-                                                .background(Circle().fill(Color.green))
-                                                .offset(x: 3, y: -3)
-                                        } else if quotaManager.remaining <= 0 {
-                                            Image(systemName: "lock.fill")
-                                                .font(.system(size: 8))
-                                                .foregroundColor(.white)
-                                                .padding(3)
-                                                .background(Circle().fill(Color.orange))
-                                                .offset(x: 3, y: -3)
-                                        }
-                                    }
+                                    episodeBadge(url: episode.url, cachedSet: cachedSet,
+                                                 subscribed: subscribed, noQuota: noQuota)
                                 }
                             }
                             .buttonStyle(PlainButtonStyle())
@@ -1315,6 +1218,25 @@ struct VideoDetailView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func episodeBadge(url: String, cachedSet: Set<String>, subscribed: Bool, noQuota: Bool) -> some View {
+        if cachedSet.contains(url) {
+            badgeIcon("arrow.down.circle.fill", .blue)
+        } else if !subscribed {
+            if quotaManager.isUnlocked(url) { badgeIcon("checkmark.circle.fill", .green) }
+            else if noQuota { badgeIcon("lock.fill", .orange) }
+        }
+    }
+
+    private func badgeIcon(_ name: String, _ color: Color) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 8))
+            .foregroundColor(.white)
+            .padding(3)
+            .background(Circle().fill(color))
+            .offset(x: 3, y: -3)
     }
 
     private func attemptPlay(episode: (name: String, url: String)) {
@@ -1484,9 +1406,11 @@ struct BatchDownloadView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var authManager: AuthManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    @ObservedObject private var downloadManager = HLSDownloadManager.shared
+    private let downloadManager = HLSDownloadManager.shared
+    @ObservedObject private var downloadIndex = HLSDownloadManager.shared.statusIndex
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
-    @ObservedObject private var network = NetworkMonitor.shared
+    private let network = NetworkMonitor.shared
+    @State private var processingTotal = 0
     @State private var showCellularAlert = false
     @State private var pendingCellularBatch: [(name: String, url: String)] = []
 
@@ -1510,27 +1434,16 @@ struct BatchDownloadView: View {
         channel.sortedEpisodes(ascending: isAscending)
     }
 
-    private var occupiedStatusByTitle: [String: EpisodeStatus] {
-        var map: [String: EpisodeStatus] = [:]
-        for url in downloadManager.downloadProgress.keys {
-            if let t = downloadManager.cacheMetadata[url]?.title {
-                map[t] = .downloading
-            }
-        }
-        for url in downloadManager.localBookmarks.keys {
-            if let t = downloadManager.cacheMetadata[url]?.title {
-                map[t] = .cached
-            }
-        }
-        return map
-    }
-
     private func expectedTitle(for ep: (name: String, url: String)) -> String {
         "\(item.name) · \(ep.name)"
     }
 
     private func status(for ep: (name: String, url: String)) -> EpisodeStatus {
-        occupiedStatusByTitle[expectedTitle(for: ep)] ?? .available
+        switch downloadIndex.statusByTitle[expectedTitle(for: ep)] {
+        case .cached?:      return .cached
+        case .downloading?: return .downloading
+        case nil:           return .available
+        }
     }
 
     private var selectableEpisodes: [(name: String, url: String)] {
@@ -1833,8 +1746,8 @@ struct BatchDownloadView: View {
             VStack(spacing: 14) {
                 ProgressView().tint(.white).scaleEffect(1.3)
                 Text(isGlobalEnglishMode
-                     ? "Preparing downloads... \(processedCount)/\(selectedURLs.count)"
-                     : "正在准备下载… \(processedCount)/\(selectedURLs.count)")
+                     ? "Preparing downloads... \(processedCount)/\(processingTotal)"
+                     : "正在准备下载… \(processedCount)/\(processingTotal)")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.white)
             }
@@ -1891,34 +1804,46 @@ struct BatchDownloadView: View {
     }
 
     private func performDownloads(_ selected: [(name: String, url: String)]) {
+        guard !selected.isEmpty else { return }
         isProcessing = true
         processedCount = 0
+        processingTotal = selected.count
+        let eps = selected
 
-        Task {
-            for ep in selected {
-                do {
-                    let realURL = try await OVideoAPI.resolveRealURL(episodeURL: ep.url)
-                    await MainActor.run {
-                        downloadManager.startDownload(
-                            urlString: realURL,
-                            title: "\(item.name) · \(ep.name)",
-                            coverImage: item.image,
-                            seriesTitle: item.name,
-                            episodeName: ep.name,
-                            episodeKey: ep.url,
-                            sourceURL: item.url
-                        )
-                        processedCount += 1
+        Task { @MainActor in
+            // ⭐ 最多 4 路并发解析真实地址；入队仍按用户选择顺序
+            var resolved = [String?](repeating: nil, count: eps.count)
+            await withTaskGroup(of: (Int, String?).self) { group in
+                var next = 0
+                let limit = min(4, eps.count)
+                while next < limit {
+                    let i = next, url = eps[i].url
+                    group.addTask { (i, try? await OVideoAPI.resolveRealURL(episodeURL: url)) }
+                    next += 1
+                }
+                for await (i, real) in group {
+                    resolved[i] = real
+                    processedCount += 1
+                    if next < eps.count {
+                        let j = next, url = eps[j].url
+                        group.addTask { (j, try? await OVideoAPI.resolveRealURL(episodeURL: url)) }
+                        next += 1
                     }
-                } catch {
-                    await MainActor.run { processedCount += 1 }
                 }
             }
-            await MainActor.run {
-                isProcessing = false
-                dismiss()
-                onStartDownloads()
+            for (i, ep) in eps.enumerated() {
+                guard let real = resolved[i] else { continue }
+                downloadManager.startDownload(urlString: real,
+                                              title: "\(item.name) · \(ep.name)",
+                                              coverImage: item.image,
+                                              seriesTitle: item.name,
+                                              episodeName: ep.name,
+                                              episodeKey: ep.url,
+                                              sourceURL: item.url)
             }
+            isProcessing = false
+            dismiss()
+            onStartDownloads()
         }
     }
     

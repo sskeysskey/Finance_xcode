@@ -328,6 +328,15 @@ extension OVideoItem {
     }
 }
 
+extension OVideoItem {
+    /// ⭐ 内容级比较（`==` 只比 url，用于集合去重；UI 是否需要重绘必须用这个）
+    func hasSameContent(as o: OVideoItem) -> Bool {
+        url == o.url && name == o.name && info == o.info && image == o.image
+            && update == o.update && date == o.date && time == o.time
+            && ratings == o.ratings && region == o.region && intro == o.intro
+    }
+}
+
 enum VideoSortOption: String, CaseIterable {
     case update, date, rating
     func displayName(_ en: Bool) -> String {
@@ -370,34 +379,42 @@ extension VideoCacheMetadata {
     }
 }
 
-// MARK: - 数据管理器（分页 / 按需 / ★新增静默刷新）
+// MARK: - ⭐ 单个「分类 + 排序」的独立数据源
+// 每个分类页只监听自己的 feed：A 分类翻页不会让 B/C/D/E 分类页、底部栏、详情页重绘
+@MainActor
+final class OVideoCategoryFeed: ObservableObject {
+    let key: String
+    @Published fileprivate(set) var items: [OVideoItem] = []
+    @Published fileprivate(set) var hasMore = true
+    @Published fileprivate(set) var isLoading = false
+    @Published fileprivate(set) var loadFailed = false
+    fileprivate(set) var didLoadFirstPage = false
+    fileprivate var nextPage = 0
+    fileprivate var lastRefreshAt: Date?
+    fileprivate var knownURLs = Set<String>()
+
+    init(key: String) { self.key = key }
+}
+
+// MARK: - 数据管理器（分页 / 按需 / 静默刷新 · 性能版）
 @MainActor
 class OVideoDataManager: ObservableObject {
     @Published var categoryNames: [String] = ["Featured", "Movie", "Drama", "Show", "Anime"]
     @Published var reviewMaxYear: Int? = nil {
-        didSet {
-            if oldValue != reviewMaxYear {
-                pageItems.removeAll(); hasMore.removeAll()
-                nextPage.removeAll(); loadingKeys.removeAll()
-                lastRefreshAt.removeAll()
-            }
-        }
+        didSet { if oldValue != reviewMaxYear { feeds.removeAll() } }
     }
     @Published var isBootstrapping = false
     @Published var bootstrapError: String? = nil
 
-    @Published private(set) var pageItems: [String: [OVideoItem]] = [:]
-    @Published private(set) var hasMore: [String: Bool] = [:]
-    @Published private(set) var loadingKeys: Set<String> = []
-    private var nextPage: [String: Int] = [:]
-
-    // 【新增】静默刷新节流
-    private var lastRefreshAt: [String: Date] = [:]
+    /// ⭐ 不发布：feed 自己发布，避免全局广播
+    private var feeds: [String: OVideoCategoryFeed] = [:]
     private var lastCategoryRefreshAt: Date?
 
     private let pageSize = 24
     private var didBootstrap = false
     private var loadedUserId: String? = nil
+    private var bootstrapTask: Task<Void, Never>?
+    private var bootstrapTaskKey: String?
 
     var isLoading: Bool { isBootstrapping }
 
@@ -406,101 +423,143 @@ class OVideoDataManager: ObservableObject {
         return "\(cat)|\(sort.rawValue)"
     }
 
-    func items(category: String, sort: VideoSortOption) -> [OVideoItem] {
-        pageItems[cacheKey(category, sort)] ?? []
-    }
-    func hasMorePages(category: String, sort: VideoSortOption) -> Bool {
-        hasMore[cacheKey(category, sort)] ?? true
-    }
-    func isLoadingPage(category: String, sort: VideoSortOption) -> Bool {
-        loadingKeys.contains(cacheKey(category, sort))
+    /// 取得（必要时创建）某分类 + 排序的数据源
+    func feed(category: String, sort: VideoSortOption) -> OVideoCategoryFeed {
+        let k = cacheKey(category, sort)
+        if let f = feeds[k] { return f }
+        let f = OVideoCategoryFeed(key: k)
+        feeds[k] = f
+        return f
     }
 
+    // 兼容旧 API（注意：这三个是非响应式快照，UI 请监听 feed）
+    func items(category: String, sort: VideoSortOption) -> [OVideoItem] {
+        feeds[cacheKey(category, sort)]?.items ?? []
+    }
+    func hasMorePages(category: String, sort: VideoSortOption) -> Bool {
+        feeds[cacheKey(category, sort)]?.hasMore ?? true
+    }
+    func isLoadingPage(category: String, sort: VideoSortOption) -> Bool {
+        feeds[cacheKey(category, sort)]?.isLoading ?? false
+    }
+
+    // MARK: 启动（⭐ 并发调用去重：AppDelegate 预热 + VideoModuleView.task 不再重复请求）
     func bootstrap(userId: String?) async {
         if didBootstrap && loadedUserId == userId { return }
+        let key = userId ?? "∅"
+        if let t = bootstrapTask, bootstrapTaskKey == key { await t.value; return }
+        let t = Task { await self.performBootstrap(userId: userId) }
+        bootstrapTask = t
+        bootstrapTaskKey = key
+        await t.value
+        if bootstrapTaskKey == key { bootstrapTask = nil; bootstrapTaskKey = nil }
+    }
+
+    private func performBootstrap(userId: String?) async {
         if didBootstrap && loadedUserId != userId {
-            pageItems.removeAll(); hasMore.removeAll()
-            nextPage.removeAll(); loadingKeys.removeAll(); lastRefreshAt.removeAll()
+            feeds.removeAll()
+            objectWillChange.send()          // 让分类页重新取新 feed
         }
         loadedUserId = userId
-        isBootstrapping = true
+        if !isBootstrapping { isBootstrapping = true }
         defer { isBootstrapping = false }
         do {
             let names = try await OVideoAPI.fetchCategories()
-            if !names.isEmpty { categoryNames = names }
+            if !names.isEmpty, names != categoryNames { categoryNames = names }
             lastCategoryRefreshAt = Date()
-            bootstrapError = nil
+            if bootstrapError != nil { bootstrapError = nil }
         } catch {
             bootstrapError = error.localizedDescription
         }
         didBootstrap = true
     }
 
+    // MARK: 分页
     func loadFirstPageIfNeeded(category: String, sort: VideoSortOption, userId: String?) async {
-        if pageItems[cacheKey(category, sort)] != nil { return }
+        let f = feed(category: category, sort: sort)
+        if f.didLoadFirstPage || f.isLoading { return }
         await loadNextPage(category: category, sort: sort, userId: userId)
     }
 
     func loadNextPage(category: String, sort: VideoSortOption, userId: String?) async {
-        let key = cacheKey(category, sort)
-        if loadingKeys.contains(key) { return }
-        if let hm = hasMore[key], hm == false { return }
-        let page = nextPage[key] ?? 0
-        loadingKeys.insert(key)
-        defer { loadingKeys.remove(key) }
+        let f = feed(category: category, sort: sort)
+        guard !f.isLoading, f.hasMore else { return }
+        let page = f.nextPage
+        let year = reviewMaxYear
+        f.isLoading = true
+        if f.loadFailed { f.loadFailed = false }
         do {
             let resp = try await OVideoAPI.fetchList(category: category, sort: sort,
-                                         page: page, pageSize: pageSize,
-                                         userId: userId, maxYear: reviewMaxYear)
-            var arr = pageItems[key] ?? []
-            let existing = Set(arr.map { $0.url })
-            arr.append(contentsOf: resp.items.filter { !existing.contains($0.url) })
-            pageItems[key] = arr
-            hasMore[key] = resp.has_more
-            nextPage[key] = page + 1
-            if page == 0 { lastRefreshAt[key] = Date() }
-        } catch { }
+                                                     page: page, pageSize: pageSize,
+                                                     userId: userId, maxYear: year)
+            f.isLoading = false
+            // ⭐ 过期结果丢弃：审核年份 / 用户切换后旧 feed 已被移除；或静默刷新已抢先填充
+            guard feeds[f.key] === f, f.nextPage == page else { return }
+            var fresh: [OVideoItem] = []
+            for it in resp.items where f.knownURLs.insert(it.url).inserted { fresh.append(it) }
+            if !fresh.isEmpty { f.items.append(contentsOf: fresh) }
+            if f.hasMore != resp.has_more { f.hasMore = resp.has_more }
+            f.nextPage = page + 1
+            if page == 0 { f.didLoadFirstPage = true; f.lastRefreshAt = Date() }
+        } catch {
+            f.isLoading = false
+            let cancelled = (error is CancellationError) || (error as? URLError)?.code == .cancelled
+            if !cancelled { f.loadFailed = true }   // 页面切走导致的取消不算失败，回来会自动重载
+        }
     }
 
-    // MARK: - ★★★【需求1】静默刷新第一页（新增内容前插 + 同 URL 就地更新）★★★
+    // MARK: 静默刷新第一页（新增前插 + 同 URL 就地更新；⭐ 内容无变化时不发布）
     func silentRefreshFirstPage(category: String, sort: VideoSortOption,
                                 userId: String?, minInterval: TimeInterval = 60) async {
-        let key = cacheKey(category, sort)
-        if loadingKeys.contains(key) { return }
-        if let last = lastRefreshAt[key], Date().timeIntervalSince(last) < minInterval { return }
-        lastRefreshAt[key] = Date()
+        let f = feed(category: category, sort: sort)
+        if f.isLoading { return }
+        if let last = f.lastRefreshAt, Date().timeIntervalSince(last) < minInterval { return }
+        f.lastRefreshAt = Date()
+        let year = reviewMaxYear
 
         do {
             let resp = try await OVideoAPI.fetchList(category: category, sort: sort,
                                                      page: 0, pageSize: pageSize,
-                                                     userId: userId, maxYear: reviewMaxYear)
-            var arr = pageItems[key] ?? []
-            if arr.isEmpty {
-                pageItems[key] = resp.items
-                hasMore[key] = resp.has_more
-                nextPage[key] = 1
+                                                     userId: userId, maxYear: year)
+            guard feeds[f.key] === f else { return }
+
+            if f.items.isEmpty {
+                guard !f.isLoading else { return }   // 正常分页已在进行，交给它
+                var seen = Set<String>()
+                let list = resp.items.filter { seen.insert($0.url).inserted }
+                f.knownURLs = seen
+                f.items = list
+                f.hasMore = resp.has_more
+                f.nextPage = 1
+                f.didLoadFirstPage = true
+                if f.loadFailed { f.loadFailed = false }
                 return
             }
-            // 1) 同 url 就地更新（更新时间/集数/评分等会变新）
+
+            var arr = f.items
+            var changed = false
             let freshMap = Dictionary(resp.items.map { ($0.url, $0) }, uniquingKeysWith: { a, _ in a })
             for i in arr.indices {
-                if let newer = freshMap[arr[i].url] { arr[i] = newer }
+                if let newer = freshMap[arr[i].url], !newer.hasSameContent(as: arr[i]) {
+                    arr[i] = newer; changed = true
+                }
             }
-            // 2) 全新条目前插（page0 就是当前排序下的头部）
-            let existing = Set(arr.map { $0.url })
-            let brandNew = resp.items.filter { !existing.contains($0.url) }
+            var brandNew: [OVideoItem] = []
+            for it in resp.items where !f.knownURLs.contains(it.url) {
+                f.knownURLs.insert(it.url)
+                brandNew.append(it)
+            }
             if !brandNew.isEmpty {
                 arr.insert(contentsOf: brandNew, at: 0)
-                print("📺 [静默刷新] \(key) 新增 \(brandNew.count) 条")
+                changed = true
+                print("📺 [静默刷新] \(f.key) 新增 \(brandNew.count) 条")
             }
-            pageItems[key] = arr
+            if changed { f.items = arr }
         } catch {
-            // 失败允许 20 秒后再试
-            lastRefreshAt[key] = Date().addingTimeInterval(-(max(0, minInterval - 20)))
+            f.lastRefreshAt = Date().addingTimeInterval(-(max(0, minInterval - 20)))
         }
     }
 
-    /// 刷新用户当前正在看的那个分类 + 分类名
     func silentRefreshCurrentSelection(userId: String?, minInterval: TimeInterval = 60) async {
         await refreshCategoryNames()
         let idx = UserDefaults.standard.integer(forKey: "OVideo_SelectedCategoryIndex")
@@ -512,12 +571,11 @@ class OVideoDataManager: ObservableObject {
                                      userId: userId, minInterval: minInterval)
     }
 
-    /// 分类名变动较少，10 分钟节流
     func refreshCategoryNames(minInterval: TimeInterval = 600) async {
         if let last = lastCategoryRefreshAt, Date().timeIntervalSince(last) < minInterval { return }
         lastCategoryRefreshAt = Date()
-        if let names = try? await OVideoAPI.fetchCategories(), !names.isEmpty {
-            if names != categoryNames { categoryNames = names }
+        if let names = try? await OVideoAPI.fetchCategories(), !names.isEmpty, names != categoryNames {
+            categoryNames = names
         }
     }
 
@@ -530,13 +588,13 @@ class OVideoDataManager: ObservableObject {
     }
 
     func fetchFilter(category: String?, type: String?, year: Int?, region: String?,
-                    sort: VideoSortOption, page: Int, userId: String?)
+                     sort: VideoSortOption, page: Int, userId: String?)
     async -> (items: [OVideoItem], hasMore: Bool) {
         do {
             let resp = try await OVideoAPI.fetchFilter(category: category, type: type, year: year,
-                                                    region: region, sort: sort, page: page,
-                                                    pageSize: pageSize, userId: userId,
-                                                    maxYear: reviewMaxYear)
+                                                       region: region, sort: sort, page: page,
+                                                       pageSize: pageSize, userId: userId,
+                                                       maxYear: reviewMaxYear)
             return (resp.items, resp.has_more)
         } catch {
             return ([], false)

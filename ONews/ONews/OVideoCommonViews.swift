@@ -1,12 +1,12 @@
-// 图片缓存 / 瀑布流 / 卡片 / 首页 Pager（分页无限滚动版）
+// 图片缓存 / 瀑布流 / 卡片 / 首页 Pager（分页无限滚动 · 性能优化版）
 
 import SwiftUI
+import UIKit
+import ImageIO
 
-// ⭐ 新增：分类显示名统一辅助（卡片标签 + 首页菜单共用）
+// ⭐ 分类显示名统一辅助（卡片标签 + 首页菜单共用）
 func videoCategoryDisplayName(_ key: String, english: Bool) -> String {
-    if english {
-        return key   // 英文模式直接用原始 key
-    }
+    if english { return key }
     switch key {
     case "Featured": return "最新"
     case "Movie":    return "电影"
@@ -17,58 +17,134 @@ func videoCategoryDisplayName(_ key: String, english: Bool) -> String {
     }
 }
 
-// MARK: - 图片内存缓存（不变）
+// MARK: - 图片内存缓存
 final class OImageCache {
     static let shared = OImageCache()
     private let cache = NSCache<NSURL, UIImage>()
     private init() {
         cache.countLimit = 300
-        cache.totalCostLimit = 200 * 1024 * 1024
+        cache.totalCostLimit = 160 * 1024 * 1024
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                self?.cache.removeAllObjects()
+            }
     }
     func image(for url: URL) -> UIImage? { cache.object(forKey: url as NSURL) }
     func set(_ image: UIImage, for url: URL) {
-        cache.setObject(image, forKey: url as NSURL,
-                        cost: Int(image.size.width * image.size.height * 4))
+        let cost: Int
+        if let cg = image.cgImage { cost = cg.bytesPerRow * cg.height }
+        else { cost = Int(image.size.width * image.scale * image.size.height * image.scale * 4) }
+        cache.setObject(image, forKey: url as NSURL, cost: cost)
     }
 }
 
-// MARK: - 带缓存异步图片（不变）
+// MARK: - ⭐ 图片加载管线：后台下载 + ImageIO 降采样（解码不上主线程）+ 同 URL 请求合并
+@MainActor
+final class OImageLoader {
+    static let shared = OImageLoader()
+    private var inflight: [NSURL: Task<UIImage?, Never>] = [:]
+
+    private let session: URLSession = {
+        let c = URLSessionConfiguration.default
+        c.urlCache = URLCache(memoryCapacity: 16 * 1024 * 1024,
+                              diskCapacity: 200 * 1024 * 1024,
+                              diskPath: "ovideo_covers")
+        c.requestCachePolicy = .returnCacheDataElseLoad
+        c.httpMaximumConnectionsPerHost = 6
+        c.timeoutIntervalForRequest = 20
+        return URLSession(configuration: c)
+    }()
+
+    /// 卡片 2 列 × 3x 屏，最长边 900px 足够清晰
+    private let maxPixel: CGFloat = 900
+
+    func load(_ url: URL) async -> UIImage? {
+        if let c = OImageCache.shared.image(for: url) { return c }
+        let key = url as NSURL
+        if let t = inflight[key] { return await t.value }
+
+        let session = self.session
+        let maxPixel = self.maxPixel
+        let task = Task.detached(priority: .utility) { () -> UIImage? in
+            guard let (data, resp) = try? await session.data(from: url) else { return nil }
+            if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { return nil }
+            return OImageLoader.downsample(data, maxPixel: maxPixel)
+        }
+        inflight[key] = task
+        let img = await task.value
+        inflight[key] = nil
+        if let img { OImageCache.shared.set(img, for: url) }
+        return img
+    }
+
+    nonisolated static func downsample(_ data: Data, maxPixel: CGFloat) -> UIImage? {
+        let srcOpts = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let src = CGImageSourceCreateWithData(data as CFData, srcOpts) else { return nil }
+        let opts = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,        // ⭐ 在后台线程完成解码
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ] as CFDictionary
+        if let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts) { return UIImage(cgImage: cg) }
+        return UIImage(data: data)
+    }
+}
+
+fileprivate struct OLoadedImage {
+    let url: URL
+    let image: UIImage
+}
+
+// MARK: - 带缓存异步图片（⭐ 首帧命中内存缓存不闪占位 / URL 变化不串图 / 失败有 failure 态）
 struct CachedAsyncImage<Content: View>: View {
     let url: URL
     let content: (AsyncImagePhase) -> Content
-    @State private var uiImage: UIImage?
-    @State private var isLoading = false
+    @State private var loaded: OLoadedImage?
+    @State private var failedURL: URL?
+
     init(url: URL, @ViewBuilder content: @escaping (AsyncImagePhase) -> Content) {
-        self.url = url; self.content = content
+        self.url = url
+        self.content = content
+        _loaded = State(initialValue: OImageCache.shared.image(for: url).map { OLoadedImage(url: url, image: $0) })
     }
+
     var body: some View {
         Group {
-            if let img = uiImage { content(.success(Image(uiImage: img))) }
-            else { content(.empty) }
-        }
-        .task(id: url) { await load() }
-    }
-    private func load() async {
-        if uiImage != nil { return }
-        if let cached = OImageCache.shared.image(for: url) { self.uiImage = cached; return }
-        isLoading = true; defer { isLoading = false }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            if let img = UIImage(data: data) {
-                OImageCache.shared.set(img, for: url)
-                self.uiImage = img
+            if let l = loaded, l.url == url {
+                content(.success(Image(uiImage: l.image)))
+            } else if failedURL == url {
+                content(.failure(URLError(.cannotDecodeContentData)))
+            } else {
+                content(.empty)
             }
-        } catch { }
+        }
+        .task(id: url) {
+            if loaded?.url == url { return }
+            if let c = OImageCache.shared.image(for: url) {
+                loaded = OLoadedImage(url: url, image: c); return
+            }
+            let img = await OImageLoader.shared.load(url)
+            if Task.isCancelled { return }
+            if let img {
+                loaded = OLoadedImage(url: url, image: img)
+                failedURL = nil
+            } else {
+                failedURL = url
+            }
+        }
     }
 }
 
-// MARK: - 瀑布流（带触底回调）
+// MARK: - 瀑布流（⭐ 提前 6 个触发下一页；不再整页监听 dataManager）
 struct WaterfallGridView: View {
     let items: [OVideoItem]
-    @ObservedObject var dataManager: OVideoDataManager
-    var playSource: String = "unknown"       // ⭐ 新增：点击来源，透传给详情页
-    var onReachEnd: (() -> Void)? = nil      // 触底加载下一页
+    let dataManager: OVideoDataManager
+    var playSource: String = "unknown"
+    var onReachEnd: (() -> Void)? = nil
 
+    private static let prefetchDistance = 6
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 10),
         GridItem(.flexible(), spacing: 10)
@@ -80,16 +156,18 @@ struct WaterfallGridView: View {
                 .foregroundColor(.secondary)
                 .frame(maxWidth: .infinity, minHeight: 200)
         } else {
+            let triggerURLs: Set<String> = onReachEnd == nil
+                ? [] : Set(items.suffix(Self.prefetchDistance).map(\.url))
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(items) { item in
-                    NavigationLink(destination: VideoDetailView(item: item,
-                                                                dataManager: dataManager,
-                                                                playSource: playSource)) {   // ⭐ 透传
-                        VideoCardView(item: item)
+                    NavigationLink {
+                        VideoDetailView(item: item, dataManager: dataManager, playSource: playSource)
+                    } label: {
+                        VideoCardView(item: item).equatable()
                     }
                     .buttonStyle(PlainButtonStyle())
                     .onAppear {
-                        if item.url == items.last?.url { onReachEnd?() }
+                        if triggerURLs.contains(item.url) { onReachEnd?() }
                     }
                 }
             }
@@ -98,21 +176,26 @@ struct WaterfallGridView: View {
     }
 }
 
-// MARK: - 卡片
-struct VideoCardView: View {
+// MARK: - 卡片（⭐ Equatable：内容不变不重绘；内容变了一定重绘）
+struct VideoCardView: View, Equatable {
     let item: OVideoItem
 
+    static func == (l: VideoCardView, r: VideoCardView) -> Bool {
+        l.item.hasSameContent(as: r.item)
+    }
+
     var body: some View {
+        let rating = item.bestRating
         VStack(alignment: .leading, spacing: 10) {
             Color.clear
                 .aspectRatio(2.0/3.0, contentMode: .fit)
                 .overlay(
                     ZStack(alignment: .bottomTrailing) {
                         coverImage
-                        if item.bestRating > 0 {
+                        if rating > 0 {
                             VStack {
                                 HStack {
-                                    Text(String(format: "%.1f", item.bestRating))
+                                    Text(String(format: "%.1f", rating))
                                         .font(.system(size: 11, weight: .bold))
                                         .foregroundColor(.white)
                                         .padding(.horizontal, 10).padding(.vertical, 3)
@@ -145,38 +228,24 @@ struct VideoCardView: View {
                 .padding(.horizontal, 2)
                 .padding(.top, 2)
 
-            // 时间 / 地区 / 类型行
             HStack(spacing: 10) {
                 if let date = item.date, !date.isEmpty {
                     Text(date.split(separator: "(").first.map(String.init) ?? date)
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-
-                    // ⭐ 新增：上映日期右边显示地区
+                        .font(.system(size: 13)).foregroundColor(.secondary).lineLimit(1)
                     if let region = item.region, !region.isEmpty {
-                        Text(region)
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                        Text(region).font(.system(size: 13)).foregroundColor(.secondary).lineLimit(1)
                     }
                 } else if let region = item.region, !region.isEmpty {
-                    // 没有日期时，只显示地区（可选兜底）
-                    Text(region)
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                    Text(region).font(.system(size: 13)).foregroundColor(.secondary).lineLimit(1)
                 } else if let types = item.types, !types.isEmpty {
                     Text(types.joined(separator: " / "))
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                        .font(.system(size: 13)).foregroundColor(.secondary).lineLimit(1)
                 }
             }
             .padding(.horizontal, 2)
         }
         .padding(.bottom, 8)
-        .contentShape(Rectangle())   // ⭐ 整张卡片的点击命中区域限定为自身矩形
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -214,7 +283,7 @@ struct VideoCardView: View {
 enum VideoCategoryTheme {
     static func color(for key: String) -> Color {
         switch key {
-        case "Featured": return Color(red: 0.95, green: 0.30, blue: 0.45)   // ⭐ 最新：玫红
+        case "Featured": return Color(red: 0.95, green: 0.30, blue: 0.45)
         case "Movie": return Color(red: 0.25, green: 0.55, blue: 0.95)
         case "Drama": return Color(red: 0.62, green: 0.36, blue: 0.85)
         case "Show":  return Color(red: 0.98, green: 0.55, blue: 0.20)
@@ -225,7 +294,7 @@ enum VideoCategoryTheme {
     }
     static func icon(for key: String) -> String {
         switch key {
-        case "Featured": return "flame.fill"     // ⭐ 最新
+        case "Featured": return "flame.fill"
         case "Movie": return "film.fill"
         case "Drama": return "theatermasks.fill"
         case "Show":  return "sparkles"
@@ -241,17 +310,15 @@ struct VideoModuleView: View {
     @EnvironmentObject private var dataManager: OVideoDataManager
     @EnvironmentObject var authManager: AuthManager
     @EnvironmentObject var resourceManager: ResourceManager
-    @ObservedObject private var seriesTrack = SeriesTrackManager.shared      // 【新增】
+    @ObservedObject private var seriesTrack = SeriesTrackManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
-    @AppStorage("OVideo_TrackNoAutoPopup") private var noAutoPopup = false   // 【新增】
+    @AppStorage("OVideo_TrackNoAutoPopup") private var noAutoPopup = false
 
     @AppStorage("OVideo_SortOption") private var sortOptionRaw: String = VideoSortOption.date.rawValue
     @AppStorage("OVideo_SelectedCategoryIndex") private var selectedCategoryIndex: Int = 0
     @AppStorage("hasSeenVideoSwipeGuide") private var hasSeenVideoSwipeGuide = false
 
-    // 【新增】是否显示左上角返回按钮（只看视频的根视图传 false）
     var showBackButton: Bool = true
-    // 【需求3】区分「首次进入」与「从其他页面返回」
     @State private var didAppearOnce = false
 
     private var sortBinding: Binding<VideoSortOption> {
@@ -260,6 +327,12 @@ struct VideoModuleView: View {
     }
     private var categoryIndexBinding: Binding<Int> {
         Binding(get: { selectedCategoryIndex }, set: { selectedCategoryIndex = $0 })
+    }
+
+    /// ⭐ 值没变就不赋值：@Published 每次 set 都会广播
+    private func applyReviewYear() {
+        let y = resourceManager.effectiveReviewVideoMaxYear
+        if dataManager.reviewMaxYear != y { dataManager.reviewMaxYear = y }
     }
 
     var body: some View {
@@ -277,7 +350,6 @@ struct VideoModuleView: View {
                     .transition(.opacity)
             }
         }
-        // ✅ 在线客服悬浮按钮
         .supportBubble(userId: SupportIdentity.userId(appleId: authManager.userIdentifier))
         .sheet(isPresented: $seriesTrack.showSheet) {
             SeriesTrackListView()
@@ -285,36 +357,36 @@ struct VideoModuleView: View {
                 .environmentObject(authManager)
                 .environmentObject(resourceManager)
         }
-        // ★★★【需求1】每次回到视频首页（从详情/播放器/搜索返回）都静默刷新 ★★★
         .onAppear {
-            dataManager.reviewMaxYear = resourceManager.effectiveReviewVideoMaxYear
-            Task {
-                // 只拉 version.json（开关/审核年份/通知），不下载新闻 JSON，省流量
-                await resourceManager.refreshServerConfig(minInterval: 120)
-                await dataManager.silentRefreshCurrentSelection(
-                    userId: authManager.userIdentifier, minInterval: 45)
-                await seriesTrack.refresh()
-            }
-            // 【需求3】只有「返回」视频首页才算成功时刻；冷启动第一次不打扰
-            if didAppearOnce {
+            applyReviewYear()
+            let returning = didAppearOnce
+            if returning {
                 NotificationPermissionManager.shared.record(.videoHomeReturn)
             } else {
                 didAppearOnce = true
             }
+            Task {
+                await resourceManager.refreshServerConfig(minInterval: 120)
+                applyReviewYear()          // ⭐ 修复：配置刷新后审核年份要立刻生效
+                await dataManager.silentRefreshCurrentSelection(
+                    userId: authManager.userIdentifier, minInterval: 45)
+                if returning { await seriesTrack.refresh() }   // 首次由 .task 负责，避免重复请求
+            }
         }
         .task {
-            await dataManager.bootstrap(userId: authManager.userIdentifier)
-            await FreeQuotaManager.shared.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
+            // ⭐ 三路并行，互不阻塞
+            Task { await FreeQuotaManager.shared.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager)) }
+            async let boot: Void = dataManager.bootstrap(userId: authManager.userIdentifier)
             await seriesTrack.refresh()
             if !noAutoPopup, seriesTrack.unseenCount > 0, !seriesTrack.showSheet {
                 try? await Task.sleep(nanoseconds: 400_000_000)
-                seriesTrack.showSheet = true
+                if !Task.isCancelled, !seriesTrack.showSheet { seriesTrack.showSheet = true }
             }
+            await boot
         }
     }
 }
 
-// 【新增】视频模块关闭时的占位提示页（只看视频的用户遇到模块关闭时显示）
 struct VideoModuleClosedView: View {
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     var body: some View {
@@ -335,13 +407,13 @@ struct VideoModuleClosedView: View {
     }
 }
 
-// MARK: - 底部栏
+// MARK: - 底部栏（⭐ 不再监听 dataManager）
 struct VideoBottomBar: View {
-    @ObservedObject var dataManager: OVideoDataManager
+    let dataManager: OVideoDataManager
     @EnvironmentObject var authManager: AuthManager
     @ObservedObject private var quota = FreeQuotaManager.shared
     @ObservedObject private var pointsCoordinator = NewsPointsCoordinator.shared
-    @ObservedObject private var seriesTrack = SeriesTrackManager.shared   // 【新增】
+    @ObservedObject private var seriesTrack = SeriesTrackManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     let isLoading: Bool
 
@@ -352,7 +424,6 @@ struct VideoBottomBar: View {
                             isEnglish: isGlobalEnglishMode)
             }.buttonStyle(.plain)
 
-            // 【修改】原「搜索」→「追剧」，带未读角标
             Button {
                 seriesTrack.showSheet = true
             } label: {
@@ -369,12 +440,8 @@ struct VideoBottomBar: View {
             if !authManager.isSubscribed {
                 Button {
                     pointsCoordinator.authRef = authManager
-                    // ⭐ 复用统一弹窗（视频上下文；主动点“+” → isShortage:false）
-                    if authManager.isLoggedIn {
-                        pointsCoordinator.presentInsufficient(needLogin: false, context: .video, isShortage: false)
-                    } else {
-                        pointsCoordinator.presentInsufficient(needLogin: true, context: .video, isShortage: false)
-                    }
+                    pointsCoordinator.presentInsufficient(needLogin: !authManager.isLoggedIn,
+                                                          context: .video, isShortage: false)
                 } label: {
                     BarPointsItemView(points: quota.remaining, isEnglish: isGlobalEnglishMode)
                 }.buttonStyle(.plain)
@@ -394,10 +461,8 @@ private struct BarPointsItemView: View {
     let isEnglish: Bool
     var body: some View {
         VStack(spacing: 4) {
-            ZStack(alignment: .topTrailing) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 24)).foregroundColor(.orange)
-            }
+            Image(systemName: "plus.circle.fill")
+                .font(.system(size: 24)).foregroundColor(.orange)
             Text(isEnglish ? "Points \(points)" : "免费点数\(points)")
                 .font(.system(size: 12, weight: .medium)).foregroundColor(.primary)
         }
@@ -410,7 +475,7 @@ private struct BarItemView: View {
     let zh: String
     let en: String
     let isEnglish: Bool
-    var badge: Int = 0          // 【新增】
+    var badge: Int = 0
 
     var body: some View {
         VStack(spacing: 4) {
@@ -418,7 +483,6 @@ private struct BarItemView: View {
                 Image(systemName: icon)
                     .font(.system(size: 24, weight: .regular))
                     .foregroundColor(.primary)
-
                 if badge > 0 {
                     Text(badge > 99 ? "99+" : "\(badge)")
                         .font(.system(size: 10, weight: .bold))
@@ -431,7 +495,6 @@ private struct BarItemView: View {
                 }
             }
             .frame(height: 26)
-
             Text(isEnglish ? en : zh)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.primary)
@@ -441,7 +504,7 @@ private struct BarItemView: View {
     }
 }
 
-// MARK: - 单个分类列表（分页 + 无限滚动）
+// MARK: - 单个分类列表（外壳：只在分类名/审核年份变化时重算，取对应 feed）
 struct CategoryVideoListView: View {
     let categoryName: String
     let sortOption: VideoSortOption
@@ -449,29 +512,50 @@ struct CategoryVideoListView: View {
     let userId: String?
 
     var body: some View {
-        let items = dataManager.items(category: categoryName, sort: sortOption)
-        let loading = dataManager.isLoadingPage(category: categoryName, sort: sortOption)
+        CategoryFeedListView(feed: dataManager.feed(category: categoryName, sort: sortOption),
+                             categoryName: categoryName,
+                             sortOption: sortOption,
+                             dataManager: dataManager,
+                             userId: userId)
+    }
+}
 
+// MARK: - ⭐ 真正的列表：只监听自己的 feed
+private struct CategoryFeedListView: View {
+    @ObservedObject var feed: OVideoCategoryFeed
+    let categoryName: String
+    let sortOption: VideoSortOption
+    let dataManager: OVideoDataManager
+    let userId: String?
+    @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+
+    var body: some View {
+        let items = feed.items
         ScrollViewReader { proxy in
             ScrollView {
                 Color.clear.frame(height: 0).id("top_anchor")
 
-                if items.isEmpty && loading {
+                if items.isEmpty && feed.loadFailed && !feed.isLoading {
+                    retryView.padding(.top, 80)
+                } else if items.isEmpty && (feed.isLoading || !feed.didLoadFirstPage) {
                     ProgressView().padding(.top, 80)
                 } else {
                     WaterfallGridView(items: items, dataManager: dataManager,
-                                      playSource: "home",          // ⭐ 首页
-                                      onReachEnd: {
-                                          Task { await dataManager.loadNextPage(category: categoryName,
-                                                                                sort: sortOption, userId: userId) }
-                                      })
+                                      playSource: "home",
+                                      onReachEnd: { loadMore() })
                     .padding(.top, 10)
 
-                    if loading && !items.isEmpty {
+                    if feed.isLoading && !items.isEmpty {
                         ProgressView().padding(.vertical, 16)
+                    } else if feed.loadFailed && !items.isEmpty {
+                        retryView.padding(.vertical, 16)
                     }
                     Color.clear.frame(height: 20)
                 }
+            }
+            .refreshable {
+                await dataManager.silentRefreshFirstPage(category: categoryName, sort: sortOption,
+                                                         userId: userId, minInterval: 3)
             }
             .onChange(of: sortOption) {
                 withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
@@ -480,47 +564,72 @@ struct CategoryVideoListView: View {
             }
         }
         .background(Color(UIColor.systemGroupedBackground))
-        .task(id: "\(categoryName)|\(sortOption.rawValue)|\(dataManager.reviewMaxYear ?? -1)") {
+        .task(id: feed.key) {
             await dataManager.loadFirstPageIfNeeded(category: categoryName,
                                                     sort: sortOption, userId: userId)
         }
     }
+
+    private func loadMore() {
+        Task { await dataManager.loadNextPage(category: categoryName, sort: sortOption, userId: userId) }
+    }
+
+    private var retryView: some View {
+        Button { loadMore() } label: {
+            VStack(spacing: 8) {
+                Image(systemName: "arrow.clockwise.circle.fill")
+                    .font(.system(size: 28)).foregroundColor(.accentColor)
+                Text(isGlobalEnglishMode ? "Failed to load. Tap to retry" : "加载失败，点击重试")
+                    .font(.system(size: 13, weight: .medium)).foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 }
 
-// ⭐ 新增:支持"中间滑动切栏目 / 贴边右滑返回上一页"的分页控制器
+// MARK: - ⭐ 支持"中间滑动切栏目 / 贴边右滑返回"的分页控制器（修复 delegate 悬空导致导航卡死）
 final class EdgeSwipePageViewController: UIPageViewController, UIGestureRecognizerDelegate {
-    private var didSetupEdgeGesture = false
+    private weak var originalPopDelegate: UIGestureRecognizerDelegate?
+    private var didRequireFail = false
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        setupEdgeGestureIfNeeded()
-    }
-
-    private func setupEdgeGestureIfNeeded() {
-        guard !didSetupEdgeGesture,
-              let nav = navigationController,
-              let popGesture = nav.interactivePopGestureRecognizer else { return }
-        didSetupEdgeGesture = true
-
-        // 因为隐藏了系统导航栏,需要手动开启并接管返回手势
-        popGesture.isEnabled = true
-        popGesture.delegate = self
-
-        // 关键:内部横向滚动手势必须等"边缘返回手势"失败后才触发
-        for sub in view.subviews {
-            if let scroll = sub as? UIScrollView {
-                scroll.panGestureRecognizer.require(toFail: popGesture)
+        guard let nav = navigationController,
+              let pop = nav.interactivePopGestureRecognizer else { return }
+        if pop.delegate !== self {
+            originalPopDelegate = pop.delegate
+            pop.delegate = self
+        }
+        pop.isEnabled = true
+        if !didRequireFail {
+            didRequireFail = true
+            for sub in view.subviews {
+                if let scroll = sub as? UIScrollView {
+                    scroll.panGestureRecognizer.require(toFail: pop)
+                }
             }
         }
     }
 
-    // 栈里有上一页时,才允许触发返回手势
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        restorePopDelegate()      // ⭐ 离开时把系统 delegate 还回去，其它页面行为不受影响
+    }
+
+    private func restorePopDelegate() {
+        guard let pop = navigationController?.interactivePopGestureRecognizer,
+              pop.delegate === self else { return }
+        pop.delegate = originalPopDelegate
+    }
+
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        return (navigationController?.viewControllers.count ?? 0) > 1
+        (navigationController?.viewControllers.count ?? 0) > 1
     }
 }
 
-// MARK: - 无限循环 Pager（按名称）— 不变
+// MARK: - 无限循环 Pager
 struct InfinitePageViewController: UIViewControllerRepresentable {
     var categories: [String]
     @Binding var selectedIndex: Int
@@ -528,50 +637,67 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
     var dataManager: OVideoDataManager
     var userId: String?
 
+    fileprivate var signature: String { categories.joined(separator: "\u{1F}") + "|" + (userId ?? "") }
+
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIViewController(context: Context) -> UIPageViewController {
         let pvc = EdgeSwipePageViewController(transitionStyle: .scroll,
-                                      navigationOrientation: .horizontal, options: nil)
+                                              navigationOrientation: .horizontal, options: nil)
         pvc.dataSource = context.coordinator
         pvc.delegate = context.coordinator
         pvc.view.backgroundColor = .clear
+        context.coordinator.lastSortOption = sortOption
+        context.coordinator.lastSignature = signature
         if !categories.isEmpty {
             let safe = min(max(0, selectedIndex), categories.count - 1)
+            context.coordinator.currentIndex = safe
             pvc.setViewControllers([context.coordinator.viewController(for: safe)],
                                    direction: .forward, animated: false)
         }
         return pvc
     }
 
-    func updateUIViewController(_ pageViewController: UIPageViewController, context: Context) {
-        context.coordinator.parent = self
+    func updateUIViewController(_ pvc: UIPageViewController, context: Context) {
+        let coord = context.coordinator
+        coord.parent = self
         guard !categories.isEmpty else { return }
 
-        let signature = categories.joined(separator: ",")
-        let sortChanged = context.coordinator.lastSortOption != sortOption
-        let dataChanged = context.coordinator.lastCategoriesSignature != signature
+        let sig = signature
+        let sortChanged = coord.lastSortOption != sortOption
+        let dataChanged = coord.lastSignature != sig
+        var forceReset = false
 
-        if sortChanged || dataChanged {
-            for (index, vc) in context.coordinator.controllers where index < categories.count {
-                vc.rootView = CategoryVideoListView(categoryName: categories[index],
-                                                    sortOption: sortOption,
-                                                    dataManager: dataManager, userId: userId)
+        if dataChanged {
+            // ⭐ 分类数变少时清掉越界的缓存页，否则左右滑会卡死
+            for k in coord.controllers.keys where k >= categories.count {
+                coord.controllers.removeValue(forKey: k)
             }
-            context.coordinator.lastSortOption = sortOption
-            context.coordinator.lastCategoriesSignature = signature
+            if coord.currentIndex >= categories.count { forceReset = true }
+        }
+        if sortChanged || dataChanged {
+            for (index, vc) in coord.controllers { vc.rootView = coord.makeRoot(index) }
+            coord.lastSortOption = sortOption
+            coord.lastSignature = sig
         }
 
         let safeTarget = min(max(0, selectedIndex), categories.count - 1)
-        if context.coordinator.currentIndex != safeTarget {
+        if forceReset {
+            pvc.setViewControllers([coord.viewController(for: safeTarget)],
+                                   direction: .forward, animated: false)
+            coord.currentIndex = safeTarget
+            if selectedIndex != safeTarget {
+                let binding = $selectedIndex
+                DispatchQueue.main.async { binding.wrappedValue = safeTarget }
+            }
+        } else if coord.currentIndex != safeTarget {
             let count = categories.count
-            let current = context.coordinator.currentIndex
-            var diff = safeTarget - current
+            var diff = safeTarget - coord.currentIndex
             if diff > count / 2 { diff -= count } else if diff < -count / 2 { diff += count }
             let direction: UIPageViewController.NavigationDirection = diff >= 0 ? .forward : .reverse
-            let vc = context.coordinator.viewController(for: safeTarget)
-            pageViewController.setViewControllers([vc], direction: direction, animated: true)
-            context.coordinator.currentIndex = safeTarget
+            pvc.setViewControllers([coord.viewController(for: safeTarget)],
+                                   direction: direction, animated: true)
+            coord.currentIndex = safeTarget
         }
     }
 
@@ -580,53 +706,57 @@ struct InfinitePageViewController: UIViewControllerRepresentable {
         var currentIndex: Int
         var controllers = [Int: UIHostingController<CategoryVideoListView>]()
         var lastSortOption: VideoSortOption?
-        var lastCategoriesSignature: String = ""
+        var lastSignature: String = ""
 
         init(_ parent: InfinitePageViewController) {
             self.parent = parent
             self.currentIndex = parent.selectedIndex
         }
 
+        func makeRoot(_ index: Int) -> CategoryVideoListView {
+            CategoryVideoListView(categoryName: parent.categories[index],
+                                  sortOption: parent.sortOption,
+                                  dataManager: parent.dataManager,
+                                  userId: parent.userId)
+        }
+
         func viewController(for index: Int) -> UIViewController {
             if let cached = controllers[index] { return cached }
-            let view = CategoryVideoListView(categoryName: parent.categories[index],
-                                             sortOption: parent.sortOption,
-                                             dataManager: parent.dataManager, userId: parent.userId)
-            let vc = UIHostingController(rootView: view)
+            let vc = UIHostingController(rootView: makeRoot(index))
             vc.view.backgroundColor = .clear
             controllers[index] = vc
             return vc
         }
 
+        private func index(of vc: UIViewController) -> Int? {
+            guard let host = vc as? UIHostingController<CategoryVideoListView> else { return nil }
+            return controllers.first(where: { $0.value === host })?.key
+        }
+
         func pageViewController(_ pvc: UIPageViewController, viewControllerBefore vc: UIViewController) -> UIViewController? {
-            guard !parent.categories.isEmpty,
-                  let host = vc as? UIHostingController<CategoryVideoListView>,
-                  let index = controllers.first(where: { $0.value == host })?.key else { return nil }
-            return viewController(for: (index - 1 + parent.categories.count) % parent.categories.count)
+            let n = parent.categories.count
+            guard n > 0, let i = index(of: vc) else { return nil }
+            return viewController(for: (i - 1 + n) % n)
         }
 
         func pageViewController(_ pvc: UIPageViewController, viewControllerAfter vc: UIViewController) -> UIViewController? {
-            guard !parent.categories.isEmpty,
-                  let host = vc as? UIHostingController<CategoryVideoListView>,
-                  let index = controllers.first(where: { $0.value == host })?.key else { return nil }
-            return viewController(for: (index + 1) % parent.categories.count)
+            let n = parent.categories.count
+            guard n > 0, let i = index(of: vc) else { return nil }
+            return viewController(for: (i + 1) % n)
         }
 
         func pageViewController(_ pvc: UIPageViewController, didFinishAnimating finished: Bool,
                                 previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
-            if completed,
-               let visible = pvc.viewControllers?.first as? UIHostingController<CategoryVideoListView>,
-               let index = controllers.first(where: { $0.value == visible })?.key {
-                currentIndex = index
-                DispatchQueue.main.async {
-                    if self.parent.selectedIndex != index { self.parent.selectedIndex = index }
-                }
+            guard completed, let visible = pvc.viewControllers?.first, let i = index(of: visible) else { return }
+            currentIndex = i
+            DispatchQueue.main.async {
+                if self.parent.selectedIndex != i { self.parent.selectedIndex = i }
             }
         }
     }
 }
 
-// ⭐ 需求2：横向分类栏（小红书风格）
+// MARK: - 横向分类栏
 struct CategoryTabBar: View {
     let categories: [String]
     @Binding var selectedIndex: Int
@@ -659,8 +789,7 @@ struct CategoryTabBar: View {
                                 }
                                 ZStack {
                                     if isSelected {
-                                        Capsule()
-                                            .fill(theme)
+                                        Capsule().fill(theme)
                                             .matchedGeometryEffect(id: "tab_underline", in: ns)
                                             .frame(width: 24, height: 3)
                                     } else {
@@ -685,18 +814,15 @@ struct CategoryTabBar: View {
     }
 }
 
-// MARK: - 首页（需求2 版本：顶部横向分类栏）
+// MARK: - 首页
 struct VideoBrowseView: View {
     @ObservedObject var dataManager: OVideoDataManager
     @Binding var selectedCategoryIndex: Int
     @Binding var sortOption: VideoSortOption
-    // 【新增】是否显示返回按钮
     var showBackButton: Bool = true
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @EnvironmentObject var authManager: AuthManager
-
-    // ⭐ 新增：用于触发返回上一页的操作
-    @Environment(\.presentationMode) var presentationMode
+    @Environment(\.dismiss) private var dismiss
 
     private var userId: String? { authManager.userIdentifier }
 
@@ -706,13 +832,9 @@ struct VideoBrowseView: View {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(spacing: 0) {
-                    // ⭐ 顶部 banner：返回按钮 + 横向分类栏 + 右侧搜索图标
                     HStack(spacing: 0) {
-                        // 【修改】只看视频的根视图不显示返回按钮
                         if showBackButton {
-                            Button {
-                                presentationMode.wrappedValue.dismiss()
-                            } label: {
+                            Button { dismiss() } label: {
                                 Image(systemName: "chevron.left")
                                     .font(.system(size: 20, weight: .semibold))
                                     .foregroundColor(.primary)
@@ -723,10 +845,10 @@ struct VideoBrowseView: View {
                         }
 
                         CategoryTabBar(categories: dataManager.categoryNames,
-                                    selectedIndex: $selectedCategoryIndex,
-                                    isEnglish: isGlobalEnglishMode)
+                                       selectedIndex: $selectedCategoryIndex,
+                                       isEnglish: isGlobalEnglishMode)
                             .frame(maxWidth: .infinity)
-                            .padding(.leading, showBackButton ? 0 : 8)   // 【新增】无返回按钮时补一点左边距
+                            .padding(.leading, showBackButton ? 0 : 8)
 
                         NavigationLink {
                             VideoSearchTabView(dataManager: dataManager)
@@ -744,7 +866,6 @@ struct VideoBrowseView: View {
 
                     Divider().opacity(0.4)
 
-                    // ⭐ 下方分页内容 + 悬浮排序按钮
                     ZStack(alignment: .topTrailing) {
                         InfinitePageViewController(categories: dataManager.categoryNames,
                                                    selectedIndex: $selectedCategoryIndex,
@@ -760,9 +881,7 @@ struct VideoBrowseView: View {
                 }
             }
         }
-        // ⭐ 隐藏系统导航栏，把空间让给分类栏
         .toolbar(.hidden, for: .navigationBar)
-        // ★★★【需求1】切换栏目 / 切换排序时，静默刷新该栏目第一页
         .onChange(of: selectedCategoryIndex) { _, idx in
             guard idx >= 0, idx < dataManager.categoryNames.count else { return }
             let cat = dataManager.categoryNames[idx]
@@ -782,7 +901,6 @@ struct VideoBrowseView: View {
         }
     }
 
-    // ⭐ 悬浮排序按钮（靠右，悬浮在卡片之上，会轻微遮挡下方卡片）
     private var floatingSortButton: some View {
         Menu {
             ForEach(VideoSortOption.allCases, id: \.self) { opt in
@@ -812,7 +930,7 @@ struct VideoBrowseView: View {
     }
 }
 
-// MARK: - 新手引导（不变）
+// MARK: - 新手引导
 struct VideoSwipeGuideView: View {
     @Binding var hasSeenGuide: Bool
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false

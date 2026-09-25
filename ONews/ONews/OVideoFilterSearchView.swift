@@ -14,7 +14,7 @@ private enum FilterField: Int, Identifiable {
 
 // MARK: - 分类检索页
 struct VideoFilterView: View {
-    @ObservedObject var dataManager: OVideoDataManager
+    let dataManager: OVideoDataManager
     @EnvironmentObject var authManager: AuthManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
@@ -152,23 +152,28 @@ struct VideoFilterView: View {
 
     // 重新加载第一页
     private func reload() async {
-        loadedSignature = filterSignature      // ⭐ 标记当前签名已加载
+        let sig = filterSignature
+        loadedSignature = sig
         page = 0; hasMore = true; isLoading = true
         let r = await dataManager.fetchFilter(category: selectedCategory, type: selectedType,
                                               year: selectedYear, region: selectedRegion,
                                               sort: selectedSort, page: 0, userId: userId)
+        guard sig == filterSignature, !Task.isCancelled else { return }   // ⭐ 过期结果丢弃
         results = r.items; hasMore = r.hasMore; page = 1; isLoading = false
     }
 
     private func loadMore() async {
         guard hasMore, !isLoading else { return }
+        let sig = filterSignature
+        let p = page
         isLoading = true
         let r = await dataManager.fetchFilter(category: selectedCategory, type: selectedType,
                                               year: selectedYear, region: selectedRegion,
-                                              sort: selectedSort, page: page, userId: userId)
+                                              sort: selectedSort, page: p, userId: userId)
+        guard sig == filterSignature, p == page else { return }   // ⭐ 筛选已变，不拼到新结果里
         let existing = Set(results.map { $0.url })
         results.append(contentsOf: r.items.filter { !existing.contains($0.url) })
-        hasMore = r.hasMore; page += 1; isLoading = false
+        hasMore = r.hasMore; page = p + 1; isLoading = false
     }
 
     // MARK: - ⭐ 改进后的底部筛选条
@@ -339,7 +344,7 @@ private struct FilterSheetView: View {
 
 // MARK: - 搜索 Tab（服务端搜索）⭐ 新增：无/少结果时的寻片提示
 struct VideoSearchTabView: View {
-    @ObservedObject var dataManager: OVideoDataManager
+    let dataManager: OVideoDataManager
     let initialKeyword: String?
     let autoFocus: Bool
     @StateObject private var historyManager = SearchHistoryManager()
@@ -402,7 +407,6 @@ struct VideoSearchTabView: View {
             }
             if let initial = initialKeyword, !initial.isEmpty, keyword.isEmpty {
                 keyword = initial
-                scheduleSearch(initial)
                 historyManager.add(initial)
             }
         }
@@ -812,12 +816,32 @@ private struct WishSubmitSheet: View {
 // MARK: - 自适应换行布局（不变）
 struct FlowLayout: Layout {
     var spacing: CGFloat = 8
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+
+    struct Cache {
+        var sizes: [CGSize] = []
+        var width: CGFloat = -1
+    }
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
+    func updateCache(_ cache: inout Cache, subviews: Subviews) { cache = Cache() }
+
+    private func measure(_ subviews: Subviews, maxWidth: CGFloat, cache: inout Cache) -> [CGSize] {
+        if cache.sizes.count == subviews.count, cache.width == maxWidth { return cache.sizes }
+        let sizes = subviews.map { sub -> CGSize in
+            let ideal = sub.sizeThatFits(.unspecified)
+            guard maxWidth.isFinite, ideal.width > maxWidth else { return ideal }
+            return sub.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))   // 超宽则换行收缩
+        }
+        cache.sizes = sizes
+        cache.width = maxWidth
+        return sizes
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let maxWidth = proposal.width ?? .infinity
+        let sizes = measure(subviews, maxWidth: maxWidth, cache: &cache)
         var rowWidth: CGFloat = 0, rowHeight: CGFloat = 0
         var totalHeight: CGFloat = 0, totalWidth: CGFloat = 0
-        for sub in subviews {
-            let size = sub.sizeThatFits(.unspecified)
+        for size in sizes {
             if rowWidth + size.width > maxWidth, rowWidth > 0 {
                 totalHeight += rowHeight + spacing
                 totalWidth = max(totalWidth, rowWidth - spacing)
@@ -830,10 +854,12 @@ struct FlowLayout: Layout {
         totalWidth = max(totalWidth, rowWidth - spacing)
         return CGSize(width: maxWidth.isFinite ? maxWidth : totalWidth, height: totalHeight)
     }
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x: CGFloat = bounds.minX, y: CGFloat = bounds.minY, rowHeight: CGFloat = 0
-        for sub in subviews {
-            let size = sub.sizeThatFits(.unspecified)
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        let sizes = measure(subviews, maxWidth: bounds.width, cache: &cache)
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        for (i, sub) in subviews.enumerated() {
+            let size = sizes[i]
             if x + size.width > bounds.maxX, x > bounds.minX {
                 x = bounds.minX; y += rowHeight + spacing; rowHeight = 0
             }

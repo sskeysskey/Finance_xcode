@@ -118,6 +118,8 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
     /// ⚠️ 刻意不是 @Published：AVKit 全屏转场中改这两个值绝不能触发 SwiftUI 重新布局
     var isFullScreen = false
     var isPiPActive = false
+    /// ⭐ 宿主页面是否可见。页面已离开时，异步解析回来的 prepare 只记住会话，不真正播放
+    var hostVisible = true
 
     private(set) var player = AVPlayer()
     var resolver: (@Sendable () async throws -> String)?
@@ -185,7 +187,6 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
     private var isEnglish: Bool { UserDefaults.standard.bool(forKey: "isGlobalEnglishMode") }
 
     init() {
-        configureAudioSession()
         attachPlayerObservers()
         registerLifecycleObservers()
         startSupervisor()
@@ -205,10 +206,15 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         player.replaceCurrentItem(with: nil)
     }
 
+    /// ⭐ setCategory / setActive 可能阻塞几十毫秒，统一放到串行队列（保证先后顺序）
+    private static let audioQueue = DispatchQueue(label: "ovideo.audiosession", qos: .userInitiated)
+
     private func configureAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .moviePlayback)
-        try? session.setActive(true)
+        Self.audioQueue.async {
+            let session = AVAudioSession.sharedInstance()
+            try? session.setCategory(.playback, mode: .moviePlayback)
+            try? session.setActive(true)
+        }
     }
 
     // MARK: 锁屏元数据
@@ -304,12 +310,17 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
                  resetRecovery: Bool = true,
                  autoPlay: Bool = true) {
 
+        if !hostVisible {
+            if resolver != nil { self.resolver = resolver }
+            lastSession = LastSession(url: url, key: positionKey, isLocal: isLocal, wasPlaying: autoPlay)
+            return
+        }
         teardownItemObservers()
 
-        let wasTornDown = isTornDown
+        _ = isTornDown
         isTornDown = false
         autoPlayWhenReady = autoPlay
-        if wasTornDown { configureAudioSession() }   // teardown 时会话已被释放
+        configureAudioSession()
 
         self.currentAssetURL = url
         self.positionKey = positionKey
@@ -778,7 +789,9 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         if phase != .idle { phase = .idle }
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        Self.audioQueue.async {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     /// 页面重新出现（从新闻页返回 / 关闭举报全屏页）时恢复：
@@ -1107,7 +1120,6 @@ struct PlayerLoadingIndicator: View {
 
 // MARK: - 局部观察下载进度的宿主
 private struct CacheCardHost: View {
-    @ObservedObject private var dm = HLSDownloadManager.shared
     let realURL: String
     let videoTitle: String
     let coverImage: String?
@@ -1128,7 +1140,8 @@ private struct CacheCardHost: View {
 }
 
 private struct DeleteCacheButton: View {
-    @ObservedObject private var dm = HLSDownloadManager.shared
+    private let dm = HLSDownloadManager.shared
+    @ObservedObject private var index = HLSDownloadManager.shared.statusIndex
     let activeKey: String
     let onDeleted: () -> Void
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
@@ -1229,15 +1242,7 @@ struct VideoPlayerPageView: View {
         authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(activeEpisodeURL)
     }
 
-    private func cachedOriginalURLs() -> Set<String> {
-        var s = Set<String>()
-        for (key, meta) in downloadManager.cacheMetadata
-        where downloadManager.localBookmarks[key] != nil {
-            s.insert(key)
-            if let orig = meta.originalEpisodeURL, !orig.isEmpty { s.insert(orig) }
-        }
-        return s
-    }
+    private func cachedOriginalURLs() -> Set<String> { downloadManager.statusIndex.cachedKeys }
 
     var body: some View {
         ZStack {
@@ -1326,13 +1331,15 @@ struct VideoPlayerPageView: View {
         }
         .onAppear {
             NotificationPermissionManager.shared.suppress(true)
-            engine.reviveIfNeeded()     // ⭐ 从新闻页/举报页回来：按记忆进度恢复
+            engine.hostVisible = true
+            engine.reviveIfNeeded()
         }
         .onDisappear {
             NotificationPermissionManager.shared.suppress(false)
             ReviewManager.shared.recordVideoInteraction()
             resolveTimeoutWork?.cancel(); resolveTimeoutWork = nil
-            engine.teardown()     // 全屏/画中画期间会被 engine 内部自动忽略
+            engine.teardown()
+            if engine.isTornDown { engine.hostVisible = false }   // 全屏/PiP 误报时不会置 false
         }
         .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示",
                isPresented: $showEpisodeCellularAlert) {
@@ -1716,15 +1723,7 @@ struct CachedVideoPlayerView: View {
         return title
     }
 
-    private func cachedOriginalURLs() -> Set<String> {
-        var s = Set<String>()
-        for (key, meta) in downloadManager.cacheMetadata
-        where downloadManager.localBookmarks[key] != nil {
-            s.insert(key)
-            if let orig = meta.originalEpisodeURL, !orig.isEmpty { s.insert(orig) }
-        }
-        return s
-    }
+    private func cachedOriginalURLs() -> Set<String> { downloadManager.statusIndex.cachedKeys }
 
     private var showSpinner: Bool {
         resolveError == nil && (isResolvingOnline || engine.isBusyForUI)
@@ -1879,6 +1878,7 @@ struct CachedVideoPlayerView: View {
         }
         .onAppear {
             NotificationPermissionManager.shared.suppress(true)
+            engine.hostVisible = true
             if !engine.reviveIfNeeded() { startInitialPlaybackIfNeeded() }
         }
         // ⭐ 本地文件不弹「反馈修复」：本地不存在网络慢的问题
@@ -1898,6 +1898,7 @@ struct CachedVideoPlayerView: View {
         .onDisappear {
             NotificationPermissionManager.shared.suppress(false)
             engine.teardown()
+            if engine.isTornDown { engine.hostVisible = false }
         }
         .onChange(of: authManager.isLoggedIn) { _, loggedIn in
             if loggedIn {
@@ -1997,7 +1998,7 @@ struct CachedVideoPlayerView: View {
     private func loadAllEpisodes() async {
         guard allEpisodes.isEmpty, let src = sourceURL, !src.isEmpty else { return }
         let channels = (try? await OVideoAPI.fetchPlaylist(url: src)) ?? []
-        guard let best = optimalSortedChannels(channels).first else { return }
+        guard let best = optimalSortedChannels(channels, itemName: baseTitle).first else { return }
         let items = best.episodeItems(ascending: isEpisodeAscending)
         await MainActor.run {
             self.allEpisodes = items
@@ -2150,7 +2151,7 @@ struct EpisodePickerView: View {
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var authManager: AuthManager
-    @ObservedObject private var dm = HLSDownloadManager.shared
+    @ObservedObject private var index = HLSDownloadManager.shared.statusIndex
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
@@ -2162,7 +2163,7 @@ struct EpisodePickerView: View {
                 LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(episodes) { ep in
                         let isCurrent = ep.url == currentURL
-                        let isCached = cachedOriginalURLs.contains(ep.url) || dm.localBookmarks[ep.url] != nil
+                        let isCached = cachedOriginalURLs.contains(ep.url) || index.cachedKeys.contains(ep.url)
                         let isUnlocked = quotaManager.isUnlocked(ep.url)
                         let hasQuota = quotaManager.remaining > 0
 

@@ -15,27 +15,9 @@ extension OVideoItem {
     }
 }
 
-// ⭐ 选最优线路（集数多优先 → 画质高优先），与详情页逻辑一致
-func optimalSortedChannels(_ channels: [OVideoChannel]) -> [OVideoChannel] {
-    let indexed = channels.enumerated().map { (index, channel) -> (Int, OVideoChannel, Int) in
-        var quality = 1
-        let keys = channel.episodes.keys
-        let hasLow = keys.contains {
-            let k = $0.uppercased()
-            return k.contains("TC") || k.contains("TS") || k.contains("HC") || k.contains("抢先")
-        }
-        let hasHigh = keys.contains {
-            let k = $0.uppercased()
-            return k.contains("HD") || k.contains("正片")
-        }
-        if hasLow { quality = 0 } else if hasHigh { quality = 2 }
-        return (index, channel, quality)
-    }
-    return indexed.sorted { a, b in
-        if a.1.episodes.count != b.1.episodes.count { return a.1.episodes.count > b.1.episodes.count }
-        if a.2 != b.2 { return a.2 > b.2 }
-        return a.0 < b.0
-    }.map { $0.1 }
+// ⭐ 与详情页完全同一套规则（目标季有效集数 → 画质 → 原顺序）
+func optimalSortedChannels(_ channels: [OVideoChannel], itemName: String? = nil) -> [OVideoChannel] {
+    rankVideoChannels(channels, itemName: itemName)
 }
 
 // ⭐ 「下载更多」sheet 载荷
@@ -69,18 +51,82 @@ import UIKit
 //   5. delegateQueue 改为专用串行队列；didLoad 只写 inbox，主线程每秒合并发布
 //   6. 全网都慢 → 判定为网络问题，绝不重建（避免网差时无限重启）
 // =====================================================================
+// MARK: - ⭐ 下载状态索引：只在成员变化时发布，不随每秒进度/速度刷新
+final class DownloadStatusIndex: ObservableObject {
+    enum Status: Equatable { case downloading, cached }
+
+    /// 已缓存的 realURL + 其 originalEpisodeURL
+    @Published private(set) var cachedKeys: Set<String> = []
+    /// 标题 → 状态（与 BatchDownloadView 旧判定一致）
+    @Published private(set) var statusByTitle: [String: Status] = [:]
+    @Published private(set) var downloadingKeys: Set<String> = []
+    @Published private(set) var pausedCount = 0
+    @Published private(set) var cachedCount = 0
+
+    var downloadingCount: Int { downloadingKeys.count }
+
+    func update(bookmarks: [String: Data], progress: [String: Double],
+                paused: [String: Bool], metadata: [String: VideoCacheMetadata]) {
+        var keys = Set<String>()
+        var titles: [String: Status] = [:]
+        var dl = Set<String>()
+        var pz = 0
+        for url in progress.keys where bookmarks[url] == nil {
+            dl.insert(url)
+            if paused[url] == true { pz += 1 }
+            if let t = metadata[url]?.title { titles[t] = .downloading }
+        }
+        for url in bookmarks.keys {
+            keys.insert(url)
+            if let m = metadata[url] {
+                if let o = m.originalEpisodeURL, !o.isEmpty { keys.insert(o) }
+                titles[m.title] = .cached
+            }
+        }
+        if keys != cachedKeys { cachedKeys = keys }
+        if titles != statusByTitle { statusByTitle = titles }
+        if dl != downloadingKeys { downloadingKeys = dl }
+        if pz != pausedCount { pausedCount = pz }
+        if bookmarks.count != cachedCount { cachedCount = bookmarks.count }
+    }
+}
+
 final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDelegate {
 
     static let shared = HLSDownloadManager()
     private var downloadSession: AVAssetDownloadURLSession!
 
-    // MARK: - 对外发布状态（签名与旧版完全一致，UI 无需修改）
-    @Published var downloadProgress: [String: Double] = [:]
+    @Published var downloadProgress: [String: Double] = [:] {
+        didSet {
+            if downloadProgress.count != oldValue.count
+                || downloadProgress.keys.contains(where: { oldValue[$0] == nil }) {
+                scheduleIndexRebuild()
+            }
+        }
+    }
     @Published var downloadSpeed:    [String: Double] = [:]
-    @Published var isPaused:         [String: Bool]   = [:]
+    @Published var isPaused:         [String: Bool]   = [:] { didSet { scheduleIndexRebuild() } }
     @Published var isQueued:         [String: Bool]   = [:]
-    @Published var localBookmarks:   [String: Data]   = [:]
-    @Published var cacheMetadata:    [String: VideoCacheMetadata] = [:]
+    @Published var localBookmarks:   [String: Data]   = [:] { didSet { scheduleIndexRebuild() } }
+    @Published var cacheMetadata:    [String: VideoCacheMetadata] = [:] { didSet { scheduleIndexRebuild() } }
+
+    /// ⭐ UI 只关心成员关系时请监听它，而不是整个 manager
+    let statusIndex = DownloadStatusIndex()
+    private var indexRebuildScheduled = false
+
+    private func scheduleIndexRebuild() {
+        guard !indexRebuildScheduled else { return }
+        indexRebuildScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.indexRebuildScheduled = false
+            self.rebuildIndexNow()
+        }
+    }
+    private func rebuildIndexNow() {
+        statusIndex.update(bookmarks: localBookmarks, progress: downloadProgress,
+                           paused: isPaused, metadata: cacheMetadata)
+    }
 
     // =============================================================
     // MARK: - 可调参数（想调行为只改这里）
@@ -212,6 +258,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         startTimer()
         observeNetwork()
         observeAppLifecycle()
+        rebuildIndexNow()
     }
 
     // =================================================================
@@ -818,12 +865,17 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 
     private func onTick() {
         tickCount &+= 1
-        drainProgressInbox()                              // 合并发布进度（每秒一次）
-        sampleSpeed()                                     // 只读 countOfBytesReceived
-        checkWarmupTimeout()                              // 冷启动起不来 → 全新重建
-        checkStalls()                                     // 完全停滞 → 续传重建
-        if tickCount % 5  == 0 { checkSlowCrawl() }        // 龟速判定
-        if tickCount % 2  == 0 { reconcile() }            // 补位（配合热身闸门要更勤）
+        // ⭐ 无任务时计时器几乎不做事（原来每秒都在对账）
+        if downloadProgress.isEmpty && activeTasks.isEmpty && waitingQueue.isEmpty {
+            if tickCount % 30 == 0 { updateIdleTimer() }
+            return
+        }
+        drainProgressInbox()
+        sampleSpeed()
+        checkWarmupTimeout()
+        checkStalls()
+        if tickCount % 5  == 0 { checkSlowCrawl() }
+        if tickCount % 2  == 0 { reconcile() }
         if tickCount % 30 == 0 { auditSessionTasks() }
     }
 
@@ -865,6 +917,12 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         savePersistedProgressIfNeeded()
     }
 
+    private func publishSpeed(_ url: String, _ v: Double) {
+        let old = downloadSpeed[url] ?? 0
+        if v <= 0 { if old != 0 { downloadSpeed[url] = 0 }; return }
+        if old <= 0 || abs(v - old) / old > 0.05 { downloadSpeed[url] = v }
+    }
+
     private func sampleSpeed() {
         let now = Date()
         for url in runningUrls {
@@ -887,9 +945,9 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             if delta > 0 {
                 lastAdvanceAt[url] = now
                 lastNonZeroAt[url] = now
-                downloadSpeed[url] = ema
+                publishSpeed(url, ema)
             } else if let last = lastNonZeroAt[url], now.timeIntervalSince(last) < 4 {
-                downloadSpeed[url] = ema
+                publishSpeed(url, ema)
             } else {
                 speedEMA[url] = 0
                 if (downloadSpeed[url] ?? 0) != 0 { downloadSpeed[url] = 0 }
@@ -1324,12 +1382,12 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 
     private func observeNetwork() {
         NetworkMonitor.shared.onSwitchedToCellular = { [weak self] in
-            guard let self = self else { return }
-            let urls = Set(self.runningUrls)
-                .union(self.waitingQueue)
-                .union(self.activeTasks.keys)
-            for url in urls { self.pauseDownload(urlString: url, byUser: false) }
-            print("⚠️ 检测到 Wi-Fi → 蜂窝，已暂停所有下载")
+            self?.onMain {
+                guard let self = self else { return }
+                let urls = Set(self.runningUrls).union(self.waitingQueue).union(self.activeTasks.keys)
+                for url in urls { self.pauseDownload(urlString: url, byUser: false) }
+                print("⚠️ 检测到 Wi-Fi → 蜂窝，已暂停所有下载")
+            }
         }
     }
 
@@ -1733,8 +1791,9 @@ struct DownloadingGroup: Identifiable {
 
 // MARK: - 下载管理
 struct VideoCacheView: View {
-    @StateObject private var downloadManager = HLSDownloadManager.shared
-    @StateObject private var network = NetworkMonitor.shared
+    private let downloadManager = HLSDownloadManager.shared
+    @ObservedObject private var index = HLSDownloadManager.shared.statusIndex   // ⭐ 不再每秒整页重算
+    private let network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     @EnvironmentObject var authManager: AuthManager
@@ -1772,7 +1831,7 @@ struct VideoCacheView: View {
         }.sorted { $0.latestSavedAt > $1.latestSavedAt }
     }
 
-    private var cachedCount: Int { downloadManager.localBookmarks.count }
+    private var cachedCount: Int { index.cachedCount }
 
     // ---------- ⭐ 下载中分组 ----------
     private var downloadingGroups: [DownloadingGroup] {
@@ -1812,16 +1871,9 @@ struct VideoCacheView: View {
         .sorted { $0.seriesTitle.localizedStandardCompare($1.seriesTitle) == .orderedAscending }
     }
 
-    private var downloadingTaskCount: Int {
-        downloadManager.downloadProgress.keys
-            .filter { downloadManager.localBookmarks[$0] == nil }.count
-    }
+    private var downloadingTaskCount: Int { index.downloadingCount }
 
-    private var pausedCount: Int {
-        downloadManager.downloadProgress.keys.filter {
-            downloadManager.localBookmarks[$0] == nil && downloadManager.isPaused[$0] == true
-        }.count
-    }
+    private var pausedCount: Int { index.pausedCount }
 
     private func makeEpisodeItems(from group: CachedSeriesGroup) -> [VideoEpisodeItem] {
         group.episodes.enumerated().map { index, item in
@@ -1834,19 +1886,21 @@ struct VideoCacheView: View {
     }
 
     var body: some View {
+        let cachedGroups = groupedCachedItems
+        let dlGroups = downloadingGroups
         ZStack {
             LinearGradient(colors: [Color(.systemGroupedBackground),
                                     Color.accentColor.opacity(0.05)],
                            startPoint: .top, endPoint: .bottom).ignoresSafeArea()
 
-            if groupedCachedItems.isEmpty && downloadingGroups.isEmpty {
+            if cachedGroups.isEmpty && dlGroups.isEmpty {
                 emptyState
             } else {
                 List {
                     // ============ 下载中（按剧集归拢） ============
-                    if !downloadingGroups.isEmpty {
+                    if !dlGroups.isEmpty {
                         Section(header: downloadingHeader) {
-                            ForEach(downloadingGroups) { group in
+                            ForEach(dlGroups) { group in
                                 if group.items.count <= 1, let only = group.items.first {
                                     DownloadingCard(realURL: only.url, title: only.title)
                                         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
@@ -1906,11 +1960,11 @@ struct VideoCacheView: View {
                     }
 
                     // ============ 已下载 ============
-                    if !groupedCachedItems.isEmpty {
+                    if !cachedGroups.isEmpty {
                         Section(header: sectionHeader(
                             isGlobalEnglishMode ? "Cached" : "已下载",
                             count: cachedCount, icon: "checkmark.seal.fill", color: .green)) {
-                            ForEach(groupedCachedItems) { group in
+                            ForEach(cachedGroups) { group in
                                 if group.episodes.count == 1 {
                                     let row = group.episodes[0]
                                     let seriesTitle = row.meta.seriesTitle?.isEmpty == false
@@ -2101,7 +2155,8 @@ struct DownloadingGroupHeaderRow: View {
     let isExpanded: Bool
     let onToggle: () -> Void
 
-    @ObservedObject private var dm = HLSDownloadManager.shared
+    private let dm = HLSDownloadManager.shared
+    @ObservedObject private var index = HLSDownloadManager.shared.statusIndex
     @ObservedObject private var network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @State private var showCellularAlert = false
@@ -2254,7 +2309,7 @@ struct DownloadingEpisodeRow: View {
     let url: String
     let name: String
 
-    @ObservedObject private var dm = HLSDownloadManager.shared
+    private let dm = HLSDownloadManager.shared
     @ObservedObject private var network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @State private var showCellularAlert = false
@@ -2492,7 +2547,7 @@ struct DownloadingCard: View {
 struct CachedItemCard: View {
     let meta: VideoCacheMetadata
     let url: String
-    @ObservedObject private var dm = HLSDownloadManager.shared
+    private let dm = HLSDownloadManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     var body: some View {
@@ -2559,15 +2614,15 @@ struct CachedItemCard: View {
         }
     }
 
-    private func formattedDate(_ d: Date) -> String {
-        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short
-        return f.string(from: d)
-    }
+    private static let df: DateFormatter = {
+        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short; return f
+    }()
+    private func formattedDate(_ d: Date) -> String { Self.df.string(from: d) }
 }
 
 // MARK: - 观看记录全屏界面
 struct VideoPlayHistoryView: View {
-    @StateObject private var recordManager = VideoPlayRecordManager.shared
+    @ObservedObject private var recordManager = VideoPlayRecordManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
     @EnvironmentObject var authManager: AuthManager
@@ -2769,11 +2824,11 @@ struct VideoPlayHistoryView: View {
         }
     }
 
-    private func formattedDate(_ d: Date) -> String {
+    private static let df: DateFormatter = {
         let f = DateFormatter(); f.dateStyle = .short; f.timeStyle = .short
-        f.doesRelativeDateFormatting = true
-        return f.string(from: d)
-    }
+        f.doesRelativeDateFormatting = true; return f
+    }()
+    private func formattedDate(_ d: Date) -> String { Self.df.string(from: d) }
 }
 
 // MARK: - 已下载剧集分组卡片
@@ -2844,10 +2899,10 @@ struct CachedSeriesCard: View {
         }
     }
 
-    private func formattedDate(_ d: Date) -> String {
-        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short
-        return f.string(from: d)
-    }
+    private static let df: DateFormatter = {
+        let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short; return f
+    }()
+    private func formattedDate(_ d: Date) -> String { Self.df.string(from: d) }
 }
 
 // MARK: - 已下载剧集详情
@@ -2855,7 +2910,8 @@ struct CachedSeriesDetailView: View {
     let groupKey: String
     let seriesTitle: String
     let coverImage: String?
-    @ObservedObject private var dm = HLSDownloadManager.shared
+    private let dm = HLSDownloadManager.shared
+    @ObservedObject private var index = HLSDownloadManager.shared.statusIndex
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @AppStorage("OVideo_IsEpisodeAscending") private var isEpisodeAscending = true
 
@@ -2992,7 +3048,7 @@ struct CachedSeriesDetailView: View {
         isLoadingMore = true
         Task {
             let channels = (try? await OVideoAPI.fetchPlaylist(url: src)) ?? []
-            let best = optimalSortedChannels(channels).first
+            let best = optimalSortedChannels(channels, itemName: seriesTitle).first
             await MainActor.run {
                 isLoadingMore = false
                 if let best = best {
