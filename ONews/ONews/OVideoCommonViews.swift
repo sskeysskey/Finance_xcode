@@ -177,6 +177,7 @@ struct WaterfallGridView: View {
 }
 
 // MARK: - 卡片（⭐ Equatable：内容不变不重绘；内容变了一定重绘）
+// ⭐ 封面左上对齐：横图/方图只裁右侧，竖长图只裁底部；评分固定左上、info 固定左下，永不被裁
 struct VideoCardView: View, Equatable {
     let item: OVideoItem
 
@@ -189,34 +190,30 @@ struct VideoCardView: View, Equatable {
         VStack(alignment: .leading, spacing: 10) {
             Color.clear
                 .aspectRatio(2.0/3.0, contentMode: .fit)
-                .overlay(
-                    ZStack(alignment: .bottomTrailing) {
-                        coverImage
-                        if rating > 0 {
-                            VStack {
-                                HStack {
-                                    Text(String(format: "%.1f", rating))
-                                        .font(.system(size: 11, weight: .bold))
-                                        .foregroundColor(.white)
-                                        .padding(.horizontal, 10).padding(.vertical, 3)
-                                        .background(Capsule().fill(Color.orange.opacity(0.9)))
-                                        .padding(12)
-                                    Spacer()
-                                }
-                                Spacer()
-                            }
-                        }
-                        if let info = item.info, !info.isEmpty {
-                            Text(info)
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 10).padding(.vertical, 3)
-                                .background(Capsule().fill(Color.black.opacity(0.65)))
-                                .padding(12)
-                        }
-                    }
-                )
+                .overlay { coverImage }                              // 图片严格限定在卡片尺寸内
                 .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(alignment: .topLeading) {                   // ⭐ 评分：左上
+                    if rating > 0 {
+                        Text(String(format: "%.1f", rating))
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10).padding(.vertical, 3)
+                            .background(Capsule().fill(Color.orange.opacity(0.9)))
+                            .padding(10)
+                    }
+                }
+                .overlay(alignment: .bottomLeading) {                // ⭐ info：左下
+                    if let info = item.info, !info.isEmpty {
+                        Text(info)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .padding(.horizontal, 10).padding(.vertical, 3)
+                            .background(Capsule().fill(Color.black.opacity(0.65)))
+                            .padding(10)
+                    }
+                }
 
             Text(item.name)
                 .font(.system(size: 16, weight: .semibold))
@@ -252,24 +249,31 @@ struct VideoCardView: View, Equatable {
     private var coverImage: some View {
         if let imageName = item.image, !imageName.isEmpty,
            let url = OVideoAPI.coverURL(for: imageName) {
-            CachedAsyncImage(url: url) { phase in
-                switch phase {
-                case .empty:
-                    ZStack { Rectangle().fill(Color.secondary.opacity(0.12)); ProgressView() }
-                case .success(let img):
-                    img.resizable().scaledToFill()
-                case .failure:
-                    ZStack {
+            GeometryReader { geo in
+                CachedAsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable()
+                            .scaledToFill()
+                            // ⭐ 关键：固定为卡片尺寸 + 左上对齐，溢出部分只会在右侧/底部
+                            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                    case .failure:
+                        ZStack {
+                            Rectangle().fill(Color.secondary.opacity(0.12))
+                            Image(systemName: "photo").foregroundColor(.secondary)
+                        }
+                    case .empty:
+                        ZStack {
+                            Rectangle().fill(Color.secondary.opacity(0.12))
+                            ProgressView()
+                        }
+                    @unknown default:
                         Rectangle().fill(Color.secondary.opacity(0.12))
-                        Image(systemName: "photo").foregroundColor(.secondary)
                     }
-                @unknown default:
-                    Rectangle().fill(Color.secondary.opacity(0.12))
                 }
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                .clipped()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
-            .contentShape(Rectangle())
         } else {
             ZStack {
                 Rectangle().fill(Color.secondary.opacity(0.12))

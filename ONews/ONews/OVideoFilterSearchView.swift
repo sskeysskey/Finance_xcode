@@ -12,17 +12,50 @@ private enum FilterField: Int, Identifiable {
     var id: Int { rawValue }
 }
 
+// MARK: - ⭐ 分类检索偏好持久化（每次改动即保存，下次进入自动恢复）
+private enum FilterPrefs {
+    static let categoryKey = "OVideo_Filter_Category"
+    static let typeKey     = "OVideo_Filter_Type"
+    static let yearKey     = "OVideo_Filter_Year"
+    static let regionKey   = "OVideo_Filter_Region"
+    static let sortKey     = "OVideo_Filter_Sort"
+    private static var d: UserDefaults { .standard }
+
+    static func string(_ key: String) -> String? {
+        guard let v = d.string(forKey: key), !v.isEmpty else { return nil }
+        return v
+    }
+    static var year: Int? {
+        let y = d.integer(forKey: yearKey)
+        return y > 0 ? y : nil
+    }
+    static var sort: VideoSortOption {
+        d.string(forKey: sortKey).flatMap(VideoSortOption.init(rawValue:)) ?? .update
+    }
+
+    static func save(category: String?, type: String?, year: Int?, region: String?, sort: VideoSortOption) {
+        set(category, categoryKey)
+        set(type, typeKey)
+        set(region, regionKey)
+        if let year { d.set(year, forKey: yearKey) } else { d.removeObject(forKey: yearKey) }
+        d.set(sort.rawValue, forKey: sortKey)
+    }
+    private static func set(_ v: String?, _ key: String) {
+        if let v, !v.isEmpty { d.set(v, forKey: key) } else { d.removeObject(forKey: key) }
+    }
+}
+
 // MARK: - 分类检索页
 struct VideoFilterView: View {
     let dataManager: OVideoDataManager
     @EnvironmentObject var authManager: AuthManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
-    @State private var selectedCategory: String? = nil
-    @State private var selectedType: String? = nil
-    @State private var selectedYear: Int? = nil
-    @State private var selectedRegion: String? = nil
-    @State private var selectedSort: VideoSortOption = .update
+    @State private var selectedCategory: String?
+    @State private var selectedType: String?
+    @State private var selectedYear: Int?
+    @State private var selectedRegion: String?
+    @State private var selectedSort: VideoSortOption
 
     @State private var isReady = false
     @State private var allTypes: [String] = []
@@ -34,7 +67,7 @@ struct VideoFilterView: View {
     @State private var hasMore = true
     @State private var isLoading = false
     @State private var page = 0
-    // ⭐ 修复点：记录已加载的筛选条件签名，避免视图重新出现时被重复 reload 清空数据
+    // 记录已加载的筛选条件签名，避免视图重新出现时被重复 reload 清空数据
     @State private var loadedSignature: String? = nil
     private let scrollTopID = "filter_scroll_top"
 
@@ -42,6 +75,16 @@ struct VideoFilterView: View {
     private let documentaryCategoryKey = "Documentary"
     private let typeOrder = ["科幻","喜剧","爱情","恐怖","惊悚","动作","悬疑","犯罪","冒险","战争","情色","体育","传记","历史","女性","家庭","灾难","古装","文艺","校园","百合","美食","西部"]
     private let regionOrder = ["美国","韩国","欧洲","日本","亚洲","中国","香港澳门","中国台湾","印度","中东","北美洲/南美洲","非洲"]
+
+    // ⭐ 初始化时直接恢复上次的筛选（首次请求即用恢复后的条件，不会先闪一次"全部"）
+    init(dataManager: OVideoDataManager) {
+        self.dataManager = dataManager
+        _selectedCategory = State(initialValue: FilterPrefs.string(FilterPrefs.categoryKey))
+        _selectedType     = State(initialValue: FilterPrefs.string(FilterPrefs.typeKey))
+        _selectedYear     = State(initialValue: FilterPrefs.year)
+        _selectedRegion   = State(initialValue: FilterPrefs.string(FilterPrefs.regionKey))
+        _selectedSort     = State(initialValue: FilterPrefs.sort)
+    }
 
     private var userId: String? { authManager.userIdentifier }
 
@@ -90,26 +133,29 @@ struct VideoFilterView: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 if hasActiveFilter {
                     Button {
-                        withAnimation {
-                            selectedCategory = nil; selectedType = nil
-                            selectedYear = nil; selectedRegion = nil
-                            selectedSort = .update
-                        }
+                        withAnimation { resetFilters() }
                     } label: {
-                        Label(isGlobalEnglishMode ? "Reset" : "重置",
-                              systemImage: "arrow.counterclockwise")
-                            .font(.system(size: 14, weight: .medium))
+                        // ⭐ 图标 + 文字（toolbar 里的 Label 默认只显示图标，所以改用 HStack）
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text(isGlobalEnglishMode ? "Reset" : "重置")
+                                .font(.system(size: 14, weight: .medium))
+                        }
                     }
                 }
             }
         }
         .task { await prepareOptions() }
-        // ⭐ 修复点：isReady 或筛选条件变化都纳入 id；内部再用 loadedSignature 守卫，
-        //    确保从详情页返回（视图重新出现）时不会重复 reload 清空已加载的数据。
         .task(id: "\(isReady)|\(filterSignature)") {
             guard isReady else { return }
             guard loadedSignature != filterSignature else { return }
             await reload()
+        }
+        // ⭐ 任何筛选变化（选择 / 清除 / 重置 / 失效值自动清理）都立刻保存
+        .onChange(of: filterSignature) {
+            FilterPrefs.save(category: selectedCategory, type: selectedType,
+                             year: selectedYear, region: selectedRegion, sort: selectedSort)
         }
         .sheet(item: $activeSheet) { field in
             let cfg = optionConfig(for: field)
@@ -119,6 +165,12 @@ struct VideoFilterView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
+    }
+
+    private func resetFilters() {
+        selectedCategory = nil; selectedType = nil
+        selectedYear = nil; selectedRegion = nil
+        selectedSort = .update
     }
 
     private var contentView: some View {
@@ -132,7 +184,7 @@ struct VideoFilterView: View {
                     ProgressView().padding(.top, 80)
                 } else {
                     WaterfallGridView(items: results, dataManager: dataManager,
-                                      playSource: "filter",        // ⭐ 分类检索
+                                      playSource: "filter",
                                       onReachEnd: {
                                           Task { await loadMore() }
                                       })
@@ -155,10 +207,17 @@ struct VideoFilterView: View {
         let sig = filterSignature
         loadedSignature = sig
         page = 0; hasMore = true; isLoading = true
+        results = []                       // ⭐ 清掉旧条件结果，避免误点
         let r = await dataManager.fetchFilter(category: selectedCategory, type: selectedType,
                                               year: selectedYear, region: selectedRegion,
                                               sort: selectedSort, page: 0, userId: userId)
-        guard sig == filterSignature, !Task.isCancelled else { return }   // ⭐ 过期结果丢弃
+        guard sig == filterSignature else { return }          // 新条件的 reload 会接管
+        if Task.isCancelled {
+            // ⭐ 修复：被取消时复位，否则回到页面会永远转圈且不会重新加载
+            loadedSignature = nil
+            isLoading = false
+            return
+        }
         results = r.items; hasMore = r.hasMore; page = 1; isLoading = false
     }
 
@@ -170,13 +229,13 @@ struct VideoFilterView: View {
         let r = await dataManager.fetchFilter(category: selectedCategory, type: selectedType,
                                               year: selectedYear, region: selectedRegion,
                                               sort: selectedSort, page: p, userId: userId)
-        guard sig == filterSignature, p == page else { return }   // ⭐ 筛选已变，不拼到新结果里
+        guard sig == filterSignature, p == page else { return }
         let existing = Set(results.map { $0.url })
         results.append(contentsOf: r.items.filter { !existing.contains($0.url) })
         hasMore = r.hasMore; page = p + 1; isLoading = false
     }
 
-    // MARK: - ⭐ 改进后的底部筛选条
+    // MARK: - 底部筛选条
     private var bottomFilterBar: some View {
         HStack(spacing: 8) {
             filterBarItem(field: .category,
@@ -214,7 +273,6 @@ struct VideoFilterView: View {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 8, weight: .bold))
             }
-            // ⭐ 未激活也用 accent 色调，不再是灰色，整体更显眼
             .foregroundColor(isActive ? .white : .accentColor)
             .frame(maxWidth: .infinity).padding(.vertical, 9)
             .background(
@@ -244,7 +302,6 @@ struct VideoFilterView: View {
         switch field {
         case .category:
             var opts = [FilterOption(value: "All", label: allLabel)]
-            // 👇 只加这一句，过滤掉 Featured
             let filteredCategories = allCategories.filter { $0 != "Featured" }
             opts += filteredCategories.map { FilterOption(value: $0, label: categoryDisplayName($0)) }
             return (isGlobalEnglishMode ? "Category" : "大类", opts, selectedCategory ?? "All")
@@ -297,6 +354,13 @@ struct VideoFilterView: View {
                 if ia != ib { return ia < ib }
                 return a < b
             }
+            // ⭐ 恢复的值若已不在服务端选项中则自动清除（列表为空时不校验，防误删）
+            if let t = selectedType, !allTypes.isEmpty, !allTypes.contains(t) { selectedType = nil }
+            if let y = selectedYear, !allYears.isEmpty, !allYears.contains(y) { selectedYear = nil }
+            if let r = selectedRegion, !allRegions.isEmpty, !allRegions.contains(r) { selectedRegion = nil }
+        }
+        if let c = selectedCategory, c == "Featured" || !allCategories.contains(c) {
+            selectedCategory = nil
         }
         withAnimation(.easeInOut(duration: 0.2)) { self.isReady = true }
     }

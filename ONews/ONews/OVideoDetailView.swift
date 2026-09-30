@@ -634,12 +634,16 @@ struct VideoDetailView: View {
         guard let ep = pendingDownloadEpisode else { return }
         let uid = FreeQuotaManager.currentUserId(auth: authManager)
         if !quotaManager.isUnlocked(ep.url) {
-            _ = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
-                                          videoTitle: "\(item.name) · \(ep.name)")
+            let r = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
+                                              videoTitle: "\(item.name) · \(ep.name)")
+            switch r {
+            case .success, .alreadyUnlocked: break
+            case .quotaExceeded, .failed:
+                await MainActor.run { showDLQuotaExhausted = true }   // ⭐ 未扣点成功不下载
+                return
+            }
         }
-        await MainActor.run {
-            startDirectDownload(ep)
-        }
+        await MainActor.run { startDirectDownload(ep) }
     }
 
     // 网络判断（非 WiFi 先提示）
@@ -1789,17 +1793,27 @@ struct BatchDownloadView: View {
     private func confirmBatchDownload() async {
         let selected = pendingBatch
         guard !selected.isEmpty else { return }
-        
+
         let uid = FreeQuotaManager.currentUserId(auth: authManager)
-        let newOnes = selected.filter { !FreeQuotaManager.shared.isUnlocked($0.url) }
-        for ep in newOnes {
-            _ = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
-                                        videoTitle: "\(item.name) · \(ep.name)")
+        var allowed: [(name: String, url: String)] = []
+        for ep in selected {
+            if FreeQuotaManager.shared.isUnlocked(ep.url) { allowed.append(ep); continue }
+            let r = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
+                                              videoTitle: "\(item.name) · \(ep.name)")
+            switch r {
+            case .success, .alreadyUnlocked: allowed.append(ep)
+            case .quotaExceeded, .failed:    break      // ⭐ 扣点失败的不下载
+            }
         }
-        
+
         await MainActor.run {
             showBatchConsumeConfirm = false
-            performDownloadsWithNetworkCheck(selected)
+            pendingBatch = []
+            if allowed.isEmpty {
+                showQuotaExhaustedAlert = true
+            } else {
+                performDownloadsWithNetworkCheck(allowed)
+            }
         }
     }
 

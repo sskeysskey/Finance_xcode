@@ -1494,7 +1494,13 @@ struct VideoPlayerPageView: View {
             EpisodePickerView(episodes: activeEpisodes,
                               currentURL: activeEpisodeURL,
                               cachedOriginalURLs: cachedOriginalURLs(),
-                              onSelect: { ep in handleEpisodeSelection(ep) })
+                              onSelect: { ep in handleEpisodeSelection(ep) },
+                              seriesTitle: seriesBaseTitle,
+                              batchContext: EpisodeBatchContext.make(seriesTitle: seriesBaseTitle,
+                                                                     sourceURL: sourceURL,
+                                                                     cover: coverImage,
+                                                                     channelName: channelName,
+                                                                     episodes: activeEpisodes))
                 .presentationDetents([.medium, .large])
         }
     }
@@ -1769,18 +1775,20 @@ struct CachedVideoPlayerView: View {
                                     episodeName: activeName,
                                     realURL: activeKey)
                     }
-                    .sheet(isPresented: $showRepairSheet) {
-                        PlaybackRepairSheet(videoTitle: displayTitle,
-                                            sourceURL: sourceURL ?? activeKey,
-                                            episodeURL: activeKey,
-                                            channelName: channelName,
-                                            episodeName: activeName,
-                                            realURL: activeKey,
-                                            onRetry: {
-                                                showRepairSheet = false
-                                                retryCurrent()
-                                            })
-                        .presentationDetents([.medium, .large])
+                    .sheet(isPresented: $showEpisodePicker) {
+                        EpisodePickerView(episodes: pickerEpisodes,
+                                        currentURL: activeKey,
+                                        cachedOriginalURLs: cachedOriginalURLs(),
+                                        onSelect: { ep in selectEpisode(ep) },
+                                        seriesTitle: baseTitle,
+                                        // ⭐ 仅在拿到服务端完整剧集列表时提供批量下载
+                                        batchContext: allEpisodes.isEmpty ? nil
+                                            : EpisodeBatchContext.make(seriesTitle: baseTitle,
+                                                                    sourceURL: sourceURL,
+                                                                    cover: downloadManager.cacheMetadata[realURL]?.coverImage,
+                                                                    channelName: channelName,
+                                                                    episodes: allEpisodes))
+                            .presentationDetents([.medium, .large])
                     }
 
                 ScrollView {
@@ -2142,12 +2150,40 @@ extension OVideoChannel {
     }
 }
 
-// MARK: - 选集弹窗
+// MARK: - ⭐ 选集弹窗内「批量下载」所需上下文
+struct EpisodeBatchContext {
+    let item: OVideoItem
+    let channel: OVideoChannel
+    let channelDisplayName: String
+
+    /// 把当前选集列表（已按展示顺序排好）包装成 BatchDownloadView 需要的 item + channel
+    static func make(seriesTitle: String, sourceURL: String?, cover: String?,
+                     channelName: String?, episodes: [VideoEpisodeItem]) -> EpisodeBatchContext? {
+        guard let src = sourceURL, !src.isEmpty, !episodes.isEmpty else { return nil }
+        var dict: [String: String] = [:]
+        var order: [String] = []
+        for ep in episodes where dict[ep.name] == nil {
+            dict[ep.name] = ep.url
+            order.append(ep.name)
+        }
+        let channel = OVideoChannel(name: channelName ?? "", episodes: dict, episodeOrder: order)
+        let en = UserDefaults.standard.bool(forKey: "isGlobalEnglishMode")
+        return EpisodeBatchContext(item: OVideoItem(seriesName: seriesTitle, sourceURL: src, cover: cover),
+                                   channel: channel,
+                                   channelDisplayName: en ? "Current Line" : "当前线路")
+    }
+}
+
+// MARK: - 选集弹窗（⭐ 新增批量下载 + 下载中状态角标）
 struct EpisodePickerView: View {
     let episodes: [VideoEpisodeItem]
     let currentURL: String
     var cachedOriginalURLs: Set<String> = []
     let onSelect: (VideoEpisodeItem) -> Void
+    /// 用于按「剧名 · 集名」判断下载中/已下载（与 BatchDownloadView 判定规则一致）
+    var seriesTitle: String? = nil
+    /// 为 nil 时不显示批量下载按钮
+    var batchContext: EpisodeBatchContext? = nil
 
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var authManager: AuthManager
@@ -2155,55 +2191,47 @@ struct EpisodePickerView: View {
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
 
+    @State private var showBatchDownload = false
+    @State private var showQueuedToast = false
+
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
+
+    private func downloadStatus(_ ep: VideoEpisodeItem) -> DownloadStatusIndex.Status? {
+        if cachedOriginalURLs.contains(ep.url) || index.cachedKeys.contains(ep.url) { return .cached }
+        guard let s = seriesTitle, !s.isEmpty else { return nil }
+        return index.statusByTitle["\(s) · \(ep.name)"]
+    }
 
     var body: some View {
         NavigationView {
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(episodes) { ep in
-                        let isCurrent = ep.url == currentURL
-                        let isCached = cachedOriginalURLs.contains(ep.url) || index.cachedKeys.contains(ep.url)
-                        let isUnlocked = quotaManager.isUnlocked(ep.url)
-                        let hasQuota = quotaManager.remaining > 0
+            ZStack(alignment: .bottom) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if batchContext != nil { headerRow }
 
-                        Button {
-                            onSelect(ep)
-                            dismiss()
-                        } label: {
-                            ZStack(alignment: .topTrailing) {
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(isCurrent ? Color.accentColor : Color.secondary.opacity(0.15))
-                                    .frame(height: 50)
-                                    .overlay(
-                                        Text(ep.name)
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .lineLimit(2).minimumScaleFactor(0.7)
-                                            .multilineTextAlignment(.center)
-                                            .foregroundColor(isCurrent ? .white : .primary)
-                                            .padding(.horizontal, 4)
-                                    )
-
-                                if isCached {
-                                    Image(systemName: "arrow.down.circle.fill")
-                                        .font(.system(size: 12)).foregroundColor(.white)
-                                        .padding(2).background(Circle().fill(Color.blue)).padding(3)
-                                } else if !authManager.isSubscribed {
-                                    if isUnlocked {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .font(.system(size: 10)).foregroundColor(.green).padding(3)
-                                    } else if !hasQuota {
-                                        Image(systemName: "lock.fill")
-                                            .font(.system(size: 8)).foregroundColor(.white)
-                                            .padding(3).background(Circle().fill(Color.orange))
-                                    }
-                                }
-                            }
+                        LazyVGrid(columns: columns, spacing: 10) {
+                            ForEach(episodes) { ep in cell(ep) }
                         }
-                        .buttonStyle(PlainButtonStyle())
                     }
+                    .padding(16)
+                    .padding(.bottom, showQueuedToast ? 50 : 0)
                 }
-                .padding(16)
+
+                if showQueuedToast {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
+                        Text(isGlobalEnglishMode
+                             ? "Added to download queue. Check progress in Cache."
+                             : "已加入下载队列，可在「下载管理」查看进度")
+                            .foregroundColor(.primary)
+                    }
+                    .font(.system(size: 13, weight: .medium))
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(Capsule().fill(.ultraThinMaterial))
+                    .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+                    .padding(.bottom, 16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
             .navigationTitle(isGlobalEnglishMode ? "Episodes" : "选集")
             .navigationBarTitleDisplayMode(.inline)
@@ -2212,6 +2240,95 @@ struct EpisodePickerView: View {
                     Button(isGlobalEnglishMode ? "Done" : "完成") { dismiss() }
                 }
             }
+        }
+        .sheet(isPresented: $showBatchDownload) {
+            if let ctx = batchContext {
+                BatchDownloadView(item: ctx.item,
+                                  channel: ctx.channel,
+                                  channelDisplayName: ctx.channelDisplayName,
+                                  isAscending: true,          // channel 已按选集展示顺序构造
+                                  onStartDownloads: { flashQueuedToast() })
+                    .environmentObject(authManager)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+        }
+    }
+
+    // ⭐ 与详情页一致的「批量下载」按钮
+    private var headerRow: some View {
+        HStack {
+            Text(isGlobalEnglishMode ? "\(episodes.count) episodes" : "共 \(episodes.count) 集")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.secondary)
+            Spacer()
+            Button { showBatchDownload = true } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.and.arrow.down.fill").font(.system(size: 13))
+                    Text(isGlobalEnglishMode ? "Batch" : "批量下载")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(Capsule().fill(
+                    LinearGradient(colors: [Color.orange, Color.pink],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)))
+                .shadow(color: Color.orange.opacity(0.35), radius: 4, x: 0, y: 2)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func cell(_ ep: VideoEpisodeItem) -> some View {
+        let isCurrent = ep.url == currentURL
+        let status = downloadStatus(ep)
+        let isUnlocked = quotaManager.isUnlocked(ep.url)
+        let hasQuota = quotaManager.remaining > 0
+
+        return Button {
+            onSelect(ep)
+            dismiss()
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isCurrent ? Color.accentColor : Color.secondary.opacity(0.15))
+                    .frame(height: 50)
+                    .overlay(
+                        Text(ep.name)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(2).minimumScaleFactor(0.7)
+                            .multilineTextAlignment(.center)
+                            .foregroundColor(isCurrent ? .white : .primary)
+                            .padding(.horizontal, 4)
+                    )
+
+                if status == .cached {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 12)).foregroundColor(.white)
+                        .padding(2).background(Circle().fill(Color.blue)).padding(3)
+                } else if status == .downloading {
+                    Image(systemName: "arrow.down.to.line")
+                        .font(.system(size: 8, weight: .bold)).foregroundColor(.white)
+                        .padding(3).background(Circle().fill(Color.orange)).padding(3)
+                } else if !authManager.isSubscribed {
+                    if isUnlocked {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10)).foregroundColor(.green).padding(3)
+                    } else if !hasQuota {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 8)).foregroundColor(.white)
+                            .padding(3).background(Circle().fill(Color.orange))
+                    }
+                }
+            }
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    private func flashQueuedToast() {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { showQueuedToast = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
+            withAnimation(.easeInOut) { showQueuedToast = false }
         }
     }
 }

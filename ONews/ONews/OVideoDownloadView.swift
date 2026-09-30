@@ -2155,7 +2155,7 @@ struct DownloadingGroupHeaderRow: View {
     let isExpanded: Bool
     let onToggle: () -> Void
 
-    private let dm = HLSDownloadManager.shared
+    @ObservedObject private var dm = HLSDownloadManager.shared
     @ObservedObject private var index = HLSDownloadManager.shared.statusIndex
     @ObservedObject private var network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
@@ -2309,7 +2309,7 @@ struct DownloadingEpisodeRow: View {
     let url: String
     let name: String
 
-    private let dm = HLSDownloadManager.shared
+    @ObservedObject private var dm = HLSDownloadManager.shared
     @ObservedObject private var network = NetworkMonitor.shared
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
     @State private var showCellularAlert = false

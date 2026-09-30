@@ -323,7 +323,7 @@ extension OVideoItem {
         return Array(cast.prefix(2))
     }
     var otherCast: [String] {
-        guard let cast = cast, cast.count > 3 else { return [] }
+        guard let cast = cast, cast.count > 2 else { return [] }   // 原为 > 3
         return Array(cast.dropFirst(2))
     }
 }
