@@ -236,7 +236,7 @@ struct SupportBubbleOverlay: ViewModifier {
             showChatLocal = true
         }
         .simultaneousGesture(dragGesture(in: size))
-        .accessibilityLabel("在线客服")
+        .accessibilityLabel("客服留言板")
     }
 
     private func dragGesture(in size: CGSize) -> some Gesture {
@@ -295,15 +295,17 @@ struct SupportChatView: View {
                                 Circle().fill(LinearGradient(colors: [.blue, .purple],
                                     startPoint: .topLeading, endPoint: .bottomTrailing))
                                     .frame(width: 38, height: 38)
-                                Image(systemName: "plus.bubble.fill")
+                                Image(systemName: "square.and.pencil") // 改用便签/编辑图标，弱化即时聊天感
                                     .foregroundColor(.white).font(.system(size: 16, weight: .bold))
                             }
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(en ? "Ask a new question" : "有问题？直接问客服")
+                                // 【修改文案】：避免“直接问”
+                                Text(en ? "Submit a new inquiry" : "提交新咨询 / 留言")
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundColor(.primary)
-                                Text(en ? "Playback, subscription, points, anything."
-                                        : "找片、播放、订阅、点数、建议…任何问题都可以问")
+                                // 【修改文案】：点明回复节奏
+                                Text(en ? "Replies within 24h. Playback, subscription, feedback, etc."
+                                        : "找新闻、找片、有关订阅或点数问题、任何产品Bug或建议…都可以留言咨询")
                                     .font(.caption).foregroundColor(.secondary)
                             }
                             Spacer()
@@ -330,7 +332,8 @@ struct SupportChatView: View {
                 // }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle(en ? "Support" : "在线客服")
+            // 【修改导航标题】
+            .navigationTitle(en ? "Support Desk" : "客服留言")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -416,6 +419,20 @@ struct SupportThreadDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // 【新增：顶部常驻提示栏】
+            HStack(spacing: 8) {
+                Image(systemName: "clock.badge.exclamationmark")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.orange)
+                Text(en ? "Offline message mode: Usually replies within 24 hours. You can leave after sending." 
+                        : "当前为留言模式：非即时通信（预计24h内回复），留言后您无需在页面等待，收到回复时图标会有红点提示。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(Color.orange.opacity(0.08))
             if let sub = thread.subtitle, !sub.isEmpty {
                 Text(sub)
                     .font(.caption).foregroundColor(.secondary)
@@ -430,8 +447,22 @@ struct SupportThreadDetailView: View {
                         if !loaded {
                             ProgressView().padding(.top, 40)
                         } else if messages.isEmpty {
-                            Text(en ? "Send your first message." : "发送第一条消息开始对话")
-                                .font(.footnote).foregroundColor(.secondary).padding(.top, 40)
+                            // 【修改：空白页提示】引导用户一次性把问题说清，避免“在吗”
+                            VStack(spacing: 8) {
+                                Image(systemName: "envelope.open")
+                                    .font(.system(size: 36))
+                                    .foregroundColor(.secondary.opacity(0.6))
+                                Text(en ? "Feel free to leave a detailed message." : "欢迎留言")
+                                    .font(.headline)
+                                    .foregroundColor(.secondary)
+                                Text(en ? "Please include steps, device models, or details.\nI will get back to you as soon as possible via this thread."
+                                        : "请尽量详细描述遇到的情况或操作步骤，\n收到后我会尽快通过此记录给您答复。")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .padding(.top, 50)
+                            .padding(.horizontal, 24)
                         }
                         ForEach(messages) { m in bubble(m).id(m.id) }
                         Color.clear.frame(height: 1).id("BOTTOM")
@@ -451,8 +482,11 @@ struct SupportThreadDetailView: View {
 
             Divider()
             HStack(spacing: 10) {
-                TextField(en ? "Type a message…" : "输入消息…", text: $draft, axis: .vertical)
-                    .lineLimit(1...4)
+                // 【修改：输入框占位符】引导详细输入
+                TextField(en ? "Describe your question in detail (multi-line supported)…" 
+                             : "请详细描述您的问题（支持多行换行）…", 
+                          text: $draft, axis: .vertical)
+                    .lineLimit(1...5)
                     .padding(10)
                     .background(RoundedRectangle(cornerRadius: 18).fill(Color(UIColor.secondarySystemBackground)))
                     .focused($focused)
