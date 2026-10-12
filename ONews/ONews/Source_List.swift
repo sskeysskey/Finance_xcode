@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers   // ★ 新增：拖拽排序
 
 // 【修改】扩展导航目标，增加文章详情
 enum NavigationTarget: Hashable {
@@ -137,6 +138,11 @@ struct UserProfileView: View {
     @ObservedObject private var supportManager = SupportChatManager.shared
     @State private var showSupportChat = false
     @AppStorage(NewsPointsPrefs.storageKey) private var autoDeductPoints = false
+
+    // ★ 新增：文章列表排序偏好
+    @AppStorage(ArticleSortPrefs.groupNewestFirstKey) private var groupNewestFirst = true
+    @AppStorage(ArticleSortPrefs.itemNewestFirstKey) private var itemNewestFirst = true
+    @State private var showResetSourceOrderConfirm = false
 
     // 【新增】统一取客服用的 userId
     private var supportUserId: String {
@@ -296,6 +302,47 @@ struct UserProfileView: View {
                             }
                             .tint(.blue)
                         }
+                    }
+
+                    // ★ 新增：排序设置
+                    Section {
+                        Picker(selection: $groupNewestFirst) {
+                            Text(isGlobalEnglishMode ? "Newest Day on Top" : "最新日期在上").tag(true)
+                            Text(isGlobalEnglishMode ? "Newest Day at Bottom" : "最新日期在下").tag(false)
+                        } label: {
+                            HStack {
+                                Image(systemName: "calendar").foregroundColor(.blue)
+                                Text(isGlobalEnglishMode ? "Date Groups" : "日期分组顺序")
+                                    .foregroundColor(.primary)
+                            }
+                        }
+
+                        Picker(selection: $itemNewestFirst) {
+                            Text(isGlobalEnglishMode ? "Newest on Top" : "最新文章在上").tag(true)
+                            Text(isGlobalEnglishMode ? "Newest at Bottom" : "最新文章在下").tag(false)
+                        } label: {
+                            HStack {
+                                Image(systemName: "list.bullet").foregroundColor(.blue)
+                                Text(isGlobalEnglishMode ? "Articles in a Day" : "组内文章顺序")
+                                    .foregroundColor(.primary)
+                            }
+                        }
+
+                        Button {
+                            showResetSourceOrderConfirm = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "arrow.up.arrow.down").foregroundColor(.orange)
+                                Text(isGlobalEnglishMode ? "Reset Source Order" : "恢复默认新闻源顺序")
+                                    .foregroundColor(.primary)
+                            }
+                        }
+                    } header: {
+                        Text(isGlobalEnglishMode ? "Sorting" : "排序")
+                    } footer: {
+                        Text(isGlobalEnglishMode
+                             ? "Applies to All Articles and every source list. “Next” and continuous playback follow this order. Long-press a source on the home page to drag it."
+                             : "同时作用于「全部文章」与各新闻源列表，「下一篇」和连续播放也按此顺序进行。首页长按新闻源可拖动调整顺序。")
                     }
                     
                     // 支持与反馈部分
@@ -494,6 +541,18 @@ struct UserProfileView: View {
                     Button("OK", role: .cancel) { }
                 } message: {
                     Text(bulkDownloadErrorMessage)
+                }
+                .alert(isGlobalEnglishMode ? "Reset Source Order?" : "恢复默认顺序？",
+                       isPresented: $showResetSourceOrderConfirm) {
+                    Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
+                    Button(isGlobalEnglishMode ? "Reset" : "恢复", role: .destructive) {
+                        NotificationCenter.default.post(name: .newsSourceOrderDidReset, object: nil)
+                        ONewsHaptics.success()
+                    }
+                } message: {
+                    Text(isGlobalEnglishMode
+                         ? "Your custom drag order on the home page will be discarded."
+                         : "首页手动拖拽的新闻源顺序将被清除。")
                 }
             }
             
@@ -840,6 +899,8 @@ private struct SourceHomeView: View {
     @State private var searchText = ""
     @State private var isSearchActive = false
     @State private var searchGroups: [HomeSearchGroup] = []
+    @AppStorage(ArticleSortPrefs.groupNewestFirstKey) private var groupNewestFirst = true
+    @AppStorage(ArticleSortPrefs.itemNewestFirstKey) private var itemNewestFirst = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -916,6 +977,8 @@ private struct SourceHomeView: View {
         .onChange(of: viewModel.allArticlesSortedForDisplay.count) { _, _ in
             if isSearchActive { runSearch() }
         }
+        .onChange(of: groupNewestFirst) { _, _ in if isSearchActive { runSearch() } }
+        .onChange(of: itemNewestFirst) { _, _ in if isSearchActive { runSearch() } }
         .sheet(isPresented: $showAddSourceSheet, onDismiss: { viewModel.loadNews() }) {
             NavigationView { AddSourceView(isFirstTimeSetup: false) }
                 .environmentObject(resourceManager)
@@ -969,14 +1032,14 @@ private struct SourceHomeView: View {
         }
     }
 
-    // MARK: 搜索（★ 只在提交时后台计算一次，不再每次重绘都扫全文）
     private func runSearch() {
         let kw = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !kw.isEmpty else { isSearchActive = false; searchGroups = []; return }
         let pool = viewModel.allArticlesSortedForDisplay
+        let g = groupNewestFirst, i = itemNewestFirst
         Task {
             let groups = await Task.detached(priority: .userInitiated) {
-                SourceHomeView.search(pool: pool, keyword: kw)
+                SourceHomeView.search(pool: pool, keyword: kw, groupNewestFirst: g, itemNewestFirst: i)
             }.value
             guard searchText.trimmingCharacters(in: .whitespacesAndNewlines) == kw else { return }
             searchGroups = groups
@@ -986,7 +1049,9 @@ private struct SourceHomeView: View {
 
     nonisolated private static func search(
         pool: [(article: Article, sourceName: String, sourceNameEN: String)],
-        keyword kw: String
+        keyword kw: String,
+        groupNewestFirst: Bool,
+        itemNewestFirst: Bool
     ) -> [HomeSearchGroup] {
         let opts: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
         func hit(_ s: String?) -> Bool {
@@ -1004,10 +1069,10 @@ private struct SourceHomeView: View {
                                           sourceNameEN: item.sourceNameEN, isContentMatch: true))
             }
         }
-        let dict = Dictionary(grouping: hits, by: { $0.article.timestamp })
-        return dict.keys.sorted(by: >).map {
-            HomeSearchGroup(timestamp: $0, items: Array((dict[$0] ?? []).reversed()))
-        }
+        return ArticleSortPrefs.group(hits, day: { $0.article.timestamp },
+                                      groupNewestFirst: groupNewestFirst,
+                                      itemNewestFirst: itemNewestFirst)
+            .map { HomeSearchGroup(timestamp: $0.day, items: $0.items) }
     }
 
     private func closeSearch() {
@@ -1094,12 +1159,14 @@ private struct SourceHomeView: View {
 }
 
 // MARK: - 首页列表（Equatable：父视图重绘时引用不变就跳过；自身仍随 NewsViewModel 刷新）
+// ★ 支持长按拖拽排序（iOS 主屏幕式：长按抬起 → 拖动实时换位 → 松手完成），顺序本地持久化
 private struct HomeSourceList: View, Equatable {
     @ObservedObject var viewModel: NewsViewModel
     let resourceManager: ResourceManager
 
     @Environment(\.appNavPath) private var appNavPath
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    @State private var draggingSourceID: String?
 
     static func == (l: HomeSourceList, r: HomeSourceList) -> Bool {
         l.viewModel === r.viewModel && l.resourceManager === r.resourceManager
@@ -1115,60 +1182,112 @@ private struct HomeSourceList: View, Equatable {
 
                 HomeUpdateTimeRow(resourceManager: resourceManager)
 
-                VStack(spacing: 1) {
-                    ForEach(viewModel.sources) { source in
-                        NavigationLink(value: NavigationTarget.source(source.name)) {
-                            HStack(spacing: 15) {
-                                SourceIconView(sourceName: source.name)
-                                Text(isGlobalEnglishMode ? source.name_en : source.name)
-                                    .font(.body.weight(.medium))
-                                    .foregroundColor(.primary)
-                                    .animation(.none, value: isGlobalEnglishMode)
-                                Spacer()
-                                let unread = source.unreadCount
-                                if unread > 0 {
-                                    Text("\(unread)")
-                                        .font(.caption.bold())
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.blue.opacity(0.1))
-                                        .foregroundColor(.blue)
-                                        .clipShape(Capsule())
-                                } else {
-                                    Image(systemName: "checkmark")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary.opacity(0.5))
-                                }
-                                Button(action: { playSource(source.name) }) {
-                                    Image(systemName: "play.fill")
-                                        .font(.system(size: 14, weight: .bold))
-                                        .symbolRenderingMode(.hierarchical)
-                                        .foregroundStyle(.primary)
-                                        .padding(8)
-                                        .background(Circle().fill(Color.secondary.opacity(0.12)))
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                            }
-                            .padding(.vertical, 12)
-                            .padding(.horizontal, 16)
-                            .background(Color.cardBackground)
-                        }
+                sourceListCard
 
-                        if source.id != viewModel.sources.last?.id {
-                            Divider()
-                                .padding(.leading, 110)
-                                .background(Color.cardBackground)
-                        }
-                    }
+                if viewModel.sources.count > 1 {
+                    Text(isGlobalEnglishMode ? "Long press and drag to reorder sources"
+                                             : "长按新闻源并拖动，可调整顺序")
+                        .font(.caption2)
+                        .foregroundColor(.secondary.opacity(0.7))
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, -6)
                 }
-                .cornerRadius(16)
-                .padding(.horizontal, 16)
-                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
 
                 Spacer().frame(height: 40)
             }
             .padding(.top, 10)
         }
+        .onAppear { draggingSourceID = nil }
+    }
+
+    // MARK: 新闻源卡片（可拖拽）
+    private var sourceListCard: some View {
+        VStack(spacing: 1) {
+            ForEach(viewModel.sources) { source in
+                NavigationLink(value: NavigationTarget.source(source.name)) {
+                    sourceRowContent(source, showsPlay: true)
+                }
+                .onDrag {
+                    draggingSourceID = source.id
+                    ONewsHaptics.rigid()
+                    return NSItemProvider(object: source.id as NSString)
+                } preview: {
+                    sourceRowContent(source, showsPlay: false)
+                        .frame(width: UIScreen.main.bounds.width - 32)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .onDrop(of: [UTType.text],
+                        delegate: SourceReorderDropDelegate(targetID: source.id,
+                                                            draggingID: $draggingSourceID,
+                                                            viewModel: viewModel))
+                .accessibilityAction(named: Text(isGlobalEnglishMode ? "Move Up" : "上移")) {
+                    withAnimation { _ = viewModel.moveSource(id: source.id, by: -1) }
+                }
+                .accessibilityAction(named: Text(isGlobalEnglishMode ? "Move Down" : "下移")) {
+                    withAnimation { _ = viewModel.moveSource(id: source.id, by: 1) }
+                }
+
+                if source.id != viewModel.sources.last?.id {
+                    Divider()
+                        .padding(.leading, 110)
+                        .background(Color.cardBackground)
+                }
+            }
+        }
+        .cornerRadius(16)
+        .padding(.horizontal, 16)
+        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+        // 落在分隔线 / 缝隙上也能正常结束拖拽
+        .onDrop(of: [UTType.text], delegate: SourceReorderEndDropDelegate(draggingID: $draggingSourceID))
+    }
+
+    private func sourceRowContent(_ source: NewsSource, showsPlay: Bool) -> some View {
+        HStack(spacing: 12) {
+            // ★ 拖拽把手（提示可拖动）
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.secondary.opacity(0.45))
+                .frame(width: 16)
+                .accessibilityHidden(true)
+
+            SourceIconView(sourceName: source.name)
+            Text(isGlobalEnglishMode ? source.name_en : source.name)
+                .font(.body.weight(.medium))
+                .foregroundColor(.primary)
+                .animation(.none, value: isGlobalEnglishMode)
+            Spacer()
+
+            // ★ 与角标同源（readRecords），阅读中也准确
+            let unread = viewModel.getEffectiveUnreadCount(inSource: source.name)
+            if unread > 0 {
+                Text("\(unread)")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.blue.opacity(0.1))
+                    .foregroundColor(.blue)
+                    .clipShape(Capsule())
+            } else {
+                Image(systemName: "checkmark")
+                    .font(.caption)
+                    .foregroundColor(.secondary.opacity(0.5))
+            }
+
+            if showsPlay {
+                Button(action: { playSource(source.name) }) {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(.primary)
+                        .padding(8)
+                        .background(Circle().fill(Color.secondary.opacity(0.12)))
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .background(Color.cardBackground)
     }
 
     private var onewsAllCard: some View {
@@ -1234,10 +1353,9 @@ private struct HomeSourceList: View, Equatable {
         .buttonStyle(ScaleButtonStyle())
     }
 
+    /// ★ 按用户设定的显示顺序取第一篇未读
     private func playAll() {
-        guard let target = viewModel.allArticlesSortedForDisplay.first(where: {
-            !viewModel.isArticleEffectivelyRead($0.article)
-        }) else {
+        guard let target = viewModel.firstUnreadForPlayback(inSource: nil) else {
             print("没有未读文章，无需播放。")
             return
         }
@@ -1249,16 +1367,52 @@ private struct HomeSourceList: View, Equatable {
     }
 
     private func playSource(_ sourceName: String) {
-        guard let source = viewModel.sources.first(where: { $0.name == sourceName }) else { return }
-        guard let target = source.articles.first(where: { !viewModel.isArticleEffectivelyRead($0) }) else {
+        guard let target = viewModel.firstUnreadForPlayback(inSource: sourceName) else {
             appNavPath?.wrappedValue.append(NavigationTarget.source(sourceName))
             return
         }
         ONewsHaptics.light()
-        HomeArticleOpener.open(target, sourceName: sourceName,
+        HomeArticleOpener.open(target.article, sourceName: sourceName,
                                autoPlay: true, isFromAll: false,
                                viewModel: viewModel, resourceManager: resourceManager,
                                navPath: appNavPath)
+    }
+}
+
+// MARK: - 拖拽排序代理
+/// 拖到某一行上方 → 实时换位（同 iOS 主屏幕的"让位"效果）
+private struct SourceReorderDropDelegate: DropDelegate {
+    let targetID: String
+    @Binding var draggingID: String?
+    let viewModel: NewsViewModel
+
+    func validateDrop(info: DropInfo) -> Bool { draggingID != nil }
+
+    func dropEntered(info: DropInfo) {
+        guard let dragging = draggingID, dragging != targetID else { return }
+        var moved = false
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            moved = viewModel.moveSource(id: dragging, to: targetID)
+        }
+        if moved { ONewsHaptics.selection() }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingID = nil      // 顺序已在 moveSource 中实时持久化
+        return true
+    }
+}
+
+/// 容器级兜底：在缝隙处松手也能正确结束拖拽状态
+private struct SourceReorderEndDropDelegate: DropDelegate {
+    @Binding var draggingID: String?
+    func validateDrop(info: DropInfo) -> Bool { draggingID != nil }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+    func performDrop(info: DropInfo) -> Bool {
+        draggingID = nil
+        return true
     }
 }
 

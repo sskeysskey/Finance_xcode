@@ -115,7 +115,7 @@ struct Localized {
     static var noPhotoPermission: String { tr("没有相册权限，保存失败", "No photo permission") }
     static var imageLoadError: String { tr("图片加载失败，无法保存", "Load error, cannot save") }
     static var shareFooter: String {
-        tr("\n\n...\n\n阅读全文请前往苹果商店免费下载“国外消息“应用程序",
+        tr("\n\n...\n\n阅读全文请前往苹果商店免费下载“国外消息&视频“应用",
         "\n\n...\n\nRead full article in ONews app, available on the App Store.")
     }
     static var readNext: String { tr("阅读下一篇文章", "Read Next") }
@@ -129,7 +129,7 @@ struct Localized {
     static var more: String { tr("更多", "More") }
     static var contentCopied: String { tr("文章内容已复制", "Content Copied") }
     static var weChatLimitHint: String { 
-        tr("由于微信限制，请手动去微信粘贴文章内容", "Due to WeChat limitations, please paste the content manually in the app.") 
+        tr("由于微信限制，请手动去微信粘贴内容", "Due to WeChat limitations, please paste the content manually in the app.") 
     }
     static var openWeChat: String { tr("打开微信", "Open WeChat") }
     static var weChatNotInstalled: String { tr("未安装微信", "WeChat not installed") }
@@ -204,7 +204,7 @@ struct Localized {
     static var downloadingData: String { tr("正在加载数据...", "Loading Data and Files...") }
     static var downloadingFiles: String { tr("正在下载文件...", "Downloading files...") }
     static var checkingUpdates: String { tr("正在检查更新...", "Checking for updates...") }
-    static var upToDate: String { tr("当前已是最新", "Already up to date") }
+    static var upToDate: String { tr("当前已是最新资源", "Already up to date") }
     static var updateComplete: String { tr("更新完成！", "Update complete!") }
     
     // MARK: - 欢迎页特效默认词汇 (Fallback)

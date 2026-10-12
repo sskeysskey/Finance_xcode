@@ -454,6 +454,11 @@ struct ArticleRowView: View, Equatable {
     let isSelectionMode: Bool
     let isSelected: Bool
     let allowBulkMarks: Bool
+    /// 批量标记可用性（列表按"显示顺序"算好；没有可标记目标时菜单项直接隐藏）
+    let canMarkAbove: Bool
+    let canMarkBelow: Bool
+    let canMarkAboveInGroup: Bool
+    let canMarkBelowInGroup: Bool
 
     let onTap: () -> Void
     let onToggleSelect: () -> Void
@@ -461,6 +466,8 @@ struct ArticleRowView: View, Equatable {
     let onToggleRead: () -> Void
     let onMarkAbove: () -> Void
     let onMarkBelow: () -> Void
+    let onMarkAboveInGroup: () -> Void
+    let onMarkBelowInGroup: () -> Void
 
     static func == (l: ArticleRowView, r: ArticleRowView) -> Bool {
         l.item.id == r.item.id
@@ -473,8 +480,13 @@ struct ArticleRowView: View, Equatable {
             && l.isSelectionMode == r.isSelectionMode
             && l.isSelected == r.isSelected
             && l.allowBulkMarks == r.allowBulkMarks
+            && l.canMarkAbove == r.canMarkAbove
+            && l.canMarkBelow == r.canMarkBelow
+            && l.canMarkAboveInGroup == r.canMarkAboveInGroup
+            && l.canMarkBelowInGroup == r.canMarkBelowInGroup
     }
 
+    private var isEn: Bool { Localized.isEnglish }
     private var toggleTitle: String { isRead ? Localized.markAsUnread_text : Localized.markAsRead_text }
 
     var body: some View {
@@ -514,17 +526,40 @@ struct ArticleRowView: View, Equatable {
                     Label(toggleTitle, systemImage: isRead ? "circle" : "checkmark.circle")
                 }
                 if !isRead && allowBulkMarks {
-                    Divider()
-                    Button(action: onMarkAbove) {
-                        Label(Localized.readAbove, systemImage: "arrow.up.to.line.compact")
+                    if canMarkAboveInGroup || canMarkBelowInGroup {
+                        Section(isEn ? "This Day Only" : "仅本日分组") {
+                            if canMarkAboveInGroup {
+                                Button(action: onMarkAboveInGroup) {
+                                    Label(isEn ? "Mark Above in This Day as Read" : "本日以上全部已读",
+                                          systemImage: "arrow.up.to.line")
+                                }
+                            }
+                            if canMarkBelowInGroup {
+                                Button(action: onMarkBelowInGroup) {
+                                    Label(isEn ? "Mark Below in This Day as Read" : "本日以下全部已读",
+                                          systemImage: "arrow.down.to.line")
+                                }
+                            }
+                        }
                     }
-                    Button(action: onMarkBelow) {
-                        Label(Localized.readBelow, systemImage: "arrow.down.to.line.compact")
+                    if canMarkAbove || canMarkBelow {
+                        Section(isEn ? "Across All Days" : "跨日期分组") {
+                            if canMarkAbove {
+                                Button(action: onMarkAbove) {
+                                    Label(Localized.readAbove, systemImage: "arrow.up.to.line.compact")
+                                }
+                            }
+                            if canMarkBelow {
+                                Button(action: onMarkBelow) {
+                                    Label(Localized.readBelow, systemImage: "arrow.down.to.line.compact")
+                                }
+                            }
+                        }
                     }
                 }
                 Divider()
                 Button(action: onEnterSelection) {
-                    Label(Localized.isEnglish ? "Select Articles…" : "选择文章…",
+                    Label(isEn ? "Select Articles…" : "选择文章…",
                           systemImage: "checkmark.circle.badge.questionmark")
                 }
             }
@@ -753,6 +788,8 @@ struct ArticleListScreen: View {
 
     @EnvironmentObject var authManager: AuthManager
     @AppStorage("isGlobalEnglishMode") private var isGlobalEnglishMode = false
+    @AppStorage(ArticleSortPrefs.groupNewestFirstKey) private var groupNewestFirst = true
+    @AppStorage(ArticleSortPrefs.itemNewestFirstKey) private var itemNewestFirst = true
     @Environment(\.appNavPath) private var appNavPath
 
     @State private var filterMode: ArticleFilterMode = .unread
@@ -763,26 +800,36 @@ struct ArticleListScreen: View {
     @State private var showProfileSheet = false
     @State private var hasPerformedAutoExpansion = false
 
-    /// ★ 吸顶 header 的"自愈纪元"：结构变化 / 从详情返回后递增一次，
-    ///   让所有 header 以全新身份重建（等价于你手动"来回切换界面"，但用户无感）
+    /// ★ 吸顶 header 的"自愈纪元"
     @State private var headerEpoch = 0
 
     @StateObject private var selection = ArticleSelectionModel()
     @StateObject private var undoHolder = ArticleUndoHolder()
     private var undo: ArticleUndoCenter { undoHolder.center }
 
-    // MARK: 一次成型的数据快照（每次 body 只算一遍）
+    // MARK: 一次成型的数据快照
     private struct Snapshot {
         var sourceAvailable = true
+        /// 基础顺序（日期降序 + 发布时间降序）的可见文章
         var visible: [ArticleItem] = []
+        /// 按用户偏好排列的分组
         var groups: [ArticleDateGroup] = []
+        /// ★ 显示顺序（groups 拍平）——"以上 / 以下"按它计算
+        var ordered: [ArticleItem] = []
         var unreadCount = 0
         var readCount = 0
 
-        /// ★ 分组结构签名（日期 + 数量），变化即触发 header 自愈
         var groupSignature: String {
             groups.map { "\($0.timestamp):\($0.items.count)" }.joined(separator: ",")
         }
+    }
+
+    private struct RowMarks {
+        var above = false
+        var below = false
+        var aboveInGroup = false
+        var belowInGroup = false
+        static let none = RowMarks()
     }
 
     private var expansionKey: String {
@@ -804,6 +851,13 @@ struct ArticleListScreen: View {
             guard let s = currentSource else { return n.replacingOccurrences(of: "_", with: " ") }
             return (isGlobalEnglishMode ? s.name_en : s.name).replacingOccurrences(of: "_", with: " ")
         }
+    }
+
+    private func makeGroups(_ items: [ArticleItem]) -> [ArticleDateGroup] {
+        ArticleSortPrefs.group(items, day: { $0.article.timestamp },
+                               groupNewestFirst: groupNewestFirst,
+                               itemNewestFirst: itemNewestFirst)
+            .map { ArticleDateGroup(timestamp: $0.day, items: $0.items) }
     }
 
     private func makeSnapshot() -> Snapshot {
@@ -833,12 +887,9 @@ struct ArticleListScreen: View {
             }
         }
 
-        var buckets: [String: [ArticleItem]] = [:]
-        for item in snap.visible { buckets[item.article.timestamp, default: []].append(item) }
-        snap.groups = buckets.keys.sorted(by: >).map { ts in
-            let raw = buckets[ts] ?? []
-            return ArticleDateGroup(timestamp: ts, items: wantRead ? Array(raw.reversed()) : raw)
-        }
+        // ★ 已读 / 未读统一规则（不再对已读列表做组内反转）
+        snap.groups = makeGroups(snap.visible)
+        snap.ordered = snap.groups.flatMap(\.items)
         return snap
     }
 
@@ -860,8 +911,6 @@ struct ArticleListScreen: View {
         .toolbar { toolbarContent }
         .sheet(isPresented: $showProfileSheet) { UserProfileView() }
         .onAppear {
-            // ★ 从详情页返回时"标记已读"会让分组消失；
-            //   不带动画执行，避免与 pop 转场 + header 复用叠加
             var t = Transaction()
             t.disablesAnimations = true
             withTransaction(t) { viewModel.finishReadingIfNeeded() }
@@ -869,22 +918,27 @@ struct ArticleListScreen: View {
             if !hasPerformedAutoExpansion {
                 autoExpandGroups(); hasPerformedAutoExpansion = true
             }
-            // ★ pop 转场（≈0.35s）结束后兜底重建一次 header
             scheduleHeaderRefresh(after: 0.45)
 
             let reason = (scope == .all) ? "all-list-appear" : "source-list-appear"
             Task { await resourceManager.silentRefresh(minInterval: 60, reason: reason) }
         }
         .onChange(of: snap.groupSignature) { _, _ in
-            // ★ 分组增删 / 数量变化：等列表删除动画播完再自愈
             scheduleHeaderRefresh(after: 0.4)
         }
         .onChange(of: filterMode) { _, _ in
             ONewsHaptics.selection()
             autoExpandGroups()
         }
+        .onChange(of: groupNewestFirst) { _, _ in
+            autoExpandGroups()            // 顶部分组变了 → 重新决定默认展开
+            scheduleHeaderRefresh(after: 0.1)
+        }
+        .onChange(of: itemNewestFirst) { _, _ in
+            scheduleHeaderRefresh(after: 0.1)
+        }
         .onChange(of: viewModel.allArticlesSortedForDisplay.count) { _, _ in
-            if isSearchActive { runSearch() }   // 数据刷新后搜索结果同步
+            if isSearchActive { runSearch() }
         }
         .onChange(of: authManager.isLoggedIn) { _, newValue in
             if newValue {
@@ -926,7 +980,7 @@ struct ArticleListScreen: View {
     private func listArea(_ snap: Snapshot) -> some View {
         if isSearchActive {
             List { searchRows }
-                .listStyle(.plain)   // ★ plain 样式下 Section header 自动吸顶
+                .listStyle(.plain)
                 .environment(\.defaultMinListRowHeight, 0)
                 .environment(\.defaultMinListHeaderHeight, 0)
         } else if snap.visible.isEmpty {
@@ -946,12 +1000,15 @@ struct ArticleListScreen: View {
         let selected = selection.selected
         let isReadList = (filterMode == .read)
         let epoch = headerEpoch
+        let firstID = snap.ordered.first?.id
+        let lastID = snap.ordered.last?.id
 
         ForEach(snap.groups) { group in
             let ts = group.timestamp
             let isExpanded = expanded.contains(ts)
             let ids = group.items.map(\.id)
-            // 锁 / 免费只与日期有关 → 每组算一次
+            let gFirst = group.items.first?.id
+            let gLast = group.items.last?.id
             let showLock = NewsPointsCoordinator.shouldShowLock(timestamp: ts, auth: authManager, viewModel: viewModel)
             let groupFree = NewsFreeBadge.isFree(timestamp: ts, auth: authManager, viewModel: viewModel)
             let groupLocked = showLock && (group.items.isEmpty || group.items.contains {
@@ -968,7 +1025,11 @@ struct ArticleListScreen: View {
                             isFree: !locked && groupFree,
                             inSelection: inSelection,
                             isSelected: selected.contains(item.id),
-                            allowBulk: !isReadList)
+                            allowBulk: !isReadList,
+                            marks: RowMarks(above: item.id != firstID,
+                                            below: item.id != lastID,
+                                            aboveInGroup: item.id != gFirst,
+                                            belowInGroup: item.id != gLast))
                     }
                 }
             } header: {
@@ -984,7 +1045,6 @@ struct ArticleListScreen: View {
                     onPlay: { playGroup(ts) },
                     onToggleGroupSelect: { selection.toggleGroup(ids) }
                 )
-                // ★ 身份绑定"日期 + 纪元"：复用给别的日期 / 自愈时都是全新子树，不继承残留动画状态
                 .id("\(ts)#\(epoch)")
                 .listRowInsets(EdgeInsets())
             }
@@ -992,12 +1052,7 @@ struct ArticleListScreen: View {
         }
     }
 
-    private var searchGroups: [ArticleDateGroup] {
-        let dict = Dictionary(grouping: searchHits, by: { $0.article.timestamp })
-        return dict.keys.sorted(by: >).map {
-            ArticleDateGroup(timestamp: $0, items: Array((dict[$0] ?? []).reversed()))
-        }
-    }
+    private var searchGroups: [ArticleDateGroup] { makeGroups(searchHits) }
 
     @ViewBuilder
     private var searchRows: some View {
@@ -1041,7 +1096,8 @@ struct ArticleListScreen: View {
     }
 
     private func row(_ item: ArticleItem, isRead: Bool, isLocked: Bool, isFree: Bool,
-                     inSelection: Bool, isSelected: Bool, allowBulk: Bool) -> some View {
+                     inSelection: Bool, isSelected: Bool, allowBulk: Bool,
+                     marks: RowMarks = .none) -> some View {
         ArticleRowView(
             item: item,
             isRead: isRead,
@@ -1051,12 +1107,18 @@ struct ArticleListScreen: View {
             isSelectionMode: inSelection,
             isSelected: isSelected,
             allowBulkMarks: allowBulk,
+            canMarkAbove: marks.above,
+            canMarkBelow: marks.below,
+            canMarkAboveInGroup: marks.aboveInGroup,
+            canMarkBelowInGroup: marks.belowInGroup,
             onTap: { openArticle(item, autoPlay: false) },
             onToggleSelect: { selection.toggle(item.id) },
             onEnterSelection: { enterSelection(preselect: item.id) },
             onToggleRead: { markOne(item, asRead: !isRead) },
-            onMarkAbove: { markAround(item, above: true) },
-            onMarkBelow: { markAround(item, above: false) }
+            onMarkAbove: { markAround(item, above: true, inGroup: false) },
+            onMarkBelow: { markAround(item, above: false, inGroup: false) },
+            onMarkAboveInGroup: { markAround(item, above: true, inGroup: true) },
+            onMarkBelowInGroup: { markAround(item, above: false, inGroup: true) }
         )
         .equatable()
         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
@@ -1064,7 +1126,7 @@ struct ArticleListScreen: View {
         .listRowBackground(Color.clear)
     }
 
-    // MARK: ★ header 自愈（无动画地换一次身份）
+    // MARK: ★ header 自愈
     private func scheduleHeaderRefresh(after delay: Double) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             var t = Transaction()
@@ -1126,7 +1188,7 @@ struct ArticleListScreen: View {
         }
     }
 
-    // MARK: 搜索（仅提交时计算一次；中英文标题 / 正文都匹配）
+    // MARK: 搜索
     private func runSearch() {
         let kw = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !kw.isEmpty else { isSearchActive = false; searchHits = []; return }
@@ -1198,7 +1260,7 @@ struct ArticleListScreen: View {
     private func markOne(_ item: ArticleItem, asRead: Bool) {
         ONewsHaptics.light()
         let a = item.article
-        viewModel.markArticles([a], asRead: asRead)   // 原生 swipeActions 会平滑收起此行
+        viewModel.markArticles([a], asRead: asRead)
         let msg = isGlobalEnglishMode
             ? (asRead ? "Marked as read" : "Marked as unread")
             : (asRead ? "已标记为已读" : "已标记为未读")
@@ -1207,9 +1269,14 @@ struct ArticleListScreen: View {
         }
     }
 
-    /// 调用时才读取最新可见列表（避免 Equatable 行持有过期的闭包数据）
-    private func markAround(_ item: ArticleItem, above: Bool) {
-        let list = makeSnapshot().visible.map(\.article)
+    /// 调用时才读取最新快照；"以上 / 以下"严格按屏幕显示顺序
+    /// - inGroup: true = 只在当前日期分组内；false = 跨所有日期分组（原功能）
+    private func markAround(_ item: ArticleItem, above: Bool, inGroup: Bool) {
+        let snap = makeSnapshot()
+        let pool: [ArticleItem] = inGroup
+            ? (snap.groups.first(where: { $0.timestamp == item.article.timestamp })?.items ?? [])
+            : snap.ordered
+        let list = pool.map(\.article)
         guard let pivot = list.firstIndex(where: { $0.id == item.id }) else { return }
         let targets: [Article] = above
             ? Array(list[..<pivot])
@@ -1219,7 +1286,12 @@ struct ArticleListScreen: View {
         ONewsHaptics.success()
         withAnimation(.easeInOut(duration: 0.25)) { viewModel.markArticles(targets, asRead: true) }
         let n = targets.count
-        let msg = isGlobalEnglishMode ? "\(n) marked as read" : "已将 \(n) 篇标记为已读"
+        let msg: String
+        if inGroup {
+            msg = isGlobalEnglishMode ? "\(n) in this day marked as read" : "已将本日 \(n) 篇标记为已读"
+        } else {
+            msg = isGlobalEnglishMode ? "\(n) marked as read" : "已将 \(n) 篇标记为已读"
+        }
         undo.show(msg) { [viewModel] in
             withAnimation(.easeInOut(duration: 0.25)) { viewModel.markArticles(targets, asRead: false) }
         }
@@ -1227,7 +1299,8 @@ struct ArticleListScreen: View {
 
     // MARK: 打开文章
     private func playGroup(_ timestamp: String) {
-        if let first = makeSnapshot().visible.first(where: { $0.article.timestamp == timestamp }) {
+        // 按显示顺序取该组第一篇
+        if let first = makeSnapshot().groups.first(where: { $0.timestamp == timestamp })?.items.first {
             openArticle(first, autoPlay: true)
         }
     }
@@ -1259,12 +1332,12 @@ struct ArticleListScreen: View {
                                                   imageNames: article.images,
                                                   priority: true)
         }
-        ArticleBodyCache.shared.prefetch(article: article)   // push 动画结束前正文已排好
+        ArticleBodyCache.shared.prefetch(article: article)
 
         appNavPath?.wrappedValue.append(NavigationTarget.articleDetail(article, srcName, ctx, autoPlay))
     }
 
-    // MARK: 自动展开（值不变不写，避免无谓的 publish）
+    // MARK: 自动展开（展开"屏幕最上方"的分组；值不变不写）
     private func autoExpandGroups() {
         let ts = makeSnapshot().groups.map(\.timestamp)
         let value: Set<String>

@@ -1,4 +1,39 @@
 import SwiftUI
+import Foundation
+
+// ============================================================================
+// MARK: - 文章列表排序偏好（个人中心可改）
+// 统一作用于：单源列表 / 全部文章列表 / 搜索结果 / 下一篇 / 连续播放 / 分组播放
+// 约定：所有"基础序列"都已是【日期降序 + 同日内发布时间降序】，这里只做 O(N) 的稳定重排
+// ============================================================================
+enum ArticleSortPrefs {
+    static let groupNewestFirstKey = "articleListGroupNewestFirst"
+    static let itemNewestFirstKey = "articleListItemNewestFirst"
+
+    /// 日期分组：true = 最新日期在上（默认）
+    static var groupNewestFirst: Bool {
+        UserDefaults.standard.object(forKey: groupNewestFirstKey) as? Bool ?? true
+    }
+
+    /// 组内文章：true = 最新文章在上（默认）
+    static var itemNewestFirst: Bool {
+        UserDefaults.standard.object(forKey: itemNewestFirstKey) as? Bool ?? true
+    }
+
+    /// 按日期分桶 → 按偏好排列分组与组内顺序（输入需为"新→旧"的基础顺序）
+    static func group<T>(_ items: [T],
+                         day: (T) -> String,
+                         groupNewestFirst: Bool,
+                         itemNewestFirst: Bool) -> [(day: String, items: [T])] {
+        var buckets: [String: [T]] = [:]
+        for it in items { buckets[day(it), default: []].append(it) }
+        let days = groupNewestFirst ? buckets.keys.sorted(by: >) : buckets.keys.sorted(by: <)
+        return days.map { d in
+            let arr = buckets[d] ?? []
+            return (day: d, items: itemNewestFirst ? arr : Array(arr.reversed()))
+        }
+    }
+}
 
 // ============================================================================
 // MARK: - 音频容器：把"高频 publish"隔离在 Overlay 子树内
