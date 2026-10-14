@@ -1252,10 +1252,13 @@ private struct HomeSourceList: View, Equatable {
 
             SourceIconView(sourceName: source.name)
             Text(isGlobalEnglishMode ? source.name_en : source.name)
-                .font(.body.weight(.medium))
+                .font(.system(size: 15, weight: .medium))   // 原 .body(17pt) → 15pt
                 .foregroundColor(.primary)
+                .lineLimit(1)                                // 绝不换行
+                .minimumScaleFactor(0.8)                     // 极端长名字再自动缩一点
+                .layoutPriority(1)                           // 空间不够时优先保证名字，其余元素让位
                 .animation(.none, value: isGlobalEnglishMode)
-            Spacer()
+            Spacer(minLength: 4)
 
             // ★ 与角标同源（readRecords），阅读中也准确
             let unread = viewModel.getEffectiveUnreadCount(inSource: source.name)

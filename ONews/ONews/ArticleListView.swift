@@ -109,6 +109,27 @@ enum ONewsDateText {
     }
 }
 
+// ==================== 发布时间（HH:mm:ss，纯字符串处理，零 DateFormatter 开销） ====================
+/// 输入 "2026-10-12 03:32:50" / "2026-10-12T03:32:50Z" 等，输出 "03:32:50"。
+/// 数字不足 12 位（只有日期）或时分越界 → 返回 nil（调用方据此隐藏，而不是显示 00:00:00）
+enum ONewsPublishTime {
+    static func string(_ raw: String?, includeSeconds: Bool = true) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let d = Array(raw.filter { $0.isASCII && $0.isNumber })
+        guard d.count >= 12 else { return nil }          // yyyyMMddHHmm 至少 12 位
+
+        let hh = String(d[8..<10])
+        let mm = String(d[10..<12])
+        guard let h = Int(hh), h < 24, let m = Int(mm), m < 60 else { return nil }
+
+        if includeSeconds, d.count >= 14 {
+            let ss = String(d[12..<14])
+            if let s = Int(ss), s < 60 { return "\(hh):\(mm):\(ss)" }
+        }
+        return "\(hh):\(mm)"
+    }
+}
+
 // ==================== 撤销条（Gmail 式 Undo Snackbar） ====================
 @MainActor
 final class ArticleUndoCenter: ObservableObject {
@@ -383,24 +404,42 @@ struct ArticleRowCardView: View {
     }
 
     var body: some View {
+        let name = displaySourceName
+        let time = ONewsPublishTime.string(article.publishedAt)
+
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                if let finalName = displaySourceName {
-                    Text(finalName.replacingOccurrences(of: "_", with: " ").uppercased())
-                        .font(.system(size: 11, weight: .bold))
-                        .tracking(0.5)
-                        .foregroundColor(isReadEffective ? .secondary.opacity(0.7) : .blue.opacity(0.8))
-                }
-                Spacer()
-                if isLocked {
-                    HStack(spacing: 4) {
-                        Image(systemName: "lock.fill").font(.system(size: 14))
-                        Text(Localized.needSubscription).font(.system(size: 14, weight: .medium))
+            // 第一行：有内容才渲染（避免空行白占 14pt 间距）
+            if name != nil || time != nil || isLocked {
+                HStack(spacing: 8) {
+                    if let finalName = name {
+                        // 全部文章 / 搜索：源名在左
+                        Text(finalName.replacingOccurrences(of: "_", with: " ").uppercased())
+                            .font(.system(size: 11, weight: .bold))
+                            .tracking(0.5)
+                            .foregroundColor(isReadEffective ? .secondary.opacity(0.7) : .blue.opacity(0.8))
+                            .lineLimit(1)
+                    } else if let time {
+                        // 单一新闻源：时间直接放第一行左侧
+                        publishTimeLabel(time)
                     }
-                    .foregroundColor(.orange.opacity(0.9))
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Color.orange.opacity(0.15))
-                    .cornerRadius(8)
+
+                    Spacer(minLength: 8)
+
+                    if isLocked {
+                        HStack(spacing: 4) {
+                            Image(systemName: "lock.fill").font(.system(size: 14))
+                            Text(Localized.needSubscription).font(.system(size: 14, weight: .medium))
+                        }
+                        .foregroundColor(.orange.opacity(0.9))
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.orange.opacity(0.15))
+                        .cornerRadius(8)
+                    }
+
+                    // 全部文章 / 搜索：时间在最右
+                    if name != nil, let time {
+                        publishTimeLabel(time)
+                    }
                 }
             }
 
@@ -432,6 +471,16 @@ struct ArticleRowCardView: View {
         )
         .opacity(isLocked ? 0.7 : 1.0)
         .transaction { $0.animation = nil }   // 中英切换时标题不做跨行插值动画
+    }
+
+    /// 发布时间小标签：等宽数字（秒数跳动时不抖动）、不被压缩、已读后变淡
+    private func publishTimeLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium))
+            .monospacedDigit()
+            .foregroundColor(.secondary.opacity(isReadEffective ? 0.65 : 0.9))
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 
@@ -630,10 +679,6 @@ struct TimestampHeader: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .layoutPriority(1)
 
-            if isFree && !isLocked {
-                FreeTagView(compact: true).padding(.leading, 8)
-            }
-
             Spacer(minLength: 8)
 
             if count > 0 && !isSelectionMode {
@@ -718,8 +763,6 @@ struct SearchGroupHeader: View {
                     Image(systemName: "lock.fill")
                         .foregroundColor(.yellow.opacity(0.8))
                         .font(.footnote)
-                } else if isFree {
-                    FreeTagView(compact: true)
                 }
             }
         }

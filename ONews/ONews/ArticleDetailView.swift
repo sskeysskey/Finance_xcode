@@ -334,12 +334,13 @@ struct ArticleDetailView: View {
         (isEnglishMode && hasEnglishVersion) ? (article.topic_eng ?? article.topic) : article.topic
     }
 
-    private static let monthDayFormatter: DateFormatter = {
-        let f = DateFormatter(); f.setLocalizedDateFormatFromTemplate("MMMd"); return f
-    }()
+    private static let monthDayFormatter = DateFormatter()   // 格式串每次按当前语言生成,见 formatMonthDay
     private static let longDateFormatter = DateFormatter()
     private static let parsingFormatter: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "yyMMdd"; return f
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")          // 解析固定格式必须用 POSIX,避免非公历地区解析失败
+        f.dateFormat = "yyMMdd"
+        return f
     }()
 
     var body: some View {
@@ -421,8 +422,12 @@ struct ArticleDetailView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
-                Text(formatDate(from: article.timestamp))
+                Text(dateLine)
                     .font(.caption).foregroundColor(.gray)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)      // 英文长日期 + 时间 + 原文链接 同行时兜底
+                    .layoutPriority(1)
                 if let urlString = article.url, let url = URL(string: urlString) {
                     Link(destination: url) {
                         HStack(spacing: 2) {
@@ -571,17 +576,36 @@ struct ArticleDetailView: View {
         }
     }
 
+    /// 顶部标题栏的短日期:中文 "9月8日",英文 "Sep 8"
     private func formatMonthDay(from timestamp: String) -> String {
         guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp }
-        Self.monthDayFormatter.locale = Localized.currentLocale
+        let locale = Localized.currentLocale
+        Self.monthDayFormatter.locale = locale
+        // ★ 先定 locale 再用模板生成格式串,"日" 字才不会丢
+        Self.monthDayFormatter.dateFormat = DateFormatter.dateFormat(fromTemplate: "MMMd",
+                                                                     options: 0,
+                                                                     locale: locale)
         return Self.monthDayFormatter.string(from: date)
     }
 
+    /// 正文头部长日期:中文 "2026年10月12日 星期一"(无逗号),英文保持 "MONDAY, OCTOBER 12, 2026"
     private func formatDate(from timestamp: String) -> String {
         guard let date = Self.parsingFormatter.date(from: timestamp) else { return timestamp.uppercased() }
         Self.longDateFormatter.dateFormat = Localized.dateFormatFull
         Self.longDateFormatter.locale = Localized.currentLocale
-        return Self.longDateFormatter.string(from: date).uppercased()
+        var text = Self.longDateFormatter.string(from: date).uppercased()
+        if !Localized.isEnglish {
+            // 中文:把 "," / "," 及其后的空白统一换成一个空格
+            text = text.replacingOccurrences(of: "[,,]\\s*", with: " ", options: .regularExpression)
+        }
+        return text
+    }
+
+    /// "2026年10月12日 星期一 03:32:50";没有发布时间则只显示日期
+    private var dateLine: String {
+        let date = formatDate(from: article.timestamp)
+        guard let time = ONewsPublishTime.string(article.publishedAt) else { return date }
+        return "\(date) \(time)"
     }
 }
 
