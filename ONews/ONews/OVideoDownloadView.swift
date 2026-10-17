@@ -220,6 +220,8 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
     private var reconcileScheduled = false
 
     var backgroundCompletionHandler: (() -> Void)?
+    /// ⭐ 正在补扣点的 url（防重复扣）
+    var chargingURLs = Set<String>()
 
     // =================================================================
     // MARK: - init
@@ -687,7 +689,8 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
     // =================================================================
     func startDownload(urlString: String, title: String, coverImage: String? = nil,
                        seriesTitle: String? = nil, episodeName: String? = nil,
-                       episodeKey: String? = nil, sourceURL: String? = nil) {
+                       episodeKey: String? = nil, sourceURL: String? = nil,
+                       chargeEpisodeKey: String? = nil) {
         onMain {
             guard self.localBookmarks[urlString] == nil else { return }
             self.userPausedUrls.remove(urlString)
@@ -697,12 +700,22 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
             self.slowRestarts[urlString]   = 0
             self.cooldownUntil.removeValue(forKey: urlString)
 
-            if self.cacheMetadata[urlString] == nil {
-                self.cacheMetadata[urlString] = VideoCacheMetadata(
+            let ck = (chargeEpisodeKey?.isEmpty == false) ? chargeEpisodeKey : nil
+            if var meta = self.cacheMetadata[urlString] {
+                if let ck = ck, meta.chargePending != true {
+                    meta.chargeEpisodeKey = ck
+                    meta.chargePending = true
+                    self.cacheMetadata[urlString] = meta
+                    self.saveMetadata()
+                }
+            } else {
+                var meta = VideoCacheMetadata(
                     title: title, coverImage: coverImage, savedAt: Date(),
                     seriesTitle: seriesTitle, episodeName: episodeName,
                     originalEpisodeURL: episodeKey, sourceURL: sourceURL
                 )
+                if let ck = ck { meta.chargeEpisodeKey = ck; meta.chargePending = true }
+                self.cacheMetadata[urlString] = meta
                 self.saveMetadata()
             }
             if self.downloadProgress[urlString] == nil {
@@ -1182,7 +1195,13 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         guard let urlString = task.taskDescription else { onMain { self.scheduleReconcile() }; return }
         onMain {
             guard self.isCurrent(task, urlString) else { self.scheduleReconcile(); return }
-
+            // ⭐ 修复：clearCurrentTaskID 会清空 inbox，先把最后一次进度并入，避免完成被误判为"未下完"
+            self.inboxLock.lock()
+            let finalRaw = self.inboxProgress[urlString]
+            self.inboxLock.unlock()
+            if let r = finalRaw {
+                self.accurateProgress[urlString] = max(self.accurateProgress[urlString] ?? 0, min(1.0, max(0.0, r)))
+            }
             self.activeTasks.removeValue(forKey: urlString)
             self.runningUrls.remove(urlString)
             self.clearCurrentTaskID(urlString)
@@ -1235,13 +1254,17 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
                 let trackEpisodeName = metadata?.episodeName
 
                 Task { @MainActor in
+                    // ⭐ 下载完成只"加入追踪"，不算"看过"，不会把有更新的剧从追剧列表移走
                     SeriesTrackManager.shared.recordWatch(
                         sourceURL: trackSourceURL,
                         title: trackTitle,
                         cover: trackCover,
                         episodeName: trackEpisodeName,
-                        channelName: nil
+                        channelName: nil,
+                        catchUp: false
                     )
+                    // ⭐ 下载成功 → 现在才扣点
+                    _ = await HLSDownloadManager.shared.settleCharge(for: urlString)
                 }
 
                 self.pendingBookmarks.removeValue(forKey: urlString)
@@ -1421,6 +1444,7 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
         ) { [weak self] _ in
             self?.updateIdleTimer()
             self?.scheduleReconcile()
+            Task { @MainActor in HLSDownloadManager.shared.settleAllPendingCharges() }
         }
     }
 }
@@ -1450,6 +1474,52 @@ extension HLSDownloadManager {
             if comps.count > 1, let first = comps.first, !first.isEmpty { return "s:" + first }
         }
         return "u:" + url
+    }
+}
+
+// MARK: - ⭐ 下载成功后扣点
+extension HLSDownloadManager {
+    /// 尚未扣点的下载（下载中 + 完成未扣成功）占用的点数，入队前用于预占校验
+    @MainActor var pendingChargeCount: Int {
+        var keys = Set<String>()
+        for m in cacheMetadata.values where m.chargePending == true {
+            if let k = m.chargeEpisodeKey, !k.isEmpty, !FreeQuotaManager.shared.isUnlocked(k) {
+                keys.insert(k)
+            }
+        }
+        return keys.count
+    }
+
+    @MainActor func needsCharge(_ url: String) -> Bool {
+        cacheMetadata[url]?.chargePending == true
+    }
+
+    /// 补扣：会员 / 当天已解锁 → 直接视为成功并清除标记
+    @MainActor func settleCharge(for url: String) async -> VideoChargeOutcome {
+        guard let meta = cacheMetadata[url], meta.chargePending == true else { return .charged }
+        guard let key = meta.chargeEpisodeKey, !key.isEmpty else {
+            var m = meta; m.chargePending = false
+            cacheMetadata[url] = m; saveMetadata()
+            return .charged
+        }
+        if chargingURLs.contains(url) { return .failed }
+        chargingURLs.insert(url)
+        let outcome = await VideoChargeService.charge(episodeKey: key, title: meta.title,
+                                                      auth: AuthManager.shared)
+        chargingURLs.remove(url)
+        if outcome == .charged, var m = cacheMetadata[url] {
+            m.chargePending = false
+            cacheMetadata[url] = m
+            saveMetadata()
+        }
+        return outcome
+    }
+
+    /// 已下载完成但还没扣成点的，统一补扣（App 回前台 / 进下载管理时调用）
+    @MainActor func settleAllPendingCharges() {
+        for url in localBookmarks.keys where needsCharge(url) && !chargingURLs.contains(url) {
+            Task { @MainActor in _ = await self.settleCharge(for: url) }
+        }
     }
 }
 
@@ -1484,6 +1554,8 @@ struct CacheCard: View {
     @State private var showSubscriptionSheet = false
     @State private var showCellularAlert = false
     @State private var showCancelAlert = false
+    @State private var showChargeConfirm = false
+    @State private var chargeOnComplete = false
 
     var body: some View {
         let isDownloaded = downloadManager.localBookmarks[realURL] != nil
@@ -1521,12 +1593,22 @@ struct CacheCard: View {
                 downloadManager.startDownload(urlString: realURL, title: videoTitle,
                                               coverImage: coverImage, seriesTitle: seriesTitle,
                                               episodeName: episodeName, episodeKey: episodeKey,
-                                              sourceURL: sourceURL)
+                                              sourceURL: sourceURL, chargeEpisodeKey: chargeKeyIfNeeded)
             }
         } message: {
             Text(isGlobalEnglishMode
                  ? "You are currently on a cellular network. Do you want to continue downloading?"
                  : "当前处于蜂窝移动网络，下载将消耗流量，是否继续？")
+        }
+        .alert(isGlobalEnglishMode ? "Use 1 Free Pass" : "使用免费点数",
+               isPresented: $showChargeConfirm) {
+            Button(isGlobalEnglishMode ? "Cancel" : "取消", role: .cancel) { }
+            Button(isGlobalEnglishMode ? "Confirm" : "确认下载") {
+                chargeOnComplete = true
+                proceedDownload()
+            }
+        } message: {
+            Text(VideoChargeService.downloadNote(english: isGlobalEnglishMode))
         }
         .alert(isGlobalEnglishMode ? "Notice" : "温馨提示", isPresented: $showAdWarningAlert) {
             Button(isGlobalEnglishMode ? "Got it" : "我知道了，请继续下载") {
@@ -1546,6 +1628,15 @@ struct CacheCard: View {
         return authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(key)
     }
 
+    private var chargeKeyIfNeeded: String? {
+        (chargeOnComplete && !hasAccess) ? episodeKey : nil
+    }
+
+    private func proceedDownload() {
+        if !hasAcknowledgedAdWarning { showAdWarningAlert = true; return }
+        startDownloadFlow()
+    }
+
     private func startDownloadFlow() {
         if !network.isWiFi {
             showCellularAlert = true
@@ -1553,7 +1644,7 @@ struct CacheCard: View {
             downloadManager.startDownload(urlString: realURL, title: videoTitle,
                                           coverImage: coverImage, seriesTitle: seriesTitle,
                                           episodeName: episodeName, episodeKey: episodeKey,
-                                          sourceURL: sourceURL)
+                                          sourceURL: sourceURL, chargeEpisodeKey: chargeKeyIfNeeded)
         }
     }
 
@@ -1677,9 +1768,17 @@ struct CacheCard: View {
                 .font(.system(size: 12)).foregroundColor(.secondary)
 
             Button {
-                guard hasAccess else { showSubscriptionSheet = true; return }
-                if !hasAcknowledgedAdWarning { showAdWarningAlert = true; return }
-                startDownloadFlow()
+                if hasAccess {
+                    chargeOnComplete = false
+                    proceedDownload()
+                    return
+                }
+                // ⭐ 没解锁但有点数：下载成功后才扣
+                guard authManager.isLoggedIn, let k = episodeKey, !k.isEmpty,
+                      FreeQuotaManager.shared.remaining - downloadManager.pendingChargeCount >= 1 else {
+                    showSubscriptionSheet = true; return
+                }
+                showChargeConfirm = true
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.down.circle.fill")
@@ -2057,6 +2156,7 @@ struct VideoCacheView: View {
                  : "当前处于蜂窝移动网络，继续下载将消耗流量，是否继续？")
         }
         .task {
+            downloadManager.settleAllPendingCharges()
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
         }
     }
@@ -2636,6 +2736,7 @@ struct VideoPlayHistoryView: View {
     @State private var showConsumeConfirm = false
     @State private var consumeRemaining = 0
     @State private var showQuotaExhausted = false
+    @State private var chargeKey: String? = nil
 
     var body: some View {
         ZStack {
@@ -2672,7 +2773,8 @@ struct VideoPlayHistoryView: View {
                 VideoPlayerPageView(episodeURL: r.videoURL,
                                     videoTitle: "\(r.videoTitle) · \(r.episodeName)",
                                     coverImage: r.coverImage, channelName: r.channelName,
-                                    episodeName: r.episodeName, sourceURL: r.sourceURL)
+                                    episodeName: r.episodeName, sourceURL: r.sourceURL,
+                                    chargeOnPlayKey: chargeKey == r.videoURL ? r.videoURL : nil)
             }
         }
         .toolbar {
@@ -2696,7 +2798,8 @@ struct VideoPlayHistoryView: View {
             }
         } message: {
             Text(quotaManager.consumeSourceNote(english: isGlobalEnglishMode)
-                 + "\n" + quotaManager.remainingSummary(english: isGlobalEnglishMode))
+                 + "\n" + quotaManager.remainingSummary(english: isGlobalEnglishMode)
+                 + "\n" + VideoChargeService.playNote(english: isGlobalEnglishMode))
         }
         .alert(isGlobalEnglishMode ? "Free Passes Used Up (0 left)" : "今日免费额度不足",
                isPresented: $showQuotaExhausted) {
@@ -2732,7 +2835,7 @@ struct VideoPlayHistoryView: View {
     private func attemptPlay(_ record: VideoPlayRecord) {
         switch decideVideoAccess(episodeKey: record.videoURL, auth: authManager, quota: quotaManager) {
         case .allowed:
-            playRecord = record; navigateToPlayer = true
+            chargeKey = nil; playRecord = record; navigateToPlayer = true
         case .needLogin:
             showLoginAlert = true
         case .needConsume(let r):
@@ -2742,17 +2845,12 @@ struct VideoPlayHistoryView: View {
         }
     }
 
+    /// ⭐ 不再立即扣点：真正开始播放后由播放页扣
     private func consumeAndPlay() async {
         guard let record = pendingRecord else { return }
-        let uid = FreeQuotaManager.currentUserId(auth: authManager)
-        let result = await quotaManager.unlock(userId: uid, episodeKey: record.videoURL,
-                                               videoTitle: "\(record.videoTitle) · \(record.episodeName)")
-        switch result {
-        case .success, .alreadyUnlocked:
-            playRecord = record; navigateToPlayer = true
-        case .quotaExceeded, .failed:
-            showQuotaExhausted = true
-        }
+        chargeKey = record.videoURL
+        playRecord = record
+        navigateToPlayer = true
         pendingRecord = nil
     }
 

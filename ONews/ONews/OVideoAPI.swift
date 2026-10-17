@@ -370,6 +370,10 @@ struct VideoCacheMetadata: Codable {
     var episodeName: String?
     var originalEpisodeURL: String?
     var sourceURL: String?
+    /// ⭐ 下载成功后才扣点：需要扣点的集 key（与 FreeQuotaManager.unlock 的 episodeKey 一致）
+    var chargeEpisodeKey: String? = nil
+    /// ⭐ true = 尚未扣点（下载中 / 完成时扣点失败）
+    var chargePending: Bool? = nil
 }
 extension VideoCacheMetadata {
     var groupKey: String {

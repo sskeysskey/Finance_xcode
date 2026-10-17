@@ -251,6 +251,9 @@ class DataService: ObservableObject {
 
     // 【新增】存储期权大单数据
     @Published var optionBigOrders: [OptionBigOrder] = []
+
+    // 【新增】Firstrade 已成交买卖记录：Key = 规范化 Symbol（大写，'.'→'-'），Value = 按日期升序
+    @Published var tradeRecords: [String: [FTTradeDay]] = [:]
     
     // 【新增】UserDefaults Keys
     private let ecoDataKey = "FinanceAppEcoDataTime"
@@ -564,6 +567,8 @@ class DataService: ObservableObject {
             await self.loadPolymarketData()
             // 【新增】加载成交额数据
             await self.loadVolumeHighData()
+            // 【新增】加载 Firstrade 买卖记录
+            await self.loadFirstradeOrders()
 
             await MainActor.run {
                 self.isDataLoaded = true
@@ -675,6 +680,25 @@ class DataService: ObservableObject {
             
         } catch {
             print("DataService: 解析 0.5Y_volume_high 文件时出错: \(error)")
+        }
+    }
+
+    // MARK: - 【新增】加载 Firstrade 订单（买卖点）
+    private func loadFirstradeOrders() async {
+        guard let url = FileManagerHelper.getLatestFileUrl(for: "firstrade_orders") else {
+            if !isInitialLoad {
+                print("DataService: firstrade_orders 文件未在 Documents 中找到")
+            }
+            await MainActor.run { self.tradeRecords = [:] }
+            return
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            let parsed = FTTradeStore.parse(data)
+            await MainActor.run { self.tradeRecords = parsed }
+            print("DataService: 已加载 \(parsed.count) 个标的的买卖记录")
+        } catch {
+            print("DataService: 解析 firstrade_orders 失败: \(error)")
         }
     }
 

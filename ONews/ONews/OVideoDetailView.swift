@@ -340,6 +340,8 @@ struct VideoDetailView: View {
     @State private var showDLConsumeConfirm = false
     @State private var showDLQuotaExhausted = false
     @State private var showDLCellularAlert = false
+    @State private var chargeOnPlayURL: String? = nil          // ⭐ 播放成功后才扣点
+    @State private var pendingDownloadNeedsCharge = false      // ⭐ 下载成功后才扣点
 
     @State private var selectedEpisode: (name: String, url: String)? = nil
     @State private var loadedChannels: [OVideoChannel] = []
@@ -406,7 +408,8 @@ struct VideoDetailView: View {
                     episodeName: episode.name,
                     sourceURL: item.url,
                     episodes: channel.episodeItems(ascending: isEpisodeAscending),
-                    playSource: playSource
+                    playSource: playSource,
+                    chargeOnPlayKey: chargeOnPlayURL == episode.url ? episode.url : nil
                 )
             }
         }
@@ -449,8 +452,8 @@ struct VideoDetailView: View {
             }
         } message: {
             Text(quotaManager.consumeSourceNote(english: isGlobalEnglishMode)
-                 + "\n"
-                 + quotaManager.remainingSummary(english: isGlobalEnglishMode))
+                 + "\n" + quotaManager.remainingSummary(english: isGlobalEnglishMode)
+                 + "\n" + VideoChargeService.playNote(english: isGlobalEnglishMode))
         }
         .alert(isGlobalEnglishMode
             ? "Free Passes Used Up"
@@ -473,9 +476,8 @@ struct VideoDetailView: View {
                 Task { await confirmDirectDownloadConsume() }
             }
         } message: {
-            Text(quotaManager.consumeSourceNote(english: isGlobalEnglishMode)
-                 + "\n"
-                 + quotaManager.remainingSummary(english: isGlobalEnglishMode))
+            Text(quotaManager.remainingSummary(english: isGlobalEnglishMode)
+                 + "\n" + VideoChargeService.downloadNote(english: isGlobalEnglishMode))
         }
         // ⭐ 单集直接下载：额度不足
         .alert(isGlobalEnglishMode ? "Not Enough Passes" : "免费点数不足",
@@ -613,37 +615,24 @@ struct VideoDetailView: View {
     // 单集直接下载：先做订阅/点数判断
     private func prepareDirectDownload(_ ep: (name: String, url: String)) {
         pendingDownloadEpisode = ep
-
-        if authManager.isSubscribed {
+        pendingDownloadNeedsCharge = false
+        if authManager.isSubscribed || quotaManager.isUnlocked(ep.url) {
             startDirectDownload(ep)
             return
         }
-        if quotaManager.isUnlocked(ep.url) {
-            startDirectDownload(ep)
-            return
-        }
-        if quotaManager.remaining < 1 {
+        // ⭐ 预占：在途未扣点的下载也要算进去
+        if quotaManager.remaining - downloadManager.pendingChargeCount < 1 {
             showDLQuotaExhausted = true
             return
         }
         showDLConsumeConfirm = true
     }
 
-    // 确认消耗点数后下载
+    /// ⭐ 不再立即扣点：标记"下载成功后扣"
     private func confirmDirectDownloadConsume() async {
         guard let ep = pendingDownloadEpisode else { return }
-        let uid = FreeQuotaManager.currentUserId(auth: authManager)
-        if !quotaManager.isUnlocked(ep.url) {
-            let r = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
-                                              videoTitle: "\(item.name) · \(ep.name)")
-            switch r {
-            case .success, .alreadyUnlocked: break
-            case .quotaExceeded, .failed:
-                await MainActor.run { showDLQuotaExhausted = true }   // ⭐ 未扣点成功不下载
-                return
-            }
-        }
-        await MainActor.run { startDirectDownload(ep) }
+        pendingDownloadNeedsCharge = true
+        startDirectDownload(ep)
     }
 
     // 网络判断（非 WiFi 先提示）
@@ -658,6 +647,8 @@ struct VideoDetailView: View {
 
     // 真正发起下载并跳转缓存页
     private func performDirectDownload(_ ep: (name: String, url: String)) {
+        let chargeKey: String? = (pendingDownloadNeedsCharge && !authManager.isSubscribed
+                                  && !quotaManager.isUnlocked(ep.url)) ? ep.url : nil
         Task {
             do {
                 let realURL = try await OVideoAPI.resolveRealURL(episodeURL: ep.url)
@@ -669,7 +660,8 @@ struct VideoDetailView: View {
                         seriesTitle: item.name,
                         episodeName: ep.name,
                         episodeKey: ep.url,
-                        sourceURL: item.url
+                        sourceURL: item.url,
+                        chargeEpisodeKey: chargeKey
                     )
                 }
             } catch {
@@ -1246,6 +1238,7 @@ struct VideoDetailView: View {
     private func attemptPlay(episode: (name: String, url: String)) {
         switch decideVideoAccess(episodeKey: episode.url, auth: authManager, quota: quotaManager) {
         case .allowed:
+            chargeOnPlayURL = nil
             navigateToPlayer = true
         case .needLogin:
             showLoginAlert = true
@@ -1259,19 +1252,12 @@ struct VideoDetailView: View {
         }
     }
 
+    /// ⭐ 不再立即扣点：带着"待扣点"进入播放页，真正开始播放后才扣
     private func consumeAndPlay() async {
         guard let ep = pendingEpisode else { return }
-        let uid = FreeQuotaManager.currentUserId(auth: authManager)
-        let result = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
-                                            videoTitle: "\(item.name) · \(ep.name)")
-        switch result {
-        case .success, .alreadyUnlocked:
-            navigateToPlayer = true
-        case .quotaExceeded:
-            showSubscriptionSheet = true
-        case .failed:
-            showSubscriptionSheet = true
-        }
+        chargeOnPlayURL = ep.url
+        selectedEpisode = ep
+        navigateToPlayer = true
     }
     
     // MARK: - 4. 详情介绍块
@@ -1427,6 +1413,7 @@ struct BatchDownloadView: View {
     @State private var pendingBatch: [(name: String, url: String)] = []
     @State private var batchConsumeCount = 0
     @State private var showBatchConsumeConfirm = false
+    @State private var chargeOnComplete = false
 
     private enum EpisodeStatus {
         case available
@@ -1522,8 +1509,9 @@ struct BatchDownloadView: View {
             } message: {
                 Text((isGlobalEnglishMode
                     ? "This will use \(batchConsumeCount) passes (welcome passes used first).\n"
-                    : "本次操作将消耗 \(batchConsumeCount) 点\n")
-                    + quotaManager.remainingSummary(english: isGlobalEnglishMode))
+                    : "本次将消耗 \(batchConsumeCount) 点\n")
+                    + quotaManager.remainingSummary(english: isGlobalEnglishMode)
+                    + "\n" + VideoChargeService.downloadNote(english: isGlobalEnglishMode))
             }
             // ⭐ 额度不足提示
             .alert(isGlobalEnglishMode ? "Not Enough Passes" : "免费点数不足",
@@ -1763,6 +1751,7 @@ struct BatchDownloadView: View {
     }
 
     private func startBatchDownload() {
+        chargeOnComplete = false
         let selected = episodes.filter {
             selectedURLs.contains($0.url) && status(for: $0) == .available
         }
@@ -1781,7 +1770,7 @@ struct BatchDownloadView: View {
 
         batchConsumeCount = newOnes.count
 
-        if quotaManager.remaining < newOnes.count {
+        if quotaManager.remaining - downloadManager.pendingChargeCount < newOnes.count {
             showQuotaExhaustedAlert = true
             return
         }
@@ -1790,31 +1779,14 @@ struct BatchDownloadView: View {
         showBatchConsumeConfirm = true
     }
 
+    /// ⭐ 不再立即扣点：每集下载成功后才各扣 1 点
     private func confirmBatchDownload() async {
         let selected = pendingBatch
         guard !selected.isEmpty else { return }
-
-        let uid = FreeQuotaManager.currentUserId(auth: authManager)
-        var allowed: [(name: String, url: String)] = []
-        for ep in selected {
-            if FreeQuotaManager.shared.isUnlocked(ep.url) { allowed.append(ep); continue }
-            let r = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
-                                              videoTitle: "\(item.name) · \(ep.name)")
-            switch r {
-            case .success, .alreadyUnlocked: allowed.append(ep)
-            case .quotaExceeded, .failed:    break      // ⭐ 扣点失败的不下载
-            }
-        }
-
-        await MainActor.run {
-            showBatchConsumeConfirm = false
-            pendingBatch = []
-            if allowed.isEmpty {
-                showQuotaExhaustedAlert = true
-            } else {
-                performDownloadsWithNetworkCheck(allowed)
-            }
-        }
+        showBatchConsumeConfirm = false
+        pendingBatch = []
+        chargeOnComplete = true
+        performDownloadsWithNetworkCheck(selected)
     }
 
     private func performDownloads(_ selected: [(name: String, url: String)]) {
@@ -1823,6 +1795,8 @@ struct BatchDownloadView: View {
         processedCount = 0
         processingTotal = selected.count
         let eps = selected
+        let chargeKeys: Set<String> = (chargeOnComplete && !authManager.isSubscribed)
+            ? Set(eps.map { $0.url }.filter { !quotaManager.isUnlocked($0) }) : []
 
         Task { @MainActor in
             // ⭐ 最多 4 路并发解析真实地址；入队仍按用户选择顺序
@@ -1853,7 +1827,8 @@ struct BatchDownloadView: View {
                                               seriesTitle: item.name,
                                               episodeName: ep.name,
                                               episodeKey: ep.url,
-                                              sourceURL: item.url)
+                                              sourceURL: item.url,
+                                              chargeEpisodeKey: chargeKeys.contains(ep.url) ? ep.url : nil)
             }
             isProcessing = false
             dismiss()

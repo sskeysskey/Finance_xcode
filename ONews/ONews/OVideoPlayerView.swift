@@ -3,7 +3,7 @@
 import SwiftUI
 import AVKit
 import MediaPlayer
-import CoreMedia   // ⭐ 新增：kCMMetadataBaseDataType_JPEG
+import CoreMedia   // ⭐ kCMMetadataBaseDataType_JPEG
 
 // MARK: - ⭐️ 主线程跳板
 // 所有来自系统（KVO / AVFoundation / UIKit / NotificationCenter）的回调都先过这里。
@@ -13,6 +13,47 @@ import CoreMedia   // ⭐ 新增：kCMMetadataBaseDataType_JPEG
 @inline(__always)
 private func onMainThread(_ block: @escaping () -> Void) {
     if Thread.isMainThread { block() } else { DispatchQueue.main.async(execute: block) }
+}
+
+// MARK: - ⭐ 扣点服务：在线播放「真正开始播放」/ 下载「真正下载成功」后才扣点
+enum VideoChargeOutcome: Equatable {
+    case charged          // 已扣点 / 已解锁 / 会员无需扣点
+    case quotaExceeded    // 服务器明确返回点数不足
+    case failed           // 网络等原因暂时扣不了
+}
+
+@MainActor
+enum VideoChargeService {
+    /// 扣 1 点（同集当天已解锁 / 会员 → 直接视为成功）。网络失败自动重试 3 次
+    static func charge(episodeKey: String, title: String, auth: AuthManager) async -> VideoChargeOutcome {
+        let quota = FreeQuotaManager.shared
+        if auth.isSubscribed || auth.isPermanentVIP || quota.isUnlocked(episodeKey) { return .charged }
+        let uid = FreeQuotaManager.currentUserId(auth: auth)
+        for attempt in 0..<3 {
+            let r = await quota.unlock(userId: uid, episodeKey: episodeKey, videoTitle: title)
+            switch r {
+            case .success, .alreadyUnlocked:
+                return .charged
+            case .quotaExceeded:
+                return .quotaExceeded
+            case .failed:
+                if attempt < 2 {
+                    try? await Task.sleep(nanoseconds: UInt64(attempt + 1) * 1_500_000_000)
+                }
+            }
+        }
+        return .failed
+    }
+
+    static func playNote(english: Bool) -> String {
+        english ? "The pass is only used once the video actually starts playing. No charge if it fails to play."
+                : "视频真正开始播放后才扣点，未能播放不扣点"
+    }
+
+    static func downloadNote(english: Bool) -> String {
+        english ? "Passes are only used after the download completes. No charge if it fails or is canceled."
+                : "下载成功后才扣点，下载失败或取消不扣点"
+    }
 }
 
 // MARK: - 倍速记忆
@@ -114,6 +155,8 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
     @Published private(set) var errorText: String?
     @Published private(set) var playerGeneration = 0
     @Published private(set) var controlsRefreshToken = 0
+    /// ⭐ 「画面连续真实走动 ≥ confirmSeconds」后被设为当前 positionKey（扣点 / 追剧追平的唯一依据）
+    @Published private(set) var playbackConfirmedKey: String?
 
     /// ⚠️ 刻意不是 @Published：AVKit 全屏转场中改这两个值绝不能触发 SwiftUI 重新布局
     var isFullScreen = false
@@ -139,7 +182,14 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
     private var lastSession: LastSession?
     private var autoPlayWhenReady = true
 
-    // ⭐ 锁屏 / 控制中心元数据（AVPlayerViewController 读取 item.externalMetadata 自动发布）
+    // ⭐ 扣点失败时冻结播放（拦截 AVKit 播放键）
+    private(set) var playbackHold = false
+
+    // ⭐ 播放确认
+    private var confirmAnchor: Double?
+    private let confirmSeconds: Double = 2.0
+
+    // 锁屏 / 控制中心元数据
     private var npTitle: String?
     private var npSubtitle: String?
     private var npArtworkSource: String?
@@ -178,10 +228,24 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
     private var lastProgressTime: Double = -1
     private var lastProgressAt = Date()
 
-    private let spinnerDelay: TimeInterval     = 0.35
-    private let slowHintDelay: TimeInterval    = 6
-    private let autoRecoverDelay: TimeInterval = 15
-    private let manualRetryDelay: TimeInterval = 25
+    // ⭐ 网络活动探测（"数据还在进来就耐心等"，这是下载能成而播放失败的关键差异）
+    private var lastActivityAt = Date()
+    private var lastLoadedEnd: Double = 0
+    private var lastAccessBytes: Int64 = 0
+    private var activityTick = 0
+
+    // ⭐ 码率降级：每次硬重载降一档，先播起来再说
+    private var peakBitRateStep = 0
+    private static let peakBitRates: [Double] = [0, 2_500_000, 1_200_000]
+
+    private let spinnerDelay: TimeInterval        = 0.35
+    private let slowHintDelay: TimeInterval       = 6
+    private let autoRecoverIdle: TimeInterval     = 12    // 连续 12s 一个字节都没进来 → 自愈
+    private let autoRecoverCeiling: TimeInterval  = 40    // 或总忙碌 40s
+    private let manualRetryIdle: TimeInterval     = 25
+    private let manualRetryCeiling: TimeInterval  = 75
+    private let localRecoverDelay: TimeInterval   = 8
+    private let localManualDelay: TimeInterval    = 20
     private let networkForwardBuffer: TimeInterval = 10
 
     private var isEnglish: Bool { UserDefaults.standard.bool(forKey: "isGlobalEnglishMode") }
@@ -201,12 +265,10 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         statusObs?.invalidate(); bufferEmptyObs?.invalidate(); keepUpObs?.invalidate()
         tcsObs?.invalidate(); waitObs?.invalidate()
         rateObs?.invalidate(); defaultRateObs?.invalidate()
-        // ⭐ 兜底：引擎销毁时彻底释放 item，锁屏不留残影
         player.pause()
         player.replaceCurrentItem(with: nil)
     }
 
-    /// ⭐ setCategory / setActive 可能阻塞几十毫秒，统一放到串行队列（保证先后顺序）
     private static let audioQueue = DispatchQueue(label: "ovideo.audiosession", qos: .userInitiated)
 
     private func configureAudioSession() {
@@ -218,7 +280,6 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
     }
 
     // MARK: 锁屏元数据
-    /// 在 prepare 之前调用：标题 = 剧名，副标题 = 集数，artwork = 封面（http / 本地路径都支持）
     func setNowPlaying(title: String, subtitle: String?, artwork: String?) {
         npTitle = title
         npSubtitle = subtitle
@@ -262,7 +323,6 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
             }
         }
         guard let raw = raw, let img = UIImage(data: raw) else { return nil }
-        // 降采样到 600px，锁屏足够清晰，内存也小
         let longest = max(img.size.width, img.size.height)
         guard longest > 0 else { return nil }
         let scale = min(1, 600 / longest)
@@ -279,7 +339,6 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         guard let title = npTitle, !title.isEmpty else { return }
         var list: [AVMetadataItem] = [Self.metadataItem(.commonIdentifierTitle, title as NSString)]
         if let sub = npSubtitle, !sub.isEmpty {
-            // 播放器全屏 UI 读 TrackSubTitle；锁屏第二行读 Artist —— 两个都给
             list.append(Self.metadataItem(.iTunesMetadataTrackSubTitle, sub as NSString))
             list.append(Self.metadataItem(.commonIdentifierArtist, sub as NSString))
         }
@@ -301,6 +360,10 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         return (m.copy() as? AVMetadataItem) ?? m
     }
 
+    private func currentPeakBitRate() -> Double {
+        Self.peakBitRates[min(peakBitRateStep, Self.peakBitRates.count - 1)]
+    }
+
     // MARK: 准备播放
     func prepare(url: URL,
                  positionKey: String,
@@ -317,9 +380,9 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         }
         teardownItemObservers()
 
-        _ = isTornDown
         isTornDown = false
         autoPlayWhenReady = autoPlay
+        playbackHold = false
         configureAudioSession()
 
         self.currentAssetURL = url
@@ -330,6 +393,8 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         errorText = nil
         isPreparing = true
         hasStartedPlaying = false
+        if playbackConfirmedKey != nil { playbackConfirmedKey = nil }
+        confirmAnchor = nil
         currentTime = startAt ?? 0
         duration = 0
         lastSaved = -100
@@ -337,15 +402,21 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         lastProgressTime = -1
         lastProgressAt = Date()
         busySince = Date()
+        lastActivityAt = Date()
+        lastLoadedEnd = 0
+        lastAccessBytes = 0
         didAutoRecoverForThisBusy = false
         offerManualRetry = false
         slowNetwork = false
         showBusySpinner = true
-        if resetRecovery { recoveryAttempts = 0 }
+        if resetRecovery { recoveryAttempts = 0; peakBitRateStep = 0 }
 
         let item = AVPlayerItem(asset: AVURLAsset(url: url))
-        if !isLocal { item.preferredForwardBufferDuration = networkForwardBuffer }
-        applyNowPlayingMetadata(to: item)   // ⭐ 锁屏标题 / 集数 / 封面
+        if !isLocal {
+            item.preferredForwardBufferDuration = networkForwardBuffer
+            item.preferredPeakBitRate = currentPeakBitRate()
+        }
+        applyNowPlayingMetadata(to: item)
 
         player.actionAtItemEnd = .pause
         player.automaticallyWaitsToMinimizeStalling = !isLocal
@@ -359,7 +430,6 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         recomputePhase()
     }
 
-    /// 切集时先把画面挂住（避免旧视频继续播、也避免拆掉 surface）
     func beginSwitching() {
         player.pause()
         saveProgress()
@@ -367,10 +437,24 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         isPreparing = true
         showBusySpinner = true
         busySince = Date()
+        lastActivityAt = Date()
         didAutoRecoverForThisBusy = false
         offerManualRetry = false
         slowNetwork = false
         recomputePhase()
+    }
+
+    // MARK: ⭐ 扣点冻结
+    func holdPlayback() {
+        playbackHold = true
+        player.pause()
+        saveProgress()
+    }
+
+    func releaseHold(resume: Bool) {
+        guard playbackHold else { return }
+        playbackHold = false
+        if resume, !isTornDown, player.currentItem != nil { playAtPreferredRate() }
     }
 
     // MARK: Player 级监听
@@ -381,8 +465,14 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         waitObs = player.observe(\.reasonForWaitingToPlay, options: [.new]) { [weak self] _, _ in
             onMainThread { self?.recomputePhase() }
         }
-        rateObs = player.observe(\.rate, options: [.new]) { _, change in
+        rateObs = player.observe(\.rate, options: [.new]) { [weak self] _, change in
             if let r = change.newValue, r > 0, r <= 2.0 { PlaybackSpeedStore.rate = r }
+            if let r = change.newValue, r > 0 {
+                onMainThread {
+                    guard let self = self, self.playbackHold else { return }
+                    self.player.pause()           // ⭐ 冻结期间 AVKit 播放键也无效
+                }
+            }
         }
         if #available(iOS 16.0, *) {
             defaultRateObs = player.observe(\.defaultRate, options: [.new]) { _, change in
@@ -472,7 +562,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
             if autoPlayWhenReady {
                 playAtPreferredRate()
             } else {
-                autoPlayWhenReady = true   // 仅本次保持暂停（复活时用户之前是暂停的）
+                autoPlayWhenReady = true
             }
             recomputePhase()
 
@@ -496,6 +586,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
     }
 
     private func playAtPreferredRate() {
+        guard !playbackHold else { return }
         if #available(iOS 16.0, *) {
             player.defaultRate = PlaybackSpeedStore.rate
             player.play()
@@ -508,7 +599,6 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
 
     // MARK: 状态机
     private func recomputePhase() {
-        // ⭐⭐ 冬眠中：任何 KVO 都不能把 phase 从 .idle 拉回来（旧版残影的根因之一）
         if isTornDown {
             if phase != .idle { phase = .idle }
             if isBuffering { isBuffering = false }
@@ -559,20 +649,54 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         supervisor = t
     }
 
+    /// ⭐ 采样"数据是否还在进来"：已缓冲区间在增长 / accessLog 字节数在增长
+    private func sampleNetworkActivity(_ now: Date) {
+        guard let item = player.currentItem else { return }
+        var end = 0.0
+        for v in item.loadedTimeRanges {
+            let e = CMTimeGetSeconds(CMTimeRangeGetEnd(v.timeRangeValue))
+            if e.isFinite { end = max(end, e) }
+        }
+        if end > lastLoadedEnd + 0.05 { lastActivityAt = now }
+        lastLoadedEnd = end
+
+        activityTick &+= 1
+        if activityTick % 2 == 0, let log = item.accessLog() {
+            var bytes: Int64 = 0
+            for ev in log.events where ev.numberOfBytesTransferred > 0 { bytes += ev.numberOfBytesTransferred }
+            if bytes > lastAccessBytes { lastActivityAt = now }
+            lastAccessBytes = bytes
+        }
+    }
+
     private func supervisorTick() {
         guard !isTornDown, errorText == nil else { return }
 
         if isBusyNow {
-            if busySince == nil { busySince = Date(); didAutoRecoverForThisBusy = false }
-            let e = Date().timeIntervalSince(busySince ?? Date())
+            let now = Date()
+            if busySince == nil {
+                busySince = now
+                didAutoRecoverForThisBusy = false
+                lastActivityAt = now
+            }
+            sampleNetworkActivity(now)
+            let since = busySince ?? now
+            let e = now.timeIntervalSince(since)
+            let idle = now.timeIntervalSince(max(since, lastActivityAt))
 
             if e >= spinnerDelay, !showBusySpinner { showBusySpinner = true }
             if e >= slowHintDelay, !slowNetwork, !isLocal { slowNetwork = true }
-            if e >= autoRecoverDelay, !didAutoRecoverForThisBusy {
+
+            // ⭐ 数据在流动就耐心等（旧版 15s 一刀切重载 = 把下了一半的数据扔掉重来）
+            let recoverDue = isLocal ? (e >= localRecoverDelay)
+                                     : (idle >= autoRecoverIdle || e >= autoRecoverCeiling)
+            if recoverDue, !didAutoRecoverForThisBusy {
                 didAutoRecoverForThisBusy = true
-                recoverNow(hard: recoveryAttempts >= 1)
+                recoverNow(hard: isPreparing || recoveryAttempts >= 1)
             }
-            if e >= manualRetryDelay, !offerManualRetry { offerManualRetry = true }
+            let manualDue = isLocal ? (e >= localManualDelay)
+                                    : (idle >= manualRetryIdle || e >= manualRetryCeiling)
+            if manualDue, !offerManualRetry { offerManualRetry = true }
         } else {
             resetBusyFlags()
         }
@@ -599,8 +723,12 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         } else {
             lastProgressTime = now
             lastProgressAt = Date()
-            if recoveryAttempts > 0, Date().timeIntervalSince(lastRecoveryAt) > 20 {
-                recoveryAttempts = 0
+            let sinceRecovery = Date().timeIntervalSince(lastRecoveryAt)
+            if recoveryAttempts > 0, sinceRecovery > 20 { recoveryAttempts = 0 }
+            // ⭐ 流畅播放 90s 后恢复不限码率，ABR 自己会往上爬
+            if peakBitRateStep > 0, sinceRecovery > 90 {
+                peakBitRateStep = 0
+                player.currentItem?.preferredPeakBitRate = 0
             }
         }
     }
@@ -635,6 +763,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         let key = positionKey
         let local = isLocal
         let fallback = currentAssetURL
+        if !local { peakBitRateStep += 1 }      // ⭐ 每次硬重载降一档码率
 
         if !local, let r = resolver {
             Task { [weak self] in
@@ -661,7 +790,7 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func bumpControlsRefresh() {
+    func bumpControlsRefresh() {
         guard !isFullScreen, !isPiPActive else { return }
         controlsRefreshToken += 1
     }
@@ -693,6 +822,21 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         if duration > 0, sec >= duration - 3 {
             PlaybackPositionStore.clear(forKey: positionKey)
         }
+        updatePlaybackConfirmation(sec)
+    }
+
+    /// ⭐ 真正播放判定：处于 playing 且画面连续走动 ≥ confirmSeconds（seek 跳跃不算）
+    private func updatePlaybackConfirmation(_ sec: Double) {
+        guard playbackConfirmedKey == nil else { return }
+        guard !isPreparing, errorText == nil, !playbackHold,
+              player.timeControlStatus == .playing, player.rate > 0 else {
+            confirmAnchor = nil
+            return
+        }
+        guard let a = confirmAnchor else { confirmAnchor = sec; return }
+        let d = sec - a
+        if d < 0 || d > confirmSeconds + 3 { confirmAnchor = sec; return }
+        if d >= confirmSeconds { playbackConfirmedKey = positionKey }
     }
 
     private func saveProgress() {
@@ -722,7 +866,6 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
 
     @objc private func appWillEnterForeground() {
         onMainThread { [weak self] in
-            // ⭐⭐ 冬眠中绝不自愈 —— 旧版正是这里在「解锁回前台」时把已关闭的视频又拉起来
             guard let self = self, !self.isTornDown, !self.isPiPActive,
                   self.currentAssetURL != nil, self.phase != .idle else { return }
             self.configureAudioSession()
@@ -745,7 +888,6 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         onMainThread { [weak self] in
             guard let self = self else { return }
             let at = max(0, self.currentTime)
-            // 无论是否冬眠都必须换一个新的 AVPlayer（旧的已失效）
             self.teardownItemObservers()
             self.teardownPlayerObservers()
             self.player.replaceCurrentItem(with: nil)
@@ -765,8 +907,6 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         saveProgress()
     }
 
-    /// 离开播放页：彻底释放 item + 音频会话 + 锁屏信息，并进入冬眠。
-    /// - force: 只有 dismantle（视图真正被移除）时传 true；onDisappear 可能是 AVKit 全屏误报，需要挡住。
     func teardown(force: Bool = false) {
         if !force { guard !isPiPActive, !isFullScreen else { return } }
         guard !isTornDown else { return }
@@ -794,8 +934,6 @@ final class OVideoPlayerEngine: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// 页面重新出现（从新闻页返回 / 关闭举报全屏页）时恢复：
-    /// 从记忆的进度继续；离开前是暂停的就保持暂停。
     @discardableResult
     func reviveIfNeeded() -> Bool {
         guard isTornDown, let s = lastSession else { return false }
@@ -838,7 +976,7 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> AVPlayerViewController {
         let c = LifecycleAVPlayerViewController()
         c.allowsPictureInPicturePlayback = true
-        c.updatesNowPlayingInfoCenter = true      // ⭐ 显式声明：由 AVKit 用 externalMetadata 发布锁屏信息
+        c.updatesNowPlayingInfoCenter = true
         c.delegate = context.coordinator
         c.videoGravity = .resizeAspect
         c.player = engine.player
@@ -847,6 +985,7 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
         }
         context.coordinator.controller = c
         context.coordinator.installOverlay()
+        context.coordinator.observeAppLifecycle()
         return c
     }
 
@@ -871,6 +1010,8 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
         private var orientationWork: DispatchWorkItem?
         private var targetMask: UIInterfaceOrientationMask?
         private var isDismantled = false
+        private var appObservers: [NSObjectProtocol] = []
+        private var wentToBackground = false
 
         private var engine: OVideoPlayerEngine { parent.engine }
 
@@ -882,6 +1023,42 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
         func handleWillDisappear() {
             if engine.isFullScreen || engine.isPiPActive { return }
             engine.pauseForDisappear()
+        }
+
+        // MARK: ⭐ 回前台：强制重建控制层（修复"暂停→后台→前台"后控制条冻结不消失）
+        func observeAppLifecycle() {
+            let nc = NotificationCenter.default
+            appObservers.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+                self?.wentToBackground = true
+            })
+            appObservers.append(nc.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+                guard let self = self, self.wentToBackground else { return }
+                self.wentToBackground = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                    self?.refreshControlsAfterForeground()
+                }
+            })
+        }
+
+        private func refreshControlsAfterForeground() {
+            guard !isDismantled, let c = controller, c.viewIfLoaded?.window != nil,
+                  !engine.isPiPActive else { return }
+            // 全屏标志残留（实际已无全屏 presentation）→ 纠正，否则刷新永远被挡
+            if engine.isFullScreen, c.presentedViewController == nil {
+                setFullScreen(false)
+            }
+            guard !engine.isFullScreen else { return }
+            forceControlsRebuild(c)
+        }
+
+        private func forceControlsRebuild(_ c: AVPlayerViewController) {
+            guard c.showsPlaybackControls else { return }
+            c.showsPlaybackControls = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak c] in
+                c?.showsPlaybackControls = true
+            }
         }
 
         func installOverlay() {
@@ -940,22 +1117,21 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
         func syncControlsRefresh(token: Int) {
             guard token != lastControlsToken else { return }
             lastControlsToken = token
-            guard let c = controller, c.showsPlaybackControls,
-                  !engine.isFullScreen, !engine.isPiPActive else { return }
-            c.showsPlaybackControls = false
-            DispatchQueue.main.async { c.showsPlaybackControls = true }
+            guard let c = controller, !engine.isFullScreen, !engine.isPiPActive else { return }
+            forceControlsRebuild(c)
         }
 
-        /// dismantle = 视图真正被移除（不是全屏误报），此时必须强制拆除
         func cleanup() {
             isDismantled = true
             orientationWork?.cancel()
+            for o in appObservers { NotificationCenter.default.removeObserver(o) }
+            appObservers.removeAll()
             overlayBox?.removeFromSuperview()
             overlayBox = nil; overlayLabel = nil
             if !engine.isPiPActive {
                 engine.isFullScreen = false
-                engine.teardown(force: true)       // ⭐ 不再被卡住的 isFullScreen 挡掉
-                controller?.player = nil           // ⭐ 断开 AVKit 与 player，锁屏会话随之结束
+                engine.teardown(force: true)
+                controller?.player = nil
                 AppDelegate.orientationLock = .portrait
                 performRotation(mask: .portrait)
             }
@@ -1002,7 +1178,6 @@ struct OVideoPlayerSurface: UIViewControllerRepresentable {
 
         func playerViewControllerDidStopPictureInPicture(_ pvc: AVPlayerViewController) {
             engine.isPiPActive = false
-            // ⭐ 页面早已离开、用户直接关掉画中画 → 此时没人会再调用 teardown，必须在这里收尾
             if isDismantled || pvc.viewIfLoaded?.window == nil {
                 engine.isFullScreen = false
                 engine.teardown(force: true)
@@ -1071,14 +1246,13 @@ struct VideoPlayerView: View {
     var body: some View {
         OVideoPlayerSurface(engine: engine, onFullScreenChanged: onFullScreenChanged)
             .onAppear {
-                // 全屏返回时 SwiftUI 可能再触发 onAppear → 不要重复 prepare
                 if engine.currentAssetURL != videoURL {
                     engine.prepare(url: videoURL,
                                    positionKey: videoURL.absoluteString,
                                    isLocal: videoURL.isFileURL)
                 }
             }
-            .onDisappear { engine.teardown() }   // teardown 内部已挡住全屏/PiP
+            .onDisappear { engine.teardown() }
             .onChange(of: engine.isBusyForUI) { _, v in isBuffering = v }
             .onChange(of: engine.hasStartedPlaying) { _, v in hasStartedPlaying = v }
             .onChange(of: engine.errorText) { _, v in if let v = v { onPlaybackFailed?(v) } }
@@ -1184,6 +1358,8 @@ struct VideoPlayerPageView: View {
     var sourceURL: String? = nil
     var episodes: [VideoEpisodeItem] = []
     var playSource: String? = nil
+    /// ⭐ 不为 nil：这一集尚未扣点，等视频真正开始播放后再扣
+    var chargeOnPlayKey: String? = nil
 
     private let downloadManager = HLSDownloadManager.shared
     private let network = NetworkMonitor.shared
@@ -1201,6 +1377,7 @@ struct VideoPlayerPageView: View {
     @State private var showSubscriptionSheet = false
     @ObservedObject private var quotaManager = FreeQuotaManager.shared
     @Environment(\.appNavPath) var appNavPath
+    @Environment(\.dismiss) private var dismiss
 
     @State private var realURL: String? = nil
     @State private var isResolving = true
@@ -1226,6 +1403,13 @@ struct VideoPlayerPageView: View {
     @State private var showEpisodeCellularAlert = false
     @State private var loadedEpisodes: [VideoEpisodeItem] = []
 
+    // ⭐ 播放后扣点
+    @State private var pendingChargeKey: String? = nil
+    @State private var didSeedCharge = false
+    @State private var isCharging = false
+    @State private var showChargeFailedAlert = false
+    @State private var showChargeQuotaAlert = false
+
     private var activeEpisodes: [VideoEpisodeItem] {
         episodes.isEmpty ? loadedEpisodes : episodes
     }
@@ -1239,7 +1423,9 @@ struct VideoPlayerPageView: View {
         return videoTitle
     }
     private var hasAccess: Bool {
-        authManager.isSubscribed || FreeQuotaManager.shared.isUnlocked(activeEpisodeURL)
+        authManager.isSubscribed
+            || FreeQuotaManager.shared.isUnlocked(activeEpisodeURL)
+            || pendingChargeKey == activeEpisodeURL
     }
 
     private func cachedOriginalURLs() -> Set<String> { downloadManager.statusIndex.cachedKeys }
@@ -1295,6 +1481,27 @@ struct VideoPlayerPageView: View {
                     }
                     .padding(.top, 16)
                 }
+                // ⭐ 扣点结果弹窗
+                .alert(isGlobalEnglishMode ? "Couldn't use your pass" : "扣点失败",
+                       isPresented: $showChargeFailedAlert) {
+                    Button(isGlobalEnglishMode ? "Leave" : "退出", role: .cancel) { dismiss() }
+                    Button(isGlobalEnglishMode ? "Retry" : "重试") {
+                        if let k = pendingChargeKey { performCharge(k) }
+                    }
+                } message: {
+                    Text(isGlobalEnglishMode
+                         ? "Network error while using your pass. Playback is paused until it succeeds."
+                         : "网络异常，扣点未成功，扣点成功后才能继续播放。")
+                }
+                .alert(isGlobalEnglishMode ? "Not Enough Passes" : "免费点数不足",
+                       isPresented: $showChargeQuotaAlert) {
+                    Button(isGlobalEnglishMode ? "Leave" : "退出", role: .cancel) { dismiss() }
+                    Button(isGlobalEnglishMode ? "Subscribe" : "订阅") { showSubscriptionSheet = true }
+                } message: {
+                    Text(isGlobalEnglishMode
+                         ? "You have no passes left. Subscribe for unlimited access, or come back tomorrow."
+                         : "当前点数已用完，订阅后即可无限畅享，或明天再来领取每日免费点数。")
+                }
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -1307,6 +1514,12 @@ struct VideoPlayerPageView: View {
                 requestRepairSheet()
             }
         }
+        // ⭐ 真正开始播放：扣点 + 追剧追平
+        .onChange(of: engine.playbackConfirmedKey) { _, key in
+            guard let key = key else { return }
+            recordSeriesWatch()
+            if key == pendingChargeKey { performCharge(key) }
+        }
         .onChange(of: isPlayerFullScreen) { _, full in
             if !full, pendingRepairPrompt {
                 pendingRepairPrompt = false
@@ -1315,6 +1528,10 @@ struct VideoPlayerPageView: View {
             }
         }
         .task {
+            if !didSeedCharge {
+                didSeedCharge = true
+                if let k = chargeOnPlayKey, !k.isEmpty { pendingChargeKey = k }
+            }
             await quotaManager.refresh(userId: FreeQuotaManager.currentUserId(auth: authManager))
             if hasAccess && realURL == nil { await resolve() }
 
@@ -1327,7 +1544,13 @@ struct VideoPlayerPageView: View {
         }
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
         .onChange(of: authManager.isSubscribed) { _, newValue in
-            if newValue && realURL == nil { Task { await resolve() } }
+            if newValue {
+                pendingChargeKey = nil
+                showChargeQuotaAlert = false
+                showChargeFailedAlert = false
+                engine.releaseHold(resume: true)
+                if realURL == nil { Task { await resolve() } }
+            }
         }
         .onAppear {
             NotificationPermissionManager.shared.suppress(true)
@@ -1339,7 +1562,7 @@ struct VideoPlayerPageView: View {
             ReviewManager.shared.recordVideoInteraction()
             resolveTimeoutWork?.cancel(); resolveTimeoutWork = nil
             engine.teardown()
-            if engine.isTornDown { engine.hostVisible = false }   // 全屏/PiP 误报时不会置 false
+            if engine.isTornDown { engine.hostVisible = false }
         }
         .alert(isGlobalEnglishMode ? "Cellular Network Warning" : "蜂窝网络提示",
                isPresented: $showEpisodeCellularAlert) {
@@ -1368,7 +1591,8 @@ struct VideoPlayerPageView: View {
             }
         } message: {
             Text(quotaManager.consumeSourceNote(english: isGlobalEnglishMode)
-                 + "\n" + quotaManager.remainingSummary(english: isGlobalEnglishMode))
+                 + "\n" + quotaManager.remainingSummary(english: isGlobalEnglishMode)
+                 + "\n" + VideoChargeService.playNote(english: isGlobalEnglishMode))
         }
         .alert(isGlobalEnglishMode ? "Sign in to Watch Free" : "登录后免费观看",
                isPresented: $showLoginAlert) {
@@ -1405,8 +1629,6 @@ struct VideoPlayerPageView: View {
     }
 
     // MARK: 播放器主区
-    // ⭐⭐ 一旦挂上 OVideoPlayerSurface 就永不移除；错误页 / 加载页都用 opacity 叠加，
-    //     避免在 AVKit 全屏 presentation 期间拆装视图层级导致崩溃。
     @ViewBuilder
     private var playerArea: some View {
         ZStack {
@@ -1511,13 +1733,14 @@ struct VideoPlayerPageView: View {
         showRepairSheet = true
     }
 
+    /// ⭐ 解析接口单次超时 15s × 2 + 1.5s 间隔，原 25s 会在第二次请求还没结束时就误弹
     private func scheduleResolveTimeout() {
         resolveTimeoutWork?.cancel()
         let work = DispatchWorkItem {
             if isResolving, realURL == nil { requestRepairSheet() }
         }
         resolveTimeoutWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 25, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 35, execute: work)
     }
 
     private func retryCurrent() {
@@ -1526,6 +1749,30 @@ struct VideoPlayerPageView: View {
             engine.retryNow()
         } else {
             Task { await resolve() }
+        }
+    }
+
+    // MARK: ⭐ 播放后扣点
+    private func performCharge(_ key: String) {
+        guard !isCharging else { return }
+        isCharging = true
+        let title = "\(seriesBaseTitle) · \(activeEpisodeName ?? "")"
+        Task {
+            let outcome = await VideoChargeService.charge(episodeKey: key, title: title, auth: authManager)
+            isCharging = false
+            switch outcome {
+            case .charged:
+                if pendingChargeKey == key { pendingChargeKey = nil }
+                engine.releaseHold(resume: true)
+            case .quotaExceeded:
+                guard activeEpisodeURL == key else { return }
+                engine.holdPlayback()
+                showChargeQuotaAlert = true
+            case .failed:
+                guard activeEpisodeURL == key else { return }
+                engine.holdPlayback()
+                showChargeFailedAlert = true
+            }
         }
     }
 
@@ -1546,16 +1793,12 @@ struct VideoPlayerPageView: View {
         }
     }
 
+    /// ⭐ 不再立即扣点：标记"播放成功后扣"
     private func consumeAndSwitchEpisode() async {
         guard let ep = pendingEpisodeForSwitch else { return }
-        let uid = FreeQuotaManager.currentUserId(auth: authManager)
-        let result = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
-                                               videoTitle: "\(seriesBaseTitle) · \(ep.name)")
-        switch result {
-        case .success, .alreadyUnlocked: proceedToSwitch(episode: ep)
-        case .quotaExceeded, .failed:    showSubscriptionSheet = true
-        }
+        pendingChargeKey = ep.url
         pendingEpisodeForSwitch = nil
+        proceedToSwitch(episode: ep)
     }
 
     private func proceedToSwitch(episode ep: VideoEpisodeItem) {
@@ -1623,7 +1866,6 @@ struct VideoPlayerPageView: View {
     }
 
     private func startPlayback(real: String) {
-        // ⭐ 锁屏：剧名 + 集数 + 封面
         engine.setNowPlaying(title: seriesBaseTitle, subtitle: activeEpisodeName, artwork: coverImage)
         let key = activeEpisodeURL
         if let local = downloadManager.getLocalURL(for: real) {
@@ -1667,7 +1909,10 @@ struct VideoPlayerPageView: View {
                                                 coverImage: coverImage,
                                                 channelName: channelName,
                                                 sourceURL: sourceURL)
+    }
 
+    /// ⭐ 追剧"追平"只在真正播放后记录（原来解析成功就记，播放失败也会被追平）
+    private func recordSeriesWatch() {
         SeriesTrackManager.shared.recordWatch(sourceURL: sourceURL,
                                               title: seriesBaseTitle,
                                               cover: coverImage,
@@ -1722,6 +1967,11 @@ struct CachedVideoPlayerView: View {
     @State private var showCellularAlert = false
     @State private var pendingOnlineEpisode: VideoEpisodeItem? = nil
 
+    // ⭐ 播放后扣点（在线切集）
+    @State private var pendingChargeKey: String? = nil
+    @State private var isCharging = false
+    @State private var showChargeFailedAlert = false
+
     private var pickerEpisodes: [VideoEpisodeItem] { allEpisodes.isEmpty ? episodes : allEpisodes }
     private var baseTitle: String { title.components(separatedBy: " · ").first ?? title }
     private var displayTitle: String {
@@ -1775,13 +2025,26 @@ struct CachedVideoPlayerView: View {
                                     episodeName: activeName,
                                     realURL: activeKey)
                     }
+                    // ⭐ 修复：原来只设置 showRepairSheet 却没有挂 sheet，"反馈修复"点了没反应
+                    .sheet(isPresented: $showRepairSheet) {
+                        PlaybackRepairSheet(videoTitle: displayTitle,
+                                            sourceURL: sourceURL ?? activeKey,
+                                            episodeURL: activeKey,
+                                            channelName: channelName,
+                                            episodeName: activeName,
+                                            realURL: activeKey,
+                                            onRetry: {
+                                                showRepairSheet = false
+                                                retryCurrent()
+                                            })
+                        .presentationDetents([.medium, .large])
+                    }
                     .sheet(isPresented: $showEpisodePicker) {
                         EpisodePickerView(episodes: pickerEpisodes,
                                         currentURL: activeKey,
                                         cachedOriginalURLs: cachedOriginalURLs(),
                                         onSelect: { ep in selectEpisode(ep) },
                                         seriesTitle: baseTitle,
-                                        // ⭐ 仅在拿到服务端完整剧集列表时提供批量下载
                                         batchContext: allEpisodes.isEmpty ? nil
                                             : EpisodeBatchContext.make(seriesTitle: baseTitle,
                                                                     sourceURL: sourceURL,
@@ -1833,17 +2096,22 @@ struct CachedVideoPlayerView: View {
                         Spacer(minLength: 30)
                     }
                 }
+                .alert(isGlobalEnglishMode ? "Couldn't use your pass" : "扣点失败",
+                       isPresented: $showChargeFailedAlert) {
+                    Button(isGlobalEnglishMode ? "Leave" : "退出", role: .cancel) { dismiss() }
+                    Button(isGlobalEnglishMode ? "Retry" : "重试") {
+                        if let k = pendingChargeKey { performCharge(k) }
+                    }
+                } message: {
+                    Text(isGlobalEnglishMode
+                         ? "Network error while using your pass. Playback is paused until it succeeds."
+                         : "网络异常，扣点未成功，扣点成功后才能继续播放。")
+                }
             }
         }
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showSubscriptionSheet) { SubscriptionView() }
-        .sheet(isPresented: $showEpisodePicker) {
-            EpisodePickerView(episodes: pickerEpisodes,
-                              currentURL: activeKey,
-                              cachedOriginalURLs: cachedOriginalURLs(),
-                              onSelect: { ep in selectEpisode(ep) })
-                .presentationDetents([.medium, .large])
-        }
+        // ⭐ 修复：删除了这里重复绑定 showEpisodePicker 的第二个 .sheet
         .alert(isGlobalEnglishMode ? "Use Free Pass (\(consumeRemaining) left)"
                                    : "今日免费赠送还剩\(consumeRemaining)点",
                isPresented: $showConsumeConfirm) {
@@ -1851,7 +2119,8 @@ struct CachedVideoPlayerView: View {
             Button(isGlobalEnglishMode ? "Confirm" : "确认使用") { Task { await consumeAndPlay() } }
         } message: {
             Text(quotaManager.consumeSourceNote(english: isGlobalEnglishMode)
-                 + "\n" + quotaManager.remainingSummary(english: isGlobalEnglishMode))
+                 + "\n" + quotaManager.remainingSummary(english: isGlobalEnglishMode)
+                 + "\n" + VideoChargeService.playNote(english: isGlobalEnglishMode))
         }
         .alert(isGlobalEnglishMode ? "Free Passes Used Up (0 left)" : "今日免费额度不足",
                isPresented: $showQuotaExhausted) {
@@ -1889,12 +2158,23 @@ struct CachedVideoPlayerView: View {
             engine.hostVisible = true
             if !engine.reviveIfNeeded() { startInitialPlaybackIfNeeded() }
         }
-        // ⭐ 本地文件不弹「反馈修复」：本地不存在网络慢的问题
         .onChange(of: engine.offerManualRetry) { _, offer in
             if offer, !engine.isLocal { requestRepairSheet() }
         }
         .onChange(of: engine.errorText) { _, msg in
             if let msg = msg { resolveError = msg; requestRepairSheet() }
+        }
+        .onChange(of: engine.playbackConfirmedKey) { _, key in
+            guard let key = key else { return }
+            recordSeriesWatch()
+            if key == pendingChargeKey { performCharge(key) }
+        }
+        .onChange(of: authManager.isSubscribed) { _, sub in
+            if sub {
+                pendingChargeKey = nil
+                showChargeFailedAlert = false
+                engine.releaseHold(resume: true)
+            }
         }
         .onChange(of: isPlayerFullScreen) { _, full in
             if !full, pendingRepairPrompt {
@@ -1965,16 +2245,38 @@ struct CachedVideoPlayerView: View {
 
     private func retryCurrent() {
         resolveError = nil
-        if let local = localURL(forOriginal: activeKey) {
-            hasPlayable = true
-            updateNowPlaying()
-            engine.prepare(url: local, positionKey: activeKey, isLocal: true, resolver: nil)
+        if let entry = localEntry(forOriginal: activeKey) {
+            playLocal(entry.url, positionKey: activeKey, cacheKey: entry.key)
             return
         }
         if let ep = pickerEpisodes.first(where: { $0.url == activeKey }) {
             resolveAndPlayOnline(ep)
         } else {
             engine.retryNow()
+        }
+    }
+
+    /// ⭐ 本地文件播放：若该下载"完成时没扣成点"，先补扣；仅服务器明确点数不足才拦截（断网照常播放，联网后补扣）
+    private func playLocal(_ local: URL, positionKey: String, cacheKey: String) {
+        let start = {
+            hasPlayable = true
+            updateNowPlaying()
+            engine.prepare(url: local, positionKey: positionKey, isLocal: true, resolver: nil)
+            recordPlayback()
+        }
+        guard downloadManager.needsCharge(cacheKey) else { start(); return }
+        isResolvingOnline = true
+        Task {
+            let outcome = await downloadManager.settleCharge(for: cacheKey)
+            isResolvingOnline = false
+            if outcome == .quotaExceeded {
+                resolveError = isGlobalEnglishMode
+                    ? "Points ran out when this download finished. 1 pass is required to watch it."
+                    : "该视频下载完成时点数不足，观看需消耗 1 点。可订阅或明天领取点数后再看。"
+                showQuotaExhausted = true
+                return
+            }
+            start()
         }
     }
 
@@ -1986,10 +2288,7 @@ struct CachedVideoPlayerView: View {
         let posKey = downloadManager.cacheMetadata[realURL]?.originalEpisodeURL ?? realURL
 
         if let local = downloadManager.getLocalURL(for: realURL) {
-            hasPlayable = true
-            updateNowPlaying()
-            engine.prepare(url: local, positionKey: posKey, isLocal: true, resolver: nil)
-            recordPlayback()
+            playLocal(local, positionKey: posKey, cacheKey: realURL)
         } else if let u = URL(string: realURL) {
             hasPlayable = true
             updateNowPlaying()
@@ -2019,12 +2318,9 @@ struct CachedVideoPlayerView: View {
         showEpisodePicker = false
         guard ep.url != activeKey else { return }
 
-        if let local = localURL(forOriginal: ep.url) {
+        if let entry = localEntry(forOriginal: ep.url) {
             activeKey = ep.url; activeName = ep.name; resolveError = nil
-            hasPlayable = true
-            updateNowPlaying()
-            engine.prepare(url: local, positionKey: ep.url, isLocal: true, resolver: nil)
-            recordPlayback()
+            playLocal(entry.url, positionKey: ep.url, cacheKey: entry.key)
             return
         }
 
@@ -2048,7 +2344,6 @@ struct CachedVideoPlayerView: View {
     private func resolveAndPlayOnline(_ ep: VideoEpisodeItem) {
         activeKey = ep.url; activeName = ep.name
         resolveError = nil
-        // ⭐ 不再把 hasPlayable 置 false：保持 surface 常驻，只让引擎挂起等新地址
         engine.beginSwitching()
         isResolvingOnline = true
         Task {
@@ -2069,24 +2364,41 @@ struct CachedVideoPlayerView: View {
         }
     }
 
+    /// ⭐ 不再立即扣点：标记"播放成功后扣"
     private func consumeAndPlay() async {
         guard let ep = pendingEpisode else { return }
-        let uid = FreeQuotaManager.currentUserId(auth: authManager)
-        let result = await quotaManager.unlock(userId: uid, episodeKey: ep.url,
-                                               videoTitle: "\(baseTitle) · \(ep.name)")
-        await MainActor.run {
-            switch result {
-            case .success, .alreadyUnlocked: startOnline(ep)
-            case .quotaExceeded, .failed:    showSubscriptionSheet = true
+        pendingChargeKey = ep.url
+        pendingEpisode = nil
+        startOnline(ep)
+    }
+
+    private func performCharge(_ key: String) {
+        guard !isCharging else { return }
+        isCharging = true
+        let title = "\(baseTitle) · \(activeName ?? "")"
+        Task {
+            let outcome = await VideoChargeService.charge(episodeKey: key, title: title, auth: authManager)
+            isCharging = false
+            switch outcome {
+            case .charged:
+                if pendingChargeKey == key { pendingChargeKey = nil }
+                engine.releaseHold(resume: true)
+            case .quotaExceeded:
+                guard activeKey == key else { return }
+                engine.holdPlayback()
+                showQuotaExhausted = true
+            case .failed:
+                guard activeKey == key else { return }
+                engine.holdPlayback()
+                showChargeFailedAlert = true
             }
-            pendingEpisode = nil
         }
     }
 
-    private func localURL(forOriginal original: String) -> URL? {
-        if let u = downloadManager.getLocalURL(for: original) { return u }
+    private func localEntry(forOriginal original: String) -> (url: URL, key: String)? {
+        if let u = downloadManager.getLocalURL(for: original) { return (u, original) }
         for (key, meta) in downloadManager.cacheMetadata where meta.originalEpisodeURL == original {
-            if let u = downloadManager.getLocalURL(for: key) { return u }
+            if let u = downloadManager.getLocalURL(for: key) { return (u, key) }
         }
         return nil
     }
@@ -2117,10 +2429,13 @@ struct CachedVideoPlayerView: View {
                                                coverImage: downloadManager.cacheMetadata[activeKey]?.coverImage,
                                                channelName: channelName,
                                                sourceURL: sourceURL)
+    }
 
+    private func recordSeriesWatch() {
         SeriesTrackManager.shared.recordWatch(sourceURL: sourceURL,
                                               title: baseTitle,
-                                              cover: downloadManager.cacheMetadata[activeKey]?.coverImage,
+                                              cover: downloadManager.cacheMetadata[activeKey]?.coverImage
+                                                  ?? downloadManager.cacheMetadata[realURL]?.coverImage,
                                               episodeName: activeName,
                                               channelName: channelName)
     }
@@ -2156,7 +2471,6 @@ struct EpisodeBatchContext {
     let channel: OVideoChannel
     let channelDisplayName: String
 
-    /// 把当前选集列表（已按展示顺序排好）包装成 BatchDownloadView 需要的 item + channel
     static func make(seriesTitle: String, sourceURL: String?, cover: String?,
                      channelName: String?, episodes: [VideoEpisodeItem]) -> EpisodeBatchContext? {
         guard let src = sourceURL, !src.isEmpty, !episodes.isEmpty else { return nil }
@@ -2174,15 +2488,13 @@ struct EpisodeBatchContext {
     }
 }
 
-// MARK: - 选集弹窗（⭐ 新增批量下载 + 下载中状态角标）
+// MARK: - 选集弹窗
 struct EpisodePickerView: View {
     let episodes: [VideoEpisodeItem]
     let currentURL: String
     var cachedOriginalURLs: Set<String> = []
     let onSelect: (VideoEpisodeItem) -> Void
-    /// 用于按「剧名 · 集名」判断下载中/已下载（与 BatchDownloadView 判定规则一致）
     var seriesTitle: String? = nil
-    /// 为 nil 时不显示批量下载按钮
     var batchContext: EpisodeBatchContext? = nil
 
     @Environment(\.dismiss) private var dismiss
@@ -2246,7 +2558,7 @@ struct EpisodePickerView: View {
                 BatchDownloadView(item: ctx.item,
                                   channel: ctx.channel,
                                   channelDisplayName: ctx.channelDisplayName,
-                                  isAscending: true,          // channel 已按选集展示顺序构造
+                                  isAscending: true,
                                   onStartDownloads: { flashQueuedToast() })
                     .environmentObject(authManager)
                     .presentationDetents([.medium, .large])
@@ -2255,7 +2567,6 @@ struct EpisodePickerView: View {
         }
     }
 
-    // ⭐ 与详情页一致的「批量下载」按钮
     private var headerRow: some View {
         HStack {
             Text(isGlobalEnglishMode ? "\(episodes.count) episodes" : "共 \(episodes.count) 集")
