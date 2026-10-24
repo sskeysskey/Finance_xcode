@@ -184,7 +184,7 @@ struct Localized {
     static var restorePurchase: String { tr("恢复购买", "Restore Purchase") }
     static var terms: String { tr("使用条款 (EULA)", "Terms of Use") }
     static var privacy: String { tr("隐私政策", "Privacy Policy") }
-    static var processingPayment: String { tr("正在处理支付...", "Processing Payment...") }
+    static var processingPayment: String { tr("正在处理...", "Processing Payment...") }
     static var paymentFailed: String { tr("支付失败", "Payment Failed") }
     static var internalTestTitle: String { tr("内部测试/亲友通道", "Internal Testing") }
     static var enterInviteCode: String { tr("请输入邀请码", "Enter invite code") }
