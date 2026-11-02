@@ -182,7 +182,7 @@ struct Localized {
     static var currentProUser: String { tr("您当前是尊贵的专业版用户", "You are currently a Pro member") }
     static var freePlanFootnote: String { tr("如果实在不想付费，您仍可以免费享用三天前的文章和每日赠送的免费新闻&视频点数。", "If you don't upgrade, you can still enjoy articles older than 3 days for free.") }
     static var restorePurchase: String { tr("恢复购买", "Restore Purchase") }
-    static var terms: String { tr("使用条款 (EULA)", "Terms of Use") }
+    static var terms: String { tr("使用条款(EULA)", "Terms of Use") }
     static var privacy: String { tr("隐私政策", "Privacy Policy") }
     static var processingPayment: String { tr("正在处理...", "Processing Payment...") }
     static var paymentFailed: String { tr("支付失败", "Payment Failed") }
