@@ -71,25 +71,16 @@ final class ReaderAudioController: ObservableObject {
 private struct ReaderAudioOverlay: View {
     @ObservedObject var controller: ReaderAudioController
     @ObservedObject var player: AudioPlayerManager
-    let onStartRequest: () -> Void
     let onNext: () -> Void
 
-    init(controller: ReaderAudioController,
-         onStartRequest: @escaping () -> Void,
-         onNext: @escaping () -> Void) {
+    init(controller: ReaderAudioController, onNext: @escaping () -> Void) {
         self.controller = controller
         self.player = controller.player
-        self.onStartRequest = onStartRequest
         self.onNext = onNext
     }
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            MiniAudioBubbleView(isPlaybackActive: player.isPlaybackActive, onTap: handleBubbleTap)
-                .padding(.bottom, 10)
-                .transition(.move(edge: .leading).combined(with: .opacity))
-                .zIndex(2)
-
             if !controller.isCollapsed && player.isPlaybackActive {
                 AudioPlayerView(
                     playerManager: player,
@@ -106,16 +97,6 @@ private struct ReaderAudioOverlay: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-    }
-
-    private func handleBubbleTap() {
-        if !controller.isCollapsed && player.isPlaybackActive {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { controller.isCollapsed = true }
-        } else if player.isPlaybackActive {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { controller.isCollapsed = false }
-        } else {
-            onStartRequest()
-        }
     }
 }
 
@@ -189,7 +170,9 @@ struct ArticleContainerView: View {
                 totalUnreadCount: totalUnreadCountForContext,
                 isEnglishMode: $isEnglishMode,
                 showStickyTitle: authManager.isPermanentVIP,
-                requestNextArticle: { await switchToNextArticleAndStopAudio() }
+                requestNextArticle: { await switchToNextArticleAndStopAudio() },
+                audioPlayer: controller.player,
+                onAudioToggle: { toggleAudioPanel() }
             )
             .id(currentArticle.id)
             .transition(.opacity)
@@ -198,7 +181,6 @@ struct ArticleContainerView: View {
 
             ReaderAudioOverlay(
                 controller: controller,
-                onStartRequest: { startPlayback() },
                 onNext: {
                     Task { await switchToNextArticle(shouldAutoplayNext: true, triggerListenTrack: true) }
                 }
@@ -282,6 +264,17 @@ struct ArticleContainerView: View {
         controller.start(text: text, title: title, language: lang)
         NewsTrackingManager.shared.track(event: .listen, article: currentArticle,
                                          sourceId: currentArticle.source_id)
+    }
+
+    /// 导航栏音频按钮：播放中 → 收起/展开面板；空闲 → 开始播放
+    private func toggleAudioPanel() {
+        if controller.isActive {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                controller.isCollapsed.toggle()
+            }
+        } else {
+            startPlayback()
+        }
     }
 
     private func updateUnreadCounts() {

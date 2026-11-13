@@ -446,7 +446,7 @@ struct ArticleRowCardView: View {
             HStack(alignment: .top) {
                 Text(displayTopic)
                     .font(.system(size: 19, weight: isReadEffective ? .regular : .bold, design: .serif))
-                    .foregroundColor(isReadEffective ? .secondary : .primary)
+                    .foregroundColor(isReadEffective ? .secondary : ReaderPalette.textColor)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)

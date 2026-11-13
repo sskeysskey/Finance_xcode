@@ -50,7 +50,7 @@ struct EarningHistoryView: View {
             }
         }
         
-        // 【对齐 Python】先为命中 52week_low 的 symbol 追加虚拟分组（在剔除逻辑之前）
+        // 【对齐 Python】先命中 52week_low 的 symbol 追加虚拟分组（在剔除逻辑之前）
         for sym in Array(symbolGroups.keys) {
             if dataService.weekLow52Symbols.contains(sym) {
                 symbolGroups[sym]?.insert("52week_low")

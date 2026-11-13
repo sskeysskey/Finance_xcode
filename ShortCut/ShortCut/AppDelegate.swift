@@ -16,8 +16,13 @@ struct ShortcutConfig: Codable {
     let target: String
     let args: [String]?
     let message: String?
+    let enabled: Bool?        // 可选类型：旧配置没写这个字段时为 nil，不会导致解析失败
+
+    // 没写 enabled 时默认视为启用
+    var isEnabled: Bool { enabled ?? true }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     
     var statusItem: NSStatusItem?
@@ -78,19 +83,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let data = try Data(contentsOf: fileURL)
             let configs = try JSONDecoder().decode([ShortcutConfig].self, from: data)
-            
+
+            var enabledCount = 0
+
             for config in configs {
+                // 先判断是否启用，禁用的直接跳过，不绑定、不发通知
+                guard config.isEnabled else {
+                    print("已禁用，跳过: \(config.key) [\(config.actionType)] \(config.target)")
+                    continue
+                }
+
                 guard let key = mapKey(config.key) else {
                     print("未知的按键: \(config.key)")
                     continue
                 }
+
                 let modifiers = mapModifiers(config.modifiers)
-                
+                enabledCount += 1
+
                 bind(key: key, modifiers: modifiers) {
                     if let msg = config.message {
                         self.notify(msg)
                     }
-                    
+
                     switch config.actionType {
                     case "launchApp":
                         self.launchApp(config.target)
@@ -107,9 +122,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             }
-            self.notify("快捷键配置已成功加载！", title: "配置更新")
-            print("Successfully loaded \(configs.count) shortcuts.")
-            
+
+            self.notify("已加载 \(enabledCount) / \(configs.count) 个快捷键", title: "配置更新")
+            print("Successfully loaded \(enabledCount) of \(configs.count) shortcuts.")
+
         } catch {
             self.notify("加载配置失败，请检查 JSON 格式", title: "配置错误")
             print("Failed to load config: \(error)")

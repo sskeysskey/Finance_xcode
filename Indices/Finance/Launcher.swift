@@ -1206,8 +1206,8 @@ struct MainContentView: View {
                 Spacer()
             }
             .background(Color(UIColor.systemGroupedBackground))
-            // 【关键】限制高度：只占据屏幕底部约 25%~30% 的高度，不像全屏那么重
-            .presentationDetents([.fraction(0.30)]) 
+            // 【关键】限制高度:只占据屏幕底部约 25%~30% 的高度，不像全屏那么重
+            .presentationDetents([.fraction(0.30)])
             .presentationDragIndicator(.hidden)
         }
 

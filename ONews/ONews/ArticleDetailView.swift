@@ -80,7 +80,7 @@ enum ArticleBodyBuilder {
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .paragraphStyle: style,
-            .foregroundColor: UIColor.label      // 动态色，暗黑模式自动跟随
+            .foregroundColor: ReaderPalette.text     // 原来是 UIColor.label
         ]
 
         var blocks: [ArticleBodyBlock] = []
@@ -305,10 +305,12 @@ struct ArticleDetailView: View {
     /// 是否启用吸顶标题（只有后门 VIP 才为 true；false 时完全不挂滚动探针）
     let showStickyTitle: Bool
     var requestNextArticle: () async -> Void
+    let audioPlayer: AudioPlayerManager        // 用于导航栏音频按钮显示状态
+    let onAudioToggle: () -> Void              // 点击音频按钮时的回调（由容器实现）
 
     @Environment(\.appNavPath) private var appNavPath
 
-    @State private var showNewsPromoSheet = false
+    // @State private var showNewsPromoSheet = false
     @State private var showCustomShareSheet = false
     @State private var showSystemActivitySheet = false
     @State private var showWeChatGuideSheet = false
@@ -351,9 +353,11 @@ struct ArticleDetailView: View {
                     // ★ Equatable 包裹：只要 bodyID 不变，正文这一整棵子树绝不重算
                     ArticleBodyContentView(prepared: prepared, timestamp: article.timestamp)
                         .equatable()
-                    footer
+                    // footer
                 }
                 .padding(.vertical)
+                .padding(.bottom, 100)                       // ★ 给悬浮"下一篇"按钮留空间
+                .foregroundStyle(ReaderPalette.textColor)     // ★ 新增
             }
             .scrollIndicators(.visible)   // ★ 显示右侧位置指示条；长文按住指示条还可以拖动快速定位（系统原生能力）
             .coordinateSpace(name: "Scroll")
@@ -369,15 +373,19 @@ struct ArticleDetailView: View {
 
             VStack {
                 Spacer()
-                HStack {
-                    Spacer()
-                    NextArticleFloatingButton { Task { await requestNextArticle() } }
+                NextArticleFloatingButton {          // ★ 只保留右箭头
+                    Task { await requestNextArticle() }
                 }
+                .padding(.bottom, 30)                // 底部距离，原来的值保持不变
             }
+            .frame(maxWidth: .infinity)              // 撑满宽度，确保水平居中
             .zIndex(100)
         }
         .toolbar { toolbarContent }
         .navigationBarTitleDisplayMode(.inline)
+        .background(ReaderPalette.backgroundColor.ignoresSafeArea())   // ★ 新增
+        .toolbarBackground(ReaderPalette.backgroundColor, for: .navigationBar)  // ★ 新增（iOS 16+）
+        .toolbarBackground(.visible, for: .navigationBar)                       // ★ 新增
         .sheet(isPresented: $showCustomShareSheet) {
             CustomShareSheet(
                 onWeChatAction: {
@@ -394,14 +402,14 @@ struct ArticleDetailView: View {
             ActivityView(activityItems: [createShareText()])
                 .presentationDetents([.medium, .large])
         }
-        .sheet(isPresented: $showNewsPromoSheet) {
-            NewsPromoView(onOpenAction: {
-                showNewsPromoSheet = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    openApp(scheme: "globalnews://", appId: "6754904170")
-                }
-            })
-        }
+        // .sheet(isPresented: $showNewsPromoSheet) {
+        //     NewsPromoView(onOpenAction: {
+        //         showNewsPromoSheet = false
+        //         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        //             openApp(scheme: "globalnews://", appId: "6754904170")
+        //         }
+        //     })
+        // }
         .sheet(isPresented: $showFontAdjustment) {
             FontAdjustmentView().presentationDetents([.large])
         }
@@ -446,48 +454,34 @@ struct ArticleDetailView: View {
         .id("Header-\(article.id)")
     }
 
-    // MARK: - 尾部（下一篇按钮 + 推广）
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button(action: { Task { await requestNextArticle() } }) {
-                HStack {
-                    Text(Localized.readNext).fontWeight(.bold)
-                    Image(systemName: "arrow.right.circle.fill")
-                }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(Color.blue)
-                .cornerRadius(12)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 20)
+    // MARK: - 尾部（推广）
+    // private var footer: some View {
+    //     VStack(alignment: .leading, spacing: 0) {
+    //         VStack(alignment: .leading, spacing: 12) {
+    //             Text(Localized.isEnglish ? "More from Developer" : "“毛遂自荐”博主另一款精品应用")
+    //                 .font(.footnote).fontWeight(.semibold)
+    //                 .foregroundColor(.secondary)
+    //                 .padding(.horizontal, 2)
+    //                 .frame(maxWidth: .infinity, alignment: .center)
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text(Localized.isEnglish ? "More from Developer" : "“毛遂自荐”博主另一款精品应用")
-                    .font(.footnote).fontWeight(.semibold)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 2)
-                    .frame(maxWidth: .infinity, alignment: .center)
-
-                HStack {
-                    Spacer()
-                    PromoCardView(
-                        title: Localized.isEnglish ? "US Stock Elf" : "美股精灵",
-                        subtitle: Localized.isEnglish ? "AI Stock Picks" : "AI算法每日荐股，全球财经数据一站搞定，炒美股必备伴侣。",
-                        imageName: "logo_stock_elf_small",
-                        isSystemIcon: false,
-                        colors: [.blue, .purple]
-                    ) { showNewsPromoSheet = true }
-                    .frame(width: 220)
-                    Spacer()
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 22)
-            .padding(.bottom, 100)
-        }
-    }
+    //             HStack {
+    //                 Spacer()
+    //                 PromoCardView(
+    //                     title: Localized.isEnglish ? "US Stock Elf" : "美股精灵",
+    //                     subtitle: Localized.isEnglish ? "AI Stock Picks" : "AI算法每日荐股，全球财经数据一站搞定，炒美股必备伴侣。",
+    //                     imageName: "logo_stock_elf_small",
+    //                     isSystemIcon: false,
+    //                     colors: [.blue, .purple]
+    //                 ) { showNewsPromoSheet = true }
+    //                 .frame(width: 220)
+    //                 Spacer()
+    //             }
+    //         }
+    //         .padding(.horizontal, 20)
+    //         .padding(.top, 22)
+    //         .padding(.bottom, 100)
+    //     }
+    // }
 
     private var stickyBar: some View {
         Text(displayTopic)
@@ -522,6 +516,7 @@ struct ArticleDetailView: View {
         }
         ToolbarItem(placement: .navigationBarTrailing) {
             HStack(spacing: 12) {
+                // 1. 中英切换（保持原样）
                 if hasEnglishVersion {
                     Button(action: { withAnimation(.spring()) { isEnglishMode.toggle() } }) {
                         ZStack {
@@ -537,11 +532,15 @@ struct ArticleDetailView: View {
                     }
                 }
 
-                Button(action: { showCustomShareSheet = true }) {
-                    Image(systemName: "square.and.arrow.up")
-                }
+                // 2. 音频（原分享按钮的位置）
+                AudioToolbarButton(audioPlayerManager: audioPlayer, onAudioToggle: onAudioToggle)
 
+                // 4. "..."菜单：分享被移入此处
                 Menu {
+                    Button(action: { showCustomShareSheet = true }) {
+                        Label(Localized.isEnglish ? "Share" : "分享", systemImage: "square.and.arrow.up")
+                    }
+                    Divider()
                     Button(action: { showFontAdjustment = true }) {
                         Label(Localized.isEnglish ? "Font Size" : "字体大小", systemImage: "textformat.size")
                     }
@@ -555,7 +554,7 @@ struct ArticleDetailView: View {
                     Image(systemName: "ellipsis.circle")
                 }
             }
-            .foregroundColor(.primary)
+            .foregroundColor(ReaderPalette.textColor)   // 原来是 .primary
         }
     }
 
@@ -1165,11 +1164,13 @@ struct BrandTag: View {
 struct AudioToolbarButton: View {
     @ObservedObject var audioPlayerManager: AudioPlayerManager
     var onAudioToggle: () -> Void
+
     var body: some View {
         Button(action: onAudioToggle) {
-            Image(systemName: audioPlayerManager.isPlaybackActive ? "headphones.slash" : "headphones")
+            Image(systemName: audioPlayerManager.isPlaybackActive
+                  ? "headphones.circle.fill"   // 正在播放（或合成）中
+                  : "headphones")              // 空闲
         }
-        .disabled(audioPlayerManager.isSynthesizing)
     }
 }
 
@@ -1309,18 +1310,17 @@ struct FontAdjustmentView: View {
 
 struct NextArticleFloatingButton: View {
     var action: () -> Void
+
     var body: some View {
         Button(action: action) {
             Image(systemName: "arrow.right")
                 .font(.system(size: 18, weight: .bold))
-                .foregroundColor(Color.primary)
+                .foregroundColor(ReaderPalette.textColor)
                 .frame(width: 44, height: 44)
-                .background(Color(UIColor.systemBackground))
+                .background(ReaderPalette.backgroundColor)
                 .clipShape(Circle())
                 .overlay(Circle().stroke(Color.gray.opacity(0.3), lineWidth: 0.5))
                 .shadow(color: Color.black.opacity(0.15), radius: 4, x: 0, y: 2)
         }
-        .padding(.trailing, 20)
-        .padding(.bottom, 30)
     }
 }
