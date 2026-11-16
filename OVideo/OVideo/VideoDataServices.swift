@@ -218,6 +218,13 @@ final class VideoDataManager: ObservableObject {
         return arr.filter { ($0.releaseYear ?? 0) <= y }
     }
 
+    /// ⭐ 请求被主动取消（切换排序/筛选、搜索时继续打字）不算错误，不能写进 lastError
+    private func isCancellation(_ e: Error) -> Bool {
+        if e is CancellationError { return true }
+        let ns = e as NSError
+        return ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled
+    }
+
     private func describe(_ e: Error) -> String {
         let ns = e as NSError
         switch ns.code {
@@ -306,6 +313,7 @@ final class VideoDataManager: ObservableObject {
                 print("📦 [Data] \(c)/\(s.rawValue) page=\(page) 服务器 \(resp.items.count) 条 / 新增 \(fresh.count) / 累计 \(arr.count)")
                 if resp.items.isEmpty || !resp.has_more { break }
             } catch {
+                if isCancellation(error) { break }       // ⭐ 被取消：静默退出，不显示红条
                 lastError = describe(error)
                 print("❌ [Data] 拉取 \(c) 第 \(page) 页失败: \(error)")
                 break
@@ -316,7 +324,10 @@ final class VideoDataManager: ObservableObject {
     func search(_ kw: String, userId: String?) async -> [VideoItem] {
         await AppConfigManager.shared.ensureFetched()
         do { return sanitize(try await VideoAPI.search(keyword: kw, userId: userId, maxYear: maxYear)) }
-        catch { lastError = describe(error); return [] }
+        catch {
+            if !isCancellation(error) { lastError = describe(error) }
+            return []
+        }
     }
     func filterOptions(userId: String?) async -> FilterOptionsResponse? {
         await AppConfigManager.shared.ensureFetched()
@@ -332,9 +343,10 @@ final class VideoDataManager: ObservableObject {
                     userId: userId, maxYear: maxYear)
             return (sanitize(r.items), r.has_more, nil)
         } catch {
+            if isCancellation(error) { return ([], true, nil) }   // ⭐ 取消不算错误
             let msg = describe(error)
             lastError = msg
-            return ([], true, msg)   // ⭐ 出错不要把 hasMore 写死成 false，否则永远无法继续
+            return ([], true, msg)   // 出错不要把 hasMore 写死成 false，否则永远无法继续
         }
     }
     func playlist(_ url: String) async -> [VideoChannel] {
@@ -544,15 +556,55 @@ enum VideoAPI {
         return try JSONDecoder().decode(R.self, from: d).real_url
     }
 
-    // 追剧
-    static func fetchSeriesStatus(urls: [String]) async -> [SeriesStatus] {
+    // MARK: - 追剧（分批查询，单批 ≤ 200，服务器上限 400）
+    private struct SeriesStatusResponse: Codable { let items: [SeriesStatus] }
+    private static let seriesStatusChunk = 200
+
+    private static func cleanSeriesURLs(_ urls: [String]) -> [String] {
+        var seen = Set<String>()
+        return urls.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    private static func seriesChunks(_ list: [String]) -> [[String]] {
+        stride(from: 0, to: list.count, by: seriesStatusChunk).map {
+            Array(list[$0..<min($0 + seriesStatusChunk, list.count)])
+        }
+    }
+
+    private static func postSeriesStatus(_ urls: [String]) async -> [SeriesStatus]? {
         guard !urls.isEmpty, let u = URL(string: "\(baseURL)/track_series/status") else { return [] }
-        var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 15
+        var r = URLRequest(url: u)
+        r.httpMethod = "POST"
+        r.timeoutInterval = 15
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.setValue(ua, forHTTPHeaderField: "User-Agent")
         r.httpBody = try? JSONSerialization.data(withJSONObject: ["urls": urls])
-        guard let (d, _) = try? await session.data(for: r) else { return [] }
-        struct R: Codable { let items: [SeriesStatus] }
-        return (try? JSONDecoder().decode(R.self, from: d))?.items ?? []
+        guard let (d, resp) = try? await session.data(for: r) else { return nil }
+        if let h = resp as? HTTPURLResponse, h.statusCode != 200 { return nil }
+        return (try? JSONDecoder().decode(SeriesStatusResponse.self, from: d))?.items
+    }
+
+    /// 任一批失败返回 nil（用于"查不到就删除"这类需要完整结果的场景）
+    static func fetchSeriesStatusChecked(urls: [String]) async -> [SeriesStatus]? {
+        let clean = cleanSeriesURLs(urls)
+        guard !clean.isEmpty else { return [] }
+        var out: [SeriesStatus] = []
+        for part in seriesChunks(clean) {
+            guard let r = await postSeriesStatus(part) else { return nil }
+            out += r
+        }
+        return out
+    }
+
+    /// 失败的批次跳过，返回部分结果
+    static func fetchSeriesStatus(urls: [String]) async -> [SeriesStatus] {
+        let clean = cleanSeriesURLs(urls)
+        guard !clean.isEmpty else { return [] }
+        var out: [SeriesStatus] = []
+        for part in seriesChunks(clean) {
+            if let r = await postSeriesStatus(part) { out += r }
+        }
+        return out
     }
 
     // 寻片 / 举报回复

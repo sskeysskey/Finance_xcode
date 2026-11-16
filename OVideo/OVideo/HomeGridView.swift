@@ -24,7 +24,6 @@ struct HomeGridView: View {
                 ReviewArchiveBanner(year: config.reviewMaxYear, offline: !config.didFetch)
             }
             VideoGrid(items: items,
-                      cardWidth: cardSize,
                       loading: data.isLoading(category, app.sort),
                       errorText: items.isEmpty ? errorText : nil,
                       hasMore: data.hasMorePages(category, app.sort),
@@ -36,22 +35,6 @@ struct HomeGridView: View {
         .navigationTitle(config.categoryDisplayName(category, english: lang.isEnglish))
         .navigationSubtitle(config.updateTime.isEmpty ? "" :
             lang.t("更新于 \(config.updateTime)", "Updated \(config.updateTime)"))
-        .toolbar {
-            ToolbarItemGroup {
-                Picker("", selection: $app.sort) {
-                    ForEach(VideoSortOption.allCases, id: \.self) { s in
-                        Text(s.name(lang.isEnglish)).tag(s)
-                    }
-                }
-                .pickerStyle(.segmented).frame(width: 260)
-
-                Slider(value: $cardSize, in: 140...260).frame(width: 90)
-                    .help(lang.t("调整封面大小", "Card size"))
-
-                Button { retry() } label: { Image(systemName: "arrow.clockwise") }
-                .keyboardShortcut("r", modifiers: .command)
-            }
-        }
         // ⭐ 把 cacheEpoch 纳入 id：任何一次 resetCache 之后都会强制重新拉取（修复冷启动空白）
         .task(id: "\(category)|\(app.sort.rawValue)|\(config.effectiveMaxYear ?? -1)|\(data.cacheEpoch)") {
             await data.loadFirstPageIfNeeded(category, app.sort, userId: auth.userIdentifier)
@@ -123,7 +106,7 @@ struct NoticeBar: View {
 // MARK: - 网格
 struct VideoGrid: View {
     let items: [VideoItem]
-    var cardWidth: Double = 180
+    @AppStorage("GW_CardSize") private var cardSize: Double = 180
     var loading: Bool = false
     var errorText: String? = nil
     var hasMore: Bool = false
@@ -163,7 +146,7 @@ struct VideoGrid: View {
                     .frame(height: 340)
                 }
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: cardWidth), spacing: 18)],
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: cardSize), spacing: 18)],
                           alignment: .leading, spacing: 22) {
                     ForEach(Array(items.enumerated()), id: \.element.url) { idx, item in
                         NavigationLink(value: Route.detail(item)) { VideoCard(item: item) }
@@ -304,8 +287,9 @@ struct CachedImage: View {
     private func load() async {
         guard let url else { image = nil; return }
         if let c = ImageCache.shared.get(url) { image = c; return }
+        image = nil                    // 清掉旧图，避免复用到别人的封面
         guard let (data, _) = try? await URLSession.shared.data(from: url),
-              let img = NSImage(data: data) else { return }
+            let img = NSImage(data: data) else { return }
         ImageCache.shared.set(img, url)
         image = img
     }

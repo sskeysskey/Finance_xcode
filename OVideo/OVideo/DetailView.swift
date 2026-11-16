@@ -280,8 +280,6 @@ struct DetailView: View {
 
     // ⭐ 同系列其它季状态
     @State private var seasonSiblings: [VideoItem] = []
-    @State private var selectedSeasonItem: VideoItem? = nil
-    @State private var navigateToSeason = false
 
     private var sortedLines: [VideoChannel] { optimalChannels(channels) }
     private var currentEpisodes: [EpisodeItem] {
@@ -326,12 +324,6 @@ struct DetailView: View {
                     Label(lang.t("分享", "Share"), systemImage: "square.and.arrow.up")
                 }
                 .help(lang.t("分享这部影片", "Share this title"))
-            }
-        }
-        // ⭐ 切换到其它季的详情页
-        .navigationDestination(isPresented: $navigateToSeason) {
-            if let s = selectedSeasonItem {
-                DetailView(item: s)
             }
         }
         .sheet(isPresented: $showBatch) {
@@ -457,10 +449,7 @@ struct DetailView: View {
                 ForEach(seasonSiblings) { s in
                     let isCurrent = (s.url == item.url)
                     Button {
-                        if !isCurrent {
-                            selectedSeasonItem = s
-                            navigateToSeason = true
-                        }
+                        if !isCurrent { app.path.append(Route.detail(s)) }
                     } label: {
                         seasonChip(for: s, isCurrent: isCurrent)
                     }
@@ -757,30 +746,40 @@ struct DetailView: View {
 
     private func handleDownloadTapped() {
         guard lineIndex < sortedLines.count else { return }
-        let eps = currentEpisodes.filter { !dm.isQueuedOrDone($0.url) }
-        if currentEpisodes.count == 1, let only = eps.first { downloadSingle(only) }
-        else { showBatch = true }
+        if currentEpisodes.count == 1, let only = currentEpisodes.first {
+            downloadSingle(only)
+        } else {
+            showBatch = true
+        }
     }
 
     private func downloadSingle(_ ep: EpisodeItem) {
+        guard !dm.isQueuedOrDone(ep.url) else { return }      // 已排队或已完成：不做任何事
         Task {
+            // 1) 先解析：失败不扣点
+            guard let real = try? await VideoAPI.resolveRealURL(episodeURL: ep.url) else { return }
+
+            // 2) 再鉴权 / 扣点
             switch decideAccess(episodeKey: ep.url, auth: auth, quota: quota) {
-            case .allowed: break
-            case .needLogin: showLogin = true; return
+            case .allowed:
+                break
+            case .needLogin:
+                showLogin = true; return
             case .needConsume:
                 let uid = QuotaManager.currentUserId(auth: auth)
-                let r = await quota.unlock(userId: uid, episodeKey: ep.url,
-                                          title: "\(item.name) · \(ep.name)")
-                switch r {
+                switch await quota.unlock(userId: uid, episodeKey: ep.url,
+                                        title: "\(item.name) · \(ep.name)") {
                 case .success, .alreadyUnlocked: break
                 default: showSubscribe = true; return
                 }
-            case .exhausted: showSubscribe = true; return
+            case .exhausted:
+                showSubscribe = true; return
             }
-            guard let real = try? await VideoAPI.resolveRealURL(episodeURL: ep.url) else { return }
+
+            // 3) 入队
             dm.start(episodeKey: ep.url, mediaURL: real, title: "\(item.name) · \(ep.name)",
-                     seriesTitle: item.name, episodeName: ep.name,
-                     cover: item.image, sourceURL: item.url)
+                    seriesTitle: item.name, episodeName: ep.name,
+                    cover: item.image, sourceURL: item.url)
             app.go(.downloads)
         }
     }
@@ -973,24 +972,44 @@ struct BatchDownloadSheet: View {
     private func start() async {
         let list = episodes.filter { selected.contains($0.url) && !dm.isQueuedOrDone($0.url) }
         guard !list.isEmpty else { return }
+
+        // 非订阅用户：点数不够直接拦截，不进入循环
         if !auth.isSubscribed {
             let need = list.filter { !quota.isUnlocked($0.url) }
             if quota.remaining < need.count { showSubscribe = true; return }
-            let uid = QuotaManager.currentUserId(auth: auth)
-            for ep in need {
-                _ = await quota.unlock(userId: uid, episodeKey: ep.url,
-                                       title: "\(item.name) · \(ep.name)")
-            }
         }
+
         working = true; progress = 0
+        let uid = QuotaManager.currentUserId(auth: auth)
+
         for ep in list {
-            if let real = try? await VideoAPI.resolveRealURL(episodeURL: ep.url) {
-                dm.start(episodeKey: ep.url, mediaURL: real, title: "\(item.name) · \(ep.name)",
-                         seriesTitle: item.name, episodeName: ep.name,
-                         cover: item.image, sourceURL: item.url)
+            // 1) 先解析真实地址：失败就不扣点
+            guard let real = try? await VideoAPI.resolveRealURL(episodeURL: ep.url) else {
+                progress += 1; continue
             }
+
+            // 2) 非订阅且未解锁 → 解锁；只有成功才继续
+            if !auth.isSubscribed && !quota.isUnlocked(ep.url) {
+                switch await quota.unlock(userId: uid, episodeKey: ep.url,
+                                        title: "\(item.name) · \(ep.name)") {
+                case .success, .alreadyUnlocked:
+                    break
+                case .failed:
+                    // 网络问题，不是额度问题：跳过，之后可以重试
+                    progress += 1; continue
+                default:
+                    // 额度不足等：跳过
+                    progress += 1; continue
+                }
+            }
+
+            // 3) 入队
+            dm.start(episodeKey: ep.url, mediaURL: real, title: "\(item.name) · \(ep.name)",
+                    seriesTitle: item.name, episodeName: ep.name,
+                    cover: item.image, sourceURL: item.url)
             progress += 1
         }
+
         working = false
         dismiss()
         AppState.shared.go(.downloads)

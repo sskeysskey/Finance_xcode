@@ -90,23 +90,46 @@ final class QuotaManager: ObservableObject {
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.httpBody = try? JSONSerialization.data(withJSONObject:
             ["user_id": userId, "episode_key": episodeKey, "video_title": title])
-        struct R: Codable { let status: String; let remaining: Int
-                            let bonus_remaining: Int?; let daily_remaining: Int?; let total_remaining: Int? }
+
+        // remaining 改为可选：quota_exceeded 等响应可能不带这些字段
+        struct R: Codable {
+            let status: String
+            let remaining: Int?
+            let bonus_remaining: Int?
+            let daily_remaining: Int?
+            let total_remaining: Int?
+        }
+
         do {
             let (d, _) = try await URLSession.shared.data(for: r)
             let x = try JSONDecoder().decode(R.self, from: d)
+
             func apply() {
-                remaining = x.total_remaining ?? x.remaining
-                bonusRemaining = x.bonus_remaining ?? bonusRemaining
-                dailyRemaining = x.daily_remaining ?? dailyRemaining
+                if let t = x.total_remaining ?? x.remaining { remaining = t }
+                if let b = x.bonus_remaining { bonusRemaining = b }
+                if let dr = x.daily_remaining { dailyRemaining = dr }
             }
+            func markUnlocked() {
+                // 日期变了：旧的解锁记录不可信，先清空（服务端对已解锁项是幂等的，不会重复扣点）
+                if lastSyncDay != Self.today() { unlockedKeys = [] }
+                unlockedKeys.insert(episodeKey)
+                lastSyncDay = Self.today()
+            }
+
             switch x.status {
-            case "success":          unlockedKeys.insert(episodeKey); apply(); lastSyncDay = Self.today(); return .success
-            case "already_unlocked": unlockedKeys.insert(episodeKey); apply(); lastSyncDay = Self.today(); return .alreadyUnlocked
-            case "quota_exceeded":   remaining = 0; bonusRemaining = 0; dailyRemaining = 0; return .quotaExceeded
-            default: return .failed("unknown")
+            case "success":
+                markUnlocked(); apply(); return .success
+            case "already_unlocked":
+                markUnlocked(); apply(); return .alreadyUnlocked
+            case "quota_exceeded":
+                remaining = 0; bonusRemaining = 0; dailyRemaining = 0
+                return .quotaExceeded
+            default:
+                return .failed("unknown status: \(x.status)")
             }
-        } catch { return .failed(error.localizedDescription) }
+        } catch {
+            return .failed(error.localizedDescription)
+        }
     }
 
     func redeemInvite(userId: String, code: String) async throws -> Int {

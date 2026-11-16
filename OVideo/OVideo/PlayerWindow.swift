@@ -168,6 +168,7 @@ final class PlayerModel: ObservableObject {
     private var sleepToken: NSObjectProtocol?
     private var episodeKey = ""
     private var lastSavedAt: Double = -100
+    private var loadGeneration = 0
 
     /// 用户意图（唯一真源）
     private var wantsPlayback = false
@@ -199,7 +200,11 @@ final class PlayerModel: ObservableObject {
     func load(payload p: PlayPayload,
               episode: EpisodeItem,
               startAt: Double? = nil,
-              resetRecovery: Bool = true) async {
+              resetRecovery: Bool = true,
+              record: Bool = true) async {
+
+        loadGeneration += 1
+        let gen = loadGeneration
 
         payload = p; current = episode
         teardownItemObservers()
@@ -221,8 +226,10 @@ final class PlayerModel: ObservableObject {
             isLocal = false
             do {
                 let real = try await VideoAPI.resolveRealURL(episodeURL: episode.url)
+                guard gen == loadGeneration else { return }      // 已被更新的 load 取代
                 target = URL(string: real)
             } catch {
+                guard gen == loadGeneration else { return }
                 fail(with: error.localizedDescription)
                 return
             }
@@ -295,8 +302,7 @@ final class PlayerModel: ObservableObject {
                 }
             }
         }
-
-        recordPlayback(p, episode)
+        if record { recordPlayback(p, episode) }
     }
 
     private func handleStatus(_ status: AVPlayerItem.Status, errorText: String?, episodeKey: String) {
@@ -523,7 +529,7 @@ final class PlayerModel: ObservableObject {
         let at = currentTime
 
         if hard && !isLocal {
-            await load(payload: p, episode: ep, startAt: at, resetRecovery: false)
+            await load(payload: p, episode: ep, startAt: at, resetRecovery: false, record: false)
         } else {
             player.pause()
             player.seek(to: CMTime(seconds: at, preferredTimescale: 600)) { [weak self] _ in
@@ -539,7 +545,7 @@ final class PlayerModel: ObservableObject {
         guard let p = payload, let ep = current else { return }
         let at = currentTime
         offerManualRetry = false
-        Task { await load(payload: p, episode: ep, startAt: at, resetRecovery: true) }
+        Task { await load(payload: p, episode: ep, startAt: at, resetRecovery: true, record: false) }
     }
 
     // MARK: - 画中画
@@ -576,6 +582,7 @@ final class PlayerModel: ObservableObject {
 
     // MARK: - 清理
     func stop() {
+        loadGeneration += 1      // 作废尚未完成的 load
         wantsPlayback = false
         player.pause()
         if let p = pip, p.isPictureInPictureActive { p.stopPictureInPicture() }
@@ -716,7 +723,7 @@ struct PlayerWindowView: View {
 
     @FocusState private var isPlayPauseFocused: Bool
 
-    private var modalUp: Bool { showReport || showSubscribe || showConsume }
+    private var modalUp: Bool { showReport || showSubscribe || showConsume || showEpisodes }
     private var currentIndex: Int {
         payload.episodes.firstIndex(where: { $0.url == model.current?.url }) ?? 0
     }
@@ -766,12 +773,6 @@ struct PlayerWindowView: View {
         .toolbar(isFullScreen ? .hidden : .visible)
         .toolbar {
             ToolbarItemGroup {
-                if payload.episodes.count > 1 {
-                    Button { showEpisodes = true } label: {
-                        Label(lang.t("选集", "Episodes"), systemImage: "list.bullet")
-                    }
-                    .popover(isPresented: $showEpisodes) { episodePopover }
-                }
                 if model.isLocal {
                     Label(lang.t("离线", "Offline"), systemImage: "arrow.down.circle.fill")
                         .foregroundStyle(.green)
@@ -784,7 +785,10 @@ struct PlayerWindowView: View {
         .task {
             let ep = payload.episodes.first(where: { $0.url == payload.episodeKey })
                 ?? EpisodeItem(number: "1", name: payload.episodeName, url: payload.episodeKey)
-            model.onEnded = { if autoNext { jump(1) } }
+            model.onEnded = {
+                let auto = UserDefaults.standard.object(forKey: "GW_AutoNext") as? Bool ?? true
+                if auto { jump(1) }
+            }
 
             if HLSDownloadManager.shared.localURL(forEpisodeKey: ep.url) != nil {
                 await model.load(payload: payload, episode: ep)
@@ -886,7 +890,7 @@ struct PlayerWindowView: View {
             HStack {
                 Button(lang.t("重试", "Retry")) {
                     if let c = model.current {
-                        Task { await model.load(payload: payload, episode: c) }
+                        Task { await model.load(payload: payload, episode: c, record: false) }
                     }
                 }
                 Button(lang.t("反馈修复", "Report")) { showReport = true }

@@ -175,7 +175,7 @@ enum DeviceIdentity {
 
 // ⭐ 新增 .support
 enum SidebarItem: Hashable, Codable {
-    case category(String), filter, search, follow, downloads, history, support
+    case category(String), filter, search, follow, downloads, history, support, settings
 }
 
 enum Route: Hashable {
@@ -193,12 +193,13 @@ final class AppState: ObservableObject {
     }() { didSet { UserDefaults.standard.set(sort.rawValue, forKey: "GW_Sort") } }
     @Published var searchFocusToken = 0
     @Published var showSubscription = false
+    @Published var keyword = ""                 // ⭐ 全局搜索关键词
     private init() {}
 
     func go(_ item: SidebarItem) { path = NavigationPath(); selection = item }
-    func focusSearch() { go(.search); searchFocusToken += 1 }
+    /// ⭐ 只让搜索框重新获得焦点，不再跳到搜索页
+    func focusSearch() { searchFocusToken += 1 }
 
-    /// ⭐ 打开在线客服；type 可传 "wish" / "report" 自动定位到对应会话
     func openSupport(type: String? = nil, threadKey: String? = nil) {
         SupportChatManager.shared.focusType = type
         SupportChatManager.shared.focusThreadKey = threadKey
@@ -216,6 +217,7 @@ struct RootView: View {
     @ObservedObject var track = SeriesTrackManager.shared
     @ObservedObject var quota = QuotaManager.shared
     @ObservedObject var support = SupportChatManager.shared      // ⭐ 替代 ReplyCenter
+    @FocusState private var searchFocused: Bool     // ⭐ 新增
 
     var body: some View {
         NavigationSplitView {
@@ -226,12 +228,16 @@ struct RootView: View {
                 detailRoot
                     .navigationDestination(for: Route.self) { r in
                         switch r {
-                        case .detail(let item):
-                            DetailView(item: item)
-                        case .search(let kw):
-                            SearchView(initialKeyword: kw)
+                        case .detail(let item): DetailView(item: item)
+                        case .search(let kw):   SearchView(initialKeyword: kw)
                         }
                     }
+                    // ⭐ 全局搜索框：所有栏目都在 toolbar 里
+                    .searchable(text: $app.keyword,
+                                placement: .toolbar,
+                                prompt: lang.t("搜索片名 / 导演 / 演员", "Search title / director / cast"))
+                    .searchFocused($searchFocused)
+                    .onSubmit(of: .search) { SearchHistoryStore.shared.add(app.keyword) }
             }
         }
         .frame(minWidth: 1080, minHeight: 680)
@@ -245,7 +251,15 @@ struct RootView: View {
             await support.refresh()
             support.startPolling()
             if app.selection == nil { app.selection = .category(data.categoryNames.first ?? "Featured") }
+            refocusSearch()
         }
+        .onChangeCompat(of: app.keyword) { kw in
+            // ⭐ 一旦输入内容，自动切到搜索结果页
+            let t = kw.trimmingCharacters(in: .whitespaces)
+            if !t.isEmpty, app.selection != .search { app.selection = .search }
+        }
+        .onChangeCompat(of: app.selection) { _ in refocusSearch() }   // ⭐ 切换栏目后重新聚焦
+        .onChangeCompat(of: app.searchFocusToken) { _ in refocusSearch() }
         .onChangeCompat(of: config.useReviewDisguise) { _ in
             data.resetCache()
             Task { await data.bootstrap(userId: auth.userIdentifier) }
@@ -302,6 +316,10 @@ struct RootView: View {
                     if support.unreadTotal > 0 { Spacer(); badge(support.unreadTotal) }
                 }.tag(SidebarItem.support)
             }
+            Section(lang.t("系统", "System")) {
+                Label(lang.t("设置", "Settings"), systemImage: "gearshape")
+                    .tag(SidebarItem.settings)
+            }
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) { sidebarFooter }
@@ -313,6 +331,11 @@ struct RootView: View {
             .padding(.horizontal, 6).padding(.vertical, 1)
             .background(Color.red, in: Capsule())
             .foregroundStyle(.white)
+    }
+
+    private func refocusSearch() {
+        searchFocused = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { searchFocused = true }
     }
 
     private var sidebarFooter: some View {
@@ -371,6 +394,7 @@ struct RootView: View {
             case .downloads:       DownloadsView()
             case .history:         HistoryView()
             case .support:         SupportCenterView()
+            case .settings:        PreferencesPanelView() 
             case nil:              ProgressView()
             }
         }
@@ -385,6 +409,34 @@ struct ModuleClosedView: View {
             message: lang.t("因版权原因，内容暂时关闭，敬请谅解。",
                             "Content is temporarily closed for copyright reasons."),
             systemImage: "film.stack")
+    }
+}
+
+struct PreferencesPanelView: View {
+    @EnvironmentObject var lang: LanguageManager
+    @AppStorage("GW_CardSize") private var cardSize: Double = 180
+
+    var body: some View {
+        Form {
+            Section(lang.t("界面", "Interface")) {
+                Picker(lang.t("语言", "Language"), selection: $lang.isEnglish) {
+                    Text("中文").tag(false)
+                    Text("English").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 220)
+            }
+            Section(lang.t("浏览", "Browsing")) {
+                LabeledContent(lang.t("卡片大小", "Card size")) {
+                    HStack {
+                        Slider(value: $cardSize, in: 140...260).frame(width: 180)
+                        Text("\(Int(cardSize))").monospacedDigit().frame(width: 36)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle(lang.t("设置", "Settings"))
     }
 }
 

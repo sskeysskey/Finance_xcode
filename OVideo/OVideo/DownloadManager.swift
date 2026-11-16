@@ -86,6 +86,22 @@ struct DownloadsView: View {
     }
     }
 
+    private func playPayload(for it: DownloadItem) -> PlayPayload {
+        let siblings = dm.items
+            .filter { $0.groupKey == it.groupKey && $0.state == .completed }
+            .sorted { $0.episodeName.localizedStandardCompare($1.episodeName) == .orderedAscending }
+        let eps = siblings.enumerated().map {
+            EpisodeItem(number: String($0.offset + 1), name: $0.element.episodeName, url: $0.element.episodeKey)
+        }
+        return PlayPayload(
+            seriesTitle: it.seriesTitle, episodeName: it.episodeName, episodeKey: it.episodeKey,
+            sourceURL: it.sourceURL, cover: it.cover, channelName: nil,
+            episodes: eps.isEmpty
+                ? [EpisodeItem(number: "1", name: it.episodeName, url: it.episodeKey)]
+                : eps,
+            playSource: "downloads")
+    }
+
     private func row(_ it: DownloadItem) -> some View {
         HStack(spacing: 12) {
             CachedImage(url: VideoAPI.coverURL(it.cover))
@@ -108,12 +124,7 @@ struct DownloadsView: View {
             Spacer()
             if it.state == .completed {
                 Button {
-                    openWindow(id: "player", value: PlayPayload(
-                        seriesTitle: it.seriesTitle, episodeName: it.episodeName,
-                        episodeKey: it.episodeKey, sourceURL: it.sourceURL, cover: it.cover,
-                        channelName: nil,
-                        episodes: [EpisodeItem(number: "1", name: it.episodeName, url: it.episodeKey)],
-                        playSource: "downloads"))
+                    openWindow(id: "player", value: playPayload(for: it))
                 } label: { Image(systemName: "play.circle.fill").font(.title2) }
                 .buttonStyle(.borderless)
             } else if it.state == .paused || it.state == .failed {
@@ -243,7 +254,7 @@ final class HLSDownloadManager: ObservableObject {
     @Published private(set) var speeds: [String: Double] = [:]
 
     private var running: Set<String> = []
-    private var cancelFlags: Set<String> = []
+    private var runTokens: [String: UUID] = [:]   // 每个 item 当前有效的运行令牌
     private var lastBytes: [String: Int64] = [:]
     private var activity: NSObjectProtocol?
     private var timer: Timer?
@@ -316,15 +327,15 @@ final class HLSDownloadManager: ObservableObject {
 
     func pause(_ id: String) {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
-        cancelFlags.insert(id)
+        runTokens[id] = nil                  // 旧 run 立刻失效
         items[i].state = .paused
         running.remove(id); speeds[id] = 0
         save(); pump()
     }
+
     func resume(_ id: String) {
         guard let i = items.firstIndex(where: { $0.id == id }),
-              items[i].state == .paused || items[i].state == .failed else { return }
-        cancelFlags.remove(id)
+            items[i].state == .paused || items[i].state == .failed else { return }
         items[i].state = .queued; items[i].errorText = nil
         save(); pump()
     }
@@ -336,7 +347,8 @@ final class HLSDownloadManager: ObservableObject {
 
     func delete(_ id: String) {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
-        cancelFlags.insert(id); running.remove(id)
+        runTokens[id] = nil                  // 旧 run 失效
+        running.remove(id)
         try? FileManager.default.removeItem(at: folderURL(items[i]))
         items.remove(at: i)
         speeds[id] = nil; lastBytes[id] = nil
@@ -351,37 +363,55 @@ final class HLSDownloadManager: ObservableObject {
     private func pump() {
         updateActivity()
         while running.count < maxConcurrentDownloads,
-              let next = items.first(where: { $0.state == .queued && !running.contains($0.id) }) {
-            running.insert(next.id)
+            let next = items.first(where: { $0.state == .queued && !running.contains($0.id) }) {
             let id = next.id
-            Task { await self.run(id) }
+            let token = UUID()
+            running.insert(id)
+            runTokens[id] = token
+            Task { await self.run(id, token: token) }
         }
     }
 
-    private func run(_ id: String) async {
+    private func run(_ id: String, token: UUID) async {
         // run 本身在 MainActor 上，defer 直接同步执行即可
         defer {
+        // 只有"仍是当前运行"才清理槽位；过期的旧运行什么都不做
+        if runTokens[id] == token {
+            runTokens[id] = nil
             running.remove(id)
             speeds[id] = 0
             pump()
         }
-        guard let it = items.first(where: { $0.id == id }) else { return }
-        setState(id, .preparing)
-        do {
-            let segs = try await prepare(it)
-            if cancelFlags.contains(id) { return }
-            setState(id, .downloading)
-            try await downloadSegments(id: id, folder: folderURL(it), segments: segs)
-            if cancelFlags.contains(id) { return }
-            setState(id, .completed)
-            save()
+    }
+    guard let it = items.first(where: { $0.id == id }) else { return }
+    setState(id, .preparing)
+    do {
+        let segs = try await prepare(it)
+        if isStale(id, token) { return }
+        setState(id, .downloading)
+        try await downloadSegments(id: id, token: token, folder: folderURL(it), segments: segs)
+        if isStale(id, token) { return }
+        setState(id, .completed)
+        save()
+
+        // 下载完成 → 仅加入追踪，不视为已追平（保留你上次的改动）
+        if let src = it.sourceURL {
+            SeriesTrackManager.shared.recordWatch(
+                sourceURL: src,
+                title: it.seriesTitle.isEmpty ? it.title : it.seriesTitle,
+                cover: it.cover,
+                episodeName: it.episodeName,
+                channelName: nil,
+                catchUp: false)          // ⚠️ 见文末：需确认该参数存在
+        }
+
             let ident = AuthManager.shared.trackIdentity
             TrackingManager.shared.track(.downloadComplete, userId: ident.id, userType: ident.type,
                                          videoURL: it.episodeKey, videoTitle: it.title)
         } catch is CancellationError {
-            // 用户暂停
+            // 暂停 / 删除，不需要处理
         } catch {
-            if !cancelFlags.contains(id), let i = items.firstIndex(where: { $0.id == id }) {
+            if !isStale(id, token), let i = items.firstIndex(where: { $0.id == id }) {
                 items[i].state = .failed
                 items[i].errorText = error.localizedDescription
                 save()
@@ -394,14 +424,18 @@ final class HLSDownloadManager: ObservableObject {
         items[i].state = s; save()
     }
 
-    private func setCounts(id: String, total: Int, done: Int) {
+    private func setCounts(id: String, total: Int, done: Int, bytes: Int64? = nil) {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
         items[i].total = total
         items[i].done = min(done, total)
+        if let b = bytes { items[i].bytes = b }
         save()
     }
 
-    private func isCancelled(_ id: String) -> Bool { cancelFlags.contains(id) }
+    /// 当前运行是否已过期（被暂停、删除，或已被新的运行取代）
+    private func isStale(_ id: String, _ token: UUID) -> Bool {
+        runTokens[id] != token
+    }
 
     private func bump(_ id: String, bytes: Int64) {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return }
@@ -425,7 +459,8 @@ final class HLSDownloadManager: ObservableObject {
                 return HLSSegment(url: u, file: p[1])
             }
             if !segs.isEmpty {
-                await setCounts(id: it.id, total: segs.count, done: Self.countExisting(dir, segs))
+                let scan = Self.scanExisting(dir, segs)
+                await setCounts(id: it.id, total: segs.count, done: scan.count, bytes: scan.bytes)
                 return segs
             }
         }
@@ -493,54 +528,60 @@ final class HLSDownloadManager: ObservableObject {
         let dump = segs.map { [$0.url.absoluteString, $0.file] }
         try JSONEncoder().encode(dump).write(to: manifest)
 
-        await setCounts(id: it.id, total: segs.count, done: Self.countExisting(dir, segs))
+        let scan = Self.scanExisting(dir, segs)
+        await setCounts(id: it.id, total: segs.count, done: scan.count, bytes: scan.bytes)
         return segs
     }
 
-    nonisolated private static func countExisting(_ dir: URL, _ segs: [HLSSegment]) -> Int {
-        segs.reduce(0) { acc, s in
-            let p = dir.appendingPathComponent(s.file).path
-            let attrs = try? FileManager.default.attributesOfItem(atPath: p)
-            let sz = (attrs?[.size] as? Int) ?? 0     // ⭐ 修复多余的 ??
-            return acc + (sz > 0 ? 1 : 0)
+    nonisolated private static func scanExisting(_ dir: URL, _ segs: [HLSSegment]) -> (count: Int, bytes: Int64) {
+        var count = 0
+        var bytes: Int64 = 0
+        for s in segs {
+            let attrs = try? FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(s.file).path)
+            let sz = (attrs?[.size] as? Int) ?? 0
+            if sz > 0 { count += 1; bytes += Int64(sz) }
         }
+        return (count, bytes)
     }
 
     // MARK: 分片并发下载（滑动窗口）
-    private func downloadSegments(id: String, folder: URL, segments: [HLSSegment]) async throws {
+    private func downloadSegments(id: String, token: UUID, folder: URL, segments: [HLSSegment]) async throws {
         let limit = maxSegmentConcurrency
         var next = 0
         try await withThrowingTaskGroup(of: Void.self) { group in
             while next < segments.count, next < limit {
                 let seg = segments[next]; next += 1
-                group.addTask { try await self.processSegment(id: id, folder: folder, seg: seg) }
+                group.addTask { try await self.processSegment(id: id, token: token, folder: folder, seg: seg) }
             }
             while try await group.next() != nil {
-                if isCancelled(id) { group.cancelAll(); throw CancellationError() }   // ⭐ 去掉多余 await
+                if isStale(id, token) { group.cancelAll(); throw CancellationError() }
                 if next < segments.count {
                     let seg = segments[next]; next += 1
-                    group.addTask { try await self.processSegment(id: id, folder: folder, seg: seg) }
+                    group.addTask { try await self.processSegment(id: id, token: token, folder: folder, seg: seg) }
                 }
             }
         }
     }
 
-    nonisolated private func processSegment(id: String, folder: URL, seg: HLSSegment) async throws {
-        if await isCancelled(id) { throw CancellationError() }
+    nonisolated private func processSegment(id: String, token: UUID, folder: URL, seg: HLSSegment) async throws {
+        if await isStale(id, token) { throw CancellationError() }
         let fm = FileManager.default
         let dest = folder.appendingPathComponent(seg.file)
         if let attrs = try? fm.attributesOfItem(atPath: dest.path),
-           let sz = attrs[.size] as? Int, sz > 0 {
-            return                                   // 已存在（续传时已计入 done）
+        let sz = attrs[.size] as? Int, sz > 0 {
+            return                                    // 已存在
         }
         var lastErr: Error?
         for attempt in 0..<3 {
-            if await isCancelled(id) { throw CancellationError() }
+            if await isStale(id, token) { throw CancellationError() }
             do {
                 let data = try await HLSNet.data(seg.url)
+                if await isStale(id, token) { throw CancellationError() }   // 下载完再检查一次，避免旧运行写入
                 try data.write(to: dest, options: .atomic)
                 await bump(id, bytes: Int64(data.count))
                 return
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 lastErr = error
                 try? await Task.sleep(nanoseconds: UInt64(400_000_000 * (attempt + 1)))
