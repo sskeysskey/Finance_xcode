@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeGridView: View {
     let category: String
+    var isActive: Bool = true
     @EnvironmentObject var data: VideoDataManager
     @EnvironmentObject var auth: AuthManager
     @EnvironmentObject var lang: LanguageManager
@@ -29,14 +30,13 @@ struct HomeGridView: View {
                       hasMore: data.hasMorePages(category, app.sort),
                       onRetry: { retry() },
                       onReachEnd: {
-                          Task { await data.loadNextPage(category, app.sort, userId: auth.userIdentifier) }
-                      })
+                            guard isActive else { return }          // ⭐ 隐藏频道不翻页
+                            Task { await data.loadNextPage(category, app.sort, userId: auth.userIdentifier) }
+                        })
         }
-        .navigationTitle(config.categoryDisplayName(category, english: lang.isEnglish))
-        .navigationSubtitle(config.updateTime.isEmpty ? "" :
-            lang.t("更新于 \(config.updateTime)", "Updated \(config.updateTime)"))
-        // ⭐ 把 cacheEpoch 纳入 id：任何一次 resetCache 之后都会强制重新拉取（修复冷启动空白）
-        .task(id: "\(category)|\(app.sort.rawValue)|\(config.effectiveMaxYear ?? -1)|\(data.cacheEpoch)") {
+        .toolbar { /* 已在上一步删除 */ }
+        .task(id: "\(isActive)|\(category)|\(app.sort.rawValue)|\(config.effectiveMaxYear ?? -1)|\(data.cacheEpoch)") {
+            guard isActive else { return }                        // ⭐ 隐藏频道不加载
             await data.loadFirstPageIfNeeded(category, app.sort, userId: auth.userIdentifier)
         }
     }

@@ -1450,6 +1450,31 @@ final class HLSDownloadManager: NSObject, ObservableObject, AVAssetDownloadDeleg
 }
 
 extension HLSDownloadManager {
+    /// 规范化路径，消除 /var 与 /private/var 之类的差异
+    private func canonicalPath(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    /// 磁盘上的 .movpkg 中，没有任何下载记录（已完成 / 局部包）引用的，视为孤儿
+    func orphanAssetURLs() -> [URL] {
+        var referenced = Set<String>()
+        for key in localBookmarks.keys {
+            if let u = getLocalURL(for: key) { referenced.insert(canonicalPath(u)) }
+        }
+        for key in pendingBookmarks.keys {
+            if let u = getPendingLocalURL(for: key) { referenced.insert(canonicalPath(u)) }
+        }
+
+        let fm = FileManager.default
+        let lib = fm.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        let roots = ((try? fm.contentsOfDirectory(at: lib, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.lastPathComponent.hasPrefix("com.apple.UserManagedAssets") }
+
+        return roots
+            .flatMap { root in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] }
+            .filter { $0.pathExtension == "movpkg" && !referenced.contains(canonicalPath($0)) }
+    }
+    
     func activeTasksContains(_ url: String) -> Bool { downloadProgress[url] != nil }
 
     /// 一键继续所有暂停中的下载（按加入顺序，reconcile + 热身闸门会自动限流）

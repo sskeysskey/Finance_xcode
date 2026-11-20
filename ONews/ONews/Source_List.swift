@@ -304,6 +304,15 @@ struct UserProfileView: View {
                         }
                     }
 
+                    Section {
+                        NavigationLink {
+                            StorageCleanupView()
+                        } label: {
+                            Label(isGlobalEnglishMode ? "Storage & Cache" : "存储与缓存清理",
+                                systemImage: "externaldrive.badge.minus")
+                        }
+                    }
+
                     // ★ 新增：排序设置
                     Section {
                         Picker(selection: $groupNewestFirst) {
@@ -1963,5 +1972,98 @@ struct VideoSearchDestinationView: View {
     @EnvironmentObject var videoDataManager: OVideoDataManager
     var body: some View {
         VideoSearchTabView(dataManager: videoDataManager, autoFocus: true)
+    }
+}
+
+struct StorageCleanupView: View {
+    @EnvironmentObject var resourceManager: ResourceManager
+    @AppStorage("isGlobalEnglishMode") private var en = false
+
+    @State private var sizes: [CacheKind: Int64] = [:]
+    @State private var selected = Set(CacheKind.allCases)
+    @State private var isBusy = false
+    @State private var showConfirm = false
+    @State private var resultText: String?
+
+    private var selectedBytes: Int64 {
+        selected.reduce(Int64(0)) { $0 + (sizes[$1] ?? 0) }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(CacheKind.allCases) { kind in
+                    let size = sizes[kind] ?? 0
+                    if kind != .orphanHLS || size > 0 {
+                        Toggle(isOn: binding(for: kind)) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(kind.title(en: en))
+                                Text(kind.hint(en: en))
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                        .overlay(alignment: .trailing) { EmptyView() }
+                        .badge(sizeText(size))
+                    }
+                }
+            } footer: {
+                Text(en
+                     ? "Downloaded videos can be removed in Video → Downloads."
+                     : "已下载的视频请在「视频 → 下载管理」中删除，此处只清理无记录的残留文件。")
+            }
+
+            Section {
+                Button(role: .destructive) { showConfirm = true } label: {
+                    HStack {
+                        if isBusy { ProgressView() }
+                        Text(en ? "Clear Selected (\(sizeText(selectedBytes)))"
+                                : "清理所选（\(sizeText(selectedBytes))）")
+                    }
+                }
+                .disabled(isBusy || selectedBytes == 0)
+            }
+        }
+        .navigationTitle(en ? "Storage & Cache" : "存储与缓存清理")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await rescan() }
+        .alert(en ? "Clear Selected Items?" : "确认清理？", isPresented: $showConfirm) {
+            Button(en ? "Cancel" : "取消", role: .cancel) {}
+            Button(en ? "Clear" : "清理", role: .destructive) { Task { await runClean() } }
+        } message: {
+            Text(en ? "Offline article images will be removed and re-downloaded when needed."
+                    : "离线图片会被删除，阅读时会按需重新下载。")
+        }
+        .alert(en ? "Done" : "清理完成", isPresented: Binding(
+            get: { resultText != nil }, set: { if !$0 { resultText = nil } })
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(resultText ?? "")
+        }
+    }
+
+    private func binding(for kind: CacheKind) -> Binding<Bool> {
+        Binding(
+            get: { selected.contains(kind) },
+            set: { on in
+                if on { selected.insert(kind) } else { selected.remove(kind) }
+            }
+        )
+    }
+
+    private func sizeText(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func rescan() async {
+        sizes = await CacheCleanupManager.shared.scan(resourceManager: resourceManager)
+    }
+
+    private func runClean() async {
+        isBusy = true
+        let freed = await CacheCleanupManager.shared.clean(selected, resourceManager: resourceManager)
+        await rescan()
+        isBusy = false
+        resultText = (en ? "Freed " : "已释放 ") + sizeText(freed)
     }
 }

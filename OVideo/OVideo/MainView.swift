@@ -218,6 +218,23 @@ struct RootView: View {
     @ObservedObject var quota = QuotaManager.shared
     @ObservedObject var support = SupportChatManager.shared      // ⭐ 替代 ReplyCenter
     @FocusState private var searchFocused: Bool     // ⭐ 新增
+    @State private var loadedCategories: Set<String> = []     // ⭐ 已访问过的频道
+
+    private var categoryTitle: String {
+        if case .category(let c)? = app.selection {
+            return config.categoryDisplayName(c, english: lang.isEnglish)
+        }
+        return ""
+    }
+
+    private var categorySubtitle: String {
+        config.updateTime.isEmpty ? "" :
+            lang.t("更新于 \(config.updateTime)", "Updated \(config.updateTime)")
+    }
+
+    private func markLoaded(_ s: SidebarItem?) {
+        if case .category(let c)? = s { loadedCategories.insert(c) }
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -241,6 +258,8 @@ struct RootView: View {
             }
         }
         .frame(minWidth: 1080, minHeight: 680)
+        .onAppear { markLoaded(app.selection) }                        // ⭐ 新增
+        .onChangeCompat(of: app.selection) { markLoaded($0) }          // ⭐ 新增
         .sheet(isPresented: $app.showSubscription) { SubscriptionView() }
         .task {
             await config.refresh()
@@ -386,17 +405,34 @@ struct RootView: View {
         } else if !config.moduleEnabled || auth.isVideoModuleBlocked {
             ModuleClosedView()
         } else {
-            switch app.selection {
-            case .category(let c): HomeGridView(category: c)
-            case .filter:          FilterView()
-            case .search:          SearchView()
-            case .follow:          FollowView()
-            case .downloads:       DownloadsView()
-            case .history:         HistoryView()
-            case .support:         SupportCenterView()
-            case .settings:        PreferencesPanelView() 
-            case nil:              ProgressView()
+            ZStack {
+                // ⭐ 频道常驻层：已访问的频道一直保留在层级里，切换只改 opacity
+                Group {
+                    ForEach(data.categoryNames.filter { loadedCategories.contains($0) }, id: \.self) { c in
+                        let active = app.selection == .category(c)
+                        HomeGridView(category: c, isActive: active)
+                            .opacity(active ? 1 : 0)
+                            .allowsHitTesting(active)
+                            .accessibilityHidden(!active)
+                    }
+                }
+                .navigationTitle(categoryTitle)
+                .navigationSubtitle(categorySubtitle)
+
+                // 其他页面（放在频道层之后，标题优先取它们的）
+                switch app.selection {
+                case .category:        EmptyView()                 // 由常驻层显示
+                case .filter:          FilterView()
+                case .search:          SearchView()
+                case .follow:          FollowView()
+                case .downloads:       DownloadsView()
+                case .history:         HistoryView()
+                case .support:         SupportCenterView()
+                case .settings:        PreferencesPanelView()
+                case nil:              ProgressView()
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
